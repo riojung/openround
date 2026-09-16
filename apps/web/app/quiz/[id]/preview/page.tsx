@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import type { BrandTheme, QuizDraft } from "@openround/contracts";
+import { QuizContentSchema, type BrandTheme, type QuizDraft } from "@openround/contracts";
 import { Brand } from "../../../../components/brand";
 import { apiFetch, humanError } from "../../../../lib/api";
 import { liveThemeStyle } from "../../../../lib/theme";
@@ -12,6 +12,27 @@ interface QuizRecord {
   id: string;
   status: "draft" | "published" | "archived";
   draft: QuizDraft;
+}
+
+function previewValidationError(draft: QuizDraft) {
+  const result = QuizContentSchema.safeParse(draft);
+  if (result.success) return { content: result.data, message: null };
+
+  const issue = result.error.issues[0];
+  const [root, itemIndex, field, choiceIndex] = issue?.path ?? [];
+  let source = "Quiz";
+  if (root === "title") source = "Quiz title";
+  else if (root === "questions" && typeof itemIndex === "number") {
+    source = `Question ${itemIndex + 1}`;
+    if (field === "choices" && typeof choiceIndex === "number") {
+      source += `, answer ${choiceIndex + 1}`;
+    }
+  } else if (root === "questions") source = "Questions";
+
+  return {
+    content: null,
+    message: `Preview unavailable. ${source}: ${issue?.message ?? "Complete the quiz before previewing"}. Return to the editor and finish this draft.`,
+  };
 }
 
 export default function QuizPreviewPage() {
@@ -31,8 +52,13 @@ export default function QuizPreviewPage() {
       apiFetch<{ brandTheme: BrandTheme | null }>("/v1/auth/me"),
     ])
       .then(([{ quiz: loadedQuiz }, account]) => {
-        setQuiz(loadedQuiz);
         setBrandTheme(account.brandTheme);
+        const validation = previewValidationError(loadedQuiz.draft);
+        if (!validation.content) {
+          setError(validation.message);
+          return;
+        }
+        setQuiz({ ...loadedQuiz, draft: validation.content });
       })
       .catch((caught) => {
         if ((caught as { status?: number }).status === 401) router.replace("/signin");
@@ -89,6 +115,9 @@ export default function QuizPreviewPage() {
             <p className="error" role="alert">
               {error}
             </p>
+            <Link className="button" href={`/quiz/${id}`}>
+              Return to editor
+            </Link>
           </section>
         ) : null}
         {!quiz && !error ? (

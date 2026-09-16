@@ -34,6 +34,15 @@ function isPrivateHttpUrl(value: string) {
   return false;
 }
 
+function isLoopbackHttpUrl(value: string) {
+  const url = new URL(value);
+  if (url.protocol !== "http:") return false;
+  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) return true;
+  if (isIP(hostname) === 4) return hostname.split(".").map(Number)[0] === 127;
+  return isIP(hostname) === 6 && hostname === "::1";
+}
+
 export const ConfigSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -211,14 +220,14 @@ export const ConfigSchema = z
       (!config.COMMUNITY_MODE ||
         config.BILLING_MODE !== "disabled" ||
         !config.ALLOW_INSECURE_LOCAL_HTTP ||
-        !isPrivateHttpUrl(config.WEB_ORIGIN) ||
-        !isPrivateHttpUrl(config.PUBLIC_API_URL))
+        !isLoopbackHttpUrl(config.WEB_ORIGIN) ||
+        !isLoopbackHttpUrl(config.PUBLIC_API_URL))
     ) {
       ctx.addIssue({
         code: "custom",
         path: ["AUTH_DEBUG_MAGIC_LINKS"],
         message:
-          "Production debug links are limited to non-billing community deployments on private HTTP origins",
+          "Production debug links are limited to non-billing community deployments on loopback HTTP origins",
       });
     }
     if (config.BILLING_MODE === "stripe") {

@@ -29,8 +29,8 @@ describe("magic-link response exposure", () => {
       mailer,
       ConfigSchema.parse({
         ...productionDependencies,
-        WEB_ORIGIN: "http://192.168.1.20:8080",
-        PUBLIC_API_URL: "http://192.168.1.20:8080",
+        WEB_ORIGIN: "http://localhost:8080",
+        PUBLIC_API_URL: "http://localhost:8080",
         COOKIE_SECURE: "false",
         COMMUNITY_MODE: "true",
         ALLOW_INSECURE_LOCAL_HTTP: "true",
@@ -40,7 +40,7 @@ describe("magic-link response exposure", () => {
 
     const debugUrl = await auth.requestMagicLink("local@example.com", "workplace");
 
-    expect(debugUrl).toMatch(/^http:\/\/192\.168\.1\.20:8080\/v1\/auth\/verify\?token=/);
+    expect(debugUrl).toMatch(/^http:\/\/localhost:8080\/v1\/auth\/verify\?token=/);
     expect(mailer.messages).toEqual([{ email: "local@example.com", verifyUrl: debugUrl }]);
   });
 

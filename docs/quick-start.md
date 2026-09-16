@@ -47,7 +47,10 @@ For isolated, one-computer testing only, you can expose **Continue to dashboard*
 the product to loopback so another LAN client cannot request a token for an existing creator:
 
 ```bash
-OPENROUND_HTTP_BIND=127.0.0.1 AUTH_DEBUG_MAGIC_LINKS=true docker compose up --build -d
+OPENROUND_PUBLIC_URL=http://localhost:8080 \
+OPENROUND_HTTP_BIND=127.0.0.1 \
+AUTH_DEBUG_MAGIC_LINKS=true \
+docker compose up --build -d
 ```
 
 Do not use this shortcut while the product is reachable by other devices. Return to the secure

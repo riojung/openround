@@ -162,6 +162,11 @@ test("incomplete questions autosave with actionable guidance", async ({ page }, 
 
   await page.reload();
   await expect(page.getByRole("button", { name: /1\. Untitled question/ })).toBeVisible();
+  await page.goto(`${page.url()}/preview`);
+  await expect(page.locator(".live-card .error[role='alert']")).toContainText(
+    "Preview unavailable. Question 1: Enter the question text.",
+  );
+  await page.getByRole("link", { name: "Return to editor" }).click();
   await page.getByRole("button", { name: "Publish" }).click();
   await expect(guidance).toHaveAttribute("role", "alert");
   await expect(guidance).toContainText("Cannot publish this quiz yet");
