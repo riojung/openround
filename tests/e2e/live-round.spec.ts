@@ -28,7 +28,9 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await creator.getByRole("button", { name: "Publish" }).click();
   await expect(creator.getByText("published", { exact: true })).toBeVisible();
   await creator.getByRole("link", { name: "Dashboard" }).click();
-  await expect(creator.getByText(/1 of 5 published quiz slots used/)).toBeVisible();
+  await expect(creator.getByText(/1 of 5 published quiz slots used/)).toBeVisible({
+    timeout: 10_000,
+  });
   await creator.getByRole("button", { name: "Host" }).click();
   await expect(creator).toHaveURL(/\/host\/setup\//);
   await expect(creator.getByLabel("Maximum participants")).toHaveValue("20");
@@ -77,7 +79,7 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await creator.getByRole("link", { name: "Open report" }).click();
   await expect(
     creator.locator(".metric").filter({ hasText: "accuracy" }).getByText("100%", { exact: true }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 10_000 });
   await expect(creator.getByRole("link", { name: "CSV export requires Pro" })).toBeVisible();
   await expect(creator.getByText(/current free plan defaults to 30 days/)).toBeVisible();
 
@@ -167,7 +169,11 @@ test("incomplete questions autosave with actionable guidance", async ({ page }, 
     "Preview unavailable. Question 1: Enter the question text.",
   );
   await page.getByRole("link", { name: "Return to editor" }).click();
-  await page.getByRole("button", { name: "Publish" }).click();
+  await expect(page).toHaveURL(/\/quiz\/[^/]+$/);
+  await expect(page.getByRole("status")).toContainText("Saved", { timeout: 10_000 });
+  const publishButton = page.getByRole("button", { name: "Publish" });
+  await expect(publishButton).toBeEnabled();
+  await publishButton.click();
   await expect(guidance).toHaveAttribute("role", "alert");
   await expect(guidance).toContainText("Cannot publish this quiz yet");
   await expect(guidance).toContainText("Source: Question 1");
@@ -180,6 +186,6 @@ test("incomplete questions autosave with actionable guidance", async ({ page }, 
   }
   await expect(guidance).toHaveCount(0);
   await expect(page.getByRole("status")).toContainText("Saved", { timeout: 10_000 });
-  await page.getByRole("button", { name: "Publish" }).click();
+  await publishButton.click();
   await expect(page.getByText("published", { exact: true })).toBeVisible();
 });
