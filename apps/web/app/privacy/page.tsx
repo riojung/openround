@@ -1,0 +1,49 @@
+import { SiteFooter } from "../../components/site-footer";
+import { SiteHeader } from "../../components/site-header";
+
+export const metadata = { title: "Privacy" };
+
+export default function PrivacyPage() {
+  return (
+    <>
+      <SiteHeader />
+      <main className="shell page-main legal-copy" id="main">
+        <p className="eyebrow">Draft for legal review</p>
+        <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5rem)" }}>Privacy notice</h1>
+        <p>
+          <strong>Launch posture.</strong> OpenRound minimizes participant data and keeps Canadian
+          hosted data in the selected Canadian region. This draft must be reviewed before public or
+          school use.
+        </p>
+        <h2>Guest participation</h2>
+        <p>
+          Participants use a session-scoped nickname and opaque resume token. OpenRound does not
+          create participant accounts, build cross-session profiles, sell participant data, or use
+          it for advertising.
+        </p>
+        <h2>Data used</h2>
+        <p>
+          We process creator email, quiz content, session settings, participant nicknames, submitted
+          answers, scores, limited security logs, consent records, and billing status where
+          applicable.
+        </p>
+        <h2>Retention and control</h2>
+        <p>
+          Hosted Free session reports expire after 30 days. Pro defaults to 365 days. Creators can
+          delete sessions earlier, export account data, or delete their account.
+        </p>
+        <h2>Schools</h2>
+        <p>
+          Students must use anonymous guest mode. Institutional use requires an approved agreement
+          and applicable privacy review. No direct child account is offered.
+        </p>
+        <h2>Contact</h2>
+        <p>
+          Configure a monitored privacy and security contact before release. Do not publish this
+          placeholder unchanged.
+        </p>
+      </main>
+      <SiteFooter />
+    </>
+  );
+}

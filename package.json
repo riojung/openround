@@ -1,0 +1,56 @@
+{
+  "name": "openround-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenRound live quiz platform",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@10.15.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "pnpm": {
+    "overrides": {
+      "tsup>esbuild": "0.28.1"
+    }
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "licenses:report": "node scripts/generate-third-party-notices.mjs",
+    "lint": "turbo run lint",
+    "load:compose:aggregate": "tsx tests/load/compose-aggregate-load.ts",
+    "load:compose": "tsx tests/load/compose-game-load.ts",
+    "load:socket": "tsx tests/load/socket-load.ts",
+    "network:urls": "node scripts/show-network-urls.mjs",
+    "smoke:compose": "tsx tests/smoke/compose.ts",
+    "smoke:multi-process": "tsx tests/smoke/multi-process.ts",
+    "smoke:observability": "tsx tests/smoke/observability.ts",
+    "smoke:restore": "tsx tests/smoke/backup-restore.ts",
+    "smoke:tracing": "pnpm --filter @openround/server build && tsx tests/smoke/tracing.ts",
+    "test": "turbo run test",
+    "test:alerts": "docker run --rm --volume \"$PWD/infra/observability:/etc/prometheus:ro\" --entrypoint /bin/promtool prom/prometheus:v3.5.0 test rules /etc/prometheus/alerts.test.yml",
+    "test:multi-writer": "pnpm --filter @openround/server test:multi-writer",
+    "test:e2e": "playwright test",
+    "test:e2e:compose": "playwright test --config=playwright.compose.config.ts",
+    "test:coverage": "turbo run test:coverage",
+    "typecheck": "turbo run typecheck",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.63.0",
+    "@types/node": "26.5.1",
+    "eslint": "10.10.0",
+    "prettier": "3.9.6",
+    "socket.io-client": "4.8.3",
+    "tsup": "8.5.1",
+    "tsx": "4.20.5",
+    "turbo": "2.10.13",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.0"
+  }
+}

@@ -1,0 +1,17 @@
+apiVersion: 1
+
+deleteDatasources:
+  - name: OpenRound Prometheus
+    orgId: 1
+
+datasources:
+  - name: OpenRound Prometheus
+    type: prometheus
+    uid: openround-prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s

@@ -1,0 +1,48 @@
+app = "openround-ca-server"
+primary_region = "yyz"
+
+[build]
+  dockerfile = "apps/server/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  HOST = "0.0.0.0"
+  PORT = "4000"
+  WEB_ORIGIN = "https://openround-ca-web.fly.dev"
+  PUBLIC_API_URL = "https://openround-ca-server.fly.dev"
+  COOKIE_SECURE = "true"
+  RUN_MIGRATIONS = "false"
+  ALLOW_IN_MEMORY = "false"
+  COMMUNITY_MODE = "false"
+  BILLING_MODE = "stripe"
+  FEATURE_SIGNUPS = "false"
+  METRICS_ENABLED = "false"
+  S3_REGION = "ca-central-1"
+  SESSION_MUTATION_LEASE_TTL_MS = "15000"
+  SESSION_MUTATION_LEASE_WAIT_MS = "5000"
+  OPENROUND_MIGRATION_FILE = "/app/migrations/001_initial.sql"
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 500
+    hard_limit = 1000
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 2
+  memory = "2gb"
+
+[[http_service.checks]]
+  interval = "15s"
+  timeout = "3s"
+  grace_period = "20s"
+  method = "GET"
+  path = "/health/ready"

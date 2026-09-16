@@ -1,0 +1,51 @@
+import type { Entitlements } from "@openround/contracts";
+import type { Plan } from "@openround/db";
+import type { AppConfig } from "./config.js";
+
+const millisecondsPerDay = 24 * 60 * 60 * 1_000;
+
+export function entitlementsFor(
+  plan: Plan,
+  config: Pick<
+    AppConfig,
+    "COMMUNITY_MODE" | "COMMUNITY_REPORT_RETENTION_DAYS" | "MAX_SESSION_PARTICIPANTS"
+  >,
+): Entitlements {
+  if (config.COMMUNITY_MODE) {
+    return {
+      plan: "team",
+      maxParticipants: config.MAX_SESSION_PARTICIPANTS,
+      maxPublishedQuizzes: null,
+      reportRetentionDays: config.COMMUNITY_REPORT_RETENTION_DAYS,
+      csvExport: true,
+      brandTheme: true,
+    };
+  }
+
+  if (plan === "free") {
+    return {
+      plan,
+      maxParticipants: Math.min(20, config.MAX_SESSION_PARTICIPANTS),
+      maxPublishedQuizzes: 5,
+      reportRetentionDays: 30,
+      csvExport: false,
+      brandTheme: false,
+    };
+  }
+
+  return {
+    plan,
+    maxParticipants:
+      plan === "pro"
+        ? Math.min(100, config.MAX_SESSION_PARTICIPANTS)
+        : config.MAX_SESSION_PARTICIPANTS,
+    maxPublishedQuizzes: null,
+    reportRetentionDays: 365,
+    csvExport: true,
+    brandTheme: true,
+  };
+}
+
+export function retentionExpiry(now: Date, entitlements: Entitlements) {
+  return new Date(now.getTime() + entitlements.reportRetentionDays * millisecondsPerDay);
+}

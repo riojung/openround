@@ -1,0 +1,333 @@
+import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from "@prometheus-io/client";
+
+interface DatabasePoolMetrics {
+  totalCount: number;
+  idleCount: number;
+  waitingCount: number;
+}
+
+const realtimeEventTypes = new Set([
+  "lobby.updated",
+  "question.open",
+  "question.locked",
+  "question.reveal",
+  "leaderboard.updated",
+  "game.finished",
+  "session.snapshot",
+]);
+
+export class MetricsService {
+  readonly registry = new Registry();
+  private pool: DatabasePoolMetrics | null = null;
+
+  private readonly httpDuration = new Histogram({
+    name: "openround_http_request_duration_seconds",
+    help: "Duration of HTTP requests handled by the API",
+    labelNames: ["method", "route", "status_code"] as const,
+    buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+    registers: [this.registry],
+  });
+
+  private readonly sessionEvents = new Counter({
+    name: "openround_session_events_total",
+    help: "Authoritative game events emitted by type",
+    labelNames: ["type"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly joins = new Counter({
+    name: "openround_session_joins_total",
+    help: "Guest join and reconnect attempts by outcome",
+    labelNames: ["kind", "outcome"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly joinDuration = new Histogram({
+    name: "openround_join_acknowledgement_duration_seconds",
+    help: "Time to durably admit and acknowledge a guest or reconnect",
+    labelNames: ["kind", "outcome"] as const,
+    buckets: [0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+    registers: [this.registry],
+  });
+
+  private readonly joinBatchSize = new Histogram({
+    name: "openround_join_batch_size",
+    help: "Number of new participants committed in one per-session transaction",
+    buckets: [1, 2, 5, 10, 25, 50, 100, 250],
+    registers: [this.registry],
+  });
+
+  private readonly answers = new Counter({
+    name: "openround_answers_total",
+    help: "Answer submissions by authoritative outcome",
+    labelNames: ["outcome"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly answerDuration = new Histogram({
+    name: "openround_answer_acknowledgement_duration_seconds",
+    help: "Time to durably decide and acknowledge an answer",
+    labelNames: ["outcome"] as const,
+    buckets: [0.025, 0.05, 0.1, 0.25, 0.6, 1, 2.5],
+    registers: [this.registry],
+  });
+
+  private readonly answerBatchSize = new Histogram({
+    name: "openround_answer_batch_size",
+    help: "Number of newly accepted answers committed in one per-session transaction",
+    buckets: [1, 2, 5, 10, 25, 50, 100, 250],
+    registers: [this.registry],
+  });
+
+  private readonly hostCommands = new Counter({
+    name: "openround_host_commands_total",
+    help: "Host commands by outcome",
+    labelNames: ["action", "outcome"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly syncRequests = new Counter({
+    name: "openround_sync_requests_total",
+    help: "Reconnect synchronization requests by replay outcome",
+    labelNames: ["role", "outcome"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly replayEvents = new Counter({
+    name: "openround_replay_events_total",
+    help: "Events returned during reconnect replay",
+    registers: [this.registry],
+  });
+
+  private readonly sockets = new Gauge({
+    name: "openround_realtime_connections",
+    help: "Current Socket.IO connections on this process",
+    registers: [this.registry],
+  });
+
+  private readonly activeSessions = new Gauge({
+    name: "openround_active_sessions",
+    help: "Sessions currently loaded by this process",
+    registers: [this.registry],
+  });
+
+  private readonly mutationLeaseWait = new Histogram({
+    name: "openround_session_mutation_lease_wait_seconds",
+    help: "Time spent acquiring distributed per-session mutation ownership",
+    labelNames: ["outcome"] as const,
+    buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+    registers: [this.registry],
+  });
+
+  private readonly mutationLeaseRenewalFailures = new Counter({
+    name: "openround_session_mutation_lease_renewal_failures_total",
+    help: "Mutation leases that could not be renewed before work completed",
+    registers: [this.registry],
+  });
+
+  private readonly sessionVersionConflicts = new Counter({
+    name: "openround_session_version_conflicts_total",
+    help: "PostgreSQL compare-and-swap conflicts by mutation operation",
+    labelNames: ["operation"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly broadcasts = new Histogram({
+    name: "openround_broadcast_duration_seconds",
+    help: "Time to fan an authoritative event batch to local and adapter-backed sockets",
+    labelNames: ["outcome"] as const,
+    buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
+    registers: [this.registry],
+  });
+
+  private readonly clientEventReceipts = new Histogram({
+    name: "openround_client_event_receipt_duration_seconds",
+    help: "Round-trip time from emitting an authoritative event until the browser acknowledges receipt",
+    labelNames: ["event_type", "role", "outcome"] as const,
+    buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+    registers: [this.registry],
+  });
+
+  private readonly mediaFinalizations = new Counter({
+    name: "openround_media_finalizations_total",
+    help: "Media quarantine finalization attempts by outcome",
+    labelNames: ["outcome"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly billingEvents = new Counter({
+    name: "openround_billing_webhooks_total",
+    help: "Signature-verified billing webhooks by processing outcome",
+    labelNames: ["type", "outcome"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly billingLag = new Histogram({
+    name: "openround_billing_webhook_lag_seconds",
+    help: "Delay between provider event creation and local webhook receipt",
+    buckets: [1, 5, 15, 30, 60, 300, 900, 3_600],
+    registers: [this.registry],
+  });
+
+  private readonly retention = new Counter({
+    name: "openround_retention_records_total",
+    help: "Records handled by scheduled retention",
+    labelNames: ["resource", "outcome"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly deletionBacklog = new Gauge({
+    name: "openround_media_deletion_backlog",
+    help: "Stale media objects that could not be deleted in the latest retention run",
+    registers: [this.registry],
+  });
+
+  private readonly reports = new Counter({
+    name: "openround_reports_generated_total",
+    help: "Durable session reports generated",
+    registers: [this.registry],
+  });
+
+  private readonly databaseConnections = new Gauge({
+    name: "openround_database_connections",
+    help: "PostgreSQL pool connections by state",
+    labelNames: ["state"] as const,
+    registers: [this.registry],
+  });
+
+  constructor() {
+    collectDefaultMetrics({ prefix: "openround_node_", register: this.registry });
+  }
+
+  bindPostgres(pool: DatabasePoolMetrics) {
+    this.pool = pool;
+  }
+
+  observeHttp(method: string, route: string, statusCode: number, seconds: number) {
+    this.httpDuration.observe({ method, route, status_code: String(statusCode) }, seconds);
+  }
+
+  recordSessionEvents(types: string[]) {
+    for (const type of types) this.sessionEvents.inc({ type });
+  }
+
+  recordJoin(kind: "new" | "resume", outcome: string, seconds: number) {
+    this.joins.inc({ kind, outcome });
+    this.joinDuration.observe({ kind, outcome }, seconds);
+  }
+
+  recordJoinBatch(size: number) {
+    if (size > 0) this.joinBatchSize.observe(size);
+  }
+
+  recordAnswer(outcome: string, seconds: number) {
+    this.answers.inc({ outcome });
+    this.answerDuration.observe({ outcome }, seconds);
+  }
+
+  recordAnswerBatch(size: number) {
+    if (size > 0) this.answerBatchSize.observe(size);
+  }
+
+  recordHostCommand(action: string, outcome: string) {
+    this.hostCommands.inc({ action, outcome });
+  }
+
+  recordSync(role: string, replayComplete: boolean, events: number) {
+    this.syncRequests.inc({ role, outcome: replayComplete ? "complete" : "snapshot_fallback" });
+    if (events > 0) this.replayEvents.inc(events);
+  }
+
+  socketConnected() {
+    this.sockets.inc();
+  }
+
+  socketDisconnected() {
+    this.sockets.dec();
+  }
+
+  setActiveSessions(count: number) {
+    this.activeSessions.set(count);
+  }
+
+  observeMutationLease(outcome: "acquired" | "timeout" | "error", seconds: number) {
+    this.mutationLeaseWait.observe({ outcome }, seconds);
+  }
+
+  mutationLeaseRenewalFailed() {
+    this.mutationLeaseRenewalFailures.inc();
+  }
+
+  sessionVersionConflict(operation: string) {
+    this.sessionVersionConflicts.inc({ operation });
+  }
+
+  observeBroadcast(outcome: "success" | "error", seconds: number) {
+    this.broadcasts.observe({ outcome }, seconds);
+  }
+
+  observeClientEventReceipt(
+    eventType: string,
+    role: "host" | "presenter" | "participant",
+    outcome: "acknowledged" | "timeout",
+    seconds: number,
+  ) {
+    this.clientEventReceipts.observe(
+      {
+        event_type: realtimeEventTypes.has(eventType) ? eventType : "other",
+        role,
+        outcome,
+      },
+      Math.max(0, seconds),
+    );
+  }
+
+  recordMediaFinalization(outcome: "clean" | "rejected" | "error") {
+    this.mediaFinalizations.inc({ outcome });
+  }
+
+  recordBillingEvent(type: string, outcome: "applied" | "duplicate" | "invalid_signature") {
+    this.billingEvents.inc({ type, outcome });
+  }
+
+  observeBillingLag(seconds: number) {
+    this.billingLag.observe(Math.max(0, seconds));
+  }
+
+  recordRetention(result: {
+    expiredLiveSessions: number;
+    purgedSessions: number;
+    purgedMedia: number;
+    failedMedia: number;
+  }) {
+    if (result.expiredLiveSessions > 0)
+      this.retention.inc(
+        { resource: "live_session", outcome: "expired" },
+        result.expiredLiveSessions,
+      );
+    if (result.purgedSessions > 0)
+      this.retention.inc({ resource: "session", outcome: "deleted" }, result.purgedSessions);
+    if (result.purgedMedia > 0)
+      this.retention.inc({ resource: "media", outcome: "deleted" }, result.purgedMedia);
+    if (result.failedMedia > 0)
+      this.retention.inc({ resource: "media", outcome: "failed" }, result.failedMedia);
+    this.deletionBacklog.set(result.failedMedia);
+  }
+
+  reportGenerated() {
+    this.reports.inc();
+  }
+
+  async render() {
+    if (this.pool) {
+      this.databaseConnections.set({ state: "total" }, this.pool.totalCount);
+      this.databaseConnections.set({ state: "idle" }, this.pool.idleCount);
+      this.databaseConnections.set({ state: "waiting" }, this.pool.waitingCount);
+    }
+    return this.registry.metrics();
+  }
+
+  get contentType() {
+    return this.registry.contentType;
+  }
+}

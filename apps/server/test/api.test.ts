@@ -1,0 +1,915 @@
+import { randomUUID } from "node:crypto";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { FastifyInstance } from "fastify";
+import Stripe from "stripe";
+import type { Report, SessionSnapshot } from "@openround/contracts";
+import { MemoryRepository } from "@openround/db";
+import { buildApp } from "../src/app.js";
+import { ConfigSchema } from "../src/config.js";
+import { MemorySessionCache } from "../src/cache.js";
+
+let app: FastifyInstance | undefined;
+
+afterEach(async () => {
+  if (app) await app.close();
+  app = undefined;
+});
+
+describe("creator to report journey", () => {
+  it("publishes, hosts, answers idempotently, and produces a report", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+
+    const magic = await app.inject({
+      method: "POST",
+      url: "/v1/auth/magic-link",
+      payload: {
+        email: "facilitator@example.com",
+        segment: "education",
+        acceptPolicies: true,
+      },
+    });
+    expect(magic.statusCode).toBe(202);
+    const debugUrl = magic.json<{ debugUrl: string }>().debugUrl;
+    const token = new URL(debugUrl).searchParams.get("token")!;
+    const verified = await app.inject({ method: "GET", url: `/v1/auth/verify?token=${token}` });
+    expect(verified.statusCode).toBe(302);
+    const setCookie = verified.headers["set-cookie"]!;
+    const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(";")[0]!;
+
+    const freeAccount = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: { cookie },
+    });
+    const creator = freeAccount.json<{
+      creator: { workspaceId: string };
+      entitlements: { brandTheme: boolean };
+      brandTheme: unknown;
+    }>();
+    expect(creator).toMatchObject({ entitlements: { brandTheme: false }, brandTheme: null });
+    const freeTheme = await app.inject({
+      method: "PUT",
+      url: "/v1/account/theme",
+      headers: { cookie },
+      payload: {
+        organizationName: "Northern Learning",
+        primaryColor: "#0B2239",
+        accentColor: "#087375",
+      },
+    });
+    expect(freeTheme.statusCode).toBe(402);
+    expect(freeTheme.json()).toMatchObject({ error: { code: "ENTITLEMENT_LIMIT" } });
+    await repository.setPlan(creator.creator.workspaceId, "pro");
+    const lowContrastTheme = await app.inject({
+      method: "PUT",
+      url: "/v1/account/theme",
+      headers: { cookie },
+      payload: {
+        organizationName: "Northern Learning",
+        primaryColor: "#FFFFFF",
+        accentColor: "#FFFF00",
+      },
+    });
+    expect(lowContrastTheme.statusCode).toBe(400);
+    const savedTheme = await app.inject({
+      method: "PUT",
+      url: "/v1/account/theme",
+      headers: { cookie },
+      payload: {
+        organizationName: "Northern Learning",
+        primaryColor: "#0b2239",
+        accentColor: "#087375",
+      },
+    });
+    expect(savedTheme.statusCode).toBe(200);
+    expect(savedTheme.json()).toMatchObject({
+      theme: {
+        organizationName: "Northern Learning",
+        primaryColor: "#0B2239",
+        accentColor: "#087375",
+      },
+    });
+    await repository.setPlan(creator.creator.workspaceId, "free");
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/quizzes",
+      headers: { cookie },
+      payload: { title: "Canadian geography", description: "A short check" },
+    });
+    expect(created.statusCode).toBe(201);
+    const quizId = created.json<{ quiz: { id: string } }>().quiz.id;
+    const correctChoiceId = randomUUID();
+    const wrongChoiceId = randomUUID();
+    const questionId = randomUUID();
+    const draft = {
+      title: "Canadian geography",
+      description: "A short check",
+      questions: [
+        {
+          id: questionId,
+          type: "single_select",
+          prompt: "What is the capital of Alberta?",
+          choices: [
+            { id: correctChoiceId, label: "Edmonton", isCorrect: true },
+            { id: wrongChoiceId, label: "Calgary", isCorrect: false },
+          ],
+          timeLimitSeconds: 20,
+          basePoints: 1_000,
+          explanation: "Edmonton is Alberta's capital.",
+          mediaId: null,
+          mediaAlt: null,
+        },
+      ],
+    };
+    const updated = await app.inject({
+      method: "PATCH",
+      url: `/v1/quizzes/${quizId}`,
+      headers: { cookie },
+      payload: draft,
+    });
+    expect(updated.statusCode).toBe(200);
+    const published = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/publish`,
+      headers: { cookie },
+      payload: {},
+    });
+    expect(published.statusCode).toBe(200);
+
+    const hosted = await app.inject({
+      method: "POST",
+      url: "/v1/sessions",
+      headers: { cookie },
+      payload: {
+        quizId,
+        settings: {
+          audienceLimit: 20,
+          scoringMode: "accuracy",
+          resultVisibility: "private",
+          allowLateJoin: true,
+          nicknamePolicy: "friendly_only",
+        },
+      },
+    });
+    expect(hosted.statusCode).toBe(201);
+    const session = hosted.json<{
+      sessionId: string;
+      code: string;
+      hostToken: string;
+      snapshot: SessionSnapshot;
+    }>();
+    expect(session.snapshot.brandTheme).toBeNull();
+
+    const joined = await app.inject({
+      method: "POST",
+      url: "/v1/sessions/join",
+      payload: { code: session.code, nickname: "Ignored in friendly mode" },
+    });
+    expect(joined.statusCode).toBe(201);
+    const participant = joined.json<{ participantToken: string; snapshot: SessionSnapshot }>();
+    expect(participant.snapshot.participants[0]?.nickname).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
+
+    const started = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/commands`,
+      headers: { authorization: `Bearer ${session.hostToken}` },
+      payload: {
+        commandId: randomUUID(),
+        expectedVersion: participant.snapshot.version,
+        action: "start",
+      },
+    });
+    expect(started.statusCode).toBe(200);
+    const open = started.json<{ snapshot: SessionSnapshot }>().snapshot;
+    expect(open.phase).toBe("question_open");
+    expect(JSON.stringify(open.question)).not.toContain("isCorrect");
+
+    const idempotencyKey = randomUUID();
+    const attempts = await Promise.all([
+      ...[0, 1].map(() =>
+        app!.inject({
+          method: "POST",
+          url: `/v1/sessions/${session.sessionId}/answers`,
+          headers: { authorization: `Bearer ${participant.participantToken}` },
+          payload: { roundId: open.roundId, choiceId: correctChoiceId, idempotencyKey },
+        }),
+      ),
+      app.inject({
+        method: "POST",
+        url: `/v1/sessions/${session.sessionId}/answers`,
+        headers: { authorization: `Bearer ${participant.participantToken}` },
+        payload: {
+          roundId: randomUUID(),
+          choiceId: correctChoiceId,
+          idempotencyKey: randomUUID(),
+        },
+      }),
+    ]);
+    const firstAttempt = attempts[0]!;
+    const retryAttempt = attempts[1]!;
+    const staleRoundAttempt = attempts[2]!;
+    expect(firstAttempt.statusCode).toBe(200);
+    expect(retryAttempt.statusCode).toBe(200);
+    expect(staleRoundAttempt.statusCode).toBe(200);
+    const acknowledgements = [firstAttempt, retryAttempt].map((response) =>
+      response.json<{ accepted: boolean; score: number; duplicate: boolean; answerId: string }>(),
+    );
+    expect(acknowledgements.map(({ accepted }) => accepted)).toEqual([true, true]);
+    expect(acknowledgements.map(({ score }) => score)).toEqual([1_000, 1_000]);
+    expect(acknowledgements.map(({ duplicate }) => duplicate).sort()).toEqual([false, true]);
+    expect(new Set(acknowledgements.map(({ answerId }) => answerId)).size).toBe(1);
+    expect(staleRoundAttempt.json()).toMatchObject({
+      accepted: false,
+      duplicate: false,
+      code: "ANSWER_INVALID",
+    });
+
+    const synced = await built.sessions.snapshot({
+      sessionId: session.sessionId,
+      hostToken: session.hostToken,
+      role: "host",
+    });
+    const locked = await built.sessions.hostCommand({
+      sessionId: session.sessionId,
+      hostToken: session.hostToken,
+      commandId: randomUUID(),
+      expectedVersion: synced.version,
+      action: "lock",
+    });
+    const revealed = await built.sessions.hostCommand({
+      sessionId: session.sessionId,
+      hostToken: session.hostToken,
+      commandId: randomUUID(),
+      expectedVersion: locked.version,
+      action: "reveal",
+    });
+    const finished = await built.sessions.hostCommand({
+      sessionId: session.sessionId,
+      hostToken: session.hostToken,
+      commandId: randomUUID(),
+      expectedVersion: revealed.version,
+      action: "next",
+    });
+    expect(finished.phase).toBe("finished");
+    const replayed = await built.sessions.sync({
+      sessionId: session.sessionId,
+      hostToken: session.hostToken,
+      role: "host",
+      lastSeq: open.seq,
+    });
+    expect(replayed.replayComplete).toBe(true);
+    expect(replayed.replay.map(({ seq }) => seq)).toEqual([3, 4, 5, 6]);
+    expect(replayed.replay.map(({ eventId }) => eventId)).toEqual(
+      [3, 4, 5, 6].map((seq) => `${session.sessionId}:${seq}`),
+    );
+    expect(replayed.snapshot.seq).toBe(6);
+
+    await built.sessions.disconnect(participant.participantToken);
+    const disconnected = await built.sessions.snapshot({
+      sessionId: session.sessionId,
+      hostToken: session.hostToken,
+      role: "host",
+    });
+    expect(disconnected.participants[0]?.connected).toBe(false);
+    const reconnected = await built.sessions.sync({
+      sessionId: session.sessionId,
+      participantToken: participant.participantToken,
+      role: "participant",
+      lastSeq: disconnected.seq,
+    });
+    expect(reconnected.snapshot.participants[0]?.connected).toBe(true);
+
+    const storedSession = await repository.getSessionById(session.sessionId);
+    const report = storedSession
+      ? await repository.getReportBySession(storedSession.workspaceId, session.sessionId)
+      : null;
+    expect((report as Report).metrics).toMatchObject({
+      participantCount: 1,
+      answerCount: 1,
+      accuracyPercent: 100,
+    });
+    const generatedAt = new Date((report as Report).generatedAt!).getTime();
+    const expiresAt = new Date((report as Report).expiresAt).getTime();
+    expect(expiresAt - generatedAt).toBeGreaterThanOrEqual(30 * 24 * 60 * 60_000 - 5_000);
+    expect(expiresAt - generatedAt).toBeLessThanOrEqual(30 * 24 * 60 * 60_000 + 5_000);
+
+    const reportResponse = await app.inject({
+      method: "GET",
+      url: `/v1/reports/${(report as Report).id}`,
+      headers: { cookie },
+    });
+    expect(reportResponse.statusCode).toBe(200);
+    expect(reportResponse.json()).toMatchObject({
+      report: { expiresAt: (report as Report).expiresAt },
+      entitlements: { plan: "free", reportRetentionDays: 30, csvExport: false },
+    });
+    const freeCsv = await app.inject({
+      method: "GET",
+      url: `/v1/reports/${(report as Report).id}.csv`,
+      headers: { cookie },
+    });
+    expect(freeCsv.statusCode).toBe(402);
+    expect(freeCsv.json()).toMatchObject({ error: { code: "ENTITLEMENT_LIMIT" } });
+    await repository.setPlan(storedSession!.workspaceId, "pro");
+    const proCsv = await app.inject({
+      method: "GET",
+      url: `/v1/reports/${(report as Report).id}.csv`,
+      headers: { cookie },
+    });
+    expect(proCsv.statusCode).toBe(200);
+    expect(proCsv.headers["content-type"]).toContain("text/csv");
+    expect(proCsv.body).toContain("participant_id,nickname,score");
+    const brandedSession = await app.inject({
+      method: "POST",
+      url: "/v1/sessions",
+      headers: { cookie },
+      payload: {
+        quizId,
+        settings: {
+          audienceLimit: 20,
+          scoringMode: "accuracy",
+          resultVisibility: "private",
+          allowLateJoin: true,
+          nicknamePolicy: "friendly_only",
+        },
+      },
+    });
+    expect(brandedSession.statusCode).toBe(201);
+    const branded = brandedSession.json<{
+      sessionId: string;
+      hostToken: string;
+      snapshot: SessionSnapshot;
+    }>();
+    expect(branded.snapshot.brandTheme).toEqual({
+      organizationName: "Northern Learning",
+      primaryColor: "#0B2239",
+      accentColor: "#087375",
+    });
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: "/v1/account/theme",
+          headers: { cookie },
+          payload: {
+            organizationName: "Updated organization",
+            primaryColor: "#102A43",
+            accentColor: "#055D5F",
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await built.sessions.snapshot({
+          sessionId: branded.sessionId,
+          hostToken: branded.hostToken,
+          role: "host",
+        })
+      ).brandTheme,
+    ).toEqual({
+      organizationName: "Northern Learning",
+      primaryColor: "#0B2239",
+      accentColor: "#087375",
+    });
+    const metrics = await app.inject({ method: "GET", url: "/metrics" });
+    expect(metrics.statusCode).toBe(200);
+    expect(metrics.body).toContain("openround_join_acknowledgement_duration_seconds");
+    expect(metrics.body).toContain("openround_join_batch_size_count 1");
+    expect(metrics.body).toContain("openround_answer_acknowledgement_duration_seconds");
+    expect(metrics.body).toContain('openround_answers_total{outcome="accepted"} 1');
+    expect(metrics.body).toContain("openround_session_mutation_lease_wait_seconds");
+    expect(metrics.body).toContain("openround_session_version_conflicts_total");
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/v1/sessions/${session.sessionId}`,
+      headers: { cookie },
+    });
+    expect(deleted.statusCode).toBe(204);
+    await expect(
+      built.sessions.snapshot({
+        sessionId: session.sessionId,
+        hostToken: session.hostToken,
+        role: "host",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("returns the stable RATE_LIMITED error envelope", async () => {
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository: new MemoryRepository(), cache: new MemorySessionCache() },
+    );
+    app = built.app;
+
+    let response = await app.inject({
+      method: "POST",
+      url: "/v1/sessions/join",
+      payload: { code: "0000000", nickname: "Rate test" },
+    });
+    for (let attempt = 1; attempt < 21; attempt += 1) {
+      response = await app.inject({
+        method: "POST",
+        url: "/v1/sessions/join",
+        payload: { code: "0000000", nickname: "Rate test" },
+      });
+    }
+
+    expect(response.statusCode).toBe(429);
+    expect(response.json()).toMatchObject({ error: { code: "RATE_LIMITED" } });
+  });
+
+  it("keeps account data intact when owned media cannot be removed", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+
+    const magic = await app.inject({
+      method: "POST",
+      url: "/v1/auth/magic-link",
+      payload: { email: "delete@example.com", segment: "workplace", acceptPolicies: true },
+    });
+    const token = new URL(magic.json<{ debugUrl: string }>().debugUrl).searchParams.get("token")!;
+    const verified = await app.inject({ method: "GET", url: `/v1/auth/verify?token=${token}` });
+    const setCookie = verified.headers["set-cookie"]!;
+    const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(";")[0]!;
+    const me = await app.inject({ method: "GET", url: "/v1/auth/me", headers: { cookie } });
+    const creator = me.json<{ creator: { userId: string; workspaceId: string } }>().creator;
+    const mediaId = randomUUID();
+    await repository.createMediaAsset({
+      id: mediaId,
+      workspaceId: creator.workspaceId,
+      objectKey: `media/${creator.workspaceId}/${mediaId}.png`,
+      mimeType: "image/png",
+      sizeBytes: 128,
+      scanStatus: "clean",
+      altText: "A chart",
+      createdAt: new Date(),
+    });
+
+    const exported = await app.inject({
+      method: "GET",
+      url: "/v1/account/export",
+      headers: { cookie },
+    });
+    expect(exported.statusCode).toBe(200);
+    expect(exported.body).not.toContain("tokenHash");
+    expect(exported.json<{ mediaAssets: unknown[] }>().mediaAssets).toHaveLength(1);
+
+    const blocked = await app.inject({
+      method: "DELETE",
+      url: "/v1/account",
+      headers: { cookie },
+      payload: { confirmation: "DELETE" },
+    });
+    expect(blocked.statusCode).toBe(503);
+    expect(blocked.json()).toMatchObject({
+      error: { code: "DEPENDENCY_UNAVAILABLE" },
+    });
+    expect(await repository.getMediaAsset(creator.workspaceId, mediaId)).not.toBeNull();
+    expect(
+      (await app.inject({ method: "GET", url: "/v1/auth/me", headers: { cookie } })).statusCode,
+    ).toBe(200);
+
+    await repository.deleteMediaAsset(creator.workspaceId, mediaId);
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: "/v1/account",
+      headers: { cookie },
+      payload: { confirmation: "DELETE" },
+    });
+    expect(deleted.statusCode).toBe(204);
+    expect(await repository.exportAccount(creator.userId)).toEqual({});
+  });
+
+  it("verifies and applies Stripe events atomically and in order", async () => {
+    const repository = new MemoryRepository();
+    const webhookSecret = "whsec_openround_test_secret";
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        BILLING_MODE: "stripe",
+        STRIPE_SECRET_KEY: "sk_test_openround",
+        STRIPE_WEBHOOK_SECRET: webhookSecret,
+        STRIPE_PRO_PRICE_ID: "price_openround_pro",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+
+    const tokenHash = `stripe-${randomUUID()}`;
+    await repository.createMagicToken({
+      id: randomUUID(),
+      email: "billing@example.com",
+      segment: "workplace",
+      tokenHash,
+      policyVersion: "test-v1",
+      expiresAt: new Date(Date.now() + 60_000),
+      consumedAt: null,
+    });
+    const creator = (await repository.consumeMagicToken(tokenHash, new Date()))!;
+    const created = 1_789_387_200;
+    const checkoutPayload = JSON.stringify({
+      id: "evt_checkout_once",
+      object: "event",
+      api_version: "2026-08-27.basil",
+      created,
+      livemode: false,
+      pending_webhooks: 1,
+      request: null,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_test_openround",
+          object: "checkout.session",
+          customer: "cus_openround",
+          subscription: "sub_openround",
+          metadata: { workspaceId: creator.workspaceId },
+        },
+      },
+    });
+    const signature = Stripe.webhooks.generateTestHeaderString({
+      payload: checkoutPayload,
+      secret: webhookSecret,
+    });
+    const sendWebhook = (payload: string, stripeSignature: string) =>
+      app!.inject({
+        method: "POST",
+        url: "/v1/webhooks/stripe",
+        headers: { "content-type": "application/json", "stripe-signature": stripeSignature },
+        payload,
+      });
+
+    expect((await sendWebhook(checkoutPayload, signature)).statusCode).toBe(204);
+    expect((await sendWebhook(checkoutPayload, signature)).statusCode).toBe(204);
+    expect(repository.billingEvents.size).toBe(1);
+    expect(await repository.getBillingProfile(creator.workspaceId)).toMatchObject({
+      plan: "pro",
+      customerId: "cus_openround",
+      subscriptionId: "sub_openround",
+    });
+
+    const stalePayload = JSON.stringify({
+      id: "evt_stale_subscription",
+      object: "event",
+      api_version: "2026-08-27.basil",
+      created: created - 60,
+      livemode: false,
+      pending_webhooks: 1,
+      request: null,
+      type: "customer.subscription.deleted",
+      data: {
+        object: {
+          id: "sub_openround",
+          object: "subscription",
+          customer: "cus_openround",
+          metadata: { workspaceId: creator.workspaceId },
+          status: "canceled",
+        },
+      },
+    });
+    expect(
+      (
+        await sendWebhook(
+          stalePayload,
+          Stripe.webhooks.generateTestHeaderString({
+            payload: stalePayload,
+            secret: webhookSecret,
+          }),
+        )
+      ).statusCode,
+    ).toBe(204);
+    expect(await repository.getPlan(creator.workspaceId)).toBe("pro");
+    expect((await sendWebhook(stalePayload, "bad-signature")).statusCode).toBe(400);
+  });
+
+  it("reuses a checkout attempt and rejects workspaces with an existing subscription", async () => {
+    const repository = new MemoryRepository();
+    const createCheckout = vi.fn().mockResolvedValue({
+      url: "https://checkout.stripe.test/openround",
+    });
+    const stripe = {
+      checkout: { sessions: { create: createCheckout } },
+      billingPortal: { sessions: { create: vi.fn() } },
+      webhooks: { constructEvent: vi.fn() },
+    } as unknown as Stripe;
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        BILLING_MODE: "stripe",
+        STRIPE_SECRET_KEY: "sk_test_openround",
+        STRIPE_WEBHOOK_SECRET: "whsec_openround",
+        STRIPE_PRO_PRICE_ID: "price_openround_pro",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache(), stripe },
+    );
+    app = built.app;
+
+    const magic = await app.inject({
+      method: "POST",
+      url: "/v1/auth/magic-link",
+      payload: { email: "checkout@example.com", segment: "workplace", acceptPolicies: true },
+    });
+    const token = new URL(magic.json<{ debugUrl: string }>().debugUrl).searchParams.get("token")!;
+    const verified = await app.inject({ method: "GET", url: `/v1/auth/verify?token=${token}` });
+    const setCookie = verified.headers["set-cookie"]!;
+    const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(";")[0]!;
+    const account = await app.inject({ method: "GET", url: "/v1/auth/me", headers: { cookie } });
+    const workspaceId = account.json<{ creator: { workspaceId: string } }>().creator.workspaceId;
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/billing/checkout",
+      headers: { cookie },
+    });
+    const retry = await app.inject({
+      method: "POST",
+      url: "/v1/billing/checkout",
+      headers: { cookie },
+    });
+    expect(first.statusCode).toBe(200);
+    expect(retry.statusCode).toBe(200);
+    expect(createCheckout).toHaveBeenCalledTimes(2);
+    const firstIdempotencyKey = createCheckout.mock.calls[0]?.[1]?.idempotencyKey;
+    expect(firstIdempotencyKey).toMatch(/^openround-pro-[a-f0-9]{64}$/);
+    expect(createCheckout.mock.calls[1]?.[1]?.idempotencyKey).toBe(firstIdempotencyKey);
+    expect(createCheckout.mock.calls[0]?.[0]).toMatchObject({
+      customer_email: "checkout@example.com",
+      client_reference_id: workspaceId,
+      metadata: { workspaceId },
+    });
+
+    await repository.setPlan(workspaceId, "pro", {
+      customerId: "cus_existing",
+      subscriptionId: "sub_existing",
+      status: "active",
+    });
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/v1/billing/checkout",
+      headers: { cookie },
+    });
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json()).toMatchObject({ error: { code: "CONFLICT" } });
+    expect(createCheckout).toHaveBeenCalledTimes(2);
+  });
+
+  it("enforces the published quiz limit when an archived quiz is restored", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+
+    const magic = await app.inject({
+      method: "POST",
+      url: "/v1/auth/magic-link",
+      payload: { email: "limits@example.com", segment: "education", acceptPolicies: true },
+    });
+    const token = new URL(magic.json<{ debugUrl: string }>().debugUrl).searchParams.get("token")!;
+    const verified = await app.inject({ method: "GET", url: `/v1/auth/verify?token=${token}` });
+    const setCookie = verified.headers["set-cookie"]!;
+    const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(";")[0]!;
+    const account = await app.inject({ method: "GET", url: "/v1/auth/me", headers: { cookie } });
+    const workspaceId = account.json<{ creator: { workspaceId: string } }>().creator.workspaceId;
+    const now = new Date();
+    const draft = { title: "Limit fixture", description: "", questions: [] };
+    const archivedId = randomUUID();
+    await repository.createQuiz({
+      id: archivedId,
+      workspaceId,
+      title: draft.title,
+      description: "",
+      status: "archived",
+      draft,
+      currentVersionId: randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+    });
+    for (let index = 0; index < 5; index += 1) {
+      await repository.createQuiz({
+        id: randomUUID(),
+        workspaceId,
+        title: `Published ${index + 1}`,
+        description: "",
+        status: "published",
+        draft: { ...draft, title: `Published ${index + 1}` },
+        currentVersionId: randomUUID(),
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    const restored = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${archivedId}/archive`,
+      headers: { cookie },
+      payload: { archived: false },
+    });
+    expect(restored.statusCode).toBe(402);
+    expect(restored.json()).toMatchObject({ error: { code: "ENTITLEMENT_LIMIT" } });
+    expect((await repository.getQuiz(workspaceId, archivedId))?.status).toBe("archived");
+  });
+
+  it("exposes configuration-backed operational kill switches", async () => {
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        FEATURE_SIGNUPS: "false",
+        FEATURE_SESSION_CREATION: "false",
+        FEATURE_MEDIA_UPLOADS: "false",
+        LOG_LEVEL: "silent",
+      }),
+      { repository: new MemoryRepository(), cache: new MemorySessionCache() },
+    );
+    app = built.app;
+
+    const features = await app.inject({ method: "GET", url: "/v1/features" });
+    expect(features.json()).toMatchObject({
+      publicWebUrl: "http://localhost:3000",
+      signups: false,
+      sessionCreation: false,
+      mediaUploads: false,
+    });
+    const signup = await app.inject({
+      method: "POST",
+      url: "/v1/auth/magic-link",
+      payload: {
+        email: "paused@example.com",
+        segment: "education",
+        acceptPolicies: true,
+      },
+    });
+    expect(signup.statusCode).toBe(503);
+    expect(signup.json()).toMatchObject({ error: { code: "DEPENDENCY_UNAVAILABLE" } });
+  });
+
+  it("applies audited operational kill switches without a restart", async () => {
+    const repository = new MemoryRepository();
+    const adminToken = "runtime-admin-token-1234567890";
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        ADMIN_TOKEN: adminToken,
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+
+    const magic = await app.inject({
+      method: "POST",
+      url: "/v1/auth/magic-link",
+      payload: {
+        email: "runtime-flags@example.com",
+        segment: "workplace",
+        acceptPolicies: true,
+      },
+    });
+    const token = new URL(magic.json<{ debugUrl: string }>().debugUrl).searchParams.get("token")!;
+    const verified = await app.inject({ method: "GET", url: `/v1/auth/verify?token=${token}` });
+    const setCookie = verified.headers["set-cookie"]!;
+    const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(";")[0]!;
+
+    const unauthorized = await app.inject({
+      method: "PATCH",
+      url: "/v1/admin/features",
+      payload: { signups: false },
+    });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const paused = await app.inject({
+      method: "PATCH",
+      url: "/v1/admin/features",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { signups: false, sessionCreation: false, mediaUploads: false },
+    });
+    expect(paused.statusCode).toBe(200);
+    expect(paused.json()).toMatchObject({
+      configured: { signups: true, sessionCreation: true, mediaUploads: false },
+      runtime: { signups: false, sessionCreation: false, mediaUploads: false },
+      effective: { signups: false, sessionCreation: false, mediaUploads: false },
+    });
+    expect(repository.audits.at(-1)).toMatchObject({
+      action: "operations.features.update",
+      requestId: paused.headers["x-request-id"],
+    });
+
+    const publicFeatures = await app.inject({ method: "GET", url: "/v1/features" });
+    expect(publicFeatures.json()).toMatchObject({
+      signups: false,
+      sessionCreation: false,
+      mediaUploads: false,
+    });
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/v1/auth/magic-link",
+          payload: {
+            email: "paused@example.com",
+            segment: "education",
+            acceptPolicies: true,
+          },
+        })
+      ).statusCode,
+    ).toBe(503);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/v1/sessions",
+          headers: { cookie },
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(503);
+    const mediaPaused = await app.inject({
+      method: "POST",
+      url: "/v1/media",
+      headers: { cookie },
+      payload: {},
+    });
+    expect(mediaPaused.statusCode).toBe(503);
+    expect(mediaPaused.json()).toMatchObject({ error: { code: "DEPENDENCY_UNAVAILABLE" } });
+
+    const resumed = await app.inject({
+      method: "PATCH",
+      url: "/v1/admin/features",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { signups: true, sessionCreation: true, mediaUploads: true },
+    });
+    expect(resumed.json()).toMatchObject({
+      runtime: { signups: true, sessionCreation: true, mediaUploads: true },
+      effective: { signups: true, sessionCreation: true, mediaUploads: false },
+    });
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/v1/auth/magic-link",
+          payload: {
+            email: "resumed@example.com",
+            segment: "education",
+            acceptPolicies: true,
+          },
+        })
+      ).statusCode,
+    ).toBe(202);
+  });
+});

@@ -1,0 +1,213 @@
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: all operational alert routes fire after their hold periods
+    interval: 1m
+    input_series:
+      - series: 'up{job="openround",deployment="test"}'
+        values: "0+0x140"
+      - series: 'openround_http_request_duration_seconds_count{status_code="500"}'
+        values: "0+60x140"
+      - series: 'openround_http_request_duration_seconds_count{status_code="200"}'
+        values: "0+540x140"
+      - series: 'openround_broadcast_duration_seconds_count{outcome="error"}'
+        values: "0+60x140"
+      - series: 'openround_answer_acknowledgement_duration_seconds_bucket{outcome="accepted",le="0.6"}'
+        values: "0+0x140"
+      - series: 'openround_answer_acknowledgement_duration_seconds_bucket{outcome="accepted",le="1"}'
+        values: "0+60x140"
+      - series: 'openround_answer_acknowledgement_duration_seconds_bucket{outcome="accepted",le="2.5"}'
+        values: "0+60x140"
+      - series: 'openround_answer_acknowledgement_duration_seconds_bucket{outcome="accepted",le="+Inf"}'
+        values: "0+60x140"
+      - series: 'openround_client_event_receipt_duration_seconds_bucket{event_type="question.open",role="participant",outcome="acknowledged",le="0.5"}'
+        values: "0+0x140"
+      - series: 'openround_client_event_receipt_duration_seconds_bucket{event_type="question.open",role="participant",outcome="acknowledged",le="1"}'
+        values: "0+60x140"
+      - series: 'openround_client_event_receipt_duration_seconds_bucket{event_type="question.open",role="participant",outcome="acknowledged",le="2"}'
+        values: "0+60x140"
+      - series: 'openround_client_event_receipt_duration_seconds_bucket{event_type="question.open",role="participant",outcome="acknowledged",le="5"}'
+        values: "0+60x140"
+      - series: 'openround_client_event_receipt_duration_seconds_bucket{event_type="question.open",role="participant",outcome="acknowledged",le="+Inf"}'
+        values: "0+60x140"
+      - series: 'openround_client_event_receipt_duration_seconds_count{role="participant",outcome="timeout"}'
+        values: "0+60x140"
+      - series: 'openround_session_mutation_lease_wait_seconds_count{outcome="timeout"}'
+        values: "0+60x140"
+      - series: "openround_session_mutation_lease_renewal_failures_total"
+        values: "0+60x140"
+      - series: 'openround_session_version_conflicts_total{operation="answer"}'
+        values: "0+60x140"
+      - series: 'openround_sync_requests_total{role="participant",outcome="snapshot_fallback"}'
+        values: "0+60x140"
+      - series: 'openround_database_connections{state="waiting"}'
+        values: "1+0x140"
+      - series: "openround_media_deletion_backlog"
+        values: "1+0x140"
+      - series: "openround_billing_webhook_lag_seconds_count"
+        values: "0+60x140"
+      - series: 'openround_billing_webhook_lag_seconds_bucket{le="300"}'
+        values: "0+0x140"
+      - series: 'openround_billing_webhooks_total{type="checkout.session.completed",outcome="invalid_signature"}'
+        values: "0+60x140"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: OpenRoundMetricsTargetDown
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: OpenRoundHttpServerErrors
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: OpenRoundBroadcastFailures
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: OpenRoundAnswerAcknowledgementP99High
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: OpenRoundQuestionReceiptP95High
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: OpenRoundClientReceiptTimeouts
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: OpenRoundMutationLeaseTimeouts
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: OpenRoundMutationLeaseRenewalFailures
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: OpenRoundSessionVersionConflicts
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: OpenRoundReconnectSnapshotFallbacks
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: OpenRoundDatabasePoolWaiting
+        exp_alerts: []
+      - eval_time: 119m
+        alertname: OpenRoundMediaDeletionBacklog
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: OpenRoundBillingWebhookLag
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: OpenRoundInvalidBillingSignatures
+        exp_alerts: []
+      - eval_time: 130m
+        alertname: OpenRoundMetricsTargetDown
+        exp_alerts:
+          - exp_labels:
+              deployment: test
+              job: openround
+              severity: page
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: OpenRound metrics target is unavailable
+      - eval_time: 130m
+        alertname: OpenRoundHttpServerErrors
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: OpenRound HTTP 5xx ratio is above 2%
+      - eval_time: 130m
+        alertname: OpenRoundBroadcastFailures
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Authoritative realtime broadcasts are failing
+      - eval_time: 130m
+        alertname: OpenRoundAnswerAcknowledgementP99High
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Durable answer acknowledgement p99 is above 600 ms
+      - eval_time: 130m
+        alertname: OpenRoundQuestionReceiptP95High
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Participant question receipt p95 is above 500 ms
+      - eval_time: 130m
+        alertname: OpenRoundClientReceiptTimeouts
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Participant clients are not acknowledging live events
+      - eval_time: 130m
+        alertname: OpenRoundMutationLeaseTimeouts
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Session mutation leases are timing out
+      - eval_time: 130m
+        alertname: OpenRoundMutationLeaseRenewalFailures
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Session mutation lease renewals are failing
+      - eval_time: 130m
+        alertname: OpenRoundSessionVersionConflicts
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Session version conflicts are elevated
+      - eval_time: 130m
+        alertname: OpenRoundReconnectSnapshotFallbacks
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Reconnects frequently require canonical snapshot fallback
+      - eval_time: 130m
+        alertname: OpenRoundDatabasePoolWaiting
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              state: waiting
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Requests are waiting for a PostgreSQL connection
+      - eval_time: 130m
+        alertname: OpenRoundMediaDeletionBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Media deletion failures survived two retention intervals
+      - eval_time: 130m
+        alertname: OpenRoundBillingWebhookLag
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Billing webhooks are arriving more than five minutes late
+      - eval_time: 130m
+        alertname: OpenRoundInvalidBillingSignatures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Invalid billing webhook signatures are elevated

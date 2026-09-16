@@ -1,0 +1,139 @@
+# Observability and operational controls
+
+## Access and correlation
+
+`METRICS_ENABLED=true` serves Prometheus text on the server's `/metrics` route. The included Caddy
+configuration deliberately does not publish that route. Keep it on a private monitoring network;
+if another proxy exposes it, set a random `METRICS_TOKEN` of at least 24 characters and configure
+the scraper to send it as a bearer token.
+
+Every HTTP response carries `x-request-id`. When tracing is active it also carries `x-trace-id`,
+and browser CORS exposes both. Support may ask for these identifiers, but must not ask for creator,
+host, or participant credentials.
+
+Set `TRACING_ENABLED=true` and a full `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`—normally ending in
+`/v1/traces`—to export HTTP, Fastify, session join, answer, and host-command spans. Configure the
+collector endpoint on a private authenticated service path. Health and metrics scrapes are omitted
+from traces. Validate export during deployment; `pnpm smoke:tracing` verifies the application path
+against a local temporary collector but does not test a production backend.
+
+## Prometheus signals
+
+The server exports Node.js runtime metrics plus these OpenRound families:
+
+- `openround_http_request_duration_seconds`
+- `openround_session_events_total`
+- `openround_session_joins_total`, `openround_join_acknowledgement_duration_seconds`, and
+  `openround_join_batch_size`
+- `openround_answers_total`, `openround_answer_acknowledgement_duration_seconds`, and
+  `openround_answer_batch_size`
+- `openround_host_commands_total`
+- `openround_sync_requests_total` and `openround_replay_events_total`
+- `openround_realtime_connections` and `openround_active_sessions`
+- `openround_session_mutation_lease_wait_seconds`,
+  `openround_session_mutation_lease_renewal_failures_total`, and
+  `openround_session_version_conflicts_total`
+- `openround_broadcast_duration_seconds` and
+  `openround_client_event_receipt_duration_seconds`
+- `openround_media_finalizations_total`
+- `openround_billing_webhooks_total` and `openround_billing_webhook_lag_seconds`
+- `openround_retention_records_total` and `openround_media_deletion_backlog`
+- `openround_reports_generated_total`
+- `openround_database_connections`
+
+Build dashboards around rates and histograms rather than raw counters. At minimum, correlate HTTP
+5xx rate, answer acknowledgement p95/p99, failed broadcasts, reconnect snapshot fallbacks,
+database waiters, rejected/error media finalizations, webhook lag, and deletion backlog with
+active sessions. For multi-writer deployments, break lease wait and version conflicts down by
+outcome/operation and correlate them with Redis latency and process restarts.
+
+`openround_broadcast_duration_seconds` measures server fan-out work. The client-receipt histogram
+measures the round trip from server emission until the browser immediately acknowledges receipt,
+without relying on the device clock. Query acknowledged participant samples by `event_type`,
+`role`, and `outcome`; no session, socket, or participant identifier is used as a label. Treat its
+latency as a conservative arrival measure because it includes the acknowledgement's return trip.
+Track timeout rate separately and require both the p95 and timeout-rate gates before claiming the
+broadcast SLO.
+
+## Bundled dashboard and rules
+
+The optional observability profile starts pinned Prometheus and Grafana images, keeps both ports on
+loopback, scrapes the server over the private Compose network, loads the alert rules in
+`infra/observability/alerts.yml`, and provisions the **OpenRound Operations** dashboard:
+
+```bash
+docker compose -f compose.yaml -f compose.media.yaml -f compose.observability.yaml \
+  --profile observability up -d
+pnpm smoke:observability
+```
+
+- Prometheus: <http://127.0.0.1:9090>
+- Grafana: <http://127.0.0.1:3001>, using `OPENROUND_GRAFANA_USER` and
+  `OPENROUND_GRAFANA_PASSWORD`
+
+The default Grafana credentials are only for a loopback-bound local evaluation. Set a unique
+password before use and never expose these ports directly to the internet. Prometheus stores 15
+days locally by default; change `OPENROUND_PROMETHEUS_RETENTION` only after sizing disk and backup
+expectations.
+
+This profile is a reproducible validation and self-hosting baseline, not evidence of hosted
+monitoring. It deliberately has no default Alertmanager or paging receiver, because a silent or
+example destination would create false confidence. A production deployment must send the same
+rules to its managed Prometheus-compatible service, map `page`, `warning`, and `ticket` severities
+to owned routes, protect metrics transport, and rehearse one alert end to end.
+
+CI also runs `pnpm test:alerts`, which executes `promtool test rules` against
+`infra/observability/alerts.test.yml`. The fixture feeds synthetic failure series into every rule
+and verifies all 14 alert names, hold periods, severity labels, summaries, and runbook annotations.
+This catches expression and routing-label regressions; it does not prove delivery to a human-owned
+paging destination.
+
+## Initial alert candidates
+
+Tune every threshold in staging and assign an owner before paid beta. Suggested starting
+conditions are:
+
+- page when answer acknowledgement p99 exceeds 600 ms for ten minutes during active sessions;
+- page on sustained HTTP 5xx or failed broadcasts during an active session;
+- page when participant event-receipt timeouts are sustained during an active session, and warn
+  when acknowledged `question.open` p95 exceeds 500 ms;
+- ticket on any nonzero media deletion backlog that survives two retention runs;
+- ticket when billing webhook lag exceeds five minutes or invalid signatures spike;
+- page when PostgreSQL waiters remain nonzero and acknowledgement latency is rising;
+- page on any sustained mutation-lease acquisition timeouts or renewal failures during active
+  sessions;
+- investigate an unexpected version-conflict increase; the fence preserves correctness, but a
+  continuing rate indicates lease loss, excessive pauses, or an uncoordinated writer;
+- warn when reconnect synchronization falls back to a snapshot unusually often.
+
+Avoid alerting on a single event or an idle, scale-to-zero pilot. Record the final query, window,
+severity, owner, escalation route, and rehearsal date in the production environment's operations
+repository.
+
+## Kill switches
+
+The following startup settings are hard capability ceilings:
+
+- `FEATURE_SIGNUPS=false` pauses new magic-link requests.
+- `FEATURE_SESSION_CREATION=false` pauses creation of new live sessions.
+- `FEATURE_MEDIA_UPLOADS=false` pauses new quarantine uploads.
+
+An administrator can pause or resume any capability at runtime without a process restart:
+
+```bash
+curl --fail-with-body --request PATCH https://quiz.example.ca/v1/admin/features \
+  --header "Authorization: Bearer $OPENROUND_ADMIN_TOKEN" \
+  --header "Content-Type: application/json" \
+  --data '{"sessionCreation":false}'
+```
+
+`GET /v1/admin/features` shows `configured`, `runtime`, and `effective` values. A runtime value can
+never enable a capability whose startup ceiling or required infrastructure is disabled. Changes
+are stored in PostgreSQL, take effect on every API/realtime process on its next guarded request,
+and commit atomically with a global audit event. Verify the public effective result through
+`GET /v1/features`.
+
+Pausing these switches does not terminate existing creator sessions or active live games, and
+pausing uploads does not prevent already-quarantined files from completing scanning. Record the
+reason, owner, and restoration criteria in the incident timeline. Do not use a kill switch as a
+substitute for revoking exposed credentials or isolating a compromised dependency.

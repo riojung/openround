@@ -1,0 +1,164 @@
+groups:
+  - name: openround-availability
+    rules:
+      - alert: OpenRoundMetricsTargetDown
+        expr: up{job="openround"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: OpenRound metrics target is unavailable
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundHttpServerErrors
+        expr: |
+          sum(rate(openround_http_request_duration_seconds_count{status_code=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(openround_http_request_duration_seconds_count[5m])), 0.001)
+          > 0.02
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: OpenRound HTTP 5xx ratio is above 2%
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundBroadcastFailures
+        expr: sum(rate(openround_broadcast_duration_seconds_count{outcome="error"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Authoritative realtime broadcasts are failing
+          runbook: docs/runbooks/observability.md
+
+  - name: openround-latency
+    rules:
+      - alert: OpenRoundAnswerAcknowledgementP99High
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (
+              rate(openround_answer_acknowledgement_duration_seconds_bucket{outcome="accepted"}[10m])
+            )
+          ) > 0.6
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: Durable answer acknowledgement p99 is above 600 ms
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundQuestionReceiptP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(openround_client_event_receipt_duration_seconds_bucket{
+                event_type="question.open",
+                role="participant",
+                outcome="acknowledged"
+              }[10m])
+            )
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Participant question receipt p95 is above 500 ms
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundClientReceiptTimeouts
+        expr: |
+          sum(rate(openround_client_event_receipt_duration_seconds_count{
+            role="participant",
+            outcome="timeout"
+          }[5m])) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Participant clients are not acknowledging live events
+          runbook: docs/runbooks/observability.md
+
+  - name: openround-coordination
+    rules:
+      - alert: OpenRoundMutationLeaseTimeouts
+        expr: |
+          sum(rate(openround_session_mutation_lease_wait_seconds_count{outcome="timeout"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Session mutation leases are timing out
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundMutationLeaseRenewalFailures
+        expr: rate(openround_session_mutation_lease_renewal_failures_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Session mutation lease renewals are failing
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundSessionVersionConflicts
+        expr: sum(rate(openround_session_version_conflicts_total[10m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Session version conflicts are elevated
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundReconnectSnapshotFallbacks
+        expr: |
+          sum(rate(openround_sync_requests_total{outcome="snapshot_fallback"}[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Reconnects frequently require canonical snapshot fallback
+          runbook: docs/runbooks/observability.md
+
+  - name: openround-dependencies
+    rules:
+      - alert: OpenRoundDatabasePoolWaiting
+        expr: openround_database_connections{state="waiting"} > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Requests are waiting for a PostgreSQL connection
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundMediaDeletionBacklog
+        expr: openround_media_deletion_backlog > 0
+        for: 2h
+        labels:
+          severity: ticket
+        annotations:
+          summary: Media deletion failures survived two retention intervals
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundBillingWebhookLag
+        expr: |
+          sum(rate(openround_billing_webhook_lag_seconds_count[10m]))
+          - sum(rate(openround_billing_webhook_lag_seconds_bucket{le="300"}[10m]))
+          > 0
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Billing webhooks are arriving more than five minutes late
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundInvalidBillingSignatures
+        expr: |
+          sum(rate(openround_billing_webhooks_total{outcome="invalid_signature"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Invalid billing webhook signatures are elevated
+          runbook: docs/runbooks/observability.md

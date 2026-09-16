@@ -1,0 +1,49 @@
+name: Capacity verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capacity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  local-compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Start stress-capable media profile
+        run: docker compose -f compose.yaml -f compose.media.yaml -f compose.test.yaml up -d --build --wait
+      - name: 250-client single-session restart gate
+        run: pnpm load:compose
+        env:
+          ASSERT_PERFORMANCE: "true"
+          CLIENTS: "250"
+          JOIN_BATCH_SIZE: "25"
+          RESTART_SERVER: "true"
+      - name: 1,000-client multi-session gate
+        run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml run --rm load
+      - name: Capture Compose logs
+        if: failure()
+        run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml logs --no-color > capacity-failure.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: capacity-failure
+          path: capacity-failure.log
+          if-no-files-found: ignore
+      - name: Stop disposable stack
+        if: always()
+        run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml down --volumes

@@ -1,0 +1,50 @@
+{
+  "name": "@openround/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx watch src/index.ts",
+    "lint": "eslint src test",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:multi-writer": "vitest run test/multi-writer.test.ts",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1132.0",
+    "@aws-sdk/s3-request-presigner": "3.1132.0",
+    "@fastify/cookie": "11.1.2",
+    "@fastify/cors": "11.3.0",
+    "@fastify/helmet": "13.1.1",
+    "@fastify/otel": "0.21.0",
+    "@fastify/rate-limit": "11.2.0",
+    "@openround/contracts": "workspace:*",
+    "@openround/db": "workspace:*",
+    "@openround/game-engine": "workspace:*",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "0.222.0",
+    "@opentelemetry/instrumentation-http": "0.222.0",
+    "@opentelemetry/resources": "2.11.0",
+    "@opentelemetry/sdk-node": "0.222.0",
+    "@prometheus-io/client": "0.16.1",
+    "@socket.io/redis-streams-adapter": "0.3.0",
+    "fastify": "5.12.4",
+    "fastify-raw-body": "6.0.1",
+    "ioredis": "6.0.0",
+    "nodemailer": "10.0.10",
+    "pg": "8.23.0",
+    "pino": "10.3.1",
+    "sanitize-html": "2.17.7",
+    "socket.io": "4.8.3",
+    "stripe": "22.6.2",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "8.0.1",
+    "@types/sanitize-html": "2.16.1",
+    "pino-pretty": "13.1.3"
+  }
+}

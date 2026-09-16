@@ -1,0 +1,14 @@
+services:
+  server:
+    ports:
+      - "127.0.0.1:4401:4000"
+
+  server-secondary:
+    extends:
+      file: compose.yaml
+      service: server
+    image: openround-server
+    environment:
+      RUN_MIGRATIONS: "false"
+    ports:
+      - "127.0.0.1:4402:4000"

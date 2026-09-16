@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm smoke:tracing
+      - name: Validate Prometheus configuration and alert rules
+        run: |
+          docker run --rm \
+            --volume "$PWD/infra/observability:/etc/prometheus:ro" \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.5.0 \
+            check config /etc/prometheus/prometheus.yml
+          pnpm test:alerts
+      - name: Validate provisioned Grafana dashboard JSON
+        run: >-
+          node -e "JSON.parse(require('node:fs').readFileSync('infra/observability/grafana/dashboards/openround-overview.json', 'utf8'))"
+
+  postgres-migration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: openround
+          POSTGRES_USER: openround
+          POSTGRES_PASSWORD: test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openround -d openround"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://openround:test-only@localhost:5432/openround
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @openround/db migrate
+      - run: pnpm --filter @openround/db migrate
+      - run: pnpm --filter @openround/db test:postgres
+        env:
+          TEST_DATABASE_ADMIN_URL: postgresql://openround:test-only@localhost:5432/openround
+          TEST_DATABASE_URL: postgresql://openround_test_app:test-only-runtime@localhost:5432/openround
+      - run: pnpm test:multi-writer
+        env:
+          TEST_DATABASE_ADMIN_URL: postgresql://openround:test-only@localhost:5432/openround
+          TEST_DATABASE_URL: postgresql://openround_test_app:test-only-runtime@localhost:5432/openround
+          TEST_REDIS_URL: redis://localhost:6379
+
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - run: pnpm test:e2e

@@ -1,0 +1,71 @@
+name: Production-path smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Start production media profile
+        run: docker compose -f compose.yaml -f compose.media.yaml up -d --build --wait
+      - name: Verify one-shot image migration
+        run: >-
+          docker compose -f compose.yaml -f compose.media.yaml
+          run --rm --no-deps server node dist/migrate.js
+      - name: API and dependency smoke
+        run: pnpm smoke:compose
+      - name: Browser media smoke
+        run: pnpm test:e2e:compose
+      - name: Provision dashboard and evaluate alert rules
+        run: |
+          docker compose -f compose.yaml -f compose.media.yaml -f compose.observability.yaml --profile observability up -d prometheus grafana
+          pnpm smoke:observability
+      - name: Two-process mutation and process-loss smoke
+        run: |
+          docker compose -f compose.yaml -f compose.test.yaml -f compose.multiwriter.yaml up -d --no-build --wait server server-secondary mailpit
+          pnpm smoke:multi-process
+      - name: Isolated backup and restore drill
+        run: pnpm smoke:restore
+      - name: 100-client correctness, latency, and restart recovery
+        run: pnpm load:compose
+        env:
+          ASSERT_PERFORMANCE: "true"
+          CLIENTS: "100"
+          JOIN_BATCH_SIZE: "20"
+          RESTART_SERVER: "true"
+      - name: Capture Compose logs
+        if: failure()
+        run: docker compose -f compose.yaml -f compose.media.yaml -f compose.test.yaml -f compose.multiwriter.yaml -f compose.observability.yaml --profile observability logs --no-color > compose-failure.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: production-smoke-failure
+          path: |
+            compose-failure.log
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+      - name: Stop disposable stack
+        if: always()
+        run: docker compose -f compose.yaml -f compose.media.yaml -f compose.test.yaml -f compose.multiwriter.yaml -f compose.observability.yaml --profile observability down --volumes

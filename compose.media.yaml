@@ -1,0 +1,25 @@
+services:
+  clamav:
+    image: clamav/clamav:1.5.4-debian13-slim
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping=1 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 90s
+    restart: unless-stopped
+    volumes:
+      - clamav-data:/var/lib/clamav
+
+  server:
+    depends_on:
+      clamav:
+        condition: service_healthy
+    environment:
+      MEDIA_SCAN_MODE: clamav
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      CLAMAV_TIMEOUT_MS: 30000
+
+volumes:
+  clamav-data:

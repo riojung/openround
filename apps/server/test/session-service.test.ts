@@ -1,0 +1,231 @@
+import { randomUUID } from "node:crypto";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { QuizDraft, Report } from "@openround/contracts";
+import { MemoryRepository, type ParticipantRecord, type StoredSession } from "@openround/db";
+import { addParticipant, applyHostCommand, createGameState } from "@openround/game-engine";
+import { MemorySessionCache } from "../src/cache.js";
+import { ConfigSchema } from "../src/config.js";
+import { MetricsService } from "../src/metrics.js";
+import { hashToken } from "../src/security.js";
+import { SessionService } from "../src/session-service.js";
+
+const config = ConfigSchema.parse({
+  NODE_ENV: "test",
+  ALLOW_IN_MEMORY: "true",
+  COMMUNITY_MODE: "false",
+  WEB_ORIGIN: "http://localhost:3000",
+  PUBLIC_API_URL: "http://localhost:4000",
+  LOG_LEVEL: "silent",
+});
+
+function quizFixture(): { quiz: QuizDraft; correctChoiceId: string } {
+  const correctChoiceId = randomUUID();
+  return {
+    correctChoiceId,
+    quiz: {
+      title: "Session service fixture",
+      description: "",
+      questions: [
+        {
+          id: randomUUID(),
+          type: "true_false",
+          prompt: "Durable answers are accepted before the deadline.",
+          choices: [
+            { id: correctChoiceId, label: "True", isCorrect: true },
+            { id: randomUUID(), label: "False", isCorrect: false },
+          ],
+          timeLimitSeconds: 20,
+          basePoints: 1_000,
+          explanation: "",
+          mediaId: null,
+          mediaAlt: null,
+        },
+      ],
+    },
+  };
+}
+
+function storedSession(input: {
+  state: ReturnType<typeof createGameState>;
+  hostToken: string;
+}): StoredSession {
+  const now = new Date();
+  return {
+    id: input.state.sessionId,
+    workspaceId: randomUUID(),
+    quizVersionId: randomUUID(),
+    hostId: randomUUID(),
+    hostTokenHash: hashToken(input.hostToken),
+    state: input.state,
+    expiresAt: new Date(now.getTime() + 60_000),
+    retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+describe("session service ordering", () => {
+  it("accepts an answer received before the deadline even when credential lookup finishes later", async () => {
+    vi.useFakeTimers();
+    const receivedAtMs = new Date("2026-09-15T12:00:00.000Z").getTime();
+    vi.setSystemTime(receivedAtMs);
+    const repository = new MemoryRepository();
+    const cache = new MemorySessionCache();
+    const service = new SessionService(repository, cache, config, new MetricsService());
+    const { quiz, correctChoiceId } = quizFixture();
+    const sessionId = randomUUID();
+    const participantId = randomUUID();
+    const participantToken = "participant-token-long-enough-for-test";
+    let state = createGameState({
+      sessionId,
+      code: "1234567",
+      quiz,
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    state = addParticipant(state, {
+      id: participantId,
+      nickname: "Deadline learner",
+      score: 0,
+      correctCount: 0,
+      acceptedResponseMs: 0,
+      connected: true,
+      kicked: false,
+    }).state;
+    state = applyHostCommand(state, {
+      commandId: randomUUID(),
+      expectedVersion: state.version,
+      action: "start",
+      nowMs: receivedAtMs,
+      newRoundId: randomUUID,
+    }).state;
+    const deadlineMs = receivedAtMs + 100;
+    state.deadlineMs = deadlineMs;
+    const stored = storedSession({ state, hostToken: "host-token-long-enough-for-test" });
+    const participant: ParticipantRecord = {
+      id: participantId,
+      sessionId,
+      nickname: "Deadline learner",
+      tokenHash: hashToken(participantToken),
+      status: "active",
+      joinedAt: new Date(receivedAtMs),
+    };
+    await repository.createSession(stored);
+    await repository.createParticipant(participant);
+
+    let releaseLookup!: () => void;
+    const delayedLookup = new Promise<ParticipantRecord>((resolve) => {
+      releaseLookup = () => resolve(participant);
+    });
+    vi.spyOn(repository, "getParticipantByToken").mockReturnValue(delayedLookup);
+    const answer = service.answer({
+      sessionId,
+      participantToken,
+      roundId: state.roundId!,
+      choiceId: correctChoiceId,
+      idempotencyKey: randomUUID(),
+    });
+    vi.setSystemTime(deadlineMs + 1);
+    const automaticLock = (
+      service as unknown as {
+        autoLock(targetSessionId: string, cutoffMs: number): Promise<void>;
+      }
+    ).autoLock(sessionId, deadlineMs);
+    releaseLookup();
+
+    await expect(answer).resolves.toMatchObject({ accepted: true, duplicate: false, score: 1_000 });
+    await automaticLock;
+    expect((await repository.getSessionById(sessionId))?.state).toMatchObject({
+      phase: "question_locked",
+      answers: expect.objectContaining({}),
+    });
+    expect(repository.answers).toHaveLength(1);
+    service.close();
+  });
+
+  it("rolls final state back when its report cannot be persisted, then succeeds on retry", async () => {
+    class FailOnceFinalizationRepository extends MemoryRepository {
+      private failFinalization = true;
+
+      override async saveSession(input: StoredSession, expectedVersion: number, report?: Report) {
+        if (report && this.failFinalization) {
+          this.failFinalization = false;
+          throw new Error("simulated report persistence failure");
+        }
+        return super.saveSession(input, expectedVersion, report);
+      }
+
+      override async saveReport(workspaceId: string, report: Report) {
+        if (this.failFinalization) {
+          this.failFinalization = false;
+          throw new Error("simulated report persistence failure");
+        }
+        return super.saveReport(workspaceId, report);
+      }
+    }
+
+    const repository = new FailOnceFinalizationRepository();
+    const service = new SessionService(
+      repository,
+      new MemorySessionCache(),
+      config,
+      new MetricsService(),
+    );
+    const { quiz } = quizFixture();
+    const hostToken = "host-token-long-enough-for-finalization";
+    let state = createGameState({
+      sessionId: randomUUID(),
+      code: "7654321",
+      quiz,
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    for (const action of ["start", "lock", "reveal"] as const) {
+      state = applyHostCommand(state, {
+        commandId: randomUUID(),
+        expectedVersion: state.version,
+        action,
+        nowMs: Date.now(),
+        newRoundId: randomUUID,
+      }).state;
+    }
+    const stored = storedSession({ state, hostToken });
+    await repository.createSession(stored);
+    const command = {
+      sessionId: stored.id,
+      hostToken,
+      commandId: randomUUID(),
+      expectedVersion: state.version,
+      action: "next" as const,
+    };
+
+    await expect(service.hostCommand(command)).rejects.toThrow(
+      "simulated report persistence failure",
+    );
+    expect((await repository.getSessionById(stored.id))?.state.phase).toBe("question_reveal");
+    expect(await repository.getReportBySession(stored.workspaceId, stored.id)).toBeNull();
+
+    await expect(service.hostCommand(command)).resolves.toMatchObject({ phase: "finished" });
+    expect((await repository.getSessionById(stored.id))?.state.phase).toBe("finished");
+    expect(await repository.getReportBySession(stored.workspaceId, stored.id)).toMatchObject({
+      sessionId: stored.id,
+      status: "ready",
+    });
+    service.close();
+  });
+});

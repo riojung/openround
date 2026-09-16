@@ -1,0 +1,36 @@
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:54329:5432"
+
+  valkey:
+    ports:
+      - "127.0.0.1:56379:6379"
+
+  # The normal community profile remains capped at the supported P0 ceiling of 100.
+  # This test-only overlay permits the Phase 6 single-session stress run.
+  server:
+    environment:
+      MAX_SESSION_PARTICIPANTS: 250
+
+  load:
+    profiles: ["load"]
+    build:
+      context: .
+      dockerfile: tests/load/Dockerfile
+    depends_on:
+      mailpit:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    environment:
+      LOAD_BASE_URL: http://server:4000
+      LOAD_MAILPIT_URL: http://mailpit:8025
+      LOAD_ORIGIN: http://localhost:8080
+      SESSIONS: ${SESSIONS:-10}
+      CLIENTS_PER_SESSION: ${CLIENTS_PER_SESSION:-100}
+      JOIN_BATCH_SIZE: ${JOIN_BATCH_SIZE:-20}
+      SESSION_STAGGER_MS: ${SESSION_STAGGER_MS:-750}
+      ASSERT_PERFORMANCE: ${ASSERT_PERFORMANCE:-true}
+    init: true
+    command: ["pnpm", "load:compose:aggregate"]

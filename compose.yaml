@@ -1,0 +1,166 @@
+name: openround
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: openround
+      POSTGRES_PASSWORD: openround-local
+      POSTGRES_USER: openround
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openround -d openround"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/001-runtime-role.sql:/docker-entrypoint-initdb.d/001-runtime-role.sql:ro
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    volumes:
+      - valkey-data:/data
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: openround
+      MINIO_ROOT_PASSWORD: change-this-local-secret
+      MINIO_API_CORS_ALLOW_ORIGIN: ${OPENROUND_PUBLIC_URL:-http://localhost:8080}
+      MINIO_API_CORS_ALLOW_CREDENTIALS_WITH_WILDCARD: "off"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    ports:
+      - "${OPENROUND_STORAGE_BIND:-127.0.0.1}:9000:9000"
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mc alias set local http://minio:9000 openround change-this-local-secret
+        mc mb --ignore-existing local/openround-media
+        mc anonymous set none local/openround-media
+    restart: "no"
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    environment:
+      MP_MAX_MESSAGES: 200
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "127.0.0.1:8025:8025"
+    restart: unless-stopped
+
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4000
+      WEB_ORIGIN: ${OPENROUND_PUBLIC_URL:-http://localhost:8080}
+      PUBLIC_API_URL: ${OPENROUND_PUBLIC_URL:-http://localhost:8080}
+      COOKIE_SECURE: "false"
+      ALLOW_INSECURE_LOCAL_HTTP: "true"
+      DATABASE_URL: postgresql://openround_app:openround-app-local@postgres:5432/openround
+      DATABASE_MIGRATION_URL: postgresql://openround:openround-local@postgres:5432/openround
+      REDIS_URL: redis://valkey:6379
+      SESSION_MUTATION_LEASE_TTL_MS: ${SESSION_MUTATION_LEASE_TTL_MS:-15000}
+      SESSION_MUTATION_LEASE_WAIT_MS: ${SESSION_MUTATION_LEASE_WAIT_MS:-5000}
+      RUN_MIGRATIONS: "true"
+      COMMUNITY_MODE: "true"
+      MAX_SESSION_PARTICIPANTS: 100
+      RETENTION_INTERVAL_MINUTES: 60
+      COMMUNITY_REPORT_RETENTION_DAYS: ${COMMUNITY_REPORT_RETENTION_DAYS:-365}
+      MEDIA_QUARANTINE_RETENTION_HOURS: 24
+      FEATURE_SIGNUPS: "true"
+      FEATURE_SESSION_CREATION: "true"
+      FEATURE_MEDIA_UPLOADS: "true"
+      METRICS_ENABLED: "true"
+      TRACING_ENABLED: "false"
+      ALLOW_IN_MEMORY: "false"
+      SMTP_URL: smtp://mailpit:1025
+      EMAIL_FROM: OpenRound <noreply@openround.local>
+      POLICY_VERSION: community-operator-v1
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: ${OPENROUND_STORAGE_URL:-http://localhost:9000}
+      S3_REGION: ca-central-1
+      S3_BUCKET: openround-media
+      S3_ACCESS_KEY_ID: openround
+      S3_SECRET_ACCESS_KEY: change-this-local-secret
+      S3_FORCE_PATH_STYLE: "true"
+      MEDIA_SCAN_MODE: disabled
+      BILLING_MODE: disabled
+      ADMIN_TOKEN: replace-with-a-random-admin-token
+      OPENROUND_MIGRATION_FILE: /app/migrations/001_initial.sql
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:4000/health/ready"]
+      interval: 10s
+      timeout: 4s
+      retries: 12
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "${OPENROUND_API_URL:-}"
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: "${OPENROUND_API_URL:-}"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000"]
+      interval: 10s
+      timeout: 4s
+      retries: 12
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.10-alpine
+    depends_on:
+      server:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+
+volumes:
+  minio-data:
+  postgres-data:
+  valkey-data:

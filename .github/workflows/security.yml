@@ -1,0 +1,43 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 9 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  dependency-and-secret-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level low
+      - run: pnpm licenses:report
+      - run: git diff --exit-code -- THIRD_PARTY_NOTICES.md
+      - uses: gitleaks/gitleaks-action@v2
+
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anchore/sbom-action@v0
+        with:
+          format: spdx-json
+          output-file: openround.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openround-sbom
+          path: openround.spdx.json
