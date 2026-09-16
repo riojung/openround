@@ -68,6 +68,7 @@ export const ConfigSchema = z
     OTEL_SERVICE_VERSION: z.string().trim().min(1).max(80).default("0.1.0"),
     SMTP_URL: z.string().min(1).optional(),
     EMAIL_FROM: z.string().default("OpenRound <noreply@localhost>"),
+    AUTH_DEBUG_MAGIC_LINKS: booleanString,
     POLICY_VERSION: z.string().trim().min(1).max(80).default("2026-09-14-draft"),
     BILLING_MODE: z.enum(["disabled", "stripe"]).default("disabled"),
     STRIPE_SECRET_KEY: z.string().optional(),
@@ -203,6 +204,22 @@ export const ConfigSchema = z
           message: "Required when production metrics are enabled",
         });
       }
+    }
+    if (
+      config.AUTH_DEBUG_MAGIC_LINKS &&
+      config.NODE_ENV === "production" &&
+      (!config.COMMUNITY_MODE ||
+        config.BILLING_MODE !== "disabled" ||
+        !config.ALLOW_INSECURE_LOCAL_HTTP ||
+        !isPrivateHttpUrl(config.WEB_ORIGIN) ||
+        !isPrivateHttpUrl(config.PUBLIC_API_URL))
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["AUTH_DEBUG_MAGIC_LINKS"],
+        message:
+          "Production debug links are limited to non-billing community deployments on private HTTP origins",
+      });
     }
     if (config.BILLING_MODE === "stripe") {
       for (const key of [

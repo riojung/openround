@@ -5,6 +5,8 @@ import {
   EntitlementsSchema,
   HostCommandSchema,
   OperationalFeaturesUpdateSchema,
+  QuizContentSchema,
+  QuizDraftSchema,
   QuestionSchema,
   SessionSnapshotSchema,
   SyncRequestSchema,
@@ -72,6 +74,47 @@ describe("public contracts", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("saves incomplete drafts but requires complete publishable content", () => {
+    const draft = {
+      title: "Draft in progress",
+      description: "",
+      questions: [
+        {
+          id: randomUUID(),
+          type: "single_select" as const,
+          prompt: "",
+          choices: [
+            { id: randomUUID(), label: "", isCorrect: true },
+            { id: randomUUID(), label: "", isCorrect: false },
+          ],
+          timeLimitSeconds: 20,
+          basePoints: 1_000,
+          explanation: "",
+          mediaId: null,
+          mediaAlt: null,
+        },
+      ],
+    };
+
+    expect(QuizDraftSchema.safeParse(draft).success).toBe(true);
+    const publishable = QuizContentSchema.safeParse(draft);
+    expect(publishable.success).toBe(false);
+    if (!publishable.success) {
+      expect(publishable.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["questions", 0, "prompt"],
+            message: "Enter the question text",
+          }),
+          expect.objectContaining({
+            path: ["questions", 0, "choices", 0, "label"],
+            message: "Enter an answer",
+          }),
+        ]),
+      );
+    }
   });
 
   it("keeps the public snapshot free of answer keys while a question is open", () => {

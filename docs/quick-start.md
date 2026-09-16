@@ -37,9 +37,21 @@ Open:
 2. Choose **Workplace learning** or **Education**. This sets the session defaults described in the [user guide](user-guide.md#segment-defaults).
 3. Enter any valid development email address.
 4. Accept the draft Terms and Privacy notice, then select **Send sign-in link**.
-5. Open Mailpit at <http://localhost:8025>, select the new OpenRound message, and open its sign-in link.
+5. Open Mailpit at <http://localhost:8025>, select the new OpenRound message, and open its sign-in
+   link.
 
-Mailpit keeps local messages inside the development stack; it does not send external email.
+Mailpit keeps local messages inside the development stack; it does not send external email. The
+Compose profile does not return sign-in bearer tokens in API responses by default.
+
+For isolated, one-computer testing only, you can expose **Continue to dashboard** while also binding
+the product to loopback so another LAN client cannot request a token for an existing creator:
+
+```bash
+OPENROUND_HTTP_BIND=127.0.0.1 AUTH_DEBUG_MAGIC_LINKS=true docker compose up --build -d
+```
+
+Do not use this shortcut while the product is reachable by other devices. Return to the secure
+default by running the normal `docker compose up -d` command again.
 
 ## 3. Create and publish a quiz
 
@@ -161,7 +173,7 @@ env \
   pnpm exec turbo run dev --env-mode=loose
 ```
 
-Open <http://localhost:3000>. In development mode, the sign-in page displays a direct **Development shortcut** after accepting the policies and requesting a link.
+Open <http://localhost:3000>. In development mode, the sign-in page displays **Continue to dashboard** after accepting the policies and requesting a link.
 
 `--env-mode=loose` is required here so Turborepo passes the explicitly listed shell variables to the web and server development tasks.
 
@@ -185,12 +197,13 @@ the `observability` profile, then run `pnpm smoke:observability`. Prometheus bin
 | Product does not open                            | Run `docker compose ps` and wait for health checks; then inspect `docker compose logs server web caddy`.                          |
 | Port is already allocated                        | Stop the process using `8080`, `8025`, or `9000`, or change the corresponding Compose port mapping.                               |
 | No sign-in message                               | Open Mailpit, verify the `mailpit` service is running, and request a fresh link. Links are single-use.                            |
+| No local **Continue to dashboard** link          | This unsafe shortcut is off by default. Use Mailpit, or enable it only with the loopback-only command above.                      |
 | Image control is disabled                        | Start with `compose.media.yaml` and wait for `clamav` to become healthy.                                                          |
 | Host or participant cannot resume in another tab | Credentials are stored in that tab's session storage. Return to the original tab; if needed, create or join a new session.        |
 | Browser shows **Reconnecting…**                  | Keep the page open and inspect server/Caddy logs. The client automatically requests an authoritative snapshot after reconnecting. |
 
 ## Before public or production use
 
-The included passwords, admin token, HTTP origin, Mailpit service, and policy text are development defaults. Do not expose this stack to a network unchanged. Complete the [production readiness checklist](runbooks/production-readiness.md), [security guidance](../SECURITY.md), backup/restore rehearsal, provider-specific load tests, legal review, and secret rotation before handling real users or school data.
+The included passwords, admin token, HTTP origin, Mailpit service, and policy text are development defaults. Do not expose this stack to a network unchanged. Keep `AUTH_DEBUG_MAGIC_LINKS=false` and complete the [production readiness checklist](runbooks/production-readiness.md), [security guidance](../SECURITY.md), backup/restore rehearsal, provider-specific load tests, legal review, and secret rotation before handling real users or school data.
 
 Continue with the [user guide](user-guide.md) for complete workflows or the [architecture document](architecture.md) for implementation details.

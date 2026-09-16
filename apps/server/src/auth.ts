@@ -29,7 +29,9 @@ export class AuthService {
     });
     const verifyUrl = `${this.config.PUBLIC_API_URL}/v1/auth/verify?token=${encodeURIComponent(token)}`;
     await this.mailer.sendMagicLink(email, verifyUrl);
-    return this.config.NODE_ENV === "production" ? undefined : verifyUrl;
+    return this.config.NODE_ENV !== "production" || this.config.AUTH_DEBUG_MAGIC_LINKS
+      ? verifyUrl
+      : undefined;
   }
 
   async verifyMagicLink(token: string) {

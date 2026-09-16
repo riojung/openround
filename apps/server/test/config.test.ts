@@ -73,10 +73,37 @@ describe("production configuration", () => {
       COMMUNITY_MODE: "true",
       ALLOW_INSECURE_LOCAL_HTTP: "true",
       SMTP_URL: "smtp://mailpit:1025",
+      AUTH_DEBUG_MAGIC_LINKS: "true",
       FEATURE_SIGNUPS: "true",
     });
 
     expect(config.ALLOW_INSECURE_LOCAL_HTTP).toBe(true);
+    expect(config.AUTH_DEBUG_MAGIC_LINKS).toBe(true);
+  });
+
+  it("keeps debug magic links out of hosted production", () => {
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        AUTH_DEBUG_MAGIC_LINKS: "true",
+      }),
+    ).toThrow(/Production debug links are limited/);
+
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        WEB_ORIGIN: "http://localhost:8080",
+        PUBLIC_API_URL: "http://localhost:8080",
+        COOKIE_SECURE: "false",
+        COMMUNITY_MODE: "true",
+        ALLOW_INSECURE_LOCAL_HTTP: "true",
+        BILLING_MODE: "stripe",
+        STRIPE_SECRET_KEY: "secret",
+        STRIPE_WEBHOOK_SECRET: "webhook-secret",
+        STRIPE_PRO_PRICE_ID: "price-pro",
+        AUTH_DEBUG_MAGIC_LINKS: "true",
+      }),
+    ).toThrow(/Production debug links are limited/);
   });
 
   it("does not let the local HTTP escape hatch weaken a hosted or public deployment", () => {

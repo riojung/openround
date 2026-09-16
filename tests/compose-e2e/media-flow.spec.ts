@@ -26,6 +26,7 @@ test("creator uploads scanned media and a guest receives it privately", async ({
   browser,
   request,
 }) => {
+  test.setTimeout(90_000);
   const creatorContext = await browser.newContext();
   const creator = await creatorContext.newPage();
   const email = `compose-media-${Date.now()}@example.com`;
@@ -37,8 +38,10 @@ test("creator uploads scanned media and a guest receives it privately", async ({
   await expect(creator.getByRole("status")).toContainText("Check your inbox");
   await creator.goto(await readMagicLink(request, email));
   await expect(creator).toHaveURL(/\/dashboard/);
+  const creatorOrigin = new URL(creator.url()).origin;
 
-  await creator.goto("/account");
+  await creator.getByRole("link", { name: "Account", exact: true }).click();
+  await expect(creator).toHaveURL(/\/account/);
   await creator.getByLabel("Organization name").fill("Compose Learning");
   await creator.getByRole("button", { name: "Save theme" }).click();
   await expect(creator.getByRole("status")).toContainText("brand theme was saved");
@@ -95,7 +98,7 @@ test("creator uploads scanned media and a guest receives it privately", async ({
   await creator.getByRole("button", { name: "Reveal answer" }).click();
   await expect(participant.getByText("Correct", { exact: true })).toBeVisible();
 
-  await creator.goto("/account");
+  await creator.goto(`${creatorOrigin}/account`);
   await creator.getByLabel(/Type DELETE/).fill("DELETE");
   await creator.getByRole("button", { name: "Delete account" }).click();
   await expect(creator).toHaveURL(/\/$/);

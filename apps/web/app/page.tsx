@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { HomeCreatorActions } from "../components/home-creator-actions";
 import { JoinCodeForm } from "../components/join-code-form";
 import { SiteFooter } from "../components/site-footer";
 import { SiteHeader } from "../components/site-header";
@@ -16,14 +16,7 @@ export default function HomePage() {
               OpenRound gives classrooms and teams a dependable, low-friction way to ask, answer,
               recover, and follow up—without participant accounts.
             </p>
-            <div className="hero-actions">
-              <Link className="button" href="/signin">
-                Create a free quiz
-              </Link>
-              <Link className="button-quiet" href="#how-it-works">
-                See how it works
-              </Link>
-            </div>
+            <HomeCreatorActions />
           </div>
           <aside className="join-card" aria-labelledby="join-title">
             <p className="eyebrow">Participant entry</p>
