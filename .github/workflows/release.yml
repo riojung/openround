@@ -33,7 +33,7 @@ jobs:
           push: true
           sbom: true
           tags: ghcr.io/${{ github.repository }}/openround-${{ matrix.component }}:${{ github.ref_name }}
-      - uses: aquasecurity/trivy-action@0.33.1
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: ghcr.io/${{ github.repository }}/openround-${{ matrix.component }}@${{ steps.build.outputs.digest }}
