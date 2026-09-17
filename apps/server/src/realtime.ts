@@ -1,4 +1,5 @@
 import type { Server as HttpServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import Redis from "ioredis";
 import { Server } from "socket.io";
@@ -53,39 +54,15 @@ function consumeRateLimit(
   return bucket.count <= maximum;
 }
 
-function snapshotSelector(state: GameState) {
+export function snapshotSelector(state: GameState) {
   const staffSnapshot = snapshotForRole(state, { role: "host" });
   const participantBase = snapshotForRole(state, { role: "participant" });
-  const participantIndexes = new Map(
-    participantBase.participants.map((participant, index) => [participant.id, index]),
-  );
-  const staffParticipants = new Map(
-    staffSnapshot.participants.map((participant) => [participant.id, participant]),
-  );
-  const currentAnswers = new Map<string, string>();
-  for (const answer of Object.values(state.answers)) {
-    if (answer.roundId === state.roundId) {
-      currentAnswers.set(answer.participantId, answer.choiceId);
-    }
-  }
 
   return (role: RealtimeRole, participantId?: string): SessionSnapshot => {
     if (role !== "participant") return staffSnapshot;
-    let participants = participantBase.participants;
-    if (state.settings.resultVisibility === "private" && participantId) {
-      const ownIndex = participantIndexes.get(participantId);
-      const ownParticipant = staffParticipants.get(participantId);
-      if (ownIndex !== undefined && ownParticipant) {
-        participants = [...participants];
-        participants[ownIndex] = ownParticipant;
-      }
-    }
-    return {
-      ...participantBase,
-      participants,
-      myParticipantId: participantId ?? null,
-      myAnswerChoiceId: participantId ? (currentAnswers.get(participantId) ?? null) : null,
-    };
+    return participantId
+      ? snapshotForRole(state, { role: "participant", participantId })
+      : participantBase;
   };
 }
 
@@ -165,6 +142,20 @@ export async function attachRealtime(
           const role = socket.data.role as RealtimeRole | undefined;
           if (!role) continue;
           if (role !== "participant") {
+            const staffExpiresAtMs = socket.data.staffExpiresAtMs as number | undefined;
+            if (staffExpiresAtMs !== undefined && staffExpiresAtMs <= Date.now()) {
+              socket.disconnect(true);
+              continue;
+            }
+            const staffTokenHash = socket.data.staffTokenHash as string | undefined;
+            if (staffTokenHash) {
+              try {
+                await sessions.revalidateRealtimeStaff(state.sessionId, staffTokenHash, role);
+              } catch {
+                socket.disconnect(true);
+                continue;
+              }
+            }
             emitTrackedEvent(socket, event.type, staffEnvelope, role, metrics);
             continue;
           }
@@ -182,6 +173,31 @@ export async function attachRealtime(
     } catch (error) {
       metrics.observeBroadcast("error", (performance.now() - startedAt) / 1_000);
       throw error;
+    }
+  });
+
+  sessions.subscribeAuxiliary(async (event) => {
+    const sockets = await io.in(`session:${event.sessionId}`).fetchSockets();
+    if (event.type === "session.staff.revoked") {
+      const credentialId = event.payload.credentialId;
+      for (const socket of sockets) {
+        if (socket.data.staffCredentialId === credentialId) socket.disconnect(true);
+      }
+      return;
+    }
+    const envelope = {
+      eventId: randomUUID(),
+      sessionId: event.sessionId,
+      sessionVersion: 0,
+      seq: 0,
+      type: event.type,
+      schemaVersion: 2 as const,
+      serverTime: new Date().toISOString(),
+      payload: event.payload,
+    };
+    for (const socket of sockets) {
+      const role = socket.data.role as RealtimeRole | undefined;
+      if (role) emitTrackedEvent(socket, event.type, envelope, role, metrics);
     }
   });
 
@@ -232,9 +248,17 @@ export async function attachRealtime(
       try {
         const input = HostCommandSchema.parse(raw);
         const snapshot = await sessions.hostCommand(input);
+        const staff = await sessions.realtimeStaffIdentity(
+          input.sessionId,
+          input.hostToken,
+          "host",
+        );
         socket.data.role = "host";
         socket.data.participantId = undefined;
         socket.data.participantToken = undefined;
+        socket.data.staffCredentialId = staff.credentialId ?? undefined;
+        socket.data.staffExpiresAtMs = staff.expiresAtMs ?? undefined;
+        socket.data.staffTokenHash = staff.tokenHash;
         await socket.join(`session:${input.sessionId}`);
         acknowledge({ data: { snapshot } });
       } catch (error) {
@@ -251,9 +275,16 @@ export async function attachRealtime(
       try {
         const input = SyncRequestSchema.parse(raw);
         const synchronized = await sessions.sync(input);
+        const staff =
+          input.role !== "participant" && input.hostToken
+            ? await sessions.realtimeStaffIdentity(input.sessionId, input.hostToken, input.role)
+            : null;
         socket.data.role = input.role;
         socket.data.participantToken = input.participantToken;
         socket.data.participantId = synchronized.snapshot.myParticipantId ?? undefined;
+        socket.data.staffCredentialId = staff?.credentialId ?? undefined;
+        socket.data.staffExpiresAtMs = staff?.expiresAtMs ?? undefined;
+        socket.data.staffTokenHash = staff?.tokenHash ?? undefined;
         await socket.join(`session:${input.sessionId}`);
         acknowledge({ data: synchronized });
       } catch (error) {

@@ -13,8 +13,8 @@ export default function HomePage() {
             <p className="eyebrow">Live comprehension without the noise</p>
             <h1>See what landed while it still matters.</h1>
             <p className="lead">
-              OpenRound gives classrooms and teams a dependable, low-friction way to ask, answer,
-              recover, and follow up—without participant accounts.
+              Ask everyone, diagnose what did not land, intervene, and recheck whether understanding
+              recovered—without participant accounts.
             </p>
             <HomeCreatorActions />
           </div>
@@ -30,32 +30,32 @@ export default function HomePage() {
           <div className="shell">
             <div className="section-heading">
               <p className="eyebrow">A clear operating loop</p>
-              <h2>From question to useful evidence.</h2>
-              <p className="lead">Every screen is designed for the job in front of it.</p>
+              <h2>Ask → diagnose → intervene → recheck → prove.</h2>
+              <p className="lead">One calm loop for evidence while there is still time to act.</p>
             </div>
             <div className="feature-grid">
               <article className="card">
                 <span className="feature-number">1</span>
-                <h3>Prepare simply</h3>
+                <h3>Ask and diagnose</h3>
                 <p>
-                  Create focused multiple-choice checks, review the draft, and publish a frozen
-                  version.
+                  Use six response types, confidence, and misconception signals to see not just who
+                  was right, but where uncertainty remains.
                 </p>
               </article>
               <article className="card">
                 <span className="feature-number">2</span>
-                <h3>Run calmly</h3>
+                <h3>Intervene and recheck</h3>
                 <p>
-                  Share one code, control the pace, recover from interruptions, and keep timing
-                  fair.
+                  Explain, show an example, or invite peer discussion, then run a linked recheck
+                  without interrupting the room with account setup.
                 </p>
               </article>
               <article className="card">
                 <span className="feature-number">3</span>
-                <h3>Follow up</h3>
+                <h3>Prove carefully</h3>
                 <p>
-                  Find difficult questions and people who may need support, then export the
-                  evidence.
+                  Separate linked recovery from revote improvement, find unresolved concepts, and
+                  create an accountless follow-up with honest evidence limits.
                 </p>
               </article>
             </div>

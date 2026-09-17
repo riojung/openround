@@ -5,6 +5,7 @@ import { PostgresRepository, type CreatorContext } from "@openround/db";
 import { RedisSessionCache } from "../src/cache.js";
 import { ConfigSchema, type AppConfig } from "../src/config.js";
 import { MetricsService } from "../src/metrics.js";
+import { ReportWorker } from "../src/report-worker.js";
 import { SessionService } from "../src/session-service.js";
 
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -297,11 +298,21 @@ describe.skipIf(!enabled)("distributed session mutation ownership", () => {
       Array.from({ length: synchronized.snapshot.seq }, (_, index) => index + 1),
     );
     const persisted = await secondRepository.getSessionById(hosted.sessionId);
-    expect(Object.keys(persisted!.state.answers)).toHaveLength(40);
+    expect(Object.keys(persisted!.state.answers)).toHaveLength(0);
+    expect(
+      (await secondRepository.getSessionEvidence(creator!.workspaceId, hosted.sessionId)).answers,
+    ).toHaveLength(40);
     expect(await secondRepository.getParticipants(hosted.sessionId)).toHaveLength(40);
     expect(
       await secondRepository.getReportBySession(creator!.workspaceId, hosted.sessionId),
-    ).toMatchObject({ metrics: { participantCount: 40, answerCount: 40 } });
+    ).toMatchObject({ status: "pending" });
+    await expect(new ReportWorker(secondRepository, 60_000).runOnce()).resolves.toBe("completed");
+    expect(
+      await secondRepository.getReportBySession(creator!.workspaceId, hosted.sessionId),
+    ).toMatchObject({
+      status: "ready",
+      metrics: { participantCount: 40, answerCount: 40 },
+    });
 
     const disposable = await secondService.createSession(creator!, quiz.id, {
       audienceLimit: 20,

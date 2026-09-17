@@ -19,6 +19,8 @@ export function entitlementsFor(
       reportRetentionDays: config.COMMUNITY_REPORT_RETENTION_DAYS,
       csvExport: true,
       brandTheme: true,
+      followups: true,
+      authoringJobsPerMonth: null,
     };
   }
 
@@ -30,6 +32,8 @@ export function entitlementsFor(
       reportRetentionDays: 30,
       csvExport: false,
       brandTheme: false,
+      followups: false,
+      authoringJobsPerMonth: 3,
     };
   }
 
@@ -43,6 +47,8 @@ export function entitlementsFor(
     reportRetentionDays: 365,
     csvExport: true,
     brandTheme: true,
+    followups: true,
+    authoringJobsPerMonth: plan === "pro" ? 100 : null,
   };
 }
 

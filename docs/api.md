@@ -1,123 +1,241 @@
 # API and realtime reference
 
-All REST bodies and realtime payloads are validated by the schemas in `packages/contracts`. REST errors use `{ error: { code, message, requestId } }`.
+REST endpoints are versioned under `/v1`. Shared Zod schemas validate HTTP, realtime,
+environment, persisted-version, and webhook boundaries. Errors use:
+
+```json
+{ "error": { "code": "STABLE_CODE", "message": "Actionable explanation", "requestId": "..." } }
+```
+
+Creator routes use the secure HttpOnly creator cookie. Session, staff, presenter, participant,
+embed, and follow-up routes use their own scoped credentials as documented by the returned flow.
 
 ## Service and feature APIs
 
-- `GET /health/live` reports process liveness. `GET /health/ready` actively checks PostgreSQL and
-  Redis-compatible coordination, returns 503 without dependency details when either fails, and on
-  success reports dependency, storage, and media-scanning posture.
-- `GET /v1/features` returns `publicWebUrl`, the public community/billing mode, and signup,
-  session-creation, and media-upload switches used by the UI. The values combine deployment
-  capability ceilings with the current database-backed runtime switches. Host and presenter
-  surfaces use the public URL to build prefilled direct links and QR codes.
-- `GET /metrics` emits Prometheus text when enabled. It is intentionally not proxied by the
-  included Caddy configuration. If it is exposed on another private route, set `METRICS_TOKEN`
-  and use a bearer token.
+- `GET /health/live` — process liveness.
+- `GET /health/ready` — active PostgreSQL and Redis-compatible checks; returns 503 without secret
+  connection detail when either is unavailable.
+- `GET /v1/features` — public URL, edition mode, and effective signup/session/media switches.
+- `GET /metrics` — private Prometheus output when enabled and authorized.
 
-## Creator authentication
+## Authentication, workspaces, and account
 
-- `POST /v1/auth/magic-link` accepts `email`, `segment`, and `acceptPolicies: true`. The server
-  records Terms and Privacy consent using its configured `POLICY_VERSION` when the link is used.
-- `GET /v1/auth/verify?token=...` consumes the link, sets an HttpOnly creator cookie, and redirects to the dashboard.
-- `GET /v1/auth/me` returns the creator, active workspace, and authoritative entitlements:
-  participant ceiling, published-quiz ceiling, report-retention days, and CSV availability.
-- `POST /v1/auth/logout` revokes the creator session.
+- `POST /v1/auth/magic-link`
+- `GET /v1/auth/verify?token=...`
+- `GET /v1/auth/me`
+- `POST /v1/auth/logout`
+- `GET /v1/workspaces`
+- `POST /v1/workspaces/{id}/select`
+- `GET /v1/workspace/members`
+- `POST /v1/workspace/invitations`
+- `POST /v1/invitations/accept`
+- `DELETE /v1/workspace/invitations/{invitationId}`
+- `PATCH|DELETE /v1/workspace/members/{userId}`
+- `GET|PUT|DELETE /v1/account/theme`
+- `GET|PUT /v1/account/embed-origins`
+- `GET /v1/account/export`
+- `GET /v1/workspace/audit-export?since=...` — contract-gated owner export, at most 10,000
+  ordered events with explicit truncation metadata.
+- `DELETE /v1/account` with `{ "confirmation": "DELETE" }`
 
-## Quiz APIs
+Owners manage members, billing, and workspace deletion. Editors create and host. Viewers have
+read-only content/report access. Account export excludes bearer-token hashes and includes
+collaboration, Q&A, recovery, follow-up, and authoring records owned by the workspace.
 
-- `GET|POST /v1/quizzes`; `GET` accepts `archived=true` to include archived records.
+## Institution identity and LTI APIs
+
+These routes are disabled by default and require an operator-granted workspace policy. Enabling a
+creator integration does not change anonymous guest participation.
+
+- `GET /v1/workspace/institution-policy` — authenticated read-only capability policy; owners
+  cannot self-enable it. `GET /v1/workspaces` carries the home-region assignment.
+- `GET /v1/auth/oidc/status?workspaceId=...`
+- `POST /v1/auth/oidc/start` with `mode=login|link`
+- `GET /v1/auth/oidc/callback` — authorization-code callback with one-time state, PKCE, and nonce.
+- `GET /v1/auth/federated-identities`
+- `DELETE /v1/auth/federated-identities/{identityId}`
+- `GET /v1/lti/jwks` — public half of the active tool signing key only.
+- `POST /v1/lti/login` — third-party-initiated login (`application/x-www-form-urlencoded`).
+- `POST /v1/lti/launch` — platform-signed form-post launch.
+- `POST /v1/lti/link` — explicit link of a verified LMS subject to the current creator.
+- `GET /v1/lti/launches/{launchId}`
+- `POST /v1/lti/launches/{launchId}/deep-link`
+- `GET /v1/workspace/lti-registrations` — owner-visible, read-only registration inventory.
+
+OIDC login accepts only a previously linked workspace/issuer/subject identity; email hints never
+create a link. LTI validates issuer, audience/authorized party, nonce, deployment, version, message
+type, signed target, role, and registration. Deep Linking supports a single published
+`ltiResourceLink` and returns the same signed result on retry. Instructor launches are supported;
+learner launches, NRPS, and AGS are deliberately rejected in this release.
+
+## Checkpoint-set and portability APIs
+
+Legacy `/v1/quizzes` naming is intentionally stable through v1 even though the UI says
+**checkpoint set**.
+
+- `GET|POST /v1/quizzes`; `GET` accepts `archived=true`.
 - `GET|PATCH /v1/quizzes/{id}`
-- `POST /v1/quizzes/{id}/publish`; first publication enforces the hosted plan's published-quiz
-  ceiling. Republishing an existing slot remains allowed.
+- `POST /v1/quizzes/{id}/publish`
 - `POST /v1/quizzes/{id}/duplicate`
-- `POST /v1/quizzes/{id}/archive` accepts `{ "archived": true|false }` for archive and restore.
+- `POST /v1/quizzes/{id}/archive`
+- `GET|POST /v1/folders`
+- `PATCH|DELETE /v1/folders/{id}`
+- `PATCH /v1/quizzes/{id}/organization`
+- `POST /v1/quizzes/import` for `bulk`, `csv`, `openround_json`, or base64 `qti3`
+- `GET /v1/quizzes/{id}/export.json`
+- `GET /v1/quizzes/{id}/export.csv`
+- `GET /v1/quizzes/{id}/export.qti.zip`
+
+Imports always return a validation report. OpenRound JSON is lossless and versioned. The QTI 3
+profile supports single select, true/false, multiple select, and numeric response; unsupported
+types and omitted media are explicit warnings/errors. CSV output escapes spreadsheet formula
+prefixes.
+
+## Source-grounded authoring APIs
+
+- `GET /v1/authoring/status` — configured state and current monthly usage.
+- `GET /v1/authoring/jobs`
+- `POST /v1/authoring/jobs` — pasted text or base64 PDF/DOCX/PPTX; returns 202.
+- `GET /v1/authoring/jobs/{id}`
+- `POST /v1/authoring/jobs/{id}/apply` — idempotently creates one unpublished review draft.
+
+Uploaded files are limited to 6 MB. Arbitrary URLs are rejected. A disabled deployment returns
+`AUTHORING_DISABLED` before storing the source. Hosted monthly limits return `AUTHORING_LIMIT`.
+Jobs expose no raw source through ordinary API views. Output is schema- and citation-validated,
+retains private creator citations, and never publishes automatically.
 
 ## Media APIs
 
-- `POST /v1/media` validates JPEG, PNG, or WebP metadata, a maximum size of 10 MB, and required
-  alt text, then creates a pending record and ten-minute signed quarantine upload.
-- `POST /v1/media/{id}/complete` verifies stored metadata, actual byte length, file signature, and
-  malware scan. A clean object is promoted out of quarantine; rejected objects are deleted.
-- `GET /v1/media/{id}` gives its owning creator a five-minute signed clean-object URL.
-- `GET /v1/sessions/{sessionId}/media/{mediaId}` gives an authorized host, presenter, or
-  participant a signed URL only when the frozen session version references that clean asset.
+- `POST /v1/media` — constrained signed quarantine upload.
+- `POST /v1/media/{id}/complete` — verify metadata/bytes/signature, scan, and promote clean data.
+- `GET /v1/media/{id}` — creator-scoped signed clean-object URL.
+- `GET /v1/sessions/{sessionId}/media/{mediaId}` — authorized frozen-session media.
+- `GET /v1/followups/{id}/media/{mediaId}` — current follow-up checkpoint media.
 
-Pending and rejected objects are eligible for scheduled cleanup after
-`MEDIA_QUARANTINE_RETENTION_HOURS`. New image uploads return 503 when storage/scanning is not
-configured or the runtime switch is paused; pending completion remains available so already
-quarantined data can be resolved. Pending and rejected objects are never returned by a read
-endpoint.
+Pending or rejected media is never returned by a read endpoint and is eligible for scheduled
+cleanup.
 
-## Session and report APIs
+## Live session, staff, presenter, and embed APIs
 
-- `POST /v1/sessions` creates a session from the current immutable quiz version.
-- `POST /v1/sessions/join` accepts a code and nickname or a resume token.
-- `GET /v1/sessions/{id}/snapshot?role=...` uses a participant or host bearer credential.
-- `POST /v1/sessions/{id}/commands` is the HTTP host-command fallback.
-- `POST /v1/sessions/{id}/answers` is the HTTP answer fallback.
-- `DELETE /v1/sessions/{id}` deletes an owned session and dependent participant data.
-- `GET /v1/sessions/{id}/report` recovers a finished session's report and current entitlements after
-  host refresh.
-- `GET /v1/reports/{id}` returns the report, its stored expiry, and current entitlements.
-- `GET /v1/reports/{id}.csv` streams UTF-8 CSV for Pro/Team and ungated community deployments;
-  hosted Free receives `ENTITLEMENT_LIMIT`.
+- `POST /v1/sessions`
+- `POST /v1/sessions/join`
+- `GET /v1/sessions/{id}/snapshot?role=...`
+- `POST /v1/sessions/{id}/commands`
+- `POST /v1/sessions/{id}/answers`
+- `DELETE /v1/sessions/{id}`
+- Session staff credential creation/list/revocation routes under `/v1/sessions/{id}/staff`
+- Presenter/embed policy issuance under the session routes
+- `GET /v1/embed/policies/{sessionId}/{policyKey}`
 
-Live host/participant access expires after 24 hours without deleting durable results. The session,
-participants, answers, and report share one stored purge deadline: 30 days from finish for hosted
-Free, 365 days for hosted Pro/Team, or `COMMUNITY_REPORT_RETENTION_DAYS` for self-hosting. The
-scheduled/admin retention run first closes expired live access, then purges data whose retention
-deadline has passed.
+Host commands carry `commandId` and `expectedVersion`. Recovery actions include
+`intervention.start`, `intervention.finish`, and `recheck.open`; the engine validates when peer
+discussion, explain/example/break, linked recheck, or revote is legal. A dedicated presenter or
+embed credential is read-only and never reuses the host token.
 
-## Billing and account APIs
+Normal routes deny framing. `/embed/present/{sessionId}` is constrained by a server-issued policy
+and the workspace's allowlist of at most ten HTTPS origins.
+
+## Q&A APIs
+
+- `GET|POST /v1/sessions/{id}/qna/questions`
+- Reply creation under `/v1/sessions/{id}/qna/questions/{questionId}/replies`
+- Vote add/remove under a question
+- Question moderation under `/v1/sessions/{id}/qna/questions/{questionId}`
+- Reply moderation under `/v1/sessions/{id}/qna/replies/{replyId}`
+- Creator/staff Q&A settings routes under the session
+
+Lists use cursor pagination. Questions use `pending | published | answered | dismissed | removed`;
+replies use `pending | published | removed`. Stable errors include `QNA_DISABLED`,
+`MODERATION_REQUIRED`, and `QNA_RATE_LIMITED`. Unique participant votes, sanitization, limits,
+moderation, kick/ban, retention, export, and deletion are enforced server-side.
+
+## Reports and self-paced follow-up APIs
+
+- `GET /v1/sessions/{id}/report`
+- `GET /v1/reports/{id}`
+- `GET /v1/reports/{id}.csv`
+- `GET /v1/reports/{id}.json`
+- `POST /v1/reports/{id}/followups`
+- `GET /v1/followups/{id}` — creator view and access management.
+- `POST /v1/followups/{id}/accommodation-passes`
+- `DELETE /v1/followups/{id}/access/{accessId}`
+- `POST /v1/followups/{id}/close`
+- `POST /v1/followups/{id}/start`
+- `GET /v1/followups/{id}/snapshot`
+- `POST /v1/followups/{id}/answers`
+- `POST /v1/followups/{id}/advance`
+
+Finished rounds create pending versioned reports. Until the worker completes, export returns a
+conflict with an actionable “still being generated” message. Report v2 derives from durable rows,
+not cached historical state.
+
+Follow-up start accepts a generic/personal bearer and returns a separate attempt credential.
+Attempt answer and advance calls require that attempt bearer. Personal links allow one attempt by
+default; generic links create unpaired anonymous attempts. All timing, resume, completion,
+idempotency, revocation, and expiry are server-owned.
+
+## Billing APIs
 
 - `GET /v1/billing/status`
 - `POST /v1/billing/checkout`
 - `POST /v1/billing/portal`
 - `POST /v1/webhooks/stripe`
-- `GET /v1/account/theme` returns the stored workspace theme and whether the current deployment/
-  plan may apply it.
-- `PUT /v1/account/theme` validates and saves one organization name, background colour, and action
-  colour for Pro/Team or community workspaces. Both colours require 4.5:1 contrast with white.
-- `DELETE /v1/account/theme` removes a stored theme, including after a plan downgrade.
-- `GET /v1/account/export`
-- `DELETE /v1/account` with `{ "confirmation": "DELETE" }`
 
-Account export includes profile, workspace, quiz drafts and versions, media metadata, sessions,
-participants, answers, reports, billing state, consent records, and audit records. Host and
-participant token hashes are excluded. Account deletion removes private media objects before the
-workspace rows and invalidates in-memory and Redis session state; it fails closed if those
-dependencies cannot be cleared.
+Stripe webhooks require a verified signature and apply provider event identity plus event ordering
+idempotently before changing entitlements. Billing remains disabled in community mode.
 
 ## Realtime interface
 
-Required client events are `session.join`, `answer.submit`, `host.command`, and `sync.request`. Server events are `lobby.updated`, `question.open`, `question.locked`, `question.reveal`, `leaderboard.updated`, `game.finished`, and `session.snapshot`.
+Every server message carries `eventId`, `sessionId`, `sessionVersion`, `seq`, `type`,
+`schemaVersion`, `serverTime`, and a validated role-filtered `payload`.
 
-Every server event includes `eventId`, `sessionId`, `sessionVersion`, `seq`, `type`, `schemaVersion`,
-`serverTime`, and role-filtered `payload`. The browser immediately invokes the optional Socket.IO
-acknowledgement callback on each server event so receipt latency and timeouts can be measured; the
-callback carries no application data and does not replace sequence-based recovery. Client-event
-acknowledgements return either `{ data }` or `{ error: { code, message } }`.
+Required client messages are:
 
-Clients must retain answer idempotency keys until acknowledged and issue `sync.request` after every
-reconnect with their last observed sequence. The acknowledgement contains the current
-role-filtered `snapshot`, bounded `replay` entries after that sequence, and `replayComplete`.
-Clients must treat the snapshot as authoritative whenever the bounded journal cannot cover the
-whole gap. They must not infer acceptance from a button state or local countdown.
+- `session.join`
+- `answer.submit`
+- `host.command`
+- `sync.request`
 
-Host commands include `commandId`, `expectedVersion`, and `action`. A `kick` command also
-requires `participantId`. Snapshots expose `lobbyLocked`; participant snapshots never expose
-another participant's private result. `brandTheme` is either `null` or the contrast-validated theme
-frozen when that session was created; later workspace edits cannot alter an active room.
+Principal server messages are:
+
+- `lobby.updated`
+- `question.open`
+- `question.locked`
+- `question.reveal`
+- `leaderboard.updated`
+- `session.snapshot`
+- `game.finished`
+- `qna.question.*`, `qna.reply.*`, and `qna.vote.updated`
+
+Client acknowledgements return `{ data }` or `{ error: { code, message } }`. An answer uses the
+canonical versioned response payload plus confidence; legacy `choiceId` remains accepted for
+single-select/true-false clients and is canonicalized. Keep idempotency keys until acknowledged.
+
+After reconnect, send `sync.request` with the last observed sequence. The response includes a
+role-filtered authoritative snapshot, bounded replay metadata, and `replayComplete`. Treat the
+snapshot as authoritative whenever the journal cannot cover the full gap.
+
+## Stable errors
+
+Core stable errors include `INVALID_CODE`, `SESSION_FULL`, `SESSION_LOCKED`,
+`NICKNAME_REJECTED`, `STALE_VERSION`, `ANSWER_LATE`, `ANSWER_INVALID`, `ENTITLEMENT_LIMIT`,
+`UNAUTHORIZED`, and `RATE_LIMITED`, plus the Q&A, follow-up, portability, and authoring errors
+described above.
 
 ## Administrative APIs
 
-- `GET /v1/admin/features` returns configured ceilings, persisted runtime values, effective values,
-  and the last update time.
-- `PATCH /v1/admin/features` accepts a nonempty partial object containing `signups`,
-  `sessionCreation`, and/or `mediaUploads`. The update and its audit event commit atomically.
-- `POST /v1/admin/retention/run` runs expiry and quarantine cleanup.
-- `GET /v1/admin/sessions/by-code/{code}` returns a support-safe session lookup.
+- `GET|PATCH /v1/admin/features`
+- `PUT /v1/admin/workspaces/{id}/institution-policy`
+- `POST /v1/admin/workspaces/{id}/lti-registrations`
+- `PUT /v1/admin/workspaces/{id}/lti-registrations/{registrationId}`
+- `POST /v1/admin/retention/run`
+- `GET /v1/admin/sessions/by-code/{code}`
 
-All require the configured `ADMIN_TOKEN` as a bearer token. Administrative actions are audited;
-the token must never be shared with browser clients.
+They require the configured `ADMIN_TOKEN`, are audited, and must never be called from public
+browser code.
+
+Institution errors add `INSTITUTION_NOT_ENABLED`, `INSTITUTION_AUTH_REQUIRED`,
+`FEDERATED_AUTH_DISABLED`, `FEDERATED_IDENTITY_NOT_LINKED`, `FEDERATED_AUTH_REPLAYED`,
+`LTI_DISABLED`, `LTI_REGISTRATION_NOT_FOUND`, and `LTI_LAUNCH_INVALID`. See the
+[institution integration guide](institution-integrations.md) for callback URLs, registration
+fields, and pilot gates.

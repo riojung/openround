@@ -47,11 +47,11 @@ test("creator uploads scanned media and a guest receives it privately", async ({
   await expect(creator.getByRole("status")).toContainText("brand theme was saved");
   await creator.getByRole("link", { name: "Dashboard" }).click();
 
-  await creator.getByLabel("Quiz title").fill("Scanned image round");
-  await creator.getByRole("button", { name: "Create quiz" }).click();
-  await creator.getByRole("button", { name: "Add true or false" }).click();
+  await creator.getByLabel("Checkpoint set title").fill("Scanned image round");
+  await creator.getByRole("button", { name: "Create checkpoint set" }).click();
+  await creator.getByRole("button", { name: "True or false" }).click();
   await creator
-    .getByRole("textbox", { name: "Question", exact: true })
+    .getByRole("textbox", { name: "Checkpoint prompt", exact: true })
     .fill("Can this guest retrieve the scanned image?");
   const altText = "A one-pixel image used to verify private media delivery";
   await creator.getByLabel("Optional instructional image").fill(altText);

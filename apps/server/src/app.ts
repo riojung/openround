@@ -2,19 +2,31 @@ import Fastify from "fastify";
 import { trace } from "@opentelemetry/api";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
+import formbody from "@fastify/formbody";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import rawBody from "fastify-raw-body";
 import type Stripe from "stripe";
 import { MemoryRepository, PostgresRepository, type Repository } from "@openround/db";
 import { AuthService } from "./auth.js";
+import {
+  OpenAiCompatibleAuthoringAssistant,
+  type AuthoringAssistant,
+} from "./authoring-assistant.js";
+import { AuthoringService } from "./authoring-service.js";
+import { AuthoringWorker } from "./authoring-worker.js";
 import { MemorySessionCache, RedisSessionCache, type SessionCache } from "./cache.js";
 import type { AppConfig } from "./config.js";
 import { ConsoleMailer, SmtpMailer } from "./mailer.js";
+import { FollowupService } from "./followup-service.js";
 import { ClamAvScanner, type MalwareScanner } from "./malware-scanner.js";
 import { MetricsService } from "./metrics.js";
+import { LtiService, ltiJwtAdapterFromConfig, type LtiJwtAdapter } from "./lti-service.js";
+import { GenericOidcProvider, OidcService, type OidcProvider } from "./oidc-service.js";
 import { originAllowed } from "./origin.js";
+import { QnaService } from "./qna-service.js";
 import { registerRoutes } from "./routes.js";
+import { ReportWorker } from "./report-worker.js";
 import { RetentionService } from "./retention.js";
 import { SessionService } from "./session-service.js";
 import { StorageService } from "./storage.js";
@@ -27,6 +39,9 @@ export async function buildApp(
     scanner?: MalwareScanner | null;
     stripe?: Stripe | null;
     readiness?: () => Promise<void>;
+    authoringAssistant?: AuthoringAssistant | null;
+    oidcProvider?: OidcProvider | null;
+    ltiJwtAdapter?: LtiJwtAdapter | null;
   } = {},
 ) {
   const app = Fastify({
@@ -41,10 +56,23 @@ export async function buildApp(
           "*.participantToken",
           "*.hostToken",
           "*.token",
+          "*.attemptToken",
+          "*.genericToken",
           "*.nickname",
           "*.email",
         ],
         censor: "[REDACTED]",
+      },
+      serializers: {
+        // Authorization callbacks and magic links carry one-time credentials in the query.
+        // Keep request logging useful without ever serializing the query string.
+        req(request) {
+          return {
+            method: request.method,
+            url: request.url?.split("?", 1)[0],
+            remoteAddress: request.socket?.remoteAddress,
+          };
+        },
       },
       transport:
         config.NODE_ENV === "development"
@@ -96,6 +124,7 @@ export async function buildApp(
     exposedHeaders: ["x-request-id", "x-trace-id"],
   });
   await app.register(cookie);
+  await app.register(formbody);
   await app.register(helmet, {
     contentSecurityPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" },
@@ -111,9 +140,12 @@ export async function buildApp(
   await app.register(rawBody, { field: "rawBody", global: false, encoding: false, runFirst: true });
 
   app.addHook("preHandler", async (request, reply) => {
+    const requestPath = request.url.split("?", 1)[0];
     if (
       ["GET", "HEAD", "OPTIONS"].includes(request.method) ||
-      request.url.startsWith("/v1/webhooks/stripe")
+      request.url.startsWith("/v1/webhooks/stripe") ||
+      (request.method === "POST" &&
+        (requestPath === "/v1/lti/login" || requestPath === "/v1/lti/launch"))
     )
       return;
     const allowed = originAllowed({
@@ -136,7 +168,40 @@ export async function buildApp(
 
   const mailer = config.SMTP_URL ? new SmtpMailer(config) : new ConsoleMailer();
   const auth = new AuthService(repository, mailer, config);
+  const oidcProvider =
+    overrides.oidcProvider !== undefined
+      ? overrides.oidcProvider
+      : config.OIDC_MODE === "generic"
+        ? new GenericOidcProvider(config)
+        : null;
+  const oidc = new OidcService(repository, config, oidcProvider);
+  const ltiJwtAdapter =
+    overrides.ltiJwtAdapter !== undefined
+      ? overrides.ltiJwtAdapter
+      : ltiJwtAdapterFromConfig(config);
+  const lti = new LtiService(repository, config, ltiJwtAdapter);
   const sessions = new SessionService(repository, cache, config, metrics);
+  const qna = new QnaService(repository, sessions);
+  const followups = new FollowupService(repository);
+  const authoringAssistant =
+    overrides.authoringAssistant !== undefined
+      ? overrides.authoringAssistant
+      : config.AUTHORING_AI_MODE === "openai_compatible"
+        ? new OpenAiCompatibleAuthoringAssistant(
+            config.AUTHORING_AI_ENDPOINT!,
+            config.AUTHORING_AI_API_KEY,
+            config.AUTHORING_AI_MODEL,
+            config.AUTHORING_AI_PROVIDER_NAME,
+          )
+        : null;
+  const authoring = new AuthoringService(repository, Boolean(authoringAssistant));
+  const authoringWorker = new AuthoringWorker(
+    repository,
+    authoringAssistant,
+    config.AUTHORING_WORKER_LEASE_MS,
+    config.AUTHORING_EXTRACTION_TIMEOUT_MS,
+    metrics,
+  );
   const scanner =
     overrides.scanner !== undefined
       ? overrides.scanner
@@ -158,7 +223,9 @@ export async function buildApp(
     config.MEDIA_QUARANTINE_RETENTION_HOURS,
     metrics,
     (sessionIds) => sessions.invalidate(sessionIds),
+    config.AUDIT_RETENTION_DAYS,
   );
+  const reportWorker = new ReportWorker(repository, config.REPORT_WORKER_LEASE_MS, metrics);
   const requestStarts = new WeakMap<object, number>();
   app.addHook("onRequest", async (request) => {
     requestStarts.set(request, performance.now());
@@ -182,7 +249,12 @@ export async function buildApp(
     config,
     repository,
     auth,
+    oidc,
+    lti,
     sessions,
+    qna,
+    followups,
+    authoring,
     storage,
     retention,
     metrics,
@@ -196,5 +268,20 @@ export async function buildApp(
     await repository.close();
   });
 
-  return { app, repository, cache, sessions, storage, retention, metrics };
+  return {
+    app,
+    repository,
+    cache,
+    sessions,
+    qna,
+    followups,
+    authoring,
+    oidc,
+    lti,
+    authoringWorker,
+    storage,
+    retention,
+    reportWorker,
+    metrics,
+  };
 }

@@ -1,193 +1,238 @@
 # OpenRound product and experience design
 
-This document defines the P0 product experience implemented in the repository. It is a decision record and guide for future interface work, not a claim that every later roadmap feature exists.
+This document defines the implemented differentiated experience and the design constraints for
+future work. It does not claim that external demand, legal, security, accessibility, or production
+gates have passed.
 
 ## Product intent
 
-OpenRound helps a facilitator answer one question during a live session: **what did this room understand, while there is still time to respond?**
+OpenRound is a privacy-preserving comprehension recovery system for higher education and workplace
+learning. Its promise is that a facilitator can see what did not land, take an appropriate action,
+and check whether understanding recovered without requiring participant accounts.
 
-The experience is intentionally calmer than an entertainment-first game. It keeps participation lightweight, preserves a clear facilitator pace, makes recovery visible, and turns the round into follow-up evidence.
+The product loop is:
 
-### Goals
+```text
+Ask → Diagnose → Intervene → Recheck → Prove
+```
 
-- Let a new creator publish a short quiz without training.
-- Let participants join from a phone without an account.
-- Show the complete question and answer labels on every participant device.
-- Make accepted-answer durability and connection state understandable.
-- Support education and workplace learning with one engine and different defaults.
-- Produce an actionable report immediately after the round.
-- Meet WCAG 2.2 AA as the release acceptance target.
+Recovery evidence describes one session. It must never be presented as proof of long-term
+learning, individual ability, or an automated judgment about a participant.
 
-### P0 non-goals
+## Product principles
 
-- Native mobile applications
-- Participant accounts, persistent learner profiles, or public identity
-- Assignments, self-paced play, cohorts, LMS, SSO, or roster synchronization
-- Open-text answers, polls, surveys, AI authoring, or a public quiz marketplace
-- Advertising, behavioral tracking, or child-directed profiling
-- Single events above the supported 100-participant production ceiling
+1. **Actionable before entertaining.** Competition is optional; diagnosis and recovery are always
+   available.
+2. **Guest-first participation.** A code, link, or QR is enough for live participation.
+3. **Evidence with its limits visible.** Show measurements, thresholds, numerators,
+   denominators, sample warnings, and evidence type.
+4. **Facilitator agency.** Recommendations explain why they appeared and remain suggestions.
+5. **Calm reliability.** A saved acknowledgement means durable acceptance; reconnect is an
+   expected recoverable state.
+6. **Private by default.** Do not build cross-session learner profiles from guest activity.
+7. **Portable work.** Native JSON is lossless; standard and tabular formats report any loss.
+8. **Accessible without disclosure.** Flexible time and accommodation passes require no stored
+   reason and no public marker.
 
-## Audiences and jobs
+## Roles and permission model
 
-| Audience              | Primary job                                                        | Design implication                                                              |
-| --------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| Educator              | Check understanding without publicly ranking learners              | Accuracy scoring, private results, friendly aliases, restrained motion          |
-| Workplace facilitator | Reinforce learning and energize a group                            | Speed and accuracy are both meaningful; leaderboard is an available default     |
-| Participant           | Join quickly, understand the prompt, and know the answer was saved | No account, one code, full labels, explicit acknowledgement and reconnect state |
-| Operator/support      | Keep a live event recoverable and explain failures                 | Correlation IDs, health/metrics, deterministic errors, deletion and audit paths |
+| Role        | Experience priority                                                                |
+| ----------- | ---------------------------------------------------------------------------------- |
+| Owner       | Workspace accountability, membership, billing, deletion, content, hosting, reports |
+| Editor      | Efficient authoring, hosting, co-facilitation, and evidence review                 |
+| Viewer      | Safe read-only access to content and reports                                       |
+| Cohost      | Focused live controls for one assigned round without account-wide authority        |
+| Presenter   | Clean, read-only room display with no host credential reuse                        |
+| Participant | Fast accountless entry, full content, private outcome, and trustworthy resume      |
+| Operator    | Explicit configuration, migration, backup, privacy, and incident boundaries        |
 
 ## Experience architecture
 
 ```mermaid
 flowchart LR
-  A[Landing] --> B[Creator sign-in]
-  A --> J[Participant join]
-  B --> C[Quiz library]
-  C --> D[Editor]
-  D --> E[Published version]
-  E --> F[Host lobby]
-  J --> G[Participant lobby]
-  F --> H[Live round]
-  G --> H
-  H --> I[Report]
-  C --> K[Account and data]
+  Source[Trusted source or manual authoring] --> Set[Checkpoint set draft]
+  Import[Bulk / CSV / JSON / QTI] --> Set
+  Set --> Publish[Immutable published version]
+  Publish --> Lobby[Live round lobby]
+  Join[Code / link / QR] --> Lobby
+  Lobby --> Ask[Ask]
+  Ask --> Diagnose[Diagnose]
+  Diagnose --> Intervene[Intervene]
+  Intervene --> Recheck[Linked recheck or revote]
+  Recheck --> Evidence[Versioned report]
+  Evidence --> Followup[Optional accountless follow-up]
 ```
 
-There are four distinct live surfaces:
+The host, presenter, participant, report, and embed views are separate surfaces. They share the
+same authoritative round but expose only the information and controls appropriate to their role.
 
-- **Host controls** prioritize state, participant count, valid next actions, and recovery.
-- **Presenter view** removes operational clutter and is readable from across a room.
-- **Participant view** provides the full task, answer acknowledgement, and personal result.
-- **Report view** shifts from facilitation to analysis and deletion/export decisions.
+## Authoring design
 
-## Core journey
+### Checkpoint model
 
-### 1. Prepare
+Every checkpoint states its response type, purpose, confidence mode, delivery role, timer, score,
+and optional concepts. Supported response types are single select, true/false, multiple select,
+numeric, rating, and poll.
 
-The dashboard starts with a single title field. The editor separates question navigation from the selected question, autosaves after a short idle period, and exposes only two launch formats. Publishing is a deliberate action because it creates a frozen version.
+- Diagnostic and practice checkpoints may be scored and collect confidence.
+- Opinion ratings and polls are always unscored with confidence off.
+- Multiple select uses exact-set matching so partial guesses are not silently interpreted.
+- Numeric values use normalized decimal strings and absolute tolerance, avoiding binary floating
+  point scoring surprises.
+- A main checkpoint can link to one differently worded recheck. Rechecks cannot chain or form
+  cycles and default to zero points.
 
-Design rule: editing must feel forgiving, while publishing must feel consequential and understandable.
+Private choice feedback and misconception keys support diagnosis after lock. They never appear in
+an open participant payload.
 
-### 2. Gather
+### Source-grounded assistant
 
-The host sees a large seven-digit code, a QR code, roster, and admission controls. Participants see confirmation that they are in and the name assigned to them. The round cannot start with an empty roster.
+The assistant is an optional authoring accelerator, not a publishing agent or generic chat. It
+accepts only pasted text or bounded private PDF/DOCX/PPTX files. It returns a main checkpoint,
+linked recheck, rationales, misconception labels, and exact source citations. The UI requires
+human review and an explicit action to create an unpublished draft, followed by the normal publish
+step.
 
-Design rule: the lobby answers “am I in the right room?” for both sides before introducing time pressure.
+Assistant states are **disabled**, **waiting**, **creating draft**, **ready to review**, and
+**needs attention**. Disabled means no source leaves the deployment. Generated citations remain
+private creator metadata and the editor warns that a citation supports the original proposal if
+the content is later edited.
 
-### 3. Ask and answer
+## Live Recovery Loop
 
-Every device displays the prompt and full text labels. The host moves through guarded phases; participants can submit exactly once while a question is open. Countdown rendering is advisory; server time is authoritative.
+### Ask
 
-Design rule: never encode an answer only by color, shape, position, or a shared-display reference.
+Every participant device contains the complete prompt and controls. A shared projector is
+optional. Server time owns the deadline and only a durable acknowledgement means an answer was
+accepted.
 
-### 4. Confirm and recover
+### Diagnose
 
-After an accepted submission, the participant sees **Answer received and saved**. Connection indicators distinguish connected and reconnecting state. A reconnect requests a fresh role-filtered snapshot.
+After lock, the host sees aggregate participation, correctness, confidence, response shape, and
+authored misconception signals. Fewer than five responses suppresses a strong recommendation.
+The default deterministic guidance is:
 
-Design rule: acknowledge durable outcomes, not merely button presses. If the system cannot establish an outcome, say so and provide a recovery path.
+| Signal                                                      | Guidance                         |
+| ----------------------------------------------------------- | -------------------------------- |
+| Under 70% participation                                     | Check access or wait             |
+| At least 20% confidently wrong                              | Give a targeted explanation      |
+| Labelled distractor ≥25% of all or ≥50% of wrong, minimum 3 | Address that misconception       |
+| Under 60% correct                                           | Explain or show a worked example |
+| Correct and leading wrong answer within 15 points           | Invite peer discussion           |
+| At least 80% correct and 30% of correct respondents unsure  | Brief reinforcement              |
+| Otherwise                                                   | Continue or optionally recheck   |
 
-### 5. Reveal and follow up
+Each card includes the observed value and rule. Language uses “suggested action,” never “the
+system decided.”
 
-Reveal identifies the correct choice and can show an explanation. Standings appear only when the session allows them. The final report emphasizes difficult questions and learning follow-up rather than only rank.
+### Intervene and recheck
 
-Design rule: competition is optional; useful evidence is not.
+Peer discussion may happen before reveal. Explanation, example, and break interventions happen
+after reveal. The host records start/finish so the report can connect action to subsequent
+evidence. A linked recheck is stronger evidence than repeating the same checkpoint; revote
+improvement is displayed separately and never relabelled as linked recovery.
 
-## Session state model
+Leaderboards wait until the recovery branch is complete so competition does not interrupt the
+learning action.
 
-| Phase           | Participant experience             | Host's primary action      | Presenter emphasis             |
-| --------------- | ---------------------------------- | -------------------------- | ------------------------------ |
-| Lobby           | Assigned nickname and joined count | Admit, remove, lock, start | Code and ready roster          |
-| Question open   | Read and answer; countdown visible | Pause or lock              | Prompt, labels, timer          |
-| Paused          | Inputs disabled; pause notice      | Resume or lock             | Stable question view           |
-| Question locked | Inputs disabled; wait for reveal   | Reveal                     | Stable question view           |
-| Question reveal | Personal result and explanation    | Standings or next          | Correct answer and explanation |
-| Leaderboard     | Standings when enabled             | Next                       | Top standings                  |
-| Finished        | Personal final score               | Open report                | Completion message             |
+### Prove, carefully
 
-The interface derives available controls from the server phase. It must not optimistically invent a state transition that the server has not accepted.
+Reports show initial evidence, confidence × correctness, misconception distribution,
+interventions, linked-recheck recovery, revote improvement, unresolved concepts, participation,
+response time, Q&A, and private participant feedback. Linked recovery is:
 
-## Content design
+```text
+initially incorrect participants who later answered the linked recheck correctly
+───────────────────────────────────────────────────────────────────────────────
+participants who answered both and were initially incorrect
+```
 
-### Question constraints
+Always show numerator, denominator, evidence type, and small-sample warning.
 
-- Prompt: 1–500 characters
-- Quiz title: 1–160 characters; description: up to 1,000 characters
-- Choice label: 1–180 characters
-- Multiple choice: 2–6 choices with exactly one correct choice
-- True/false: exactly 2 fixed choices with exactly one correct choice
-- Timer: 5–300 seconds
-- Explanation: up to 1,000 characters
-- Optional image: JPEG, PNG, or WebP, up to 10 MB, with alt text up to 300 characters
+## Audience voice and moderation
 
-### Voice and terminology
+Q&A lives beside the game engine so high-volume conversation does not inflate the canonical round
+snapshot. It supports questions, votes, replies, cursor pagination, moderation, and realtime
+updates.
 
-- Use **round** for a live event and **quiz** for authored content.
-- Use **creator** or **facilitator** for the signed-in operator; use **participant** for a guest.
-- Prefer direct state language: **Answer received and saved**, **Reconnecting…**, **Time expired**.
-- Avoid blame, jokes in error messages, or language implying a participant's ability from one answer.
-- Keep privacy language concrete: explain what is stored, for how long, and how to delete it.
+- Education defaults: anonymous public display, private moderator alias, premoderation, replies
+  off.
+- Workplace defaults: alias display, postmoderation, replies on.
+- Hosts and cohosts can publish, answer, dismiss, remove, kick, or ban.
+- Text is sanitized and bounded; voting is unique per participant; rate limits are independent.
 
-## Visual and interaction principles
+The moderator can change these settings before or during a round, but a hidden identity is never
+retroactively exposed publicly.
 
-### Calm hierarchy
+## Follow-up and accommodations
 
-Each screen has one dominant task. Large headings and generous spacing establish context; panels group secondary controls. Live screens use a dark shell with high-contrast cards so question content remains the visual anchor.
+A facilitator can turn unresolved concepts into an immutable self-paced follow-up. Live guests may
+receive a one-attempt personal bearer link; a generic link remains anonymous and unpaired. Both
+are expiring and revocable.
 
-### Redundant state cues
+Time-flex mode removes the countdown. A 1.5× or 2× pass changes only server timing, stores no
+reason, and is not visible to other participants. Resume and completion are server-owned. Follow-up
+data inherits source-session retention and deletion.
 
-Correctness, selection, connection, and danger require text or iconographic cues in addition to color. Status text uses live regions where an update should be announced.
+## Presentation and portability
 
-### Deliberate danger
-
-Archive is visually distinct but reversible. Session deletion, account deletion, and ending a live session require explicit confirmation or typed confirmation proportional to impact.
-
-### Responsive by role
-
-- Participant controls must remain comfortably tappable on a narrow phone.
-- Host controls should work on a laptop without requiring a projector.
-- Presenter typography and code display should be legible at room distance.
-- Reports may scroll tables horizontally rather than compress data into unreadable columns.
+- Presenter popout and secure embed are read-only and use dedicated credentials.
+- Normal pages deny framing. The embed route permits only the workspace's explicit HTTPS
+  allowlist, up to ten origins.
+- Direct links and downloadable QR assets remain stable for the round.
+- OpenRound JSON preserves the full native model. CSV, bulk paste, and the constrained QTI 3
+  profile produce visible validation reports and never silently discard unsupported content.
 
 ## Accessibility acceptance
 
-Automated checks are necessary but not sufficient. Release acceptance includes:
+WCAG 2.2 AA is the target for every release. Acceptance includes keyboard-only operation, visible
+focus, semantic headings and controls, VoiceOver and NVDA walkthroughs, 200% zoom, text wrapping,
+contrast, reduced motion, extended time, time-flex mode, and representative phone touch targets.
+Correctness, status, danger, and selection must never rely on colour alone.
 
-- Complete keyboard operation with visible focus and logical order
-- Correct headings, labels, landmarks, table headers, status, and alert semantics
-- VoiceOver and NVDA walkthroughs for sign-in, authoring, hosting, joining, answering, and reporting
-- 200% browser zoom without loss of content or actions
-- Contrast checks for text, focus, choices, statuses, and errors
-- Reduced-motion behavior and no required motion interpretation
-- Extended-time testing and clear behavior when a server deadline expires
-- Touch targets and text wrapping on representative phone widths
+## Privacy and safety
 
-## Privacy and safety by design
+- Open checkpoint payloads exclude correctness, explanations, misconception labels,
+  distributions, and source citations.
+- Participant identities remain session-scoped unless a contract-gated institution explicitly
+  enables identified mode in a future release.
+- Authoring prompts contain only the submitted source sections, never responses, reports, Q&A, or
+  participant data.
+- Creator, staff, presenter, guest, follow-up, and embed credentials have separate scopes.
+- Export, deletion, retention, moderation, and sensitive administrative actions are explicit and
+  audited.
 
-- Participants remain session-scoped guests; no cross-session identity is created.
-- Education defaults avoid public ranking and user-entered names.
-- Open-question messages omit correct choices, explanations, and outcomes.
-- Private media requires creator or session-scoped authorization.
-- Export and deletion are first-class creator workflows.
-- Administrative actions are authenticated and audited.
-- Draft legal text is never presented as launch approval.
+## Error and recovery language
 
-## Error and recovery design
+Errors identify the source, preserve safe work, and name the next action. For example, an editor
+validation error points to the exact checkpoint and field; an authoring failure distinguishes
+source extraction from provider generation; a late answer explains the server deadline; a lost
+host credential points back to the original tab or credential issuance flow.
 
-Errors should identify what happened, preserve safe user work, and name the next action. Stable API error codes map to plain-language UI messages for invalid codes, full or locked sessions, rejected nicknames, stale host state, late or invalid answers, plan limits, authorization failures, and rate limits.
+The UI must not claim success before the corresponding durable action completes.
 
-Reconnect is a normal state, not an exceptional dead end. The UI keeps the current safe view, indicates reconnecting status, and replaces it with an authoritative snapshot after recovery. It must never imply an answer was saved until the durable acknowledgement arrives.
+## Deliberate non-goals
+
+Native apps, a full slide editor, public content marketplace, avatars/rewards, generic AI chat,
+open-text grading, advertising, participant profiling, and 1,000-player single events remain out
+of scope. Native PowerPoint or Google Slides add-ins require evidence from at least three paying
+design partners that companion mode is insufficient.
 
 ## Design change checklist
 
-Before shipping a new product flow, verify:
+Before shipping a flow, verify:
 
-1. The role and primary job are explicit.
-2. Loading, empty, success, validation, reconnect, permission, and terminal states are designed.
-3. The behavior works without a shared display and without color-only meaning.
-4. Server-authoritative state is not contradicted by optimistic UI.
-5. Keyboard, screen reader, zoom, reduced motion, and narrow viewport behavior are covered.
-6. Data collection, retention, export, deletion, and audit effects are documented.
-7. Education and workplace defaults remain intentional rather than branching into separate products.
-8. Tests and telemetry can distinguish user error, network recovery, and service failure.
+1. The role, primary job, and permission boundary are explicit.
+2. Loading, empty, success, validation, reconnect, permission, moderation, and terminal states
+   exist.
+3. Participant behavior works without a shared display, colour-only cues, or persistent identity.
+4. Optimistic UI never contradicts server-owned state or durable acknowledgement.
+5. Keyboard, screen reader, zoom, reduced motion, narrow viewport, and flexible-time behavior are
+   covered.
+6. Collection, prompt use, retention, export, deletion, and audit effects are documented.
+7. Every recommendation and metric exposes its measurement and limitations.
+8. Tests and telemetry distinguish validation, abuse, network recovery, provider failure, and
+   service failure.
 
-See the [user guide](user-guide.md) for current UI behavior and [architecture](architecture.md) for the system guarantees behind it.
+See the [user guide](user-guide.md), [architecture](architecture.md), and
+[implementation status](implementation-status.md) for current behavior and remaining gates.

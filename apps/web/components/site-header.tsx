@@ -70,7 +70,7 @@ export function SiteHeader() {
             <span className="creator-identity" title={session.creator.email}>
               {session.creator.email}
             </span>
-            <Link href="/dashboard">My quizzes</Link>
+            <Link href="/dashboard">My checkpoint sets</Link>
             <Link href="/account">Account</Link>
             <button
               className="nav-text-button"
@@ -99,7 +99,7 @@ export function SiteHeader() {
       </nav>
       <div className="site-mobile-actions">
         <Link className="button small-button" href={signedIn ? "/dashboard" : "/signin"}>
-          {signedIn ? "My quizzes" : "Sign in"}
+          {signedIn ? "My sets" : "Sign in"}
         </Link>
         <button
           aria-controls={mobileMenuId}
@@ -124,7 +124,7 @@ export function SiteHeader() {
               <span>Signed in as</span>
               <strong>{session.creator.email}</strong>
             </div>
-            <Link href="/dashboard">My quizzes</Link>
+            <Link href="/dashboard">My checkpoint sets</Link>
             <Link href="/account">Account</Link>
             <Link href="/pricing">Plans</Link>
             <button disabled={signingOut} onClick={() => void signOut()} type="button">
@@ -134,7 +134,7 @@ export function SiteHeader() {
         ) : (
           <>
             <Link className="site-mobile-primary" href="/signin">
-              Sign in to create and manage quizzes
+              Sign in to create and manage checkpoint sets
             </Link>
             <Link href="/pricing">Pricing</Link>
             <Link href="/privacy">Privacy</Link>

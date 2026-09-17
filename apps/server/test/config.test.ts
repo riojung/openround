@@ -18,6 +18,17 @@ describe("production configuration", () => {
 
     expect(config.FEATURE_SIGNUPS).toBe(false);
     expect(config.COOKIE_SECURE).toBe("true");
+    expect(config.AUDIT_RETENTION_DAYS).toBe(365);
+  });
+
+  it("bounds operator-configured audit retention", () => {
+    expect(ConfigSchema.parse({ ...productionConfig, AUDIT_RETENTION_DAYS: "730" })).toMatchObject({
+      AUDIT_RETENTION_DAYS: 730,
+    });
+    expect(() => ConfigSchema.parse({ ...productionConfig, AUDIT_RETENTION_DAYS: "29" })).toThrow();
+    expect(() =>
+      ConfigSchema.parse({ ...productionConfig, AUDIT_RETENTION_DAYS: "3651" }),
+    ).toThrow();
   });
 
   it("requires SMTP before production sign-ups can be enabled", () => {
@@ -61,6 +72,93 @@ describe("production configuration", () => {
     expect(() => ConfigSchema.parse({ ...productionConfig, COOKIE_SECURE: "false" })).toThrow(
       /Cannot be false in production/,
     );
+  });
+
+  it("requires an explicit secure provider endpoint before enabling authoring AI", () => {
+    expect(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        AUTHORING_AI_ENDPOINT: "",
+        AUTHORING_AI_API_KEY: "",
+      }),
+    ).toMatchObject({ AUTHORING_AI_MODE: "disabled" });
+
+    expect(() =>
+      ConfigSchema.parse({ ...productionConfig, AUTHORING_AI_MODE: "openai_compatible" }),
+    ).toThrow(/Required when the authoring assistant is enabled/);
+
+    expect(
+      ConfigSchema.parse({
+        ...productionConfig,
+        AUTHORING_AI_MODE: "openai_compatible",
+        AUTHORING_AI_ENDPOINT: "https://approved-provider.example.ca/v1/chat/completions",
+        AUTHORING_AI_MODEL: "approved-model",
+      }).AUTHORING_AI_MODE,
+    ).toBe("openai_compatible");
+
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        AUTHORING_AI_MODE: "openai_compatible",
+        AUTHORING_AI_ENDPOINT: "http://public-provider.example.ca/v1/chat/completions",
+      }),
+    ).toThrow(/Must use HTTPS in production/);
+
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        AUTHORING_AI_MODE: "openai_compatible",
+        AUTHORING_AI_ENDPOINT: "https://approved-provider.example.ca/v1/chat/completions",
+        AUTHORING_WORKER_LEASE_MS: "80000",
+        AUTHORING_EXTRACTION_TIMEOUT_MS: "20000",
+      }),
+    ).toThrow(/Must exceed AUTHORING_EXTRACTION_TIMEOUT_MS/);
+  });
+
+  it("requires complete, secure OIDC configuration when generic federation is enabled", () => {
+    expect(() => ConfigSchema.parse({ ...productionConfig, OIDC_MODE: "generic" })).toThrow(
+      /Required for OIDC/,
+    );
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        OIDC_MODE: "generic",
+        OIDC_ISSUER: "https://identity.example.edu",
+        OIDC_CLIENT_ID: "openround",
+      }),
+    ).toThrow(/selected OIDC client authentication method/);
+    expect(
+      ConfigSchema.parse({
+        ...productionConfig,
+        OIDC_MODE: "generic",
+        OIDC_ISSUER: "https://identity.example.edu",
+        OIDC_CLIENT_ID: "openround",
+        OIDC_CLIENT_SECRET: "secret",
+      }).OIDC_MODE,
+    ).toBe("generic");
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        OIDC_MODE: "generic",
+        OIDC_ISSUER: "http://identity.example.edu",
+        OIDC_CLIENT_ID: "openround",
+        OIDC_CLIENT_AUTH: "none",
+      }),
+    ).toThrow(/Must use HTTPS in production/);
+  });
+
+  it("requires an operator-managed signing key before enabling LTI", () => {
+    expect(() => ConfigSchema.parse({ ...productionConfig, LTI_MODE: "tool" })).toThrow(
+      /Required when the LTI tool is enabled/,
+    );
+    expect(
+      ConfigSchema.parse({
+        ...productionConfig,
+        LTI_MODE: "tool",
+        LTI_TOOL_PRIVATE_JWK: '{"kty":"RSA"}',
+      }).LTI_MODE,
+    ).toBe("tool");
   });
 
   it("allows an explicit private-network HTTP community profile", () => {

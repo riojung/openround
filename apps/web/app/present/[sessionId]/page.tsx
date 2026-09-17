@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EventEnvelope, SessionSnapshot } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
@@ -14,31 +14,39 @@ type Ack<T> = { data?: T; error?: { message: string } };
 
 export default function PresenterPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
-  const router = useRouter();
   const socket = useMemo(createRealtimeClient, []);
   const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
   const snapshotRef = useRef<SessionSnapshot | null>(null);
   const [error, setError] = useState("");
   const [mediaCredential, setMediaCredential] = useState("");
+  const [embedded, setEmbedded] = useState(false);
 
   useEffect(() => {
     snapshotRef.current = snapshot;
   }, [snapshot]);
 
   useEffect(() => {
-    const hostToken = sessionStorage.getItem(`openround:host:${sessionId}`);
-    if (!hostToken) {
+    setEmbedded(window.self !== window.top);
+    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const fragmentCredential = fragment.get("credential");
+    if (fragmentCredential) {
+      sessionStorage.setItem(`openround:presenter:${sessionId}`, fragmentCredential);
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    }
+    const presenterToken =
+      fragmentCredential ?? sessionStorage.getItem(`openround:presenter:${sessionId}`);
+    if (!presenterToken) {
       setError("Presenter access must be opened from the host tab.");
       return;
     }
-    setMediaCredential(hostToken);
+    setMediaCredential(presenterToken);
     const sync = () =>
       socket.emit(
         "sync.request",
         {
           sessionId,
           role: "presenter",
-          hostToken,
+          hostToken: presenterToken,
           lastSeq: snapshotRef.current?.seq ?? 0,
         },
         (response: Ack<{ snapshot: SessionSnapshot }>) =>
@@ -55,6 +63,9 @@ export default function PresenterPage() {
       "question.open",
       "question.locked",
       "question.reveal",
+      "checkpoint.insight",
+      "intervention.updated",
+      "recheck.open",
       "leaderboard.updated",
       "game.finished",
       "session.snapshot",
@@ -75,13 +86,17 @@ export default function PresenterPage() {
     >
       <header className="shell live-topbar">
         <Brand inverted name={snapshot?.brandTheme?.organizationName} />
-        <button
-          className="button-quiet small-button"
-          onClick={() => router.push(`/host/${sessionId}`)}
-          type="button"
-        >
-          Host controls
-        </button>
+        {!embedded ? (
+          <button
+            className="button-quiet small-button"
+            onClick={() => window.close()}
+            type="button"
+          >
+            Close presenter
+          </button>
+        ) : (
+          <span className="status-pill">Read-only embed</span>
+        )}
       </header>
       <main className="shell live-stage" aria-live="polite">
         {error ? (
@@ -111,7 +126,11 @@ export default function PresenterPage() {
           <section className="live-card">
             <div className="page-heading" style={{ alignItems: "center" }}>
               <span className="status-pill">
-                Question {(snapshot.questionIndex ?? 0) + 1} of {snapshot.questionCount}
+                {snapshot.roundKind === "linked_recheck"
+                  ? "Linked recheck"
+                  : snapshot.roundKind === "revote"
+                    ? "Revote"
+                    : `Checkpoint ${(snapshot.questionPosition ?? snapshot.questionIndex ?? 0) + 1} of ${snapshot.questionCount}`}
               </span>
               {snapshot.phase === "question_open" ? (
                 <Countdown deadline={snapshot.deadline} />
@@ -124,17 +143,49 @@ export default function PresenterPage() {
               mediaId={snapshot.question.mediaId}
               sessionId={sessionId}
             />
-            <div className="answer-grid">
-              {snapshot.question.choices.map((choice, index) => (
-                <div
-                  className="answer-button"
-                  data-correct={snapshot.correctChoiceId === choice.id || undefined}
-                  key={choice.id}
-                >
-                  <span aria-hidden="true">{String.fromCharCode(65 + index)}.</span> {choice.label}
-                </div>
-              ))}
-            </div>
+            {snapshot.question.choices.length > 0 ? (
+              <div className="answer-grid">
+                {snapshot.question.choices.map((choice, index) => {
+                  const correct =
+                    snapshot.correctResponse?.kind === "choice" &&
+                    snapshot.correctResponse.choiceIds.includes(choice.id);
+                  return (
+                    <div
+                      className="answer-button"
+                      data-correct={correct || snapshot.correctChoiceId === choice.id || undefined}
+                      key={choice.id}
+                    >
+                      <span aria-hidden="true">{String.fromCharCode(65 + index)}.</span>{" "}
+                      {choice.label}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : snapshot.question.type === "numeric" ? (
+              <p className="lead">
+                Enter a numeric response
+                {snapshot.question.unit ? ` in ${snapshot.question.unit}` : ""}
+                {snapshot.correctResponse?.kind === "numeric"
+                  ? `. Correct response: ${snapshot.correctResponse.value}${snapshot.question.unit ? ` ${snapshot.question.unit}` : ""}`
+                  : "."}
+              </p>
+            ) : snapshot.question.rating ? (
+              <p className="lead">
+                Rate from {snapshot.question.rating.min} ({snapshot.question.rating.minLabel}) to{" "}
+                {snapshot.question.rating.max} ({snapshot.question.rating.maxLabel}).
+              </p>
+            ) : null}
+            {snapshot.phase === "intervention" && snapshot.intervention ? (
+              <p className="notice">
+                {snapshot.intervention.type === "peer_discussion"
+                  ? "Discuss with a neighbour before responding again."
+                  : snapshot.intervention.type === "example"
+                    ? "The facilitator is working through an example."
+                    : snapshot.intervention.type === "explain"
+                      ? "The facilitator is clarifying this concept."
+                      : "The round is taking a short break."}
+              </p>
+            ) : null}
             {snapshot.explanation ? <p className="notice">{snapshot.explanation}</p> : null}
             {snapshot.phase === "leaderboard" &&
             snapshot.settings.resultVisibility === "leaderboard" ? (

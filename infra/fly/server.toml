@@ -20,7 +20,7 @@ primary_region = "yyz"
   S3_REGION = "ca-central-1"
   SESSION_MUTATION_LEASE_TTL_MS = "15000"
   SESSION_MUTATION_LEASE_WAIT_MS = "5000"
-  OPENROUND_MIGRATION_FILE = "/app/migrations/001_initial.sql"
+  OPENROUND_MIGRATIONS_DIR = "/app/migrations"
 
 [http_service]
   internal_port = 4000

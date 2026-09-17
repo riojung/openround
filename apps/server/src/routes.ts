@@ -4,23 +4,64 @@ import { z, ZodError } from "zod";
 import Stripe from "stripe";
 import {
   AnswerSubmitSchema,
+  AcceptWorkspaceInvitationSchema,
+  ApplyAuthoringJobSchema,
   BrandThemeSchema,
+  CheckpointSetImportRequestSchema,
+  CreateFolderSchema,
+  CreateAuthoringJobSchema,
+  CreateFollowupSchema,
+  CreateAccommodationPassSchema,
+  CreateWorkspaceInvitationSchema,
   CreateQuizSchema,
+  CreateQnaQuestionSchema,
+  CreateQnaReplySchema,
+  CreateSessionStaffCredentialSchema,
   CreateSessionSchema,
+  EmbedAllowedOriginsSchema,
+  EmbedPolicySchema,
   HostCommandSchema,
+  FollowupAnswerSubmitSchema,
+  FederatedIdentitySchema,
+  OidcStartSchema,
+  OidcStatusSchema,
   JoinRequestSchema,
+  LtiDeepLinkSelectionSchema,
+  LtiLaunchFormSchema,
+  LtiLaunchViewSchema,
+  LtiLoginInitiationSchema,
+  LtiRegistrationSchema,
   MagicLinkRequestSchema,
   MediaUploadRequestSchema,
+  ModerateQnaQuestionSchema,
+  ModerateQnaReplySchema,
   OperationalFeaturesUpdateSchema,
   OperationalFeaturesViewSchema,
+  OrganizeQuizSchema,
   PublicFeaturesSchema,
   QuizContentSchema,
+  QnaSettingsSchema,
+  UpdateQnaSettingsSchema,
+  UpdateFolderSchema,
   UpdateQuizSchema,
+  UpdateWorkspaceMemberSchema,
+  UpdateWorkspaceInstitutionPolicySchema,
+  UpsertLtiRegistrationSchema,
+  WorkspaceInstitutionPolicySchema,
+  WorkspaceInvitationSchema,
+  WorkspaceMemberSchema,
+  WorkspaceSummarySchema,
+  StartFollowupSchema,
 } from "@openround/contracts";
-import { PublishedQuizLimitError, type BillingEventInput, type Repository } from "@openround/db";
+import {
+  PublishedQuizLimitError,
+  type BillingEventInput,
+  type CreatorContext,
+  type Repository,
+} from "@openround/db";
 import type { AppConfig } from "./config.js";
 import type { AuthService } from "./auth.js";
-import { cleanPlainText } from "./security.js";
+import { cleanPlainText, hashToken } from "./security.js";
 import type { SessionService } from "./session-service.js";
 import { SessionError } from "./session-service.js";
 import type { RetentionService } from "./retention.js";
@@ -29,9 +70,56 @@ import { reportCsv } from "./reporting.js";
 import type { StorageService } from "./storage.js";
 import { entitlementsFor } from "./entitlements.js";
 import { validationIssueMessage } from "./validation.js";
+import type { QnaService } from "./qna-service.js";
+import { QnaError } from "./qna-service.js";
+import { checkpointSetCsv, importCheckpointSet, openRoundJson } from "./portability.js";
+import { exportQtiPackage, importQtiPackage } from "./qti.js";
+import { FollowupError, type FollowupService } from "./followup-service.js";
+import { AuthoringError, type AuthoringService } from "./authoring-service.js";
+import { OidcError, type OidcService } from "./oidc-service.js";
+import { LtiError, type LtiService } from "./lti-service.js";
 
 const IdParamsSchema = z.object({ id: z.string().uuid() });
 const SessionMediaParamsSchema = z.object({ id: z.string().uuid(), mediaId: z.string().uuid() });
+const SessionStaffParamsSchema = z.object({
+  id: z.string().uuid(),
+  credentialId: z.string().uuid(),
+});
+const QnaQuestionParamsSchema = z.object({
+  id: z.string().uuid(),
+  questionId: z.string().uuid(),
+});
+const QnaReplyParamsSchema = z.object({
+  id: z.string().uuid(),
+  replyId: z.string().uuid(),
+});
+const WorkspaceParamsSchema = z.object({ id: z.string().uuid() });
+const WorkspaceInvitationParamsSchema = z.object({ invitationId: z.string().uuid() });
+const WorkspaceMemberParamsSchema = z.object({ userId: z.string().uuid() });
+const EmbedPolicyParamsSchema = z.object({
+  sessionId: z.string().uuid(),
+  policyKey: z.string().min(20).max(1_000),
+});
+const FollowupParamsSchema = z.object({ id: z.string().uuid() });
+const FollowupAccessParamsSchema = z.object({
+  id: z.string().uuid(),
+  accessId: z.string().uuid(),
+});
+const FollowupMediaParamsSchema = z.object({
+  id: z.string().uuid(),
+  mediaId: z.string().uuid(),
+});
+const AuthoringJobParamsSchema = z.object({ id: z.string().uuid() });
+const FederatedIdentityParamsSchema = z.object({ identityId: z.string().uuid() });
+const LtiLaunchParamsSchema = z.object({ launchId: z.string().uuid() });
+const LtiRegistrationParamsSchema = z.object({
+  id: z.string().uuid(),
+  registrationId: z.string().uuid(),
+});
+const QnaListQuerySchema = z.object({
+  cursor: z.string().min(1).max(1_000).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+});
 const QuizListQuerySchema = z.object({ archived: z.enum(["true", "false"]).optional() });
 
 function apiError(
@@ -46,6 +134,7 @@ function apiError(
 
 function sessionStatus(code: SessionError["code"]) {
   if (code === "UNAUTHORIZED") return 401;
+  if (code === "INSTITUTION_AUTH_REQUIRED") return 403;
   if (code === "NOT_FOUND" || code === "INVALID_CODE") return 404;
   if (code === "ENTITLEMENT_LIMIT") return 402;
   if (
@@ -60,13 +149,57 @@ function sessionStatus(code: SessionError["code"]) {
   return 400;
 }
 
+function qnaStatus(code: QnaError["code"]) {
+  if (code === "UNAUTHORIZED") return 401;
+  if (code === "NOT_FOUND") return 404;
+  if (code === "QNA_RATE_LIMITED") return 429;
+  return 409;
+}
+
+function followupStatus(code: FollowupError["code"]) {
+  if (code === "UNAUTHORIZED") return 401;
+  if (code === "NOT_FOUND") return 404;
+  if (code === "ANSWER_INVALID" || code === "ANSWER_LATE") return 422;
+  return 409;
+}
+
+function authoringStatus(code: AuthoringError["code"]) {
+  if (code === "NOT_FOUND") return 404;
+  if (code === "AUTHORING_DISABLED") return 503;
+  if (code === "AUTHORING_LIMIT") return 402;
+  if (code === "ANSWER_INVALID") return 422;
+  return 409;
+}
+
+function oidcStatus(code: OidcError["code"]) {
+  if (code === "UNAUTHORIZED") return 401;
+  if (code === "FEDERATED_IDENTITY_NOT_LINKED" || code === "INSTITUTION_NOT_ENABLED") return 403;
+  if (code === "FEDERATED_AUTH_DISABLED") return 503;
+  if (code === "FEDERATED_AUTH_REPLAYED") return 400;
+  return 409;
+}
+
+function ltiStatus(code: LtiError["code"]) {
+  if (code === "UNAUTHORIZED") return 401;
+  if (code === "INSTITUTION_NOT_ENABLED") return 403;
+  if (code === "NOT_FOUND" || code === "LTI_REGISTRATION_NOT_FOUND") return 404;
+  if (code === "LTI_DISABLED") return 503;
+  if (code === "LTI_LAUNCH_INVALID") return 400;
+  return 409;
+}
+
 export async function registerRoutes(
   app: FastifyInstance,
   dependencies: {
     config: AppConfig;
     repository: Repository;
     auth: AuthService;
+    oidc: OidcService;
+    lti: LtiService;
     sessions: SessionService;
+    qna: QnaService;
+    followups: FollowupService;
+    authoring: AuthoringService;
     storage: StorageService;
     retention: RetentionService;
     metrics: MetricsService;
@@ -74,7 +207,20 @@ export async function registerRoutes(
     stripeClient?: Stripe | null;
   },
 ) {
-  const { config, repository, auth, sessions, storage, retention, metrics } = dependencies;
+  const {
+    config,
+    repository,
+    auth,
+    oidc,
+    lti,
+    sessions,
+    qna,
+    followups,
+    authoring,
+    storage,
+    retention,
+    metrics,
+  } = dependencies;
   const stripe =
     dependencies.stripeClient !== undefined
       ? dependencies.stripeClient
@@ -103,6 +249,21 @@ export async function registerRoutes(
       },
     });
   };
+  const requireWorkspaceRole = (
+    creator: CreatorContext,
+    allowed: CreatorContext["role"][],
+    reply: FastifyReply,
+    requestId: string,
+  ) =>
+    allowed.includes(creator.role)
+      ? true
+      : apiError(
+          reply,
+          403,
+          "UNAUTHORIZED",
+          "Your workspace role does not allow this action",
+          requestId,
+        );
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ZodError) {
@@ -116,6 +277,21 @@ export async function registerRoutes(
     }
     if (error instanceof SessionError) {
       return apiError(reply, sessionStatus(error.code), error.code, error.message, request.id);
+    }
+    if (error instanceof QnaError) {
+      return apiError(reply, qnaStatus(error.code), error.code, error.message, request.id);
+    }
+    if (error instanceof FollowupError) {
+      return apiError(reply, followupStatus(error.code), error.code, error.message, request.id);
+    }
+    if (error instanceof AuthoringError) {
+      return apiError(reply, authoringStatus(error.code), error.code, error.message, request.id);
+    }
+    if (error instanceof OidcError) {
+      return apiError(reply, oidcStatus(error.code), error.code, error.message, request.id);
+    }
+    if (error instanceof LtiError) {
+      return apiError(reply, ltiStatus(error.code), error.code, error.message, request.id);
     }
     if (error instanceof PublishedQuizLimitError) {
       return apiError(reply, 402, "ENTITLEMENT_LIMIT", error.message, request.id);
@@ -188,12 +364,24 @@ export async function registerRoutes(
       );
     }
     const input = MagicLinkRequestSchema.parse(request.body);
-    const debugUrl = await auth.requestMagicLink(input.email, input.segment);
+    const debugUrl = await auth.requestMagicLink(input.email, input.segment, input.returnTo);
     return reply.code(202).send({ accepted: true, ...(debugUrl ? { debugUrl } : {}) });
   });
 
   app.get("/v1/auth/verify", async (request, reply) => {
-    const { token } = z.object({ token: z.string().min(20) }).parse(request.query);
+    const { token, returnTo } = z
+      .object({
+        token: z.string().min(20),
+        returnTo: z
+          .string()
+          .max(500)
+          .refine(
+            (value) => value.startsWith("/") && !value.startsWith("//") && !/[\\\r\n]/.test(value),
+            "Return path must be local",
+          )
+          .optional(),
+      })
+      .parse(request.query);
     const verified = await auth.verifyMagicLink(token);
     if (!verified)
       return apiError(
@@ -204,7 +392,11 @@ export async function registerRoutes(
         request.id,
       );
     auth.setSessionCookie(reply, verified.sessionToken);
-    return reply.redirect(`${config.WEB_ORIGIN}/dashboard?welcome=1`);
+    return reply.redirect(
+      returnTo
+        ? new URL(returnTo, config.WEB_ORIGIN).href
+        : `${config.WEB_ORIGIN}/dashboard?welcome=1`,
+    );
   });
 
   app.get("/v1/auth/me", async (request, reply) => {
@@ -220,6 +412,427 @@ export async function registerRoutes(
     };
   });
 
+  app.get("/v1/auth/oidc/status", async (request) => {
+    const { workspaceId } = z.object({ workspaceId: z.string().uuid() }).parse(request.query);
+    return OidcStatusSchema.parse(await oidc.status(workspaceId));
+  });
+
+  app.post(
+    "/v1/auth/oidc/start",
+    { config: { rateLimit: { max: 10, timeWindow: "5 minutes" } } },
+    async (request) => {
+      const input = OidcStartSchema.parse(request.body);
+      const creator = await auth.creatorFromRequest(request);
+      return oidc.start(input.workspaceId, input.mode, creator);
+    },
+  );
+
+  app.get(
+    "/v1/auth/oidc/callback",
+    { config: { rateLimit: { max: 30, timeWindow: "5 minutes" } } },
+    async (request, reply) => {
+      const { state } = z.object({ state: z.string().min(20).max(1_000) }).parse(request.query);
+      const creator = await auth.creatorFromRequest(request);
+      const result = await oidc.callback(
+        new URL(request.url, config.PUBLIC_API_URL),
+        state,
+        creator,
+      );
+      await repository.recordAudit({
+        workspaceId: result.creator.workspaceId,
+        actorId: result.creator.userId,
+        action: result.mode === "link" ? "federated_identity.link" : "federated_identity.login",
+        targetType: "external_identity",
+        targetId: result.identity.id,
+        requestId: request.id,
+        metadata: { provider: "oidc", issuer: result.identity.issuer },
+      });
+      if (result.mode === "login") {
+        const session = await auth.issueCreatorSession(result.creator);
+        auth.setSessionCookie(reply, session.sessionToken);
+        return reply.redirect(`${config.WEB_ORIGIN}/dashboard?federated=1`);
+      }
+      return reply.redirect(`${config.WEB_ORIGIN}/account?federated=linked`);
+    },
+  );
+
+  app.get("/v1/auth/federated-identities", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const identities = await repository.listExternalIdentities(creator.workspaceId, creator.userId);
+    return {
+      identities: identities.map((identity) =>
+        FederatedIdentitySchema.parse({
+          id: identity.id,
+          provider: identity.provider,
+          issuer: identity.issuer,
+          emailHint: identity.emailHint,
+          linkedAt: identity.linkedAt.toISOString(),
+          lastUsedAt: identity.lastUsedAt?.toISOString() ?? null,
+        }),
+      ),
+    };
+  });
+
+  app.delete("/v1/auth/federated-identities/:identityId", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { identityId } = FederatedIdentityParamsSchema.parse(request.params);
+    const removed = await repository.unlinkExternalIdentity(
+      creator.workspaceId,
+      creator.userId,
+      identityId,
+    );
+    if (!removed) {
+      return apiError(reply, 404, "NOT_FOUND", "Linked identity not found", request.id);
+    }
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "federated_identity.unlink",
+      targetType: "external_identity",
+      targetId: identityId,
+      requestId: request.id,
+    });
+    return reply.code(204).send();
+  });
+
+  app.get("/v1/lti/jwks", async (request, reply) => {
+    reply.header("cache-control", "public, max-age=300, stale-while-revalidate=300");
+    return lti.publicJwks();
+  });
+
+  app.post(
+    "/v1/lti/login",
+    { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const input = LtiLoginInitiationSchema.parse(request.body);
+      const result = await lti.login(input);
+      return reply.redirect(result.authorizationUrl);
+    },
+  );
+
+  app.post(
+    "/v1/lti/launch",
+    {
+      bodyLimit: 70_000,
+      config: { rateLimit: { max: 60, timeWindow: "1 minute" } },
+    },
+    async (request, reply) => {
+      const input = LtiLaunchFormSchema.parse(request.body);
+      const result = await lti.launch(input.state, input.id_token);
+      await repository.recordAudit({
+        workspaceId: result.launch.workspaceId,
+        actorId: result.creator?.userId ?? null,
+        action: "lti.launch.accept",
+        targetType: "lti_launch",
+        targetId: result.launch.id,
+        requestId: request.id,
+        metadata: {
+          messageType: result.launch.messageType,
+          role: result.launch.role,
+          registrationId: result.launch.registrationId,
+        },
+      });
+      if (result.linkToken) {
+        return reply.redirect(
+          `${config.WEB_ORIGIN}/lti/link#token=${encodeURIComponent(result.linkToken)}`,
+        );
+      }
+      const session = await auth.issueCreatorSession(result.creator!);
+      auth.setSessionCookie(reply, session.sessionToken);
+      if (result.launch.messageType === "LtiDeepLinkingRequest") {
+        return reply.redirect(`${config.WEB_ORIGIN}/lti/select?launchId=${result.launch.id}`);
+      }
+      return reply.redirect(
+        result.launch.quizId
+          ? `${config.WEB_ORIGIN}/host/setup/${result.launch.quizId}`
+          : `${config.WEB_ORIGIN}/dashboard?lti=1`,
+      );
+    },
+  );
+
+  app.post("/v1/lti/link", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { token } = z.object({ token: z.string().min(20).max(1_000) }).parse(request.body);
+    const launch = await lti.bind(creator, token);
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "lti.identity.link",
+      targetType: "lti_launch",
+      targetId: launch.id,
+      requestId: request.id,
+      metadata: { registrationId: launch.registrationId },
+    });
+    return {
+      launch: LtiLaunchViewSchema.parse({
+        id: launch.id,
+        messageType: launch.messageType,
+        role: launch.role,
+        quizId: launch.quizId,
+        expiresAt: launch.expiresAt.toISOString(),
+      }),
+      destination:
+        launch.messageType === "LtiDeepLinkingRequest"
+          ? `/lti/select?launchId=${launch.id}`
+          : launch.quizId
+            ? `/host/setup/${launch.quizId}`
+            : "/dashboard?lti=1",
+    };
+  });
+
+  app.get("/v1/lti/launches/:launchId", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { launchId } = LtiLaunchParamsSchema.parse(request.params);
+    const launch = await lti.getLaunch(creator, launchId);
+    return {
+      launch: LtiLaunchViewSchema.parse({
+        id: launch.id,
+        messageType: launch.messageType,
+        role: launch.role,
+        quizId: launch.quizId,
+        expiresAt: launch.expiresAt.toISOString(),
+      }),
+    };
+  });
+
+  app.post("/v1/lti/launches/:launchId/deep-link", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { launchId } = LtiLaunchParamsSchema.parse(request.params);
+    const input = LtiDeepLinkSelectionSchema.parse(request.body);
+    const result = await lti.createDeepLink(creator, launchId, input.quizId);
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "lti.deep_link.create",
+      targetType: "quiz",
+      targetId: result.quizId,
+      requestId: request.id,
+      metadata: { launchId },
+    });
+    return result;
+  });
+
+  app.post("/v1/invitations/accept", async (request, reply) => {
+    const input = AcceptWorkspaceInvitationSchema.parse(request.body);
+    const accepted = await auth.acceptWorkspaceInvitation(input.token);
+    if (!accepted) {
+      return apiError(
+        reply,
+        400,
+        "UNAUTHORIZED",
+        "This workspace invitation is invalid, expired, or already used",
+        request.id,
+      );
+    }
+    auth.setSessionCookie(reply, accepted.sessionToken);
+    return { creator: accepted.creator };
+  });
+
+  app.get("/v1/workspaces", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const workspaces = await repository.listWorkspaces(creator.userId);
+    return {
+      activeWorkspaceId: creator.workspaceId,
+      workspaces: workspaces.map((workspace) => WorkspaceSummarySchema.parse(workspace)),
+    };
+  });
+
+  app.post("/v1/workspaces/:id/select", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { id } = WorkspaceParamsSchema.parse(request.params);
+    const selected = await auth.switchWorkspace(request, creator, id);
+    if (!selected) {
+      return apiError(reply, 404, "NOT_FOUND", "Workspace membership not found", request.id);
+    }
+    return { activeWorkspaceId: id };
+  });
+
+  app.get("/v1/workspace/members", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
+    const [members, invitations] = await Promise.all([
+      repository.listWorkspaceMembers(creator.workspaceId),
+      repository.listWorkspaceInvitations(creator.workspaceId),
+    ]);
+    return {
+      members: members.map((member) =>
+        WorkspaceMemberSchema.parse({
+          ...member,
+          joinedAt: member.joinedAt?.toISOString() ?? null,
+        }),
+      ),
+      invitations: invitations.map((invitation) =>
+        WorkspaceInvitationSchema.parse({
+          ...invitation,
+          tokenHash: undefined,
+          expiresAt: invitation.expiresAt.toISOString(),
+          acceptedAt: invitation.acceptedAt?.toISOString() ?? null,
+          revokedAt: invitation.revokedAt?.toISOString() ?? null,
+          createdAt: invitation.createdAt.toISOString(),
+        }),
+      ),
+    };
+  });
+
+  app.get("/v1/workspace/institution-policy", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const policy = await repository.getInstitutionPolicy(creator.workspaceId);
+    return WorkspaceInstitutionPolicySchema.parse({
+      ...policy,
+      updatedAt: policy.updatedAt?.toISOString() ?? null,
+    });
+  });
+
+  app.get("/v1/workspace/lti-registrations", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
+    const registrations = await repository.listLtiRegistrations(creator.workspaceId);
+    return {
+      registrations: registrations.map((registration) =>
+        LtiRegistrationSchema.parse({
+          ...registration,
+          createdAt: registration.createdAt.toISOString(),
+          updatedAt: registration.updatedAt.toISOString(),
+        }),
+      ),
+    };
+  });
+
+  app.post("/v1/workspace/invitations", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
+    const input = CreateWorkspaceInvitationSchema.parse(request.body);
+    const members = await repository.listWorkspaceMembers(creator.workspaceId);
+    if (members.some((member) => member.email.toLocaleLowerCase() === input.email)) {
+      return apiError(
+        reply,
+        409,
+        "CONFLICT",
+        "This person is already a workspace member",
+        request.id,
+      );
+    }
+    const result = await auth.inviteWorkspace(creator, input.email, input.role);
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "workspace.invitation.create",
+      targetType: "workspace_invitation",
+      targetId: result.invitation.id,
+      requestId: request.id,
+      metadata: { email: input.email, role: input.role },
+    });
+    return reply.code(201).send({
+      invitation: WorkspaceInvitationSchema.parse({
+        ...result.invitation,
+        tokenHash: undefined,
+        expiresAt: result.invitation.expiresAt.toISOString(),
+        acceptedAt: null,
+        revokedAt: null,
+        createdAt: result.invitation.createdAt.toISOString(),
+      }),
+      ...(result.debugUrl ? { debugUrl: result.debugUrl } : {}),
+    });
+  });
+
+  app.delete("/v1/workspace/invitations/:invitationId", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
+    const { invitationId } = WorkspaceInvitationParamsSchema.parse(request.params);
+    const revoked = await repository.revokeWorkspaceInvitation(creator.workspaceId, invitationId);
+    if (!revoked) {
+      return apiError(reply, 404, "NOT_FOUND", "Active invitation not found", request.id);
+    }
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "workspace.invitation.revoke",
+      targetType: "workspace_invitation",
+      targetId: invitationId,
+      requestId: request.id,
+    });
+    return reply.code(204).send();
+  });
+
+  app.patch("/v1/workspace/members/:userId", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
+    const { userId } = WorkspaceMemberParamsSchema.parse(request.params);
+    const input = UpdateWorkspaceMemberSchema.parse(request.body);
+    const member = await repository.updateWorkspaceMemberRole(
+      creator.workspaceId,
+      userId,
+      input.role,
+    );
+    if (!member) {
+      return apiError(
+        reply,
+        409,
+        "CONFLICT",
+        "Owners cannot be changed or member was not found",
+        request.id,
+      );
+    }
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "workspace.member.role.update",
+      targetType: "workspace_member",
+      targetId: userId,
+      requestId: request.id,
+      metadata: { role: input.role },
+    });
+    return {
+      member: WorkspaceMemberSchema.parse({
+        ...member,
+        joinedAt: member.joinedAt?.toISOString() ?? null,
+      }),
+    };
+  });
+
+  app.delete("/v1/workspace/members/:userId", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
+    const { userId } = WorkspaceMemberParamsSchema.parse(request.params);
+    if (userId === creator.userId) {
+      return apiError(
+        reply,
+        409,
+        "CONFLICT",
+        "The workspace owner cannot remove themselves",
+        request.id,
+      );
+    }
+    const removed = await repository.removeWorkspaceMember(creator.workspaceId, userId);
+    if (!removed) {
+      return apiError(reply, 404, "NOT_FOUND", "Removable workspace member not found", request.id);
+    }
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "workspace.member.remove",
+      targetType: "workspace_member",
+      targetId: userId,
+      requestId: request.id,
+    });
+    return reply.code(204).send();
+  });
+
   app.get("/v1/account/theme", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
@@ -233,6 +846,7 @@ export async function registerRoutes(
   app.put("/v1/account/theme", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
     const entitlements = entitlementsFor(creator.plan, config);
     if (!entitlements.brandTheme) {
       return apiError(
@@ -264,6 +878,7 @@ export async function registerRoutes(
   app.delete("/v1/account/theme", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
     await repository.updateBrandTheme(creator.workspaceId, null);
     await repository.recordAudit({
       workspaceId: creator.workspaceId,
@@ -281,6 +896,198 @@ export async function registerRoutes(
     return { ok: true };
   });
 
+  app.get("/v1/account/embed-origins", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    return { origins: await repository.getEmbedAllowedOrigins(creator.workspaceId) };
+  });
+
+  app.put("/v1/account/embed-origins", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
+    const input = EmbedAllowedOriginsSchema.parse(request.body);
+    const origins = await repository.updateEmbedAllowedOrigins(creator.workspaceId, input.origins);
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "workspace.embed_origins.update",
+      targetType: "workspace",
+      targetId: creator.workspaceId,
+      requestId: request.id,
+      metadata: { origins },
+    });
+    return { origins };
+  });
+
+  app.get(
+    "/v1/embed/policies/:sessionId/:policyKey",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const { sessionId, policyKey } = EmbedPolicyParamsSchema.parse(request.params);
+      const policy = await repository.getEmbedPolicyByKey(
+        hashToken(policyKey),
+        sessionId,
+        new Date(),
+      );
+      if (!policy) {
+        return apiError(reply, 404, "NOT_FOUND", "Embed policy not found", request.id);
+      }
+      reply.header("cache-control", "private, no-store");
+      return EmbedPolicySchema.parse({
+        sessionId,
+        allowedOrigins: policy.allowedOrigins,
+        expiresAt: policy.expiresAt.toISOString(),
+      });
+    },
+  );
+
+  app.get("/v1/authoring/status", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const entitlements = entitlementsFor(creator.plan, config);
+    return {
+      status: await authoring.status(creator.workspaceId, entitlements.authoringJobsPerMonth),
+    };
+  });
+
+  app.get("/v1/authoring/jobs", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    return { jobs: await authoring.list(creator.workspaceId) };
+  });
+
+  app.post(
+    "/v1/authoring/jobs",
+    {
+      bodyLimit: 8_100_000,
+      config: { rateLimit: { max: 10, timeWindow: "5 minutes" } },
+    },
+    async (request, reply) => {
+      const creator = await auth.requireCreator(request, reply);
+      if (!creator) return;
+      if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+      const input = CreateAuthoringJobSchema.parse(request.body);
+      const entitlements = entitlementsFor(creator.plan, config);
+      const job = await authoring.create(
+        creator,
+        input,
+        entitlements.authoringJobsPerMonth,
+        entitlements.reportRetentionDays,
+      );
+      await repository.recordAudit({
+        workspaceId: creator.workspaceId,
+        actorId: creator.userId,
+        action: "authoring.job.create",
+        targetType: "authoring_job",
+        targetId: job.id,
+        requestId: request.id,
+        metadata: { sourceType: job.sourceType },
+      });
+      return reply.code(202).send({ job });
+    },
+  );
+
+  app.get("/v1/authoring/jobs/:id", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { id } = AuthoringJobParamsSchema.parse(request.params);
+    return { job: await authoring.get(creator.workspaceId, id) };
+  });
+
+  app.post("/v1/authoring/jobs/:id/apply", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id } = AuthoringJobParamsSchema.parse(request.params);
+    const input = ApplyAuthoringJobSchema.parse(request.body ?? {});
+    const quiz = await authoring.apply(creator, id, input.title);
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "authoring.job.apply",
+      targetType: "quiz",
+      targetId: quiz.id,
+      requestId: request.id,
+      metadata: { authoringJobId: id },
+    });
+    return reply.code(201).send({ quiz });
+  });
+
+  app.get("/v1/folders", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    return { folders: await repository.listFolders(creator.workspaceId) };
+  });
+
+  app.post("/v1/folders", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const input = CreateFolderSchema.parse(request.body);
+    const name = cleanPlainText(input.name, 80);
+    if (!name)
+      return apiError(reply, 400, "VALIDATION_ERROR", "Folder name is required", request.id);
+    const now = new Date();
+    const folder = await repository.createFolder({
+      id: randomUUID(),
+      workspaceId: creator.workspaceId,
+      name,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "folder.create",
+      targetType: "folder",
+      targetId: folder.id,
+      requestId: request.id,
+    });
+    return reply.code(201).send({ folder });
+  });
+
+  app.patch("/v1/folders/:id", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = UpdateFolderSchema.parse(request.body);
+    const name = cleanPlainText(input.name, 80);
+    if (!name)
+      return apiError(reply, 400, "VALIDATION_ERROR", "Folder name is required", request.id);
+    const folder = await repository.renameFolder(creator.workspaceId, id, name);
+    if (!folder) return apiError(reply, 404, "NOT_FOUND", "Folder not found", request.id);
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "folder.rename",
+      targetType: "folder",
+      targetId: folder.id,
+      requestId: request.id,
+    });
+    return { folder };
+  });
+
+  app.delete("/v1/folders/:id", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    if (!(await repository.deleteFolder(creator.workspaceId, id))) {
+      return apiError(reply, 404, "NOT_FOUND", "Folder not found", request.id);
+    }
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "folder.delete",
+      targetType: "folder",
+      targetId: id,
+      requestId: request.id,
+    });
+    return reply.code(204).send();
+  });
+
   app.get("/v1/quizzes", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
@@ -293,6 +1100,7 @@ export async function registerRoutes(
   app.post("/v1/quizzes", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
     const input = CreateQuizSchema.parse(request.body);
     const now = new Date();
     const quiz = await repository.createQuiz({
@@ -303,6 +1111,8 @@ export async function registerRoutes(
       status: "draft",
       draft: { title: input.title, description: input.description, questions: [] },
       currentVersionId: null,
+      folderId: null,
+      tags: [],
       createdAt: now,
       updatedAt: now,
     });
@@ -317,6 +1127,64 @@ export async function registerRoutes(
     return reply.code(201).send({ quiz });
   });
 
+  app.post("/v1/quizzes/import", { bodyLimit: 8_100_000 }, async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    if (!entitlementsFor(creator.plan, config).csvExport) {
+      return apiError(
+        reply,
+        402,
+        "ENTITLEMENT_LIMIT",
+        "Checkpoint-set import is available on the Pro plan",
+        request.id,
+      );
+    }
+    const input = CheckpointSetImportRequestSchema.parse(request.body);
+    const result =
+      input.format === "qti3"
+        ? await importQtiPackage(input.data, input.title)
+        : importCheckpointSet(input.format, input.data, input.title);
+    if (!result.draft) {
+      return reply.code(422).send({
+        error: {
+          code: "IMPORT_VALIDATION_FAILED",
+          message: "The checkpoint set could not be imported. Review the validation details.",
+          requestId: request.id,
+        },
+        validation: result.validation,
+      });
+    }
+    const now = new Date();
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: creator.workspaceId,
+      title: result.draft.title,
+      description: result.draft.description,
+      status: "draft",
+      draft: result.draft,
+      currentVersionId: null,
+      folderId: null,
+      tags: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "quiz.import",
+      targetType: "quiz",
+      targetId: quiz.id,
+      requestId: request.id,
+      metadata: {
+        format: input.format,
+        importedCheckpoints: result.validation.importedCheckpoints,
+        warningCount: result.validation.warnings.length,
+      },
+    });
+    return reply.code(201).send({ quiz, validation: result.validation });
+  });
+
   app.get("/v1/quizzes/:id", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
@@ -325,18 +1193,131 @@ export async function registerRoutes(
     return quiz ? { quiz } : apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
   });
 
+  app.get("/v1/quizzes/:id/export.json", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const quiz = await repository.getQuiz(creator.workspaceId, id);
+    if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Checkpoint set not found", request.id);
+    if (!entitlementsFor(creator.plan, config).csvExport) {
+      return apiError(
+        reply,
+        402,
+        "ENTITLEMENT_LIMIT",
+        "Checkpoint-set export is available on the Pro plan",
+        request.id,
+      );
+    }
+    return reply
+      .header("content-type", "application/json; charset=utf-8")
+      .header("content-disposition", `attachment; filename="openround-checkpoint-set-${id}.json"`)
+      .send(openRoundJson(quiz.draft));
+  });
+
+  app.get("/v1/quizzes/:id/export.csv", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const quiz = await repository.getQuiz(creator.workspaceId, id);
+    if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Checkpoint set not found", request.id);
+    if (!entitlementsFor(creator.plan, config).csvExport) {
+      return apiError(
+        reply,
+        402,
+        "ENTITLEMENT_LIMIT",
+        "Checkpoint-set export is available on the Pro plan",
+        request.id,
+      );
+    }
+    return reply
+      .header("content-type", "text/csv; charset=utf-8")
+      .header("content-disposition", `attachment; filename="openround-checkpoint-set-${id}.csv"`)
+      .send(checkpointSetCsv(quiz.draft));
+  });
+
+  app.get("/v1/quizzes/:id/export.qti.zip", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const quiz = await repository.getQuiz(creator.workspaceId, id);
+    if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Checkpoint set not found", request.id);
+    if (!entitlementsFor(creator.plan, config).csvExport) {
+      return apiError(
+        reply,
+        402,
+        "ENTITLEMENT_LIMIT",
+        "Checkpoint-set export is available on the Pro plan",
+        request.id,
+      );
+    }
+    const result = await exportQtiPackage(quiz.draft);
+    if (!result.archive) {
+      return reply.code(422).send({
+        error: {
+          code: "EXPORT_VALIDATION_FAILED",
+          message: "This checkpoint set cannot be represented by the supported QTI 3 profile.",
+          requestId: request.id,
+        },
+        validation: result.validation,
+      });
+    }
+    return reply
+      .header("content-type", "application/zip")
+      .header("cache-control", "private, no-store")
+      .header("x-openround-export-warnings", String(result.validation.warnings.length))
+      .header(
+        "content-disposition",
+        `attachment; filename="openround-checkpoint-set-${id}.qti.zip"`,
+      )
+      .send(result.archive);
+  });
+
   app.patch("/v1/quizzes/:id", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
     const { id } = IdParamsSchema.parse(request.params);
     const draft = UpdateQuizSchema.parse(request.body);
     const quiz = await repository.updateQuiz(creator.workspaceId, id, draft);
     return quiz ? { quiz } : apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
   });
 
+  app.patch("/v1/quizzes/:id/organization", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = OrganizeQuizSchema.parse(request.body);
+    const tags = input.tags.map((tag) => cleanPlainText(tag, 40));
+    if (tags.some((tag) => !tag)) {
+      return apiError(reply, 400, "VALIDATION_ERROR", "Tags cannot be empty", request.id);
+    }
+    const quiz = await repository.organizeQuiz(creator.workspaceId, id, input.folderId, tags);
+    if (!quiz) {
+      return apiError(
+        reply,
+        404,
+        "NOT_FOUND",
+        "Checkpoint set or selected folder not found",
+        request.id,
+      );
+    }
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "quiz.organize",
+      targetType: "quiz",
+      targetId: quiz.id,
+      requestId: request.id,
+      metadata: { folderId: quiz.folderId ?? null, tags: quiz.tags ?? [] },
+    });
+    return { quiz };
+  });
+
   app.post("/v1/quizzes/:id/publish", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
     const { id } = IdParamsSchema.parse(request.params);
     const quiz = await repository.getQuiz(creator.workspaceId, id);
     if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
@@ -387,6 +1368,7 @@ export async function registerRoutes(
   app.post("/v1/quizzes/:id/duplicate", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
     const { id } = IdParamsSchema.parse(request.params);
     const source = await repository.getQuiz(creator.workspaceId, id);
     if (!source) return apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
@@ -408,6 +1390,7 @@ export async function registerRoutes(
   app.post("/v1/quizzes/:id/archive", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
     const { id } = IdParamsSchema.parse(request.params);
     const { archived } = z.object({ archived: z.boolean().default(true) }).parse(request.body);
     const quiz = await repository.archiveQuiz(
@@ -422,6 +1405,7 @@ export async function registerRoutes(
   app.post("/v1/sessions", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
     if (!(await operationalFeatures()).effective.sessionCreation) {
       return apiError(
         reply,
@@ -434,6 +1418,82 @@ export async function registerRoutes(
     const input = CreateSessionSchema.parse(request.body);
     const session = await sessions.createSession(creator, input.quizId, input.settings);
     return reply.code(201).send(session);
+  });
+
+  app.post("/v1/sessions/:id/staff", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = CreateSessionStaffCredentialSchema.parse(request.body);
+    const created = await sessions.createSessionStaffCredential(creator, id, input);
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "session.staff.create",
+      targetType: "session_staff_credential",
+      targetId: created.credential.id,
+      requestId: request.id,
+      metadata: { sessionId: id, role: created.credential.role },
+    });
+    return reply.code(201).send(created);
+  });
+
+  app.get("/v1/sessions/:id/staff", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const session = await repository.getSessionById(id);
+    if (!session || session.workspaceId !== creator.workspaceId) {
+      return apiError(reply, 404, "NOT_FOUND", "Session not found", request.id);
+    }
+    const credentials = await repository.listSessionStaff(creator.workspaceId, id);
+    return {
+      credentials: credentials.map((credential) => ({
+        id: credential.id,
+        sessionId: credential.sessionId,
+        role: credential.role,
+        label: credential.label,
+        expiresAt: credential.expiresAt.toISOString(),
+        revokedAt: credential.revokedAt?.toISOString() ?? null,
+        createdAt: credential.createdAt.toISOString(),
+      })),
+    };
+  });
+
+  app.delete("/v1/sessions/:id/staff/:credentialId", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id, credentialId } = SessionStaffParamsSchema.parse(request.params);
+    const session = await repository.getSessionById(id);
+    if (!session || session.workspaceId !== creator.workspaceId) {
+      return apiError(reply, 404, "NOT_FOUND", "Session not found", request.id);
+    }
+    const revoked = await repository.revokeSessionStaff(creator.workspaceId, credentialId);
+    if (!revoked) {
+      return apiError(reply, 404, "NOT_FOUND", "Staff credential not found", request.id);
+    }
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "session.staff.revoke",
+      targetType: "session_staff_credential",
+      targetId: credentialId,
+      requestId: request.id,
+      metadata: { sessionId: id },
+    });
+    await sessions
+      .publishAuxiliary({
+        sessionId: id,
+        type: "session.staff.revoked",
+        payload: { credentialId },
+      })
+      .catch((error: unknown) => {
+        request.log.warn({ err: error, credentialId }, "staff socket disconnect broadcast failed");
+      });
+    return reply.code(204).send();
   });
 
   app.post(
@@ -473,16 +1533,82 @@ export async function registerRoutes(
 
   app.post("/v1/sessions/:id/answers", async (request) => {
     const { id } = IdParamsSchema.parse(request.params);
-    const body = AnswerSubmitSchema.omit({ sessionId: true, participantToken: true }).parse(
-      request.body,
-    );
     const participantToken = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
-    return sessions.answer({ ...body, sessionId: id, participantToken });
+    const input = AnswerSubmitSchema.parse({
+      ...(request.body as Record<string, unknown>),
+      sessionId: id,
+      participantToken,
+    });
+    return sessions.answer(input);
+  });
+
+  app.get("/v1/sessions/:id/qna/questions", async (request) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    const query = QnaListQuerySchema.parse(request.query);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return qna.list(id, token, query);
+  });
+
+  app.post(
+    "/v1/sessions/:id/qna/questions",
+    { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const { id } = IdParamsSchema.parse(request.params);
+      const input = CreateQnaQuestionSchema.parse(request.body);
+      const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+      return reply.code(201).send(await qna.createQuestion(id, token, input.body));
+    },
+  );
+
+  app.post(
+    "/v1/sessions/:id/qna/questions/:questionId/replies",
+    { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const { id, questionId } = QnaQuestionParamsSchema.parse(request.params);
+      const input = CreateQnaReplySchema.parse(request.body);
+      const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+      return reply.code(201).send(await qna.createReply(id, questionId, token, input.body));
+    },
+  );
+
+  app.post("/v1/sessions/:id/qna/questions/:questionId/vote", async (request) => {
+    const { id, questionId } = QnaQuestionParamsSchema.parse(request.params);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return qna.setVote(id, questionId, token, true);
+  });
+
+  app.delete("/v1/sessions/:id/qna/questions/:questionId/vote", async (request) => {
+    const { id, questionId } = QnaQuestionParamsSchema.parse(request.params);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return qna.setVote(id, questionId, token, false);
+  });
+
+  app.patch("/v1/sessions/:id/qna/settings", async (request) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = UpdateQnaSettingsSchema.parse(request.body);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    const settings = await qna.updateSettings(id, token, input, request.id);
+    return QnaSettingsSchema.parse(settings);
+  });
+
+  app.patch("/v1/sessions/:id/qna/questions/:questionId", async (request) => {
+    const { id, questionId } = QnaQuestionParamsSchema.parse(request.params);
+    const input = ModerateQnaQuestionSchema.parse(request.body);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return qna.moderateQuestion(id, questionId, token, input, request.id);
+  });
+
+  app.patch("/v1/sessions/:id/qna/replies/:replyId", async (request) => {
+    const { id, replyId } = QnaReplyParamsSchema.parse(request.params);
+    const input = ModerateQnaReplySchema.parse(request.body);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return qna.moderateReply(id, replyId, token, input.status, request.id);
   });
 
   app.delete("/v1/sessions/:id", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
     const { id } = IdParamsSchema.parse(request.params);
     const deleted = await sessions.deleteSession(creator.workspaceId, id);
     if (!deleted) return apiError(reply, 404, "NOT_FOUND", "Session not found", request.id);
@@ -513,7 +1639,11 @@ export async function registerRoutes(
     const { id } = IdParamsSchema.parse(request.params);
     const report = await repository.getReport(creator.workspaceId, id);
     return report
-      ? { report, entitlements: entitlementsFor(creator.plan, config) }
+      ? {
+          report,
+          entitlements: entitlementsFor(creator.plan, config),
+          followup: await followups.getForReport(creator.workspaceId, id),
+        }
       : apiError(reply, 404, "NOT_FOUND", "Report not found", request.id);
   });
 
@@ -523,6 +1653,17 @@ export async function registerRoutes(
     const { id } = IdParamsSchema.parse(request.params);
     const report = await repository.getReport(creator.workspaceId, id);
     if (!report) return apiError(reply, 404, "NOT_FOUND", "Report not found", request.id);
+    if (report.status !== "ready") {
+      return apiError(
+        reply,
+        409,
+        "CONFLICT",
+        report.status === "pending"
+          ? "The report is still being generated; try again shortly"
+          : "Report generation failed; contact support with this report ID",
+        request.id,
+      );
+    }
     if (!entitlementsFor(creator.plan, config).csvExport) {
       return apiError(
         reply,
@@ -538,9 +1679,209 @@ export async function registerRoutes(
       .send(reportCsv(report));
   });
 
+  app.get("/v1/reports/:id.json", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const report = await repository.getReport(creator.workspaceId, id);
+    if (!report) return apiError(reply, 404, "NOT_FOUND", "Report not found", request.id);
+    if (report.status !== "ready") {
+      return apiError(
+        reply,
+        409,
+        "CONFLICT",
+        report.status === "pending"
+          ? "The report is still being generated; try again shortly"
+          : "Report generation failed; contact support with this report ID",
+        request.id,
+      );
+    }
+    if (!entitlementsFor(creator.plan, config).csvExport) {
+      return apiError(
+        reply,
+        402,
+        "ENTITLEMENT_LIMIT",
+        "Report exports are available on the Pro plan",
+        request.id,
+      );
+    }
+    return reply
+      .header("content-type", "application/json; charset=utf-8")
+      .header("content-disposition", `attachment; filename="openround-report-${id}.json"`)
+      .send(JSON.stringify(report, null, 2));
+  });
+
+  app.post("/v1/reports/:id/followups", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    if (!entitlementsFor(creator.plan, config).followups) {
+      return apiError(
+        reply,
+        402,
+        "ENTITLEMENT_LIMIT",
+        "Self-paced follow-up is available on the Pro plan",
+        request.id,
+      );
+    }
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = CreateFollowupSchema.parse(request.body);
+    const created = await followups.create(creator, id, input);
+    const link = (token: string) =>
+      `${config.WEB_ORIGIN}/followup/${created.followup.id}#token=${encodeURIComponent(token)}`;
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "followup.create",
+      targetType: "followup",
+      targetId: created.followup.id,
+      requestId: request.id,
+      metadata: {
+        sourceReportId: id,
+        conceptKeys: created.followup.conceptKeys,
+        participantPasses: created.personalAccess.length,
+        timeMode: created.followup.timeMode,
+      },
+    });
+    return reply.code(201).send({
+      followup: created.followup,
+      genericUrl: link(created.genericToken),
+      personalAccess: created.personalAccess.map((access) => ({
+        ...access,
+        url: link(access.token!),
+      })),
+    });
+  });
+
+  app.get("/v1/followups/:id", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { id } = FollowupParamsSchema.parse(request.params);
+    return followups.getForCreator(creator.workspaceId, id);
+  });
+
+  app.post("/v1/followups/:id/accommodation-passes", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id } = FollowupParamsSchema.parse(request.params);
+    const input = CreateAccommodationPassSchema.parse(request.body);
+    const created = await followups.createAccommodation(creator, id, input);
+    const url = `${config.WEB_ORIGIN}/followup/${id}#token=${encodeURIComponent(created.access.token!)}`;
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "followup.accommodation_pass.create",
+      targetType: "followup_access_token",
+      targetId: created.access.id,
+      requestId: request.id,
+      metadata: { followupId: id, timeMultiplier: created.access.timeMultiplier },
+    });
+    return reply.code(201).send({ access: { ...created.access, url } });
+  });
+
+  app.delete("/v1/followups/:id/access/:accessId", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id, accessId } = FollowupAccessParamsSchema.parse(request.params);
+    await followups.revokeAccess(creator.workspaceId, id, accessId);
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "followup.access.revoke",
+      targetType: "followup_access_token",
+      targetId: accessId,
+      requestId: request.id,
+      metadata: { followupId: id },
+    });
+    return reply.code(204).send();
+  });
+
+  app.post("/v1/followups/:id/close", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id } = FollowupParamsSchema.parse(request.params);
+    await followups.close(creator.workspaceId, id);
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "followup.close",
+      targetType: "followup",
+      targetId: id,
+      requestId: request.id,
+    });
+    return reply.code(204).send();
+  });
+
+  app.post(
+    "/v1/followups/:id/start",
+    { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+      if (!token)
+        return apiError(reply, 401, "UNAUTHORIZED", "Follow-up token required", request.id);
+      const { id } = FollowupParamsSchema.parse(request.params);
+      const input = StartFollowupSchema.parse(request.body ?? {});
+      const result = await followups.start(id, token, input.attemptToken);
+      return reply.code(201).send(result);
+    },
+  );
+
+  app.get(
+    "/v1/followups/:id/snapshot",
+    { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+      if (!token) return apiError(reply, 401, "UNAUTHORIZED", "Attempt token required", request.id);
+      const { id } = FollowupParamsSchema.parse(request.params);
+      return { snapshot: await followups.resume(id, token) };
+    },
+  );
+
+  app.post(
+    "/v1/followups/:id/answers",
+    { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+      if (!token) return apiError(reply, 401, "UNAUTHORIZED", "Attempt token required", request.id);
+      const { id } = FollowupParamsSchema.parse(request.params);
+      const input = FollowupAnswerSubmitSchema.parse(request.body);
+      return { snapshot: await followups.answer(id, token, input) };
+    },
+  );
+
+  app.post(
+    "/v1/followups/:id/advance",
+    { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+      if (!token) return apiError(reply, 401, "UNAUTHORIZED", "Attempt token required", request.id);
+      const { id } = FollowupParamsSchema.parse(request.params);
+      return { snapshot: await followups.advance(id, token) };
+    },
+  );
+
+  app.get("/v1/followups/:id/media/:mediaId", async (request, reply) => {
+    const { id, mediaId } = FollowupMediaParamsSchema.parse(request.params);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    if (!token) return apiError(reply, 401, "UNAUTHORIZED", "Attempt token required", request.id);
+    const workspaceId = await followups.authorizeMedia(id, token, mediaId);
+    const asset = await repository.getMediaAsset(workspaceId, mediaId);
+    if (!asset || asset.scanStatus !== "clean") {
+      return apiError(reply, 404, "NOT_FOUND", "Media not found", request.id);
+    }
+    return {
+      media: { id: asset.id, scanStatus: asset.scanStatus, altText: asset.altText },
+      downloadUrl: await storage.createDownloadUrl(asset),
+    };
+  });
+
   app.post("/v1/media", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
     if (!(await operationalFeatures()).effective.mediaUploads)
       return apiError(
         reply,
@@ -582,6 +1923,7 @@ export async function registerRoutes(
   app.post("/v1/media/:id/complete", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
     const { id } = IdParamsSchema.parse(request.params);
     const asset = await repository.getMediaAsset(creator.workspaceId, id);
     if (!asset) return apiError(reply, 404, "NOT_FOUND", "Media not found", request.id);
@@ -662,6 +2004,7 @@ export async function registerRoutes(
   app.post("/v1/billing/checkout", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
     if (!stripe)
       return apiError(
         reply,
@@ -724,6 +2067,7 @@ export async function registerRoutes(
   app.post("/v1/billing/portal", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
     if (!stripe)
       return apiError(
         reply,
@@ -819,13 +2163,93 @@ export async function registerRoutes(
       .send(data);
   });
 
+  app.get("/v1/workspace/audit-export", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner"], reply, request.id) !== true) return;
+    const policy = await repository.getInstitutionPolicy(creator.workspaceId);
+    if (policy.contractStatus === "disabled" || !policy.capabilities.auditExports) {
+      return apiError(
+        reply,
+        403,
+        "INSTITUTION_NOT_ENABLED",
+        "Institution audit export is not approved for this workspace",
+        request.id,
+      );
+    }
+    const query = z
+      .object({
+        since: z
+          .string()
+          .datetime({ offset: true })
+          .transform((value) => new Date(value))
+          .optional(),
+      })
+      .parse(request.query);
+    const workspaces = await repository.listWorkspaces(creator.userId);
+    const workspace = workspaces.find((candidate) => candidate.id === creator.workspaceId);
+    const maximumEvents = 10_000;
+    const events = await repository.listAuditEvents(
+      creator.workspaceId,
+      query.since ?? null,
+      maximumEvents + 1,
+    );
+    const truncated = events.length > maximumEvents;
+    const exportedEvents = events.slice(0, maximumEvents).map((event) => ({
+      ...event,
+      createdAt: event.createdAt.toISOString(),
+    }));
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "institution.audit.export",
+      targetType: "workspace",
+      targetId: creator.workspaceId,
+      requestId: request.id,
+      metadata: {
+        since: query.since?.toISOString() ?? null,
+        exportedCount: exportedEvents.length,
+        truncated,
+      },
+    });
+    return reply
+      .header("cache-control", "no-store")
+      .header("content-type", "application/json; charset=utf-8")
+      .header(
+        "content-disposition",
+        `attachment; filename="openround-audit-${creator.workspaceId}.json"`,
+      )
+      .send({
+        format: "openround.audit",
+        schemaVersion: 1,
+        exportedAt: new Date().toISOString(),
+        workspace: {
+          id: creator.workspaceId,
+          name: workspace?.name ?? "OpenRound workspace",
+          homeRegion: workspace?.homeRegion ?? null,
+        },
+        range: { since: query.since?.toISOString() ?? null, truncated, maximumEvents },
+        events: exportedEvents,
+      });
+  });
+
   app.delete("/v1/account", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
     const { confirmation } = z.object({ confirmation: z.literal("DELETE") }).parse(request.body);
     void confirmation;
-    const sessionIds = await repository.listSessionIds(creator.workspaceId);
-    const mediaAssets = await repository.listMediaAssets(creator.workspaceId);
+    const ownedWorkspaces = (await repository.listWorkspaces(creator.userId)).filter(
+      (workspace) => workspace.role === "owner",
+    );
+    const ownedWorkspaceData = await Promise.all(
+      ownedWorkspaces.map(async (workspace) => ({
+        workspace,
+        sessionIds: await repository.listSessionIds(workspace.id),
+        mediaAssets: await repository.listMediaAssets(workspace.id),
+      })),
+    );
+    const sessionIds = ownedWorkspaceData.flatMap((item) => item.sessionIds);
+    const mediaAssets = ownedWorkspaceData.flatMap((item) => item.mediaAssets);
     if (mediaAssets.length > 0 && !storage.configured) {
       return apiError(
         reply,
@@ -847,15 +2271,19 @@ export async function registerRoutes(
         request.id,
       );
     }
-    await repository.recordAudit({
-      workspaceId: creator.workspaceId,
-      actorId: creator.userId,
-      action: "account.delete",
-      targetType: "account",
-      targetId: creator.userId,
-      requestId: request.id,
-      metadata: { mediaObjectsRemoved: mediaAssets.length },
-    });
+    await Promise.all(
+      ownedWorkspaceData.map(({ workspace, mediaAssets: workspaceMedia }) =>
+        repository.recordAudit({
+          workspaceId: workspace.id,
+          actorId: creator.userId,
+          action: "account.delete",
+          targetType: "account",
+          targetId: creator.userId,
+          requestId: request.id,
+          metadata: { mediaObjectsRemoved: workspaceMedia.length },
+        }),
+      ),
+    );
     await repository.deleteAccount(creator.userId);
     auth.clearSessionCookie(reply);
     return reply.code(204).send();
@@ -875,6 +2303,73 @@ export async function registerRoutes(
     const input = OperationalFeaturesUpdateSchema.parse(request.body);
     await repository.updateOperationalFeatures(input, request.id);
     return operationalFeatures();
+  });
+
+  app.put("/v1/admin/workspaces/:id/institution-policy", async (request, reply) => {
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "");
+    if (!config.ADMIN_TOKEN || token !== config.ADMIN_TOKEN)
+      return apiError(reply, 401, "UNAUTHORIZED", "Administrator token required", request.id);
+    const { id } = WorkspaceParamsSchema.parse(request.params);
+    const input = UpdateWorkspaceInstitutionPolicySchema.parse(request.body);
+    const policy = {
+      workspaceId: id,
+      ...input,
+      k12Enabled: false as const,
+      updatedAt: new Date(),
+    };
+    await repository.updateInstitutionPolicy(policy, request.id);
+    return WorkspaceInstitutionPolicySchema.parse({
+      ...policy,
+      updatedAt: policy.updatedAt.toISOString(),
+    });
+  });
+
+  app.post("/v1/admin/workspaces/:id/lti-registrations", async (request, reply) => {
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "");
+    if (!config.ADMIN_TOKEN || token !== config.ADMIN_TOKEN)
+      return apiError(reply, 401, "UNAUTHORIZED", "Administrator token required", request.id);
+    const { id } = WorkspaceParamsSchema.parse(request.params);
+    const input = UpsertLtiRegistrationSchema.parse(request.body);
+    const registration = await lti.upsertRegistration(id, input);
+    await repository.recordAudit({
+      workspaceId: id,
+      actorId: null,
+      action: "lti.registration.create",
+      targetType: "lti_registration",
+      targetId: registration.id,
+      requestId: request.id,
+      metadata: { issuer: registration.issuer, deploymentId: registration.deploymentId },
+    });
+    return reply.code(201).send(
+      LtiRegistrationSchema.parse({
+        ...registration,
+        createdAt: registration.createdAt.toISOString(),
+        updatedAt: registration.updatedAt.toISOString(),
+      }),
+    );
+  });
+
+  app.put("/v1/admin/workspaces/:id/lti-registrations/:registrationId", async (request, reply) => {
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "");
+    if (!config.ADMIN_TOKEN || token !== config.ADMIN_TOKEN)
+      return apiError(reply, 401, "UNAUTHORIZED", "Administrator token required", request.id);
+    const { id, registrationId } = LtiRegistrationParamsSchema.parse(request.params);
+    const input = UpsertLtiRegistrationSchema.parse(request.body);
+    const registration = await lti.upsertRegistration(id, input, registrationId);
+    await repository.recordAudit({
+      workspaceId: id,
+      actorId: null,
+      action: "lti.registration.update",
+      targetType: "lti_registration",
+      targetId: registration.id,
+      requestId: request.id,
+      metadata: { issuer: registration.issuer, deploymentId: registration.deploymentId },
+    });
+    return LtiRegistrationSchema.parse({
+      ...registration,
+      createdAt: registration.createdAt.toISOString(),
+      updatedAt: registration.updatedAt.toISOString(),
+    });
   });
 
   app.post("/v1/admin/retention/run", async (request, reply) => {

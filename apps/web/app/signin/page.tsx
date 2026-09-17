@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
+import type { OidcStatus } from "@openround/contracts";
 import { Brand } from "../../components/brand";
 import { apiFetch, humanError } from "../../lib/api";
 
@@ -13,8 +14,22 @@ export default function SignInPage() {
   const [debugUrl, setDebugUrl] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [acceptPolicies, setAcceptPolicies] = useState(false);
+  const [oidcStatus, setOidcStatus] = useState<OidcStatus | null>(null);
+  const [federatedBusy, setFederatedBusy] = useState(false);
+  const [returnTo, setReturnTo] = useState<string | null>(null);
 
-  useEffect(() => setHydrated(true), []);
+  useEffect(() => {
+    setHydrated(true);
+    const workspaceId = new URLSearchParams(window.location.search).get("workspaceId");
+    const requestedReturn = new URLSearchParams(window.location.search).get("returnTo");
+    if (requestedReturn?.startsWith("/") && !requestedReturn.startsWith("//")) {
+      setReturnTo(requestedReturn);
+    }
+    if (!workspaceId) return;
+    apiFetch<OidcStatus>(`/v1/auth/oidc/status?workspaceId=${encodeURIComponent(workspaceId)}`)
+      .then(setOidcStatus)
+      .catch(() => setOidcStatus(null));
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -25,7 +40,12 @@ export default function SignInPage() {
         "/v1/auth/magic-link",
         {
           method: "POST",
-          body: JSON.stringify({ email, segment, acceptPolicies }),
+          body: JSON.stringify({
+            email,
+            segment,
+            acceptPolicies,
+            ...(returnTo ? { returnTo } : {}),
+          }),
         },
       );
       setDebugUrl(result.debugUrl ?? "");
@@ -33,6 +53,22 @@ export default function SignInPage() {
     } catch (caught) {
       setError(humanError(caught));
       setStatus("idle");
+    }
+  }
+
+  async function signInWithInstitution() {
+    if (!oidcStatus?.enabled) return;
+    setFederatedBusy(true);
+    setError("");
+    try {
+      const result = await apiFetch<{ authorizationUrl: string }>("/v1/auth/oidc/start", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId: oidcStatus.workspaceId, mode: "login" }),
+      });
+      window.location.assign(result.authorizationUrl);
+    } catch (caught) {
+      setError(humanError(caught));
+      setFederatedBusy(false);
     }
   }
 
@@ -51,6 +87,27 @@ export default function SignInPage() {
           <p className="muted">
             We will send a single-use link. No password or memory puzzle required.
           </p>
+          {oidcStatus?.enabled ? (
+            <div className="institution-signin">
+              <button
+                className="button full-width"
+                disabled={federatedBusy}
+                onClick={() => void signInWithInstitution()}
+                type="button"
+              >
+                {federatedBusy
+                  ? "Opening institution sign-in…"
+                  : `Continue with ${oidcStatus.providerName}`}
+              </button>
+              <p className="muted">
+                This works after you explicitly link your institution identity in OpenRound. An
+                email match alone will never link accounts.
+              </p>
+              <div className="auth-divider" aria-hidden="true">
+                <span>or use email</span>
+              </div>
+            </div>
+          ) : null}
           <form onSubmit={submit}>
             <fieldset className="field" style={{ border: 0, margin: 0, padding: 0 }}>
               <legend className="field-label" style={{ marginBottom: 8 }}>

@@ -1,6 +1,7 @@
 # OpenRound quick start
 
-This guide starts the complete community stack and walks through one quiz round. The normal path takes about ten minutes after container images are available.
+This guide starts the complete community stack and walks through one live checkpoint round. The
+normal path takes about ten minutes after container images are available.
 
 ## What you need
 
@@ -33,7 +34,7 @@ Open:
 
 ## 2. Sign in as a creator
 
-1. Select **Create a free quiz**.
+1. Select **Create a free checkpoint set**.
 2. Choose **Workplace learning** or **Education**. This sets the session defaults described in the [user guide](user-guide.md#segment-defaults).
 3. Enter any valid development email address.
 4. Accept the draft Terms and Privacy notice, then select **Send sign-in link**.
@@ -56,20 +57,22 @@ docker compose up --build -d
 Do not use this shortcut while the product is reachable by other devices. Return to the secure
 default by running the normal `docker compose up -d` command again.
 
-## 3. Create and publish a quiz
+## 3. Create and publish a checkpoint set
 
-1. On **Your quizzes**, enter a title and select **Create quiz**.
-2. Add at least one **Multiple choice** or **True or false** question.
-3. Enter the question, complete every answer label, and select exactly one correct answer.
-4. Set the timer, points, and optional explanation.
-5. Wait for the header to show **Saved**, select **Preview**, and step through the participant view.
-6. Return to the editor, select **Publish**, then return to **Dashboard**.
+1. On **Your checkpoint sets**, enter a title and select **Create checkpoint set**.
+2. Add a single-select, true/false, multiple-select, numeric, rating, or poll checkpoint.
+3. Enter the prompt and complete the response-specific answer settings.
+4. For a diagnostic checkpoint, optionally collect confidence, add a concept key, and create a
+   linked recheck.
+5. Set the timer, points, optional explanation, and private misconception feedback.
+6. Wait for the header to show **Saved**, select **Preview**, and step through the participant view.
+7. Return to the editor, select **Publish**, then return to **Dashboard**.
 
 Publishing creates an immutable version for future sessions. You can keep editing the draft afterward; a running session continues to use the version it started with.
 
 ## 4. Host and join a round
 
-1. On the published quiz card, select **Host**.
+1. On the published checkpoint-set card, select **Host**.
 2. Review the audience, late-join, scoring, result, and nickname settings, then select **Create live
    session**.
 3. Leave the host tab open. It contains the session-scoped host credential.
@@ -77,10 +80,14 @@ Publishing creates an immutable version for future sessions. You can keep editin
 5. Enter the seven-digit code shown by the host. Enter a nickname when custom nicknames are enabled; education sessions assign a friendly alias.
 6. Confirm the participant appears in the host lobby, then select **Start round**.
 7. Answer on the participant device. The participant should see **Answer received and saved** before reveal.
-8. As host, use **Lock answers**, **Reveal answer**, and **Next question**. **Pause**, **Resume**, **Show standings**, and **End session** appear when they are valid for the current phase.
-9. Finish the last question and select **Open report**.
+8. As host, use **Lock answers**, inspect the deterministic insight card, record an intervention,
+   and select **Reveal answer**.
+9. Open the linked recheck or same-checkpoint revote before continuing. **Pause**, **Resume**,
+   **Show standings**, and **End session** appear only when valid for the current phase.
+10. Finish the last recovery branch and select **Open report**.
 
-The report shows participation, accuracy, difficult questions, participant outcomes, and a UTF-8 CSV download.
+The report shows initial evidence, confidence, misconceptions, interventions, linked recovery,
+revote improvement, unresolved concepts, participant outcomes, Q&A, and versioned exports.
 
 ## Join from phones, tablets, and other computers
 
@@ -124,6 +131,45 @@ docker compose -f compose.yaml -f compose.media.yaml ps
 ```
 
 After the scanner is healthy, the quiz editor accepts JPEG, PNG, and WebP images up to 10 MB. Enter meaningful instructional alt text before selecting a file. Files are private and unavailable until they pass validation and malware scanning.
+
+## Optional: enable source-grounded authoring
+
+The assistant is disabled by default. A community operator may connect an approved
+OpenAI-compatible chat-completions endpoint. Review that provider's privacy, retention, residency,
+security, cost, and model terms before sending private documents.
+
+Set these values in a local `.env` file (do not commit the API key):
+
+```dotenv
+AUTHORING_AI_MODE=openai_compatible
+AUTHORING_AI_ENDPOINT=https://provider.example/v1/chat/completions
+AUTHORING_AI_API_KEY=replace-with-a-provider-secret
+AUTHORING_AI_MODEL=approved-model-name
+AUTHORING_AI_PROVIDER_NAME=approved-provider
+```
+
+Then rebuild the server:
+
+```bash
+docker compose up --build -d server web caddy
+```
+
+On the dashboard, expand **Draft checkpoints from a trusted source**. Use pasted text or a PDF,
+DOCX, or PPTX file no larger than 6 MB. The result is a cited proposal; select **Create unpublished
+review draft**, verify it in the editor, and publish manually. The worker never receives live
+participant responses or session data. Leave `AUTHORING_AI_MODE=disabled` to guarantee that no
+authoring source is sent to a model.
+
+## Optional: enable institution integration in a test environment
+
+Generic creator OIDC and LTI 1.3 instructor launch/Deep Linking are disabled by default. They
+require deployment secrets, an operator-granted workspace policy, and provider/platform
+registration; changing environment variables alone does not enable a workspace. Learner LTI,
+NRPS/AGS, managed SAML/SCIM, and K–12 remain unavailable.
+
+Follow the [institution integration guide](institution-integrations.md) to configure callback
+URLs, generate a tool signing key, grant the policy, register an LMS, test replay/revocation, and
+record the external pilot evidence. Do not use the example Compose secrets for a real institution.
 
 ## Day-to-day commands
 

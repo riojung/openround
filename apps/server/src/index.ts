@@ -7,13 +7,18 @@ const [{ buildApp }, { attachRealtime }] = await Promise.all([
   import("./app.js"),
   import("./realtime.js"),
 ]);
-const { app, sessions, retention, metrics } = await buildApp(config);
+const { app, sessions, retention, reportWorker, authoringWorker, metrics } = await buildApp(config);
 const realtime = await attachRealtime(app.server, sessions, config, metrics);
 const retentionTimer = setInterval(() => {
   void retention
     .run(new Date())
     .then((result) => {
-      if (result.expiredLiveSessions > 0 || result.purgedSessions > 0 || result.purgedMedia > 0)
+      if (
+        result.expiredLiveSessions > 0 ||
+        result.purgedSessions > 0 ||
+        result.purgedAuditEvents > 0 ||
+        result.purgedMedia > 0
+      )
         app.log.info(result, "retention purge completed");
       if (result.failedMedia > 0)
         app.log.warn(result, "retention media cleanup requires attention");
@@ -22,9 +27,35 @@ const retentionTimer = setInterval(() => {
 }, config.RETENTION_INTERVAL_MINUTES * 60_000);
 retentionTimer.unref();
 
+const reportTimer = setInterval(() => {
+  void reportWorker
+    .runUntilIdle()
+    .then((results) => {
+      const completed = results.filter((result) => result === "completed").length;
+      if (completed > 0) app.log.info({ completed }, "report generation completed");
+      if (results.includes("failed")) app.log.error("report generation exhausted its retries");
+    })
+    .catch((error: unknown) => app.log.error({ err: error }, "report worker failed"));
+}, config.REPORT_WORKER_INTERVAL_MS);
+reportTimer.unref();
+
+const authoringTimer = setInterval(() => {
+  void authoringWorker
+    .runUntilIdle()
+    .then((results) => {
+      const completed = results.filter((result) => result === "completed").length;
+      if (completed > 0) app.log.info({ completed }, "authoring jobs completed");
+      if (results.includes("failed")) app.log.warn("an authoring job failed");
+    })
+    .catch((error: unknown) => app.log.error({ err: error }, "authoring worker failed"));
+}, config.AUTHORING_WORKER_INTERVAL_MS);
+authoringTimer.unref();
+
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, "graceful shutdown started");
   clearInterval(retentionTimer);
+  clearInterval(reportTimer);
+  clearInterval(authoringTimer);
   await realtime.close();
   await app.close();
   await telemetry.shutdown();

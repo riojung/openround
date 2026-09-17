@@ -50,6 +50,7 @@ describe("retention service", () => {
     await expect(retention.run(now)).resolves.toEqual({
       expiredLiveSessions: 0,
       purgedSessions: 0,
+      purgedAuditEvents: 0,
       purgedMedia: 2,
       failedMedia: 0,
     });
@@ -132,6 +133,7 @@ describe("retention service", () => {
     await expect(retention.run(now)).resolves.toEqual({
       expiredLiveSessions: 1,
       purgedSessions: 0,
+      purgedAuditEvents: 0,
       purgedMedia: 0,
       failedMedia: 0,
     });
@@ -142,11 +144,50 @@ describe("retention service", () => {
     await expect(retention.run(new Date(retentionExpiresAt.getTime() + 1))).resolves.toEqual({
       expiredLiveSessions: 0,
       purgedSessions: 1,
+      purgedAuditEvents: 0,
       purgedMedia: 0,
       failedMedia: 0,
     });
     expect(await repository.getSessionById(sessionId)).toBeNull();
     expect(repository.reports.size).toBe(0);
     expect(invalidated).toEqual([[sessionId], [sessionId]]);
+  });
+
+  it("purges audit events at the configured retention boundary", async () => {
+    const repository = new MemoryRepository();
+    const workspaceId = randomUUID();
+    const now = new Date("2026-09-14T12:00:00.000Z");
+    await repository.recordAudit({
+      workspaceId,
+      actorId: randomUUID(),
+      action: "checkpoint.updated",
+      targetType: "quiz",
+      targetId: randomUUID(),
+      requestId: randomUUID(),
+    });
+    repository.audits[0]!.createdAt = new Date(now.getTime() - 366 * 24 * 60 * 60_000);
+    await repository.recordAudit({
+      workspaceId,
+      actorId: randomUUID(),
+      action: "checkpoint.published",
+      targetType: "quiz",
+      targetId: randomUUID(),
+      requestId: randomUUID(),
+    });
+    repository.audits[1]!.createdAt = now;
+    const retention = new RetentionService(
+      repository,
+      { configured: true, deleteAsset: async () => undefined },
+      24,
+      undefined,
+      undefined,
+      365,
+    );
+
+    const result = await retention.run(now);
+
+    expect(result.purgedAuditEvents).toBe(1);
+    expect(repository.audits).toHaveLength(1);
+    expect(repository.audits[0]!.action).toBe("checkpoint.published");
   });
 });

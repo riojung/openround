@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import type { PublicFeatures } from "@openround/contracts";
 import { apiFetch } from "../lib/api";
@@ -27,6 +27,7 @@ export function JoinAccess({
   const [candidate, setCandidate] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
   const [addressError, setAddressError] = useState("");
+  const qrFrame = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -70,6 +71,69 @@ export function JoinAccess({
     }
   }
 
+  function serializedQr() {
+    const source = qrFrame.current?.querySelector("svg");
+    if (!source) return null;
+    const svg = source.cloneNode(true) as SVGSVGElement;
+    svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    return new XMLSerializer().serializeToString(svg);
+  }
+
+  function triggerDownload(url: string, extension: "svg" | "png") {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `openround-${code}-qr.${extension}`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }
+
+  function downloadSvg() {
+    const svg = serializedQr();
+    if (!svg) return;
+    const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+    triggerDownload(url, "svg");
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setCopyStatus("QR code downloaded as SVG.");
+  }
+
+  function downloadPng() {
+    const svg = serializedQr();
+    if (!svg) return;
+    const sourceUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1024;
+      canvas.height = 1024;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        URL.revokeObjectURL(sourceUrl);
+        setCopyStatus("PNG conversion is not supported in this browser. Download SVG instead.");
+        return;
+      }
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        URL.revokeObjectURL(sourceUrl);
+        if (!blob) {
+          setCopyStatus("PNG conversion failed. Download SVG instead.");
+          return;
+        }
+        const pngUrl = URL.createObjectURL(blob);
+        triggerDownload(pngUrl, "png");
+        window.setTimeout(() => URL.revokeObjectURL(pngUrl), 0);
+        setCopyStatus("QR code downloaded as PNG.");
+      }, "image/png");
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(sourceUrl);
+      setCopyStatus("PNG conversion failed. Download SVG instead.");
+    };
+    image.src = sourceUrl;
+  }
+
   function updateAddress(event: FormEvent) {
     event.preventDefault();
     const normalized = normalizeJoinBase(candidate);
@@ -97,7 +161,7 @@ export function JoinAccess({
       <p className="eyebrow">Scan to join</p>
       {joinUrl ? (
         <>
-          <div className="join-qr-frame">
+          <div className="join-qr-frame" ref={qrFrame}>
             <QRCodeSVG
               aria-label={`QR code for round ${code.split("").join(" ")}`}
               bgColor="#ffffff"
@@ -117,13 +181,21 @@ export function JoinAccess({
             {joinUrl}
           </a>
           {editable ? (
-            <button
-              className="button-quiet small-button"
-              onClick={() => void copyJoinLink()}
-              type="button"
-            >
-              Copy join link
-            </button>
+            <div className="button-row join-asset-actions">
+              <button
+                className="button-quiet small-button"
+                onClick={() => void copyJoinLink()}
+                type="button"
+              >
+                Copy join link
+              </button>
+              <button className="button-quiet small-button" onClick={downloadSvg} type="button">
+                Download QR SVG
+              </button>
+              <button className="button-quiet small-button" onClick={downloadPng} type="button">
+                Download QR PNG
+              </button>
+            </div>
           ) : null}
         </>
       ) : (

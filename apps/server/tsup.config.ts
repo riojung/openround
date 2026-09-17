@@ -1,7 +1,13 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/migrate.ts", "src/config-check.ts"],
+  entry: [
+    "src/index.ts",
+    "src/migrate.ts",
+    "src/config-check.ts",
+    "src/source-extraction.ts",
+    "src/source-extraction-worker.ts",
+  ],
   format: ["esm"],
   platform: "node",
   target: "node22",

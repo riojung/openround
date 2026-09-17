@@ -188,6 +188,21 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private readonly authoringJobs = new Counter({
+    name: "openround_authoring_jobs_total",
+    help: "Source-grounded authoring job attempts by source type and outcome",
+    labelNames: ["source_type", "outcome"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly authoringDuration = new Histogram({
+    name: "openround_authoring_job_duration_seconds",
+    help: "Duration of one source extraction and provider generation attempt",
+    labelNames: ["source_type", "outcome"] as const,
+    buckets: [0.1, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120],
+    registers: [this.registry],
+  });
+
   private readonly databaseConnections = new Gauge({
     name: "openround_database_connections",
     help: "PostgreSQL pool connections by state",
@@ -297,6 +312,7 @@ export class MetricsService {
   recordRetention(result: {
     expiredLiveSessions: number;
     purgedSessions: number;
+    purgedAuditEvents: number;
     purgedMedia: number;
     failedMedia: number;
   }) {
@@ -307,6 +323,8 @@ export class MetricsService {
       );
     if (result.purgedSessions > 0)
       this.retention.inc({ resource: "session", outcome: "deleted" }, result.purgedSessions);
+    if (result.purgedAuditEvents > 0)
+      this.retention.inc({ resource: "audit_event", outcome: "deleted" }, result.purgedAuditEvents);
     if (result.purgedMedia > 0)
       this.retention.inc({ resource: "media", outcome: "deleted" }, result.purgedMedia);
     if (result.failedMedia > 0)
@@ -316,6 +334,11 @@ export class MetricsService {
 
   reportGenerated() {
     this.reports.inc();
+  }
+
+  recordAuthoringJob(sourceType: string, outcome: string, seconds: number) {
+    this.authoringJobs.inc({ source_type: sourceType, outcome });
+    this.authoringDuration.observe({ source_type: sourceType, outcome }, Math.max(0, seconds));
   }
 
   async render() {

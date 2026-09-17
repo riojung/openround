@@ -70,6 +70,49 @@ afterEach(() => {
 });
 
 describe("session service ordering", () => {
+  it("does not admit anonymous code-entry participants when institution identity is required", async () => {
+    const repository = new MemoryRepository();
+    const cache = new MemorySessionCache();
+    const service = new SessionService(repository, cache, config, new MetricsService());
+    const { quiz } = quizFixture();
+    const state = createGameState({
+      sessionId: randomUUID(),
+      code: "7654321",
+      quiz,
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    const stored = storedSession({ state, hostToken: "host-token-long-enough-for-test" });
+    await repository.createSession(stored);
+    repository.institutionPolicies.set(stored.workspaceId, {
+      workspaceId: stored.workspaceId,
+      contractStatus: "pilot",
+      identityRequirement: "institution",
+      capabilities: {
+        oidc: false,
+        managedSso: false,
+        scim: false,
+        lti: true,
+        nrps: false,
+        ags: false,
+        auditExports: true,
+        residencyControls: true,
+      },
+      k12Enabled: false,
+      updatedAt: new Date(),
+    });
+
+    await expect(
+      service.join({ code: "7654321", nickname: "Anonymous learner" }),
+    ).rejects.toMatchObject({ code: "INSTITUTION_AUTH_REQUIRED" });
+    service.close();
+  });
+
   it("accepts an answer received before the deadline even when credential lookup finishes later", async () => {
     vi.useFakeTimers();
     const receivedAtMs = new Date("2026-09-15T12:00:00.000Z").getTime();
@@ -153,6 +196,116 @@ describe("session service ordering", () => {
     service.close();
   });
 
+  it("rejects an idempotency key reused for a different round", async () => {
+    const repository = new MemoryRepository();
+    const service = new SessionService(
+      repository,
+      new MemorySessionCache(),
+      config,
+      new MetricsService(),
+    );
+    const first = quizFixture();
+    const secondCorrectChoiceId = randomUUID();
+    const secondQuestion = {
+      ...structuredClone(first.quiz.questions[0]!),
+      id: randomUUID(),
+      prompt: "A different checkpoint needs a different idempotency key.",
+      choices: [
+        { id: secondCorrectChoiceId, label: "True", isCorrect: true },
+        { id: randomUUID(), label: "False", isCorrect: false },
+      ],
+    };
+    const sessionId = randomUUID();
+    const participantId = randomUUID();
+    const participantToken = "participant-idempotency-token-long-enough";
+    const hostToken = "host-idempotency-token-long-enough";
+    let state = createGameState({
+      sessionId,
+      code: "2345678",
+      quiz: { ...first.quiz, questions: [first.quiz.questions[0]!, secondQuestion] },
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    state = addParticipant(state, {
+      id: participantId,
+      nickname: "Retry tester",
+      score: 0,
+      correctCount: 0,
+      acceptedResponseMs: 0,
+      connected: true,
+      kicked: false,
+    }).state;
+    state = applyHostCommand(state, {
+      commandId: randomUUID(),
+      expectedVersion: state.version,
+      action: "start",
+      nowMs: Date.now(),
+      newRoundId: randomUUID,
+    }).state;
+    await repository.createSession(storedSession({ state, hostToken }));
+    await repository.createParticipant({
+      id: participantId,
+      sessionId,
+      nickname: "Retry tester",
+      tokenHash: hashToken(participantToken),
+      status: "active",
+      joinedAt: new Date(),
+    });
+    const reusedKey = "same-key-must-not-cross-rounds";
+    await expect(
+      service.answer({
+        sessionId,
+        participantToken,
+        roundId: state.roundId!,
+        response: { kind: "choice", choiceIds: [first.correctChoiceId] },
+        idempotencyKey: reusedKey,
+      }),
+    ).resolves.toMatchObject({ accepted: true, duplicate: false });
+
+    let snapshot = await service.hostCommand({
+      sessionId,
+      hostToken,
+      commandId: randomUUID(),
+      expectedVersion: (await repository.getSessionById(sessionId))!.state.version,
+      action: "lock",
+    });
+    snapshot = await service.hostCommand({
+      sessionId,
+      hostToken,
+      commandId: randomUUID(),
+      expectedVersion: snapshot.version,
+      action: "reveal",
+    });
+    snapshot = await service.hostCommand({
+      sessionId,
+      hostToken,
+      commandId: randomUUID(),
+      expectedVersion: snapshot.version,
+      action: "next",
+    });
+
+    await expect(
+      service.answer({
+        sessionId,
+        participantToken,
+        roundId: snapshot.roundId!,
+        response: { kind: "choice", choiceIds: [secondCorrectChoiceId] },
+        idempotencyKey: reusedKey,
+      }),
+    ).resolves.toMatchObject({
+      accepted: false,
+      duplicate: false,
+      code: "ANSWER_INVALID",
+    });
+    expect(repository.answers).toHaveLength(1);
+    service.close();
+  });
+
   it("rolls final state back when its report cannot be persisted, then succeeds on retry", async () => {
     class FailOnceFinalizationRepository extends MemoryRepository {
       private failFinalization = true;
@@ -224,7 +377,8 @@ describe("session service ordering", () => {
     expect((await repository.getSessionById(stored.id))?.state.phase).toBe("finished");
     expect(await repository.getReportBySession(stored.workspaceId, stored.id)).toMatchObject({
       sessionId: stored.id,
-      status: "ready",
+      status: "pending",
+      schemaVersion: 2,
     });
     service.close();
   });

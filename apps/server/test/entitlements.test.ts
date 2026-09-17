@@ -16,6 +16,8 @@ describe("plan entitlements", () => {
       reportRetentionDays: 30,
       csvExport: false,
       brandTheme: false,
+      followups: false,
+      authoringJobsPerMonth: 3,
     });
     expect(entitlementsFor("pro", config)).toEqual({
       plan: "pro",
@@ -24,6 +26,8 @@ describe("plan entitlements", () => {
       reportRetentionDays: 365,
       csvExport: true,
       brandTheme: true,
+      followups: true,
+      authoringJobsPerMonth: 100,
     });
   });
 
@@ -43,6 +47,8 @@ describe("plan entitlements", () => {
       reportRetentionDays: 730,
       csvExport: true,
       brandTheme: true,
+      followups: true,
+      authoringJobsPerMonth: null,
     });
     expect(retentionExpiry(new Date("2026-01-01T00:00:00.000Z"), entitlements).toISOString()).toBe(
       "2028-01-01T00:00:00.000Z",

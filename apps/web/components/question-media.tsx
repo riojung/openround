@@ -8,11 +8,13 @@ export function QuestionMedia({
   mediaId,
   altText,
   credential,
+  mode = "live",
 }: {
   sessionId: string;
   mediaId: string | null;
   altText: string | null;
   credential: string;
+  mode?: "live" | "followup";
 }) {
   const [source, setSource] = useState("");
 
@@ -22,7 +24,11 @@ export function QuestionMedia({
       return;
     }
     let active = true;
-    apiFetch<{ downloadUrl: string }>(`/v1/sessions/${sessionId}/media/${mediaId}`, {
+    const path =
+      mode === "followup"
+        ? `/v1/followups/${sessionId}/media/${mediaId}`
+        : `/v1/sessions/${sessionId}/media/${mediaId}`;
+    apiFetch<{ downloadUrl: string }>(path, {
       headers: { authorization: `Bearer ${credential}` },
     })
       .then(({ downloadUrl }) => {
@@ -34,7 +40,7 @@ export function QuestionMedia({
     return () => {
       active = false;
     };
-  }, [credential, mediaId, sessionId]);
+  }, [credential, mediaId, mode, sessionId]);
 
   return source ? (
     <img alt={altText ?? ""} className="question-media" height={360} src={source} width={640} />

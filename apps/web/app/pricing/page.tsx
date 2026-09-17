@@ -22,7 +22,10 @@ export default function PricingPage() {
           <article className="card">
             <span className="status-pill">Free</span>
             <h2 style={{ marginTop: 28 }}>$0</h2>
-            <p>Hosted Free: 20 participants, five published quizzes, and 30-day reports.</p>
+            <p>
+              Hosted Free: 20 participants, five published checkpoint sets, the complete Recovery
+              Loop and Q&A, aggregate 30-day reports, and three authoring jobs monthly when enabled.
+            </p>
             <Link className="button-quiet" href="/signin">
               Create an account
             </Link>
@@ -31,8 +34,9 @@ export default function PricingPage() {
             <span className="status-pill">Pro</span>
             <h2 style={{ marginTop: 28 }}>$15 USD monthly</h2>
             <p>
-              Hosted Pro: 100 participants, unlimited quizzes, CSV exports, 365-day reports, and one
-              contrast-checked workspace brand theme.
+              Hosted Pro: 100 participants, unlimited checkpoint sets, cohosting, CSV/JSON/QTI,
+              accountless follow-up, 100 authoring jobs, 365-day reports, and one contrast-checked
+              workspace theme.
             </p>
             <Link className="button" href="/signin">
               Start with Free

@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@openround/contracts": "workspace:*"
+    "@openround/contracts": "workspace:*",
+    "@openround/insights": "workspace:*"
   }
 }

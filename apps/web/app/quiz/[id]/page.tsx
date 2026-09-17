@@ -27,6 +27,26 @@ interface DraftGuidance {
   questionIndex?: number;
 }
 
+type ChoiceQuestionDraft = Extract<
+  QuestionDraft,
+  { type: "single_select" | "true_false" | "multi_select" | "poll" }
+>;
+
+function isChoiceQuestion(question: QuestionDraft): question is ChoiceQuestionDraft {
+  return ["single_select", "true_false", "multi_select", "poll"].includes(question.type);
+}
+
+function checkpointTypeLabel(type: QuestionType) {
+  return {
+    single_select: "Single select",
+    true_false: "True or false",
+    multi_select: "Multiple select",
+    numeric: "Numeric response",
+    rating: "Rating",
+    poll: "Poll",
+  }[type];
+}
+
 function readableList(values: number[]) {
   if (values.length === 1) return String(values[0]);
   if (values.length === 2) return `${values[0]} and ${values[1]}`;
@@ -34,29 +54,80 @@ function readableList(values: number[]) {
 }
 
 function guidanceForDraft(draft: QuizDraft): DraftGuidance | null {
+  const decimalPattern = /^[+-]?(?:\d+\.?\d*|\.\d+)$/;
   if (!draft.title.trim()) {
     return {
-      source: "Quiz title",
+      source: "Checkpoint set title",
       resolution: "Enter a title in the Title field before previewing or publishing.",
     };
   }
   if (draft.questions.length === 0) {
     return {
-      source: "Questions",
-      resolution: "Add at least one multiple-choice or true-or-false question.",
+      source: "Checkpoints",
+      resolution: "Add at least one checkpoint.",
     };
   }
   for (const [questionIndex, question] of draft.questions.entries()) {
     const actions: string[] = [];
-    if (!question.prompt.trim()) actions.push("enter the question text");
-    const emptyChoices = question.choices
-      .map((choice, choiceIndex) => (!choice.label.trim() ? choiceIndex + 1 : null))
-      .filter((choiceIndex): choiceIndex is number => choiceIndex !== null);
-    if (emptyChoices.length > 0) {
-      actions.push(`fill answer choices ${readableList(emptyChoices)}`);
+    if (!question.prompt.trim()) actions.push("enter the checkpoint prompt");
+    if (isChoiceQuestion(question)) {
+      const emptyChoices = question.choices
+        .map((choice, choiceIndex) => (!choice.label.trim() ? choiceIndex + 1 : null))
+        .filter((choiceIndex): choiceIndex is number => choiceIndex !== null);
+      if (emptyChoices.length > 0) {
+        actions.push(`fill answer choices ${readableList(emptyChoices)}`);
+      }
+      const correctCount = question.choices.filter((choice) => choice.isCorrect).length;
+      if (question.type === "multi_select" && correctCount === 0) {
+        actions.push("select at least one correct answer");
+      } else if (
+        question.type !== "multi_select" &&
+        question.type !== "poll" &&
+        correctCount !== 1
+      ) {
+        actions.push("select exactly one correct answer");
+      } else if (question.type === "poll" && correctCount > 0) {
+        actions.push("clear correct answers because polls are unscored");
+      }
+      const invalidMisconceptions = question.choices
+        .map((choice) => choice.misconceptionKey?.trim())
+        .filter(
+          (key): key is string =>
+            typeof key === "string" &&
+            key.length > 0 &&
+            !/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/i.test(key),
+        );
+      if (invalidMisconceptions.length > 0) {
+        actions.push("use valid private misconception keys");
+      }
+    } else if (question.type === "numeric") {
+      if (!decimalPattern.test(question.correctValue.trim())) {
+        actions.push("enter a decimal correct value without exponent notation");
+      }
+      if (
+        !decimalPattern.test(question.tolerance.trim()) ||
+        question.tolerance.trim().startsWith("-")
+      ) {
+        actions.push("enter a non-negative decimal tolerance without exponent notation");
+      }
     }
-    if (question.choices.filter((choice) => choice.isCorrect).length !== 1) {
-      actions.push("select exactly one correct answer");
+    const invalidConcepts = (question.conceptKeys ?? []).filter(
+      (key) => !/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/i.test(key),
+    );
+    if (invalidConcepts.length > 0) {
+      actions.push(
+        `replace invalid concept ${invalidConcepts.join(", ")} with letters, numbers, dots, dashes, or underscores`,
+      );
+    }
+    if (
+      question.linkedRecheckQuestionId &&
+      !draft.questions.some(
+        (candidate) =>
+          candidate.id === question.linkedRecheckQuestionId &&
+          (candidate.delivery ?? "main") === "recheck",
+      )
+    ) {
+      actions.push("choose an existing checkpoint marked as a recheck");
     }
     if (question.mediaId && !question.mediaAlt?.trim()) {
       actions.push("describe the instructional image");
@@ -64,7 +135,7 @@ function guidanceForDraft(draft: QuizDraft): DraftGuidance | null {
     if (actions.length > 0) {
       const instruction = actions.join("; ");
       return {
-        source: `Question ${questionIndex + 1}`,
+        source: `Checkpoint ${questionIndex + 1}`,
         resolution: `${instruction[0]?.toUpperCase()}${instruction.slice(1)} before previewing or publishing.`,
         questionIndex,
       };
@@ -73,32 +144,48 @@ function guidanceForDraft(draft: QuizDraft): DraftGuidance | null {
   return null;
 }
 
-function newChoices(type: QuestionType): ChoiceDraft[] {
-  return type === "true_false"
-    ? [
-        { id: clientUuid(), label: "True", isCorrect: true },
-        { id: clientUuid(), label: "False", isCorrect: false },
-      ]
-    : [
-        { id: clientUuid(), label: "", isCorrect: true },
-        { id: clientUuid(), label: "", isCorrect: false },
-        { id: clientUuid(), label: "", isCorrect: false },
-        { id: clientUuid(), label: "", isCorrect: false },
-      ];
+function newChoices(type: ChoiceQuestionDraft["type"]): ChoiceDraft[] {
+  if (type === "true_false") {
+    return [
+      { id: clientUuid(), label: "True", isCorrect: true },
+      { id: clientUuid(), label: "False", isCorrect: false },
+    ];
+  }
+  return [
+    { id: clientUuid(), label: "", isCorrect: type !== "poll" },
+    { id: clientUuid(), label: "", isCorrect: false },
+    { id: clientUuid(), label: "", isCorrect: false },
+    { id: clientUuid(), label: "", isCorrect: false },
+  ];
 }
 
-function newQuestion(type: QuestionType): QuestionDraft {
+function commonQuestion(type: QuestionType) {
   return {
     id: clientUuid(),
     type,
     prompt: "",
-    choices: newChoices(type),
+    purpose: type === "rating" || type === "poll" ? ("opinion" as const) : ("diagnostic" as const),
+    confidence: "off" as const,
+    delivery: "main" as const,
+    conceptKeys: [],
+    linkedRecheckQuestionId: null,
     timeLimitSeconds: 20,
-    basePoints: 1_000,
+    basePoints: type === "rating" || type === "poll" ? 0 : 1_000,
     explanation: "",
     mediaId: null,
     mediaAlt: null,
   };
+}
+
+function newQuestion(type: QuestionType): QuestionDraft {
+  const common = commonQuestion(type);
+  if (type === "numeric") {
+    return { ...common, type, correctValue: "", tolerance: "0", unit: null };
+  }
+  if (type === "rating") {
+    return { ...common, type, min: 1, max: 5, minLabel: "Low", maxLabel: "High" };
+  }
+  return { ...common, type, choices: newChoices(type) };
 }
 
 export default function QuizEditorPage() {
@@ -227,6 +314,10 @@ export default function QuizEditorPage() {
     );
   }
 
+  function updateChoiceQuestion(updater: (question: ChoiceQuestionDraft) => ChoiceQuestionDraft) {
+    updateQuestion((current) => (isChoiceQuestion(current) ? updater(current) : current));
+  }
+
   function addQuestion(type: QuestionType) {
     if (!draft) return;
     const next = [...draft.questions, newQuestion(type)];
@@ -236,7 +327,14 @@ export default function QuizEditorPage() {
 
   function removeQuestion() {
     if (!draft) return;
-    const next = draft.questions.filter((_, index) => index !== selected);
+    const removedId = draft.questions[selected]?.id;
+    const next = draft.questions
+      .filter((_, index) => index !== selected)
+      .map((item) =>
+        removedId && item.linkedRecheckQuestionId === removedId
+          ? { ...item, linkedRecheckQuestionId: null }
+          : item,
+      );
     setDraft({ ...draft, questions: next });
     setSelected(Math.max(0, selected - 1));
   }
@@ -245,13 +343,37 @@ export default function QuizEditorPage() {
     if (!draft) return;
     const question = draft.questions[selected];
     if (!question) return;
-    const copy = {
+    const copy: QuestionDraft = {
       ...question,
       id: clientUuid(),
-      choices: question.choices.map((choice) => ({ ...choice, id: clientUuid() })),
+      ...(isChoiceQuestion(question)
+        ? { choices: question.choices.map((choice) => ({ ...choice, id: clientUuid() })) }
+        : {}),
+      linkedRecheckQuestionId: null,
     };
     const next = [...draft.questions];
     next.splice(selected + 1, 0, copy);
+    setDraft({ ...draft, questions: next });
+    setSelected(selected + 1);
+  }
+
+  function addLinkedRecheck() {
+    if (!draft) return;
+    const source = draft.questions[selected];
+    if (!source || source.type === "poll" || source.type === "rating") return;
+    const recheck = newQuestion(source.type);
+    const linked: QuestionDraft = {
+      ...recheck,
+      delivery: "recheck",
+      purpose: source.purpose ?? "diagnostic",
+      confidence: source.confidence ?? "off",
+      conceptKeys: source.conceptKeys ?? [],
+      prompt: "",
+    };
+    const next = draft.questions.map((question, index) =>
+      index === selected ? { ...question, linkedRecheckQuestionId: linked.id } : question,
+    );
+    next.splice(selected + 1, 0, linked);
     setDraft({ ...draft, questions: next });
     setSelected(selected + 1);
   }
@@ -430,9 +552,9 @@ export default function QuizEditorPage() {
       <main className="shell page-main" id="main">
         <div className="page-heading">
           <div>
-            <p className="eyebrow">Quiz editor</p>
+            <p className="eyebrow">Checkpoint set editor</p>
             <h1 style={{ fontSize: "clamp(2.4rem, 6vw, 4rem)" }}>
-              {draft?.title || "Untitled quiz"}
+              {draft?.title || "Untitled checkpoint set"}
             </h1>
           </div>
           {quiz ? <span className="status-pill">{quiz.status}</span> : null}
@@ -448,7 +570,9 @@ export default function QuizEditorPage() {
             role={validationAction ? "alert" : undefined}
           >
             <strong>
-              {validationAction ? `Cannot ${validationAction} this quiz yet` : "Draft checklist"}
+              {validationAction
+                ? `Cannot ${validationAction} this checkpoint set yet`
+                : "Draft checklist"}
             </strong>
             <p>
               <strong>Source:</strong> {draftGuidance.source}
@@ -458,7 +582,7 @@ export default function QuizEditorPage() {
             </p>
             <small>
               Your in-progress draft is still saved automatically. Only preview and publishing
-              require every question to be complete.
+              require every checkpoint to be complete.
             </small>
             {draftGuidance.questionIndex !== undefined &&
             draftGuidance.questionIndex !== selected ? (
@@ -467,15 +591,15 @@ export default function QuizEditorPage() {
                 onClick={() => setSelected(draftGuidance.questionIndex!)}
                 type="button"
               >
-                Edit Question {draftGuidance.questionIndex + 1}
+                Edit checkpoint {draftGuidance.questionIndex + 1}
               </button>
             ) : null}
           </div>
         ) : null}
         {publishLimitReached ? (
           <p className="notice">
-            This plan&apos;s {entitlements?.maxPublishedQuizzes} published quiz slots are in use.
-            Archive a published quiz or compare plans before publishing this draft.
+            This plan&apos;s {entitlements?.maxPublishedQuizzes} published checkpoint set slots are
+            in use. Archive a published set or compare plans before publishing this draft.
           </p>
         ) : null}
         {!draft ? (
@@ -507,7 +631,7 @@ export default function QuizEditorPage() {
             </section>
             <div className="editor-layout">
               <aside className="panel">
-                <h2 style={{ fontSize: "1.4rem" }}>Questions</h2>
+                <h2 style={{ fontSize: "1.4rem" }}>Checkpoints</h2>
                 <div className="question-list">
                   {draft.questions.map((item, index) => (
                     <button
@@ -517,7 +641,8 @@ export default function QuizEditorPage() {
                       onClick={() => setSelected(index)}
                       type="button"
                     >
-                      <strong>{index + 1}.</strong> {item.prompt || "Untitled question"}
+                      <strong>{index + 1}.</strong> {item.prompt || "Untitled checkpoint"}
+                      {(item.delivery ?? "main") === "recheck" ? " · recheck" : ""}
                     </button>
                   ))}
                 </div>
@@ -528,7 +653,7 @@ export default function QuizEditorPage() {
                     onClick={() => addQuestion("single_select")}
                     type="button"
                   >
-                    Add multiple choice
+                    Single select
                   </button>
                   <button
                     className="button-quiet small-button"
@@ -536,15 +661,43 @@ export default function QuizEditorPage() {
                     onClick={() => addQuestion("true_false")}
                     type="button"
                   >
-                    Add true or false
+                    True or false
+                  </button>
+                  <button
+                    className="button-quiet small-button"
+                    onClick={() => addQuestion("multi_select")}
+                    type="button"
+                  >
+                    Multiple select
+                  </button>
+                  <button
+                    className="button-quiet small-button"
+                    onClick={() => addQuestion("numeric")}
+                    type="button"
+                  >
+                    Numeric
+                  </button>
+                  <button
+                    className="button-quiet small-button"
+                    onClick={() => addQuestion("rating")}
+                    type="button"
+                  >
+                    Rating
+                  </button>
+                  <button
+                    className="button-quiet small-button"
+                    onClick={() => addQuestion("poll")}
+                    type="button"
+                  >
+                    Poll
                   </button>
                 </div>
               </aside>
-              <section className="panel" aria-label="Selected question editor">
+              <section className="panel" aria-label="Selected checkpoint editor">
                 {!question ? (
                   <div>
-                    <h2 style={{ fontSize: "1.7rem" }}>Add the first question</h2>
-                    <p className="muted">Choose one of the two focused launch formats.</p>
+                    <h2 style={{ fontSize: "1.7rem" }}>Add the first checkpoint</h2>
+                    <p className="muted">Choose a response format for the signal you need.</p>
                   </div>
                 ) : (
                   <>
@@ -553,7 +706,8 @@ export default function QuizEditorPage() {
                       style={{ justifyContent: "space-between", marginBottom: 22 }}
                     >
                       <span className="status-pill">
-                        {question.type === "true_false" ? "True or false" : "Single select"}
+                        {checkpointTypeLabel(question.type)}
+                        {(question.delivery ?? "main") === "recheck" ? " · linked recheck" : ""}
                       </span>
                       <div className="button-row">
                         <button
@@ -579,10 +733,22 @@ export default function QuizEditorPage() {
                         >
                           Duplicate
                         </button>
+                        {(question.delivery ?? "main") === "main" &&
+                        question.type !== "poll" &&
+                        question.type !== "rating" &&
+                        !question.linkedRecheckQuestionId ? (
+                          <button
+                            className="button-quiet small-button"
+                            onClick={addLinkedRecheck}
+                            type="button"
+                          >
+                            Add linked recheck
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                     <div className="field">
-                      <label htmlFor="prompt">Question</label>
+                      <label htmlFor="prompt">Checkpoint prompt</label>
                       <textarea
                         aria-invalid={!question.prompt.trim()}
                         className="textarea"
@@ -594,6 +760,99 @@ export default function QuizEditorPage() {
                         value={question.prompt}
                       />
                     </div>
+                    <div className="toolbar">
+                      <label className="field" style={{ flex: "1 1 180px" }}>
+                        <span>Purpose</span>
+                        <select
+                          className="select"
+                          onChange={(event) =>
+                            updateQuestion((item) => ({
+                              ...item,
+                              purpose: event.target.value as "diagnostic" | "practice" | "opinion",
+                            }))
+                          }
+                          value={
+                            question.purpose ??
+                            (question.type === "poll" || question.type === "rating"
+                              ? "opinion"
+                              : "diagnostic")
+                          }
+                        >
+                          <option value="diagnostic">Diagnostic</option>
+                          <option value="practice">Practice</option>
+                          <option value="opinion">Opinion</option>
+                        </select>
+                      </label>
+                      <label className="field" style={{ flex: "1 1 180px" }}>
+                        <span>Confidence prompt</span>
+                        <select
+                          className="select"
+                          disabled={question.type === "poll" || question.type === "rating"}
+                          onChange={(event) =>
+                            updateQuestion((item) => ({
+                              ...item,
+                              confidence: event.target.value as "off" | "optional" | "required",
+                            }))
+                          }
+                          value={question.confidence ?? "off"}
+                        >
+                          <option value="off">Off</option>
+                          <option value="optional">Optional</option>
+                          <option value="required">Required</option>
+                        </select>
+                      </label>
+                      <label className="field" style={{ flex: "2 1 280px" }}>
+                        <span>Concept keys</span>
+                        <input
+                          className="input"
+                          onChange={(event) =>
+                            updateQuestion((item) => ({
+                              ...item,
+                              conceptKeys: event.target.value
+                                .split(",")
+                                .map((value) => value.trim())
+                                .filter(Boolean),
+                            }))
+                          }
+                          placeholder="fractions, rate-vs-total"
+                          value={(question.conceptKeys ?? []).join(", ")}
+                        />
+                        <small className="muted">
+                          Comma-separated keys using letters, numbers, dots, dashes, or underscores.
+                        </small>
+                      </label>
+                    </div>
+                    {(question.delivery ?? "main") === "main" &&
+                    question.type !== "poll" &&
+                    question.type !== "rating" ? (
+                      <label className="field">
+                        <span>Linked recheck</span>
+                        <select
+                          className="select"
+                          onChange={(event) =>
+                            updateQuestion((item) => ({
+                              ...item,
+                              linkedRecheckQuestionId: event.target.value || null,
+                            }))
+                          }
+                          value={question.linkedRecheckQuestionId ?? ""}
+                        >
+                          <option value="">No linked recheck</option>
+                          {draft.questions
+                            .filter(
+                              (candidate) =>
+                                candidate.id !== question.id &&
+                                (candidate.delivery ?? "main") === "recheck",
+                            )
+                            .map((candidate) => (
+                              <option key={candidate.id} value={candidate.id}>
+                                {candidate.prompt ||
+                                  `Untitled ${checkpointTypeLabel(candidate.type)}`}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    ) : null}
                     <div className="media-editor">
                       <div className="field" style={{ marginBottom: 0 }}>
                         <label htmlFor="media-alt">Optional instructional image</label>
@@ -659,89 +918,257 @@ export default function QuizEditorPage() {
                         </div>
                       ) : null}
                     </div>
-                    <fieldset style={{ border: 0, margin: 0, padding: 0 }}>
-                      <legend className="field-label" style={{ marginBottom: 10 }}>
-                        Choices and correct answer
-                      </legend>
-                      {question.choices.map((choice, index) => (
-                        <div className="choice-row" key={choice.id}>
-                          <input
-                            aria-label={`Mark choice ${index + 1} correct`}
-                            checked={choice.isCorrect}
-                            className="choice-correct"
-                            name="correct-choice"
-                            onChange={() =>
-                              updateQuestion((item) => ({
+                    {isChoiceQuestion(question) ? (
+                      <>
+                        <fieldset style={{ border: 0, margin: 0, padding: 0 }}>
+                          <legend className="field-label" style={{ marginBottom: 10 }}>
+                            {question.type === "poll"
+                              ? "Poll choices"
+                              : "Choices and correct answer"}
+                          </legend>
+                          {question.choices.map((choice, index) => (
+                            <div className="choice-row" key={choice.id}>
+                              {question.type !== "poll" ? (
+                                <input
+                                  aria-label={`Mark choice ${index + 1} correct`}
+                                  checked={choice.isCorrect}
+                                  className="choice-correct"
+                                  name={
+                                    question.type === "multi_select"
+                                      ? `correct-choice-${choice.id}`
+                                      : "correct-choice"
+                                  }
+                                  onChange={() =>
+                                    updateChoiceQuestion((item) => ({
+                                      ...item,
+                                      choices: item.choices.map((candidate) => ({
+                                        ...candidate,
+                                        isCorrect:
+                                          item.type === "multi_select"
+                                            ? candidate.id === choice.id
+                                              ? !candidate.isCorrect
+                                              : candidate.isCorrect
+                                            : candidate.id === choice.id,
+                                      })),
+                                    }))
+                                  }
+                                  type={question.type === "multi_select" ? "checkbox" : "radio"}
+                                />
+                              ) : null}
+                              <div style={{ flex: 1 }}>
+                                <input
+                                  aria-label={`Choice ${index + 1}`}
+                                  aria-invalid={!choice.label.trim()}
+                                  className="input"
+                                  disabled={question.type === "true_false"}
+                                  maxLength={180}
+                                  onChange={(event) =>
+                                    updateChoiceQuestion((item) => ({
+                                      ...item,
+                                      choices: item.choices.map((candidate) =>
+                                        candidate.id === choice.id
+                                          ? { ...candidate, label: event.target.value }
+                                          : candidate,
+                                      ),
+                                    }))
+                                  }
+                                  value={choice.label}
+                                />
+                                {question.type !== "poll" ? (
+                                  <div className="toolbar" style={{ marginTop: 8 }}>
+                                    <input
+                                      aria-label={`Misconception label for choice ${index + 1}`}
+                                      className="input"
+                                      maxLength={64}
+                                      onChange={(event) =>
+                                        updateChoiceQuestion((item) => ({
+                                          ...item,
+                                          choices: item.choices.map((candidate) =>
+                                            candidate.id === choice.id
+                                              ? {
+                                                  ...candidate,
+                                                  misconceptionKey: event.target.value || null,
+                                                }
+                                              : candidate,
+                                          ),
+                                        }))
+                                      }
+                                      placeholder="Private misconception key"
+                                      value={choice.misconceptionKey ?? ""}
+                                    />
+                                    <input
+                                      aria-label={`Feedback for choice ${index + 1}`}
+                                      className="input"
+                                      maxLength={500}
+                                      onChange={(event) =>
+                                        updateChoiceQuestion((item) => ({
+                                          ...item,
+                                          choices: item.choices.map((candidate) =>
+                                            candidate.id === choice.id
+                                              ? { ...candidate, feedback: event.target.value }
+                                              : candidate,
+                                          ),
+                                        }))
+                                      }
+                                      placeholder="Private feedback after reveal"
+                                      value={choice.feedback ?? ""}
+                                    />
+                                  </div>
+                                ) : null}
+                              </div>
+                              {question.type !== "true_false" && question.choices.length > 2 ? (
+                                <button
+                                  className="danger-link"
+                                  onClick={() =>
+                                    updateChoiceQuestion((item) => ({
+                                      ...item,
+                                      choices: item.choices.filter(
+                                        (candidate) => candidate.id !== choice.id,
+                                      ),
+                                    }))
+                                  }
+                                  type="button"
+                                >
+                                  Remove
+                                </button>
+                              ) : null}
+                            </div>
+                          ))}
+                        </fieldset>
+                        {question.type !== "true_false" && question.choices.length < 6 ? (
+                          <button
+                            className="button-quiet small-button"
+                            onClick={() =>
+                              updateChoiceQuestion((item) => ({
                                 ...item,
-                                choices: item.choices.map((candidate) => ({
-                                  ...candidate,
-                                  isCorrect: candidate.id === choice.id,
-                                })),
+                                choices: [
+                                  ...item.choices,
+                                  { id: clientUuid(), label: "", isCorrect: false },
+                                ],
                               }))
                             }
-                            type="radio"
-                          />
+                            type="button"
+                          >
+                            Add choice
+                          </button>
+                        ) : null}
+                      </>
+                    ) : question.type === "numeric" ? (
+                      <div className="toolbar">
+                        <label className="field" style={{ flex: "1 1 180px" }}>
+                          <span>Correct value</span>
                           <input
-                            aria-label={`Choice ${index + 1}`}
-                            aria-invalid={!choice.label.trim()}
                             className="input"
-                            disabled={question.type === "true_false"}
-                            maxLength={180}
+                            inputMode="decimal"
                             onChange={(event) =>
-                              updateQuestion((item) => ({
-                                ...item,
-                                choices: item.choices.map((candidate) =>
-                                  candidate.id === choice.id
-                                    ? { ...candidate, label: event.target.value }
-                                    : candidate,
-                                ),
-                              }))
+                              updateQuestion((item) =>
+                                item.type === "numeric"
+                                  ? { ...item, correctValue: event.target.value }
+                                  : item,
+                              )
                             }
-                            value={choice.label}
+                            value={question.correctValue}
                           />
-                          {question.type === "single_select" && question.choices.length > 2 ? (
-                            <button
-                              className="danger-link"
-                              onClick={() =>
-                                updateQuestion((item) => ({
-                                  ...item,
-                                  choices: item.choices
-                                    .filter((candidate) => candidate.id !== choice.id)
-                                    .map((candidate, remainingIndex) => ({
-                                      ...candidate,
-                                      isCorrect: item.choices
-                                        .filter((value) => value.id !== choice.id)
-                                        .some((value) => value.isCorrect)
-                                        ? candidate.isCorrect
-                                        : remainingIndex === 0,
-                                    })),
-                                }))
-                              }
-                              type="button"
-                            >
-                              Remove
-                            </button>
-                          ) : null}
-                        </div>
-                      ))}
-                    </fieldset>
-                    {question.type === "single_select" && question.choices.length < 6 ? (
-                      <button
-                        className="button-quiet small-button"
-                        onClick={() =>
-                          updateQuestion((item) => ({
-                            ...item,
-                            choices: [
-                              ...item.choices,
-                              { id: clientUuid(), label: "", isCorrect: false },
-                            ],
-                          }))
-                        }
-                        type="button"
-                      >
-                        Add choice
-                      </button>
-                    ) : null}
+                        </label>
+                        <label className="field" style={{ flex: "1 1 180px" }}>
+                          <span>Absolute tolerance</span>
+                          <input
+                            className="input"
+                            inputMode="decimal"
+                            onChange={(event) =>
+                              updateQuestion((item) =>
+                                item.type === "numeric"
+                                  ? { ...item, tolerance: event.target.value }
+                                  : item,
+                              )
+                            }
+                            value={question.tolerance}
+                          />
+                        </label>
+                        <label className="field" style={{ flex: "1 1 180px" }}>
+                          <span>Optional unit</span>
+                          <input
+                            className="input"
+                            maxLength={32}
+                            onChange={(event) =>
+                              updateQuestion((item) =>
+                                item.type === "numeric"
+                                  ? { ...item, unit: event.target.value || null }
+                                  : item,
+                              )
+                            }
+                            value={question.unit ?? ""}
+                          />
+                        </label>
+                      </div>
+                    ) : (
+                      <div className="toolbar">
+                        <label className="field" style={{ flex: "1 1 120px" }}>
+                          <span>Minimum</span>
+                          <select
+                            className="select"
+                            onChange={(event) =>
+                              updateQuestion((item) =>
+                                item.type === "rating"
+                                  ? { ...item, min: Number(event.target.value) }
+                                  : item,
+                              )
+                            }
+                            value={question.min}
+                          >
+                            {[1, 2, 3, 4].map((value) => (
+                              <option key={value}>{value}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="field" style={{ flex: "1 1 120px" }}>
+                          <span>Maximum</span>
+                          <select
+                            className="select"
+                            onChange={(event) =>
+                              updateQuestion((item) =>
+                                item.type === "rating"
+                                  ? { ...item, max: Number(event.target.value) }
+                                  : item,
+                              )
+                            }
+                            value={question.max}
+                          >
+                            {[5, 6, 7, 8, 9, 10].map((value) => (
+                              <option key={value}>{value}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="field" style={{ flex: "1 1 180px" }}>
+                          <span>Minimum label</span>
+                          <input
+                            className="input"
+                            onChange={(event) =>
+                              updateQuestion((item) =>
+                                item.type === "rating"
+                                  ? { ...item, minLabel: event.target.value }
+                                  : item,
+                              )
+                            }
+                            value={question.minLabel}
+                          />
+                        </label>
+                        <label className="field" style={{ flex: "1 1 180px" }}>
+                          <span>Maximum label</span>
+                          <input
+                            className="input"
+                            onChange={(event) =>
+                              updateQuestion((item) =>
+                                item.type === "rating"
+                                  ? { ...item, maxLabel: event.target.value }
+                                  : item,
+                              )
+                            }
+                            value={question.maxLabel}
+                          />
+                        </label>
+                      </div>
+                    )}
                     <div className="toolbar" style={{ marginTop: 22 }}>
                       <label className="field" style={{ flex: "1 1 180px", marginBottom: 0 }}>
                         <span>Time limit</span>
@@ -766,6 +1193,7 @@ export default function QuizEditorPage() {
                         <span>Base points</span>
                         <select
                           className="select"
+                          disabled={question.type === "poll" || question.type === "rating"}
                           onChange={(event) =>
                             updateQuestion((item) => ({
                               ...item,
@@ -794,8 +1222,29 @@ export default function QuizEditorPage() {
                         value={question.explanation}
                       />
                     </div>
+                    {question.sourceCitations?.length ? (
+                      <details className="notice source-citations">
+                        <summary>Source evidence for this generated draft</summary>
+                        <p>
+                          These citations support the original assistant proposal. Recheck them if
+                          you change the checkpoint or answer.
+                        </p>
+                        <ul>
+                          {question.sourceCitations.map((citation) => (
+                            <li
+                              key={`${citation.sourceDigest}-${citation.locator}-${citation.excerpt}`}
+                            >
+                              <strong>
+                                {citation.sourceName} · {citation.locator}:
+                              </strong>{" "}
+                              “{citation.excerpt}”
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
                     <button className="button-danger" onClick={removeQuestion} type="button">
-                      Delete question
+                      Delete checkpoint
                     </button>
                   </>
                 )}

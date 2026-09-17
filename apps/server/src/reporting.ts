@@ -1,44 +1,279 @@
 import { randomUUID } from "node:crypto";
-import type { Report } from "@openround/contracts";
+import {
+  questionDelivery,
+  questionPurpose,
+  type Report,
+  type ReportV2,
+} from "@openround/contracts";
+import type { SessionEvidence } from "@openround/db";
 import type { GameState } from "@openround/game-engine";
 
-export function generateReport(state: GameState, expiresAt: Date): Report {
-  const answers = Object.values(state.answers);
-  const participants = Object.values(state.participants).filter(
-    (participant) => !participant.kicked,
-  );
-  const correctAnswers = answers.filter((answer) => answer.correct).length;
-  const questions = state.quiz.questions.map((question) => {
-    const roundIds = Object.entries(state.rounds)
-      .filter(([, round]) => round.questionId === question.id)
-      .map(([roundId]) => roundId);
-    const roundAnswers = answers.filter((answer) => roundIds.includes(answer.roundId));
-    const correct = roundAnswers.filter((answer) => answer.correct).length;
-    const accuracyPercent = roundAnswers.length ? (correct / roundAnswers.length) * 100 : 0;
-    return {
-      questionId: question.id,
-      prompt: question.prompt,
-      responses: roundAnswers.length,
-      correct,
-      accuracyPercent: Math.round(accuracyPercent * 10) / 10,
-      difficult: roundAnswers.length > 0 && accuracyPercent < 60,
-    };
-  });
+const evidenceNote =
+  "Recovery is evidence from this session and should not be interpreted as proof of long-term learning.";
+
+function percent(numerator: number, denominator: number) {
+  return denominator ? Math.round((numerator / denominator) * 1_000) / 10 : 0;
+}
+
+function percentile(values: number[], fraction: number) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)]!;
+}
+
+function stateEvidence(state: GameState): SessionEvidence {
+  return {
+    answers: Object.values(state.answers),
+    rounds: Object.entries(state.rounds).map(([id, round]) => ({ id, ...round })),
+    interventions: Object.values(state.interventions),
+    qna: { questions: 0, answered: 0, unresolved: 0 },
+  };
+}
+
+function emptyReportFields(state: GameState) {
+  return {
+    metrics: {
+      participantCount: Object.values(state.participants).filter(
+        (participant) => !participant.kicked,
+      ).length,
+      completedCount: 0,
+      answerCount: 0,
+      accuracyPercent: 0,
+    },
+    questions: [],
+    participants: [],
+    initialAccuracy: { correct: 0, responses: 0, percent: 0 },
+    confidenceMatrix: [1, 2, 3].map((confidence) => ({
+      confidence: confidence as 1 | 2 | 3,
+      correct: 0,
+      incorrect: 0,
+      total: 0,
+    })),
+    misconceptions: [],
+    interventions: [],
+    recovery: [],
+    unresolvedConcepts: [],
+    participation: {
+      participants: Object.values(state.participants).filter((participant) => !participant.kicked)
+        .length,
+      respondents: 0,
+      percent: 0,
+    },
+    responseTime: { responses: 0, medianMs: null, p95Ms: null },
+    qna: { questions: 0, answered: 0, unresolved: 0 },
+    participantFeedback: [],
+    evidenceNote,
+  } satisfies Omit<
+    ReportV2,
+    "id" | "sessionId" | "schemaVersion" | "status" | "generatedAt" | "expiresAt"
+  >;
+}
+
+export function createPendingReport(state: GameState, expiresAt: Date): ReportV2 {
   return {
     id: randomUUID(),
     sessionId: state.sessionId,
+    schemaVersion: 2,
+    status: "pending",
+    generatedAt: null,
+    expiresAt: expiresAt.toISOString(),
+    ...emptyReportFields(state),
+  };
+}
+
+export function generateReport(
+  state: GameState,
+  expiresAt: Date,
+  options: { id?: string; evidence?: SessionEvidence; generatedAt?: Date } = {},
+): ReportV2 {
+  const evidence = options.evidence ?? stateEvidence(state);
+  const participants = Object.values(state.participants).filter(
+    (participant) => !participant.kicked,
+  );
+  const activeParticipantIds = new Set(participants.map((participant) => participant.id));
+  const answers = evidence.answers.filter((answer) =>
+    activeParticipantIds.has(answer.participantId),
+  );
+  const questionById = new Map(state.quiz.questions.map((question) => [question.id, question]));
+  const roundById = new Map(evidence.rounds.map((round) => [round.id, round]));
+  const mainRounds = evidence.rounds.filter((round) => round.kind === "main");
+  const scorableMainRoundIds = new Set(
+    mainRounds
+      .filter((round) => {
+        const question = questionById.get(round.questionId);
+        return (
+          question &&
+          question.type !== "poll" &&
+          question.type !== "rating" &&
+          questionPurpose(question) !== "opinion"
+        );
+      })
+      .map((round) => round.id),
+  );
+  const initialAnswers = answers.filter((answer) => scorableMainRoundIds.has(answer.roundId));
+  const correctAnswers = initialAnswers.filter((answer) => answer.correct).length;
+  const questions = state.quiz.questions
+    .filter((question) => questionDelivery(question) === "main")
+    .map((question) => {
+      const roundIds = mainRounds
+        .filter((round) => round.questionId === question.id)
+        .map((round) => round.id);
+      const roundAnswers = answers.filter((answer) => roundIds.includes(answer.roundId));
+      const correct = roundAnswers.filter((answer) => answer.correct).length;
+      const accuracyPercent = percent(correct, roundAnswers.length);
+      const scorable =
+        question.type !== "poll" &&
+        question.type !== "rating" &&
+        questionPurpose(question) !== "opinion";
+      return {
+        questionId: question.id,
+        prompt: question.prompt,
+        responses: roundAnswers.length,
+        correct,
+        accuracyPercent,
+        difficult: scorable && roundAnswers.length > 0 && accuracyPercent < 60,
+      };
+    });
+
+  const confidenceMatrix = ([1, 2, 3] as const).map((confidence) => {
+    const selected = initialAnswers.filter((answer) => answer.confidence === confidence);
+    const correct = selected.filter((answer) => answer.correct).length;
+    return {
+      confidence,
+      correct,
+      incorrect: selected.length - correct,
+      total: selected.length,
+    };
+  });
+
+  const misconceptions = mainRounds.flatMap((round) => {
+    const question = questionById.get(round.questionId);
+    if (!question || !("choices" in question)) return [];
+    const roundAnswers = answers.filter((answer) => answer.roundId === round.id);
+    const wrongAnswers = roundAnswers.filter((answer) => !answer.correct);
+    const counts = new Map<string, number>();
+    for (const answer of wrongAnswers) {
+      if (answer.response.kind !== "choice" && answer.response.kind !== "poll") continue;
+      for (const choiceId of answer.response.choiceIds) {
+        const key = question.choices.find((choice) => choice.id === choiceId)?.misconceptionKey;
+        if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()].map(([key, responses]) => ({
+      questionId: question.id,
+      key,
+      responses,
+      allResponsePercent: percent(responses, roundAnswers.length),
+      wrongResponsePercent: percent(responses, wrongAnswers.length),
+    }));
+  });
+
+  const recoveredParticipantKeys = new Set<string>();
+  const recovery = evidence.rounds
+    .filter((round) => round.kind !== "main" && round.sourceRoundId)
+    .map((round) => {
+      const sourceRoundId = round.sourceRoundId!;
+      const sourceRound = roundById.get(sourceRoundId)!;
+      const initialByParticipant = new Map(
+        answers
+          .filter((answer) => answer.roundId === sourceRoundId)
+          .map((answer) => [answer.participantId, answer]),
+      );
+      const recheckByParticipant = new Map(
+        answers
+          .filter((answer) => answer.roundId === round.id)
+          .map((answer) => [answer.participantId, answer]),
+      );
+      let denominator = 0;
+      let recovered = 0;
+      for (const [participantId, initial] of initialByParticipant) {
+        const recheck = recheckByParticipant.get(participantId);
+        if (initial.correct || !recheck) continue;
+        denominator += 1;
+        if (recheck.correct) {
+          recovered += 1;
+          recoveredParticipantKeys.add(`${sourceRoundId}:${participantId}`);
+        }
+      }
+      const evidenceType: "linked_recheck" | "revote" =
+        round.kind === "linked_recheck" ? "linked_recheck" : "revote";
+      return {
+        sourceQuestionId: sourceRound.questionId,
+        recheckQuestionId: round.questionId,
+        sourceRoundId,
+        recheckRoundId: round.id,
+        evidenceType,
+        recovered,
+        initiallyIncorrectWithBoth: denominator,
+        recoveryPercent: denominator ? percent(recovered, denominator) : null,
+        smallSample: denominator < 5,
+      };
+    });
+
+  const conceptTotals = new Map<
+    string,
+    { initiallyIncorrect: Set<string>; recovered: Set<string> }
+  >();
+  for (const answer of initialAnswers.filter((candidate) => !candidate.correct)) {
+    const round = roundById.get(answer.roundId);
+    const question = round ? questionById.get(round.questionId) : undefined;
+    for (const conceptKey of question?.conceptKeys ?? []) {
+      const aggregate = conceptTotals.get(conceptKey) ?? {
+        initiallyIncorrect: new Set<string>(),
+        recovered: new Set<string>(),
+      };
+      aggregate.initiallyIncorrect.add(answer.participantId);
+      if (recoveredParticipantKeys.has(`${answer.roundId}:${answer.participantId}`)) {
+        aggregate.recovered.add(answer.participantId);
+      }
+      conceptTotals.set(conceptKey, aggregate);
+    }
+  }
+  const unresolvedConcepts = [...conceptTotals.entries()].map(([conceptKey, aggregate]) => ({
+    conceptKey,
+    initiallyIncorrect: aggregate.initiallyIncorrect.size,
+    recovered: aggregate.recovered.size,
+    unresolved: aggregate.initiallyIncorrect.size - aggregate.recovered.size,
+  }));
+
+  const respondentIds = new Set(answers.map((answer) => answer.participantId));
+  const participantFeedback = participants.map((participant) => {
+    const participantInitial = initialAnswers.filter(
+      (answer) => answer.participantId === participant.id,
+    );
+    const unresolved = new Set<string>();
+    for (const answer of participantInitial.filter((candidate) => !candidate.correct)) {
+      const round = roundById.get(answer.roundId);
+      const question = round ? questionById.get(round.questionId) : undefined;
+      if (!recoveredParticipantKeys.has(`${answer.roundId}:${participant.id}`)) {
+        for (const conceptKey of question?.conceptKeys ?? []) unresolved.add(conceptKey);
+      }
+    }
+    return {
+      participantId: participant.id,
+      correct: participantInitial.filter((answer) => answer.correct).length,
+      responses: participantInitial.length,
+      unresolvedConcepts: [...unresolved].sort(),
+    };
+  });
+
+  const linkedRecheckByIntervention = new Map(
+    evidence.rounds
+      .filter((round) => round.interventionId && round.kind !== "main")
+      .map((round) => [round.interventionId!, round.id]),
+  );
+  return {
+    id: options.id ?? randomUUID(),
+    sessionId: state.sessionId,
+    schemaVersion: 2,
     status: "ready",
-    generatedAt: new Date().toISOString(),
+    generatedAt: (options.generatedAt ?? new Date()).toISOString(),
     expiresAt: expiresAt.toISOString(),
     metrics: {
       participantCount: participants.length,
-      completedCount: participants.filter((participant) =>
-        answers.some((answer) => answer.participantId === participant.id),
-      ).length,
+      completedCount: respondentIds.size,
       answerCount: answers.length,
-      accuracyPercent: answers.length
-        ? Math.round((correctAnswers / answers.length) * 1_000) / 10
-        : 0,
+      accuracyPercent: percent(correctAnswers, initialAnswers.length),
     },
     questions,
     participants: participants.map((participant) => ({
@@ -48,6 +283,45 @@ export function generateReport(state: GameState, expiresAt: Date): Report {
       correctCount: participant.correctCount,
       answerCount: answers.filter((answer) => answer.participantId === participant.id).length,
     })),
+    initialAccuracy: {
+      correct: correctAnswers,
+      responses: initialAnswers.length,
+      percent: percent(correctAnswers, initialAnswers.length),
+    },
+    confidenceMatrix,
+    misconceptions,
+    interventions: evidence.interventions.map((intervention) => ({
+      id: intervention.id,
+      type: intervention.type,
+      sourceRoundId: intervention.sourceRoundId,
+      linkedRecheckRoundId: linkedRecheckByIntervention.get(intervention.id) ?? null,
+      startedAt: new Date(intervention.startedAtMs).toISOString(),
+      finishedAt:
+        intervention.finishedAtMs === null
+          ? null
+          : new Date(intervention.finishedAtMs).toISOString(),
+    })),
+    recovery,
+    unresolvedConcepts,
+    participation: {
+      participants: participants.length,
+      respondents: respondentIds.size,
+      percent: percent(respondentIds.size, participants.length),
+    },
+    responseTime: {
+      responses: answers.length,
+      medianMs: percentile(
+        answers.map((answer) => answer.responseMs),
+        0.5,
+      ),
+      p95Ms: percentile(
+        answers.map((answer) => answer.responseMs),
+        0.95,
+      ),
+    },
+    qna: evidence.qna,
+    participantFeedback,
+    evidenceNote,
   };
 }
 
@@ -58,7 +332,7 @@ function csvCell(value: string | number): string {
 }
 
 export function reportCsv(report: Report): string {
-  const rows = [
+  const rows: Array<Array<string | number>> = [
     ["participant_id", "nickname", "score", "correct_count", "answer_count"],
     ...report.participants.map((participant) => [
       participant.participantId,
@@ -68,5 +342,43 @@ export function reportCsv(report: Report): string {
       participant.answerCount,
     ]),
   ];
+  if (report.schemaVersion === 2) {
+    rows.push(
+      [],
+      ["report_schema_version", report.schemaVersion],
+      ["initial_correct", report.initialAccuracy.correct],
+      ["initial_responses", report.initialAccuracy.responses],
+      ["initial_accuracy_percent", report.initialAccuracy.percent],
+      [],
+      [
+        "evidence_type",
+        "source_question_id",
+        "recheck_question_id",
+        "recovered_numerator",
+        "initially_incorrect_denominator",
+        "recovery_percent",
+        "small_sample",
+      ],
+      ...report.recovery.map((recovery) => [
+        recovery.evidenceType,
+        recovery.sourceQuestionId,
+        recovery.recheckQuestionId,
+        recovery.recovered,
+        recovery.initiallyIncorrectWithBoth,
+        recovery.recoveryPercent ?? "",
+        String(recovery.smallSample),
+      ]),
+      [],
+      ["concept_key", "initially_incorrect", "recovered", "unresolved"],
+      ...report.unresolvedConcepts.map((concept) => [
+        concept.conceptKey,
+        concept.initiallyIncorrect,
+        concept.recovered,
+        concept.unresolved,
+      ]),
+      [],
+      ["evidence_note", report.evidenceNote],
+    );
+  }
   return `\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
 }
