@@ -711,6 +711,21 @@ h3 {
   color: white;
 }
 
+.live-shell .panel {
+  color: var(--ink);
+}
+
+.live-shell .panel h1,
+.live-shell .panel h2,
+.live-shell .panel h3 {
+  color: var(--navy);
+}
+
+.live-lobby-heading {
+  font-size: clamp(2rem, 5vw, 3.4rem);
+  margin-bottom: 8px;
+}
+
 .live-topbar {
   align-items: center;
   display: flex;

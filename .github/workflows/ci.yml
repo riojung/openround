@@ -14,10 +14,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.15.1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -27,6 +27,18 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - name: Validate fail-fast hosted production configuration
+        run: pnpm --filter @openround/server config:check
+        env:
+          NODE_ENV: production
+          DATABASE_URL: postgresql://runtime:example@database.internal/openround
+          REDIS_URL: rediss://cache.internal:6380
+          WEB_ORIGIN: https://quiz.example.ca
+          PUBLIC_API_URL: https://api.example.ca
+          COOKIE_SECURE: "true"
+          FEATURE_SIGNUPS: "false"
+          METRICS_ENABLED: "false"
+      - run: pnpm readiness:check
       - run: pnpm smoke:tracing
       - name: Validate Prometheus configuration and alert rules
         run: |
@@ -36,6 +48,8 @@ jobs:
             prom/prometheus:v3.5.0 \
             check config /etc/prometheus/prometheus.yml
           pnpm test:alerts
+          pnpm test:alert-routing
+          pnpm test:collector-config
       - name: Validate provisioned Grafana dashboard JSON
         run: >-
           node -e "JSON.parse(require('node:fs').readFileSync('infra/observability/grafana/dashboards/openround-overview.json', 'utf8'))"
@@ -70,10 +84,10 @@ jobs:
       DATABASE_URL: postgresql://openround:test-only@localhost:5432/openround
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.15.1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -95,10 +109,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.15.1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm

@@ -98,7 +98,12 @@ export default function ReportPage() {
             </section>
             <section className="panel" style={{ marginBottom: 26 }}>
               <h2 style={{ fontSize: "1.7rem" }}>Question analysis</h2>
-              <div style={{ overflowX: "auto" }}>
+              <div
+                aria-label="Scrollable question analysis table"
+                role="region"
+                style={{ overflowX: "auto" }}
+                tabIndex={0}
+              >
                 <table className="report-table">
                   <thead>
                     <tr>
@@ -125,7 +130,12 @@ export default function ReportPage() {
             </section>
             <section className="panel" style={{ marginBottom: 26 }}>
               <h2 style={{ fontSize: "1.7rem" }}>Participant outcomes</h2>
-              <div style={{ overflowX: "auto" }}>
+              <div
+                aria-label="Scrollable participant outcomes table"
+                role="region"
+                style={{ overflowX: "auto" }}
+                tabIndex={0}
+              >
                 <table className="report-table">
                   <thead>
                     <tr>

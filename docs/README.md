@@ -15,13 +15,22 @@ OpenRound is a pre-release, independently branded live quiz platform for classro
 ## Build and operate
 
 - [Implementation status](implementation-status.md) describes what is implemented and what remains a release gate.
+- [Release readiness ledger](release-readiness.json) is the machine-validated source of truth for
+  Canadian beta and GA promotion gates; [evidence templates](evidence/README.md) cover human and
+  provider verification.
 - [Production readiness](runbooks/production-readiness.md) is the promotion checklist for a public environment.
-- [Backup and restore](runbooks/backup-restore.md), [upgrade](runbooks/upgrade.md), [incident response](runbooks/incident-response.md), and [observability](runbooks/observability.md) cover routine operations.
+- [Canadian staging readiness](runbooks/staging-readiness.md),
+  [repository governance](runbooks/repository-governance.md),
+  [backup and restore](runbooks/backup-restore.md), [upgrade](runbooks/upgrade.md),
+  [incident response](runbooks/incident-response.md), and
+  [observability](runbooks/observability.md) cover release and routine operations.
 - [Free-pilot Cloud Run guidance](../infra/cloudrun/README.md) and the
   [Canadian Fly profile](../infra/fly/README.md) document provider boundaries and the one-shot
   migration workflow.
 - [Privacy data map](privacy-data-map.md) identifies stored data, purpose, and retention behavior.
 - [Asset register](asset-register.md) records the origin and licensing of bundled product assets.
+- [Creator authentication ADR](decisions/001-creator-authentication.md) records the deliberate P0
+  choice and migration triggers.
 
 ## Release boundary
 

@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-17",
+  "releaseTarget": "canadian-beta",
+  "gates": [
+    {
+      "id": "source-ci",
+      "name": "Source, database, browser, and security CI",
+      "owner": "engineering",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "Main passes checks, PostgreSQL isolation, browser coverage, dependency review, secret scanning, SBOM generation, and CodeQL.",
+      "evidence": [],
+      "nextAction": "Merge this workflow change only after its pull-request CI and security jobs pass, then link the green main run."
+    },
+    {
+      "id": "local-production-smoke",
+      "name": "Local production-path smoke",
+      "owner": "engineering",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "complete",
+      "criterion": "The containerized production profile passes media, observability, multi-writer, backup/restore, restart, and 100-client correctness checks.",
+      "evidence": ["https://github.com/riojung/openround/actions/runs/35181158243"]
+    },
+    {
+      "id": "canada-staging",
+      "name": "Canadian staging deployment",
+      "owner": "operations",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "A TLS-only Canadian deployment passes configuration preflight and the remote readiness workflow with PostgreSQL, Redis, SMTP, object storage, metrics, and tracing enabled.",
+      "evidence": [],
+      "nextAction": "Provision the canada-staging GitHub environment and run Staging readiness."
+    },
+    {
+      "id": "paging",
+      "name": "Monitoring and paging delivery",
+      "owner": "operations",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "Production telemetry reaches the selected backend and test page, warning, and ticket alerts reach named responders.",
+      "evidence": [],
+      "nextAction": "Install the collector and Alertmanager templates, configure secret receiver URLs, then record a notification drill."
+    },
+    {
+      "id": "target-region-load",
+      "name": "Target-region load and soak",
+      "owner": "engineering",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "Canadian staging passes the 100-client latency gate and a representative soak without correctness or reconciliation loss.",
+      "evidence": [],
+      "nextAction": "Run Staging readiness at 100 clients, then execute and attach the soak record."
+    },
+    {
+      "id": "managed-restore",
+      "name": "Managed backup and restore drill",
+      "owner": "operations",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "A managed PostgreSQL backup and private object-storage restore is timed and verified against the stated RPO and RTO.",
+      "evidence": [],
+      "nextAction": "Complete the provider drill using the restoration evidence template."
+    },
+    {
+      "id": "accessibility-review",
+      "name": "Manual accessibility review",
+      "owner": "accessibility",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "Keyboard, VoiceOver, NVDA, 200% zoom, contrast, reduced-motion, and extended-time scenarios are reviewed with no unresolved launch blockers.",
+      "evidence": [],
+      "nextAction": "Run the manual matrix and link the signed review record."
+    },
+    {
+      "id": "security-review",
+      "name": "Independent security review",
+      "owner": "security",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "An independent review covers authentication, realtime authorization, replay, XSS, uploads, rate limits, billing, administration, and infrastructure with no open critical or high findings.",
+      "evidence": [],
+      "nextAction": "Schedule the review and record findings and remediation in the security evidence template."
+    },
+    {
+      "id": "privacy-legal",
+      "name": "Canadian privacy and legal approval",
+      "owner": "legal",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "Qualified counsel approves the privacy notice, terms, consent, retention, deletion, data residency, subprocessors, and paid-beta posture.",
+      "evidence": [],
+      "nextAction": "Provide the data map and launch documents to Canadian counsel and link written approval."
+    },
+    {
+      "id": "live-billing",
+      "name": "Live billing rehearsal",
+      "owner": "operations",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "Stripe test mode proves checkout, portal, signed webhook delivery, retry idempotency, cancellation, and entitlement reconciliation in Canadian staging.",
+      "evidence": [],
+      "nextAction": "Run the signed replay workflow, then complete a provider-originated Stripe test-mode purchase and cancellation."
+    },
+    {
+      "id": "repository-governance",
+      "name": "Protected release governance",
+      "owner": "maintainer",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "Main requires passing CI and security checks, review, conversation resolution, and blocks force pushes and deletion.",
+      "evidence": [],
+      "nextAction": "Apply the documented GitHub ruleset after this workflow lands and capture the ruleset URL."
+    },
+    {
+      "id": "device-matrix",
+      "name": "Physical-device and network matrix",
+      "owner": "qa",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "Supported mobile and desktop devices complete QR join, play, reconnect, and report flows on representative Wi-Fi and cellular networks.",
+      "evidence": [],
+      "nextAction": "Execute the device evidence template against Canadian staging."
+    },
+    {
+      "id": "design-partners",
+      "name": "Design partners and observed sessions",
+      "owner": "product",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "At least three education and three workplace partners are recruited and at least ten beta sessions are observed with reconciled reports.",
+      "evidence": [],
+      "nextAction": "Recruit named partners and store redacted interview and session records."
+    },
+    {
+      "id": "signed-release",
+      "name": "Signed community release candidate",
+      "owner": "maintainer",
+      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "A v0.9.0 release candidate publishes signed OCI images, provenance, SBOMs, scan results, Compose documentation, and upgrade and rollback guidance.",
+      "evidence": [],
+      "nextAction": "Tag v0.9.0 only after all Canadian beta gates are complete."
+    }
+  ]
+}

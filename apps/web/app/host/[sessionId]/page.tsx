@@ -204,6 +204,7 @@ export default function HostPage() {
               {snapshot.phase === "lobby" ? (
                 <>
                   <p className="eyebrow">Round code</p>
+                  <h1 className="live-lobby-heading">Join this round</h1>
                   <div
                     className="session-code"
                     aria-label={`Round code ${snapshot.code.split("").join(" ")}`}

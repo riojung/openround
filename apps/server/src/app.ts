@@ -26,6 +26,7 @@ export async function buildApp(
     cache?: SessionCache;
     scanner?: MalwareScanner | null;
     stripe?: Stripe | null;
+    readiness?: () => Promise<void>;
   } = {},
 ) {
   const app = Fastify({
@@ -143,6 +144,14 @@ export async function buildApp(
         ? new ClamAvScanner(config.CLAMAV_HOST!, config.CLAMAV_PORT, config.CLAMAV_TIMEOUT_MS)
         : null;
   const storage = new StorageService(config, scanner);
+  const readiness =
+    overrides.readiness ??
+    (async () => {
+      await Promise.all([
+        repository.getOperationalFeatures(),
+        cache.get("00000000-0000-0000-0000-000000000000"),
+      ]);
+    });
   const retention = new RetentionService(
     repository,
     storage,
@@ -177,6 +186,7 @@ export async function buildApp(
     storage,
     retention,
     metrics,
+    readiness,
     stripeClient: overrides.stripe,
   });
 

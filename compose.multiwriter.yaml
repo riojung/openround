@@ -1,5 +1,8 @@
 services:
   server:
+    environment:
+      PUBLIC_API_URL: http://localhost:8080
+      WEB_ORIGIN: http://localhost:8080
     ports:
       - "127.0.0.1:4401:4000"
 
@@ -9,6 +12,8 @@ services:
       service: server
     image: openround-server
     environment:
+      PUBLIC_API_URL: http://localhost:8080
       RUN_MIGRATIONS: "false"
+      WEB_ORIGIN: http://localhost:8080
     ports:
       - "127.0.0.1:4402:4000"
