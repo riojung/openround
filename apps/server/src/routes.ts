@@ -14,7 +14,8 @@ import {
   OperationalFeaturesUpdateSchema,
   OperationalFeaturesViewSchema,
   PublicFeaturesSchema,
-  QuizDraftSchema,
+  QuizContentSchema,
+  UpdateQuizSchema,
 } from "@openround/contracts";
 import { PublishedQuizLimitError, type BillingEventInput, type Repository } from "@openround/db";
 import type { AppConfig } from "./config.js";
@@ -27,6 +28,7 @@ import type { MetricsService } from "./metrics.js";
 import { reportCsv } from "./reporting.js";
 import type { StorageService } from "./storage.js";
 import { entitlementsFor } from "./entitlements.js";
+import { validationIssueMessage } from "./validation.js";
 
 const IdParamsSchema = z.object({ id: z.string().uuid() });
 const SessionMediaParamsSchema = z.object({ id: z.string().uuid(), mediaId: z.string().uuid() });
@@ -107,7 +109,7 @@ export async function registerRoutes(
         reply,
         400,
         "VALIDATION_ERROR",
-        error.issues[0]?.message ?? "Invalid request",
+        error.issues[0] ? validationIssueMessage(error.issues[0]) : "Request: Invalid value",
         request.id,
       );
     }
@@ -314,7 +316,7 @@ export async function registerRoutes(
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
     const { id } = IdParamsSchema.parse(request.params);
-    const draft = QuizDraftSchema.parse(request.body);
+    const draft = UpdateQuizSchema.parse(request.body);
     const quiz = await repository.updateQuiz(creator.workspaceId, id, draft);
     return quiz ? { quiz } : apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
   });
@@ -325,8 +327,6 @@ export async function registerRoutes(
     const { id } = IdParamsSchema.parse(request.params);
     const quiz = await repository.getQuiz(creator.workspaceId, id);
     if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
-    if (quiz.draft.questions.length === 0)
-      return apiError(reply, 422, "VALIDATION_ERROR", "Add at least one question", request.id);
     for (const mediaId of new Set(
       quiz.draft.questions.flatMap((question) => (question.mediaId ? [question.mediaId] : [])),
     )) {
@@ -345,7 +345,7 @@ export async function registerRoutes(
     const current = quiz.currentVersionId
       ? await repository.getQuizVersion(creator.workspaceId, quiz.currentVersionId)
       : null;
-    const content = QuizDraftSchema.parse(quiz.draft);
+    const content = QuizContentSchema.parse(quiz.draft);
     const contentHash = createHash("sha256").update(JSON.stringify(content)).digest("hex");
     const version = await repository.publishQuiz(
       {

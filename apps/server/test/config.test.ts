@@ -77,6 +77,63 @@ describe("production configuration", () => {
     });
 
     expect(config.ALLOW_INSECURE_LOCAL_HTTP).toBe(true);
+    expect(config.AUTH_DEBUG_MAGIC_LINKS).toBe(false);
+  });
+
+  it("allows debug magic links for an explicit loopback-only community profile", () => {
+    const config = ConfigSchema.parse({
+      ...productionConfig,
+      WEB_ORIGIN: "http://localhost:8080",
+      PUBLIC_API_URL: "http://127.0.0.1:8080",
+      COOKIE_SECURE: "false",
+      COMMUNITY_MODE: "true",
+      ALLOW_INSECURE_LOCAL_HTTP: "true",
+      AUTH_DEBUG_MAGIC_LINKS: "true",
+    });
+
+    expect(config.AUTH_DEBUG_MAGIC_LINKS).toBe(true);
+  });
+
+  it.each(["http://192.168.1.20:8080", "http://quiz.local:8080"])(
+    "keeps debug magic links off non-loopback origin %s",
+    (origin) => {
+      expect(() =>
+        ConfigSchema.parse({
+          ...productionConfig,
+          WEB_ORIGIN: origin,
+          PUBLIC_API_URL: origin,
+          COOKIE_SECURE: "false",
+          COMMUNITY_MODE: "true",
+          ALLOW_INSECURE_LOCAL_HTTP: "true",
+          AUTH_DEBUG_MAGIC_LINKS: "true",
+        }),
+      ).toThrow(/loopback HTTP origins/);
+    },
+  );
+
+  it("keeps debug magic links out of hosted production", () => {
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        AUTH_DEBUG_MAGIC_LINKS: "true",
+      }),
+    ).toThrow(/loopback HTTP origins/);
+
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        WEB_ORIGIN: "http://localhost:8080",
+        PUBLIC_API_URL: "http://localhost:8080",
+        COOKIE_SECURE: "false",
+        COMMUNITY_MODE: "true",
+        ALLOW_INSECURE_LOCAL_HTTP: "true",
+        BILLING_MODE: "stripe",
+        STRIPE_SECRET_KEY: "secret",
+        STRIPE_WEBHOOK_SECRET: "webhook-secret",
+        STRIPE_PRO_PRICE_ID: "price-pro",
+        AUTH_DEBUG_MAGIC_LINKS: "true",
+      }),
+    ).toThrow(/loopback HTTP origins/);
   });
 
   it("does not let the local HTTP escape hatch weaken a hosted or public deployment", () => {

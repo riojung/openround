@@ -94,6 +94,10 @@ button:disabled {
   gap: 24px;
 }
 
+.site-header {
+  position: relative;
+}
+
 .brand {
   align-items: center;
   display: inline-flex;
@@ -127,6 +131,35 @@ button:disabled {
   font-size: 0.94rem;
   font-weight: 650;
   text-decoration: none;
+}
+
+.creator-identity {
+  color: var(--muted);
+  font-size: 0.82rem;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-text-button {
+  background: transparent;
+  border: 0;
+  color: var(--navy);
+  font: inherit;
+  font-size: 0.94rem;
+  font-weight: 650;
+  padding: 0;
+}
+
+.site-mobile-actions,
+.site-mobile-nav {
+  display: none;
+}
+
+.site-nav-error {
+  color: var(--danger);
+  font-size: 0.82rem;
 }
 
 .button,
@@ -511,6 +544,24 @@ h3 {
   background: #ecfdf3;
   border-color: var(--success);
   color: #05603a;
+}
+
+.validation-guidance > strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.validation-guidance p {
+  margin: 4px 0;
+}
+
+.validation-guidance small {
+  display: block;
+  margin-top: 8px;
+}
+
+.validation-guidance .button-quiet {
+  margin-top: 10px;
 }
 
 .status-pill {
@@ -968,8 +1019,77 @@ h3 {
     grid-template-columns: 1fr 1fr;
   }
 
-  .nav-links > a:not(.button) {
+  .site-header {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-bottom: 12px;
+    padding-top: 12px;
+  }
+
+  .site-desktop-nav {
     display: none;
+  }
+
+  .site-mobile-actions {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+  }
+
+  .site-mobile-nav {
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: 0 14px 34px rgba(16, 42, 67, 0.12);
+    flex: 1 0 100%;
+    overflow: hidden;
+    padding: 8px;
+  }
+
+  .site-mobile-nav:not([hidden]) {
+    display: grid;
+  }
+
+  .site-mobile-nav a,
+  .site-mobile-nav button {
+    background: transparent;
+    border: 0;
+    border-radius: 12px;
+    color: var(--navy);
+    font: inherit;
+    font-weight: 750;
+    padding: 13px 14px;
+    text-align: left;
+    text-decoration: none;
+  }
+
+  .site-mobile-nav a:hover,
+  .site-mobile-nav button:hover {
+    background: var(--sky);
+  }
+
+  .site-mobile-nav .site-mobile-primary {
+    background: var(--sky);
+    color: var(--teal-dark);
+  }
+
+  .site-mobile-session {
+    border-bottom: 1px solid var(--line);
+    display: grid;
+    gap: 2px;
+    margin: 0 6px 6px;
+    overflow-wrap: anywhere;
+    padding: 10px 8px 14px;
+  }
+
+  .site-mobile-session span {
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+
+  .site-nav-error {
+    font-size: 0.9rem;
+    margin: 6px 14px;
   }
 }
 

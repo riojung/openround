@@ -118,57 +118,93 @@ export type BrandTheme = z.infer<typeof BrandThemeSchema>;
 export const QuestionTypeSchema = z.enum(["single_select", "true_false"]);
 export type QuestionType = z.infer<typeof QuestionTypeSchema>;
 
-export const ChoiceSchema = z.object({
+export const ChoiceDraftSchema = z.object({
   id: z.string().uuid(),
-  label: z.string().trim().min(1).max(180),
+  label: z.string().trim().max(180),
   isCorrect: z.boolean(),
+});
+export type ChoiceDraft = z.infer<typeof ChoiceDraftSchema>;
+
+export const ChoiceSchema = ChoiceDraftSchema.extend({
+  label: z.string().trim().min(1, "Enter an answer").max(180),
 });
 export type Choice = z.infer<typeof ChoiceSchema>;
 
-export const QuestionSchema = z
+type QuestionRuleInput = {
+  type: QuestionType;
+  choices: Array<{ isCorrect: boolean }>;
+  mediaId: string | null;
+  mediaAlt: string | null;
+};
+
+function applyQuestionRules(question: QuestionRuleInput, ctx: z.RefinementCtx) {
+  const correct = question.choices.filter((choice) => choice.isCorrect);
+  if (correct.length !== 1) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Select exactly one correct answer",
+      path: ["choices"],
+    });
+  }
+  if (question.type === "true_false" && question.choices.length !== 2) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Use exactly two choices for a true or false question",
+      path: ["choices"],
+    });
+  }
+  if (question.mediaId && !question.mediaAlt) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Describe the instructional image for participants who cannot see it",
+      path: ["mediaAlt"],
+    });
+  }
+}
+
+export const QuestionDraftSchema = z
   .object({
     id: z.string().uuid(),
     type: QuestionTypeSchema,
-    prompt: z.string().trim().min(1).max(500),
-    choices: z.array(ChoiceSchema).min(2).max(6),
+    prompt: z.string().trim().max(500),
+    choices: z.array(ChoiceDraftSchema).min(2).max(6),
     timeLimitSeconds: z.number().int().min(5).max(300),
     basePoints: z.number().int().min(0).max(10_000).default(1_000),
     explanation: z.string().trim().max(1_000).default(""),
     mediaId: z.string().uuid().nullable().default(null),
     mediaAlt: z.string().trim().max(300).nullable().default(null),
   })
-  .superRefine((question, ctx) => {
-    const correct = question.choices.filter((choice) => choice.isCorrect);
-    if (correct.length !== 1) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Exactly one answer choice must be correct",
-        path: ["choices"],
-      });
-    }
-    if (question.type === "true_false" && question.choices.length !== 2) {
-      ctx.addIssue({
-        code: "custom",
-        message: "True or false questions require exactly two choices",
-        path: ["choices"],
-      });
-    }
-    if (question.mediaId && !question.mediaAlt) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Instructional images require alternative text",
-        path: ["mediaAlt"],
-      });
-    }
-  });
+  .superRefine(applyQuestionRules);
+export type QuestionDraft = z.infer<typeof QuestionDraftSchema>;
+
+export const QuestionSchema = z
+  .object({
+    id: z.string().uuid(),
+    type: QuestionTypeSchema,
+    prompt: z.string().trim().min(1, "Enter the question text").max(500),
+    choices: z.array(ChoiceSchema).min(2, "Add at least two answer choices").max(6),
+    timeLimitSeconds: z.number().int().min(5).max(300),
+    basePoints: z.number().int().min(0).max(10_000).default(1_000),
+    explanation: z.string().trim().max(1_000).default(""),
+    mediaId: z.string().uuid().nullable().default(null),
+    mediaAlt: z.string().trim().max(300).nullable().default(null),
+  })
+  .superRefine(applyQuestionRules);
 export type Question = z.infer<typeof QuestionSchema>;
 
 export const QuizDraftSchema = z.object({
-  title: z.string().trim().min(1).max(160),
+  title: z.string().trim().max(160),
   description: z.string().trim().max(1_000).default(""),
-  questions: z.array(QuestionSchema).max(200),
+  questions: z.array(QuestionDraftSchema).max(200),
 });
 export type QuizDraft = z.infer<typeof QuizDraftSchema>;
+
+export const QuizContentSchema = z.object({
+  title: z.string().trim().min(1, "Enter a quiz title").max(160),
+  description: z.string().trim().max(1_000).default(""),
+  questions: z.array(QuestionSchema).min(1, "Add at least one question").max(200),
+});
+export type QuizContent = z.infer<typeof QuizContentSchema>;
 
 export const ScoringModeSchema = z.enum(["accuracy", "speed"]);
 export type ScoringMode = z.infer<typeof ScoringModeSchema>;
@@ -392,7 +428,7 @@ export const MediaAccessSchema = z.object({
 });
 export type MediaAccess = z.infer<typeof MediaAccessSchema>;
 
-export const CreateQuizSchema = QuizDraftSchema.pick({ title: true }).extend({
+export const CreateQuizSchema = QuizContentSchema.pick({ title: true }).extend({
   description: z.string().trim().max(1_000).default(""),
 });
 

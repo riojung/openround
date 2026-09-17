@@ -99,7 +99,14 @@ export async function buildApp(
     contentSecurityPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" },
   });
-  await app.register(rateLimit, { global: true, max: 300, timeWindow: "1 minute" });
+  // Browser tests share one loopback address and deliberately exercise many independent
+  // users in a short window. Keep endpoint-specific limits active, but do not let the
+  // production-wide IP budget make unrelated end-to-end tests fail each other.
+  await app.register(rateLimit, {
+    global: true,
+    max: config.NODE_ENV === "test" ? 10_000 : 300,
+    timeWindow: "1 minute",
+  });
   await app.register(rawBody, { field: "rawBody", global: false, encoding: false, runFirst: true });
 
   app.addHook("preHandler", async (request, reply) => {

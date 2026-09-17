@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Choice, Entitlements, Question, QuestionType, QuizDraft } from "@openround/contracts";
+import type {
+  ChoiceDraft,
+  Entitlements,
+  QuestionDraft,
+  QuestionType,
+  QuizDraft,
+} from "@openround/contracts";
 import { Brand } from "../../../components/brand";
 import { apiFetch, humanError } from "../../../lib/api";
 import { clientUuid } from "../../../lib/uuid";
@@ -15,7 +21,59 @@ interface QuizRecord {
   currentVersionId: string | null;
 }
 
-function newChoices(type: QuestionType): Choice[] {
+interface DraftGuidance {
+  source: string;
+  resolution: string;
+  questionIndex?: number;
+}
+
+function readableList(values: number[]) {
+  if (values.length === 1) return String(values[0]);
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")}, and ${values.at(-1)}`;
+}
+
+function guidanceForDraft(draft: QuizDraft): DraftGuidance | null {
+  if (!draft.title.trim()) {
+    return {
+      source: "Quiz title",
+      resolution: "Enter a title in the Title field before previewing or publishing.",
+    };
+  }
+  if (draft.questions.length === 0) {
+    return {
+      source: "Questions",
+      resolution: "Add at least one multiple-choice or true-or-false question.",
+    };
+  }
+  for (const [questionIndex, question] of draft.questions.entries()) {
+    const actions: string[] = [];
+    if (!question.prompt.trim()) actions.push("enter the question text");
+    const emptyChoices = question.choices
+      .map((choice, choiceIndex) => (!choice.label.trim() ? choiceIndex + 1 : null))
+      .filter((choiceIndex): choiceIndex is number => choiceIndex !== null);
+    if (emptyChoices.length > 0) {
+      actions.push(`fill answer choices ${readableList(emptyChoices)}`);
+    }
+    if (question.choices.filter((choice) => choice.isCorrect).length !== 1) {
+      actions.push("select exactly one correct answer");
+    }
+    if (question.mediaId && !question.mediaAlt?.trim()) {
+      actions.push("describe the instructional image");
+    }
+    if (actions.length > 0) {
+      const instruction = actions.join("; ");
+      return {
+        source: `Question ${questionIndex + 1}`,
+        resolution: `${instruction[0]?.toUpperCase()}${instruction.slice(1)} before previewing or publishing.`,
+        questionIndex,
+      };
+    }
+  }
+  return null;
+}
+
+function newChoices(type: QuestionType): ChoiceDraft[] {
   return type === "true_false"
     ? [
         { id: clientUuid(), label: "True", isCorrect: true },
@@ -29,7 +87,7 @@ function newChoices(type: QuestionType): Choice[] {
       ];
 }
 
-function newQuestion(type: QuestionType): Question {
+function newQuestion(type: QuestionType): QuestionDraft {
   return {
     id: clientUuid(),
     type,
@@ -56,6 +114,7 @@ export default function QuizEditorPage() {
   const [mediaState, setMediaState] = useState<"idle" | "uploading" | "scanning">("idle");
   const [mediaPreviewUrl, setMediaPreviewUrl] = useState("");
   const [error, setError] = useState("");
+  const [validationAction, setValidationAction] = useState<"preview" | "publish" | null>(null);
   const loaded = useRef(false);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const latestSaveRevision = useRef(0);
@@ -134,6 +193,10 @@ export default function QuizEditorPage() {
   }, [draft, enqueueSave]);
 
   useEffect(() => {
+    if (draft && !guidanceForDraft(draft)) setValidationAction(null);
+  }, [draft]);
+
+  useEffect(() => {
     if (!selectedMediaId) {
       setMediaPreviewUrl("");
       return;
@@ -151,7 +214,7 @@ export default function QuizEditorPage() {
     };
   }, [selectedMediaId]);
 
-  function updateQuestion(updater: (question: Question) => Question) {
+  function updateQuestion(updater: (question: QuestionDraft) => QuestionDraft) {
     setDraft((current) =>
       current
         ? {
@@ -205,6 +268,13 @@ export default function QuizEditorPage() {
 
   async function publish() {
     if (!draft || saveState === "saving" || publishLimitReached) return;
+    const guidance = guidanceForDraft(draft);
+    if (guidance) {
+      setValidationAction("publish");
+      if (guidance.questionIndex !== undefined) setSelected(guidance.questionIndex);
+      return;
+    }
+    setValidationAction(null);
     setError("");
     const revision = ++latestSaveRevision.current;
     setSaveState("saving");
@@ -230,6 +300,13 @@ export default function QuizEditorPage() {
 
   async function openPreview() {
     if (!draft || saveState === "saving") return;
+    const guidance = guidanceForDraft(draft);
+    if (guidance) {
+      setValidationAction("preview");
+      if (guidance.questionIndex !== undefined) setSelected(guidance.questionIndex);
+      return;
+    }
+    setValidationAction(null);
     setError("");
     const revision = ++latestSaveRevision.current;
     setSaveState("saving");
@@ -306,6 +383,7 @@ export default function QuizEditorPage() {
   }
 
   const question = draft?.questions[selected];
+  const draftGuidance = draft ? guidanceForDraft(draft) : null;
   const publishLimitReached = Boolean(
     quiz &&
     !quiz.currentVersionId &&
@@ -364,6 +442,36 @@ export default function QuizEditorPage() {
             {error}
           </p>
         ) : null}
+        {draftGuidance ? (
+          <div
+            className={`${validationAction ? "error" : "notice"} validation-guidance`}
+            role={validationAction ? "alert" : undefined}
+          >
+            <strong>
+              {validationAction ? `Cannot ${validationAction} this quiz yet` : "Draft checklist"}
+            </strong>
+            <p>
+              <strong>Source:</strong> {draftGuidance.source}
+            </p>
+            <p>
+              <strong>How to fix:</strong> {draftGuidance.resolution}
+            </p>
+            <small>
+              Your in-progress draft is still saved automatically. Only preview and publishing
+              require every question to be complete.
+            </small>
+            {draftGuidance.questionIndex !== undefined &&
+            draftGuidance.questionIndex !== selected ? (
+              <button
+                className="button-quiet small-button"
+                onClick={() => setSelected(draftGuidance.questionIndex!)}
+                type="button"
+              >
+                Edit Question {draftGuidance.questionIndex + 1}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {publishLimitReached ? (
           <p className="notice">
             This plan&apos;s {entitlements?.maxPublishedQuizzes} published quiz slots are in use.
@@ -378,6 +486,7 @@ export default function QuizEditorPage() {
               <div className="field">
                 <label htmlFor="quiz-title">Title</label>
                 <input
+                  aria-invalid={!draft.title.trim()}
                   className="input"
                   id="quiz-title"
                   maxLength={160}
@@ -475,6 +584,7 @@ export default function QuizEditorPage() {
                     <div className="field">
                       <label htmlFor="prompt">Question</label>
                       <textarea
+                        aria-invalid={!question.prompt.trim()}
                         className="textarea"
                         id="prompt"
                         maxLength={500}
@@ -573,6 +683,7 @@ export default function QuizEditorPage() {
                           />
                           <input
                             aria-label={`Choice ${index + 1}`}
+                            aria-invalid={!choice.label.trim()}
                             className="input"
                             disabled={question.type === "true_false"}
                             maxLength={180}

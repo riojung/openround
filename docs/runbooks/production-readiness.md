@@ -14,7 +14,9 @@
   use HTTPS; creator cookies cannot be explicitly insecure; and SMTP is configured before the
   sign-up ceiling is enabled. Keep `FEATURE_SIGNUPS=false` until email delivery is verified. The
   `ALLOW_INSECURE_LOCAL_HTTP` escape hatch is restricted to non-billing community deployments on
-  loopback or private-network URLs and must never be enabled in hosted production.
+  loopback or private-network URLs and must never be enabled in hosted production. Keep
+  `AUTH_DEBUG_MAGIC_LINKS=false`; exposing a sign-in token in an API response is only for explicit,
+  loopback-bound local testing.
 - Production metrics require a bearer token at startup. Keep `METRICS_ENABLED=false` until a
   private authenticated collector is ready; do not expose the route through the public ingress.
 - Application traffic uses a non-owner PostgreSQL role; only the migration job receives the

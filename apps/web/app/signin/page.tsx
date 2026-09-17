@@ -108,12 +108,13 @@ export default function SignInPage() {
             ) : null}
             {status === "sent" ? (
               <div className="success" role="status">
-                Check your inbox for the sign-in link.
                 {debugUrl ? (
                   <div style={{ marginTop: 10 }}>
-                    Development shortcut: <a href={debugUrl}>open sign-in link</a>
+                    Your local sign-in link is ready. <a href={debugUrl}>Continue to dashboard</a>.
                   </div>
-                ) : null}
+                ) : (
+                  "Check your inbox for the sign-in link."
+                )}
               </div>
             ) : null}
             <button

@@ -32,9 +32,21 @@ for an individual round before creating its room code.
 1. Open the product and select **Create a free quiz** or go to `/signin`.
 2. Choose the segment you mainly facilitate.
 3. Enter your email, accept the Terms and Privacy notice, and request a magic link.
-4. Open the email on the same browser profile and follow the single-use link.
+4. Follow the single-use link on the same browser profile.
 
-In the local Compose stack, retrieve the message from Mailpit at <http://localhost:8025>. In native development mode, the page also displays a direct development link. A production operator must configure SMTP and an approved public origin.
+The local Compose stack captures the message in Mailpit at <http://localhost:8025>. Native
+development mode displays **Continue to dashboard**; Compose can expose the same shortcut only when
+an operator explicitly enables its loopback-only testing configuration. A hosted production operator
+must keep debug magic links disabled and configure SMTP plus an approved public origin.
+
+### Return to your quizzes or sign out
+
+- From the home page, open **Menu** on a phone or narrow browser. On a wider screen, use the creator
+  links beside the OpenRound logo.
+- Select **My quizzes** to return to the creator dashboard and manage drafts, published quizzes, and
+  archived quizzes.
+- Select **Sign out** to revoke the current browser session. Afterward, the same menu provides
+  **Sign in** when you return.
 
 ## Create a quiz
 
@@ -43,7 +55,10 @@ From **Your quizzes**, enter a title under **Start a new quiz** and select **Cre
 ### Edit quiz details
 
 - Give the quiz a clear title and optional description.
-- Changes autosave after a short pause. Wait for **Saved** before navigating away or publishing.
+- Changes autosave after a short pause, including incomplete questions. Wait for **Saved** before
+  navigating away.
+- The **Draft checklist** names the quiz field or question that needs attention and explains how to
+  resolve it. Every question must be complete before previewing or publishing.
 - Use the left question list to move between questions.
 
 ### Add questions

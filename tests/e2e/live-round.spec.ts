@@ -8,7 +8,7 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await creator.getByLabel("Email address").fill(`e2e-${testInfo.project.name}@example.com`);
   await creator.getByLabel(/I accept the Terms/).check();
   await creator.getByRole("button", { name: "Send sign-in link" }).click();
-  await creator.getByRole("link", { name: "open sign-in link" }).click();
+  await creator.getByRole("link", { name: "Continue to dashboard" }).click();
   await expect(creator).toHaveURL(/\/dashboard/);
 
   await creator.getByLabel("Quiz title").fill("A one-question check");
@@ -28,7 +28,9 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await creator.getByRole("button", { name: "Publish" }).click();
   await expect(creator.getByText("published", { exact: true })).toBeVisible();
   await creator.getByRole("link", { name: "Dashboard" }).click();
-  await expect(creator.getByText(/1 of 5 published quiz slots used/)).toBeVisible();
+  await expect(creator.getByText(/1 of 5 published quiz slots used/)).toBeVisible({
+    timeout: 10_000,
+  });
   await creator.getByRole("button", { name: "Host" }).click();
   await expect(creator).toHaveURL(/\/host\/setup\//);
   await expect(creator.getByLabel("Maximum participants")).toHaveValue("20");
@@ -77,7 +79,7 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await creator.getByRole("link", { name: "Open report" }).click();
   await expect(
     creator.locator(".metric").filter({ hasText: "accuracy" }).getByText("100%", { exact: true }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 10_000 });
   await expect(creator.getByRole("link", { name: "CSV export requires Pro" })).toBeVisible();
   await expect(creator.getByText(/current free plan defaults to 30 days/)).toBeVisible();
 
@@ -93,7 +95,7 @@ test("quiz autosave serializes overlapping edits", async ({ browser }, testInfo)
   await creator.getByLabel("Email address").fill(`autosave-${testInfo.project.name}@example.com`);
   await creator.getByLabel(/I accept the Terms/).check();
   await creator.getByRole("button", { name: "Send sign-in link" }).click();
-  await creator.getByRole("link", { name: "open sign-in link" }).click();
+  await creator.getByRole("link", { name: "Continue to dashboard" }).click();
   await expect(creator).toHaveURL(/\/dashboard/);
   await creator.getByLabel("Quiz title").fill("Autosave ordering");
   await creator.getByRole("button", { name: "Create quiz" }).click();
@@ -137,4 +139,53 @@ test("quiz autosave serializes overlapping edits", async ({ browser }, testInfo)
   await creator.reload();
   await expect(question).toHaveValue("Latest edit");
   await context.close();
+});
+
+test("incomplete questions autosave with actionable guidance", async ({ page }, testInfo) => {
+  await page.goto("/signin");
+  await page.getByRole("button", { name: "Workplace" }).click();
+  await page.getByLabel("Email address").fill(`guidance-${testInfo.project.name}@example.com`);
+  await page.getByLabel(/I accept the Terms/).check();
+  await page.getByRole("button", { name: "Send sign-in link" }).click();
+  await page.getByRole("link", { name: "Continue to dashboard" }).click();
+
+  await page.getByLabel("Quiz title").fill("Validation guidance");
+  await page.getByRole("button", { name: "Create quiz" }).click();
+  await page.getByRole("button", { name: "Add multiple choice" }).click();
+  await expect(page.getByRole("status")).toContainText("Saving");
+  await expect(page.getByRole("status")).toContainText("Saved", { timeout: 10_000 });
+
+  const guidance = page.locator(".validation-guidance");
+  await expect(guidance).toContainText("Source: Question 1");
+  await expect(guidance).toContainText(
+    "Enter the question text; fill answer choices 1, 2, 3, and 4 before previewing or publishing.",
+  );
+  await expect(guidance).toContainText("in-progress draft is still saved automatically");
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: /1\. Untitled question/ })).toBeVisible();
+  await page.goto(`${page.url()}/preview`);
+  await expect(page.locator(".live-card .error[role='alert']")).toContainText(
+    "Preview unavailable. Question 1: Enter the question text.",
+  );
+  await page.getByRole("link", { name: "Return to editor" }).click();
+  await expect(page).toHaveURL(/\/quiz\/[^/]+$/);
+  await expect(page.getByRole("status")).toContainText("Saved", { timeout: 10_000 });
+  const publishButton = page.getByRole("button", { name: "Publish" });
+  await expect(publishButton).toBeEnabled();
+  await publishButton.click();
+  await expect(guidance).toHaveAttribute("role", "alert");
+  await expect(guidance).toContainText("Cannot publish this quiz yet");
+  await expect(guidance).toContainText("Source: Question 1");
+
+  await page
+    .getByRole("textbox", { name: "Question", exact: true })
+    .fill("Which number comes after 41?");
+  for (const [index, answer] of ["40", "41", "42", "43"].entries()) {
+    await page.getByRole("textbox", { name: `Choice ${index + 1}`, exact: true }).fill(answer);
+  }
+  await expect(guidance).toHaveCount(0);
+  await expect(page.getByRole("status")).toContainText("Saved", { timeout: 10_000 });
+  await publishButton.click();
+  await expect(page.getByText("published", { exact: true })).toBeVisible();
 });
