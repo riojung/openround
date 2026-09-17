@@ -179,7 +179,7 @@ This file is not legal advice.
 | @next/swc-platform-binary             | 16.3.5              | [Project page](https://github.com/vercel/next.js#readme)                                            |
 | @pinojs/redact                        | 0.4.0               | [Project page](https://github.com/pinojs/redact#readme)                                             |
 | @socket.io/component-emitter          | 3.1.2               | [Project page](https://github.com/socketio/emitter#readme)                                          |
-| @socket.io/redis-streams-adapter      | 0.3.0               | [Project page](https://github.com/socketio/socket.io-redis-streams-adapter#readme)                  |
+| @socket.io/redis-streams-adapter      | 0.3.1               | [Project page](https://github.com/socketio/socket.io-redis-streams-adapter#readme)                  |
 | @types/cors                           | 2.8.19              | [Project page](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/cors)           |
 | @types/node                           | 26.5.1              | [Project page](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node)           |
 | @types/ws                             | 8.18.1              | [Project page](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/ws)             |
