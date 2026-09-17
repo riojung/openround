@@ -82,8 +82,10 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   const presenter = await presenterPagePromise;
   await expect(presenter).toHaveURL(/\/present\//);
   await expect(presenter.getByTestId("join-url")).toHaveAttribute("href", lanJoinUrl);
-  await presenter.getByRole("button", { name: "Close presenter" }).click();
-  await expect.poll(() => presenter.isClosed()).toBe(true);
+  await Promise.all([
+    presenter.waitForEvent("close"),
+    presenter.getByRole("button", { name: "Close presenter" }).click({ noWaitAfter: true }),
+  ]);
   await creator.getByText("Change join address").click();
   await creator.getByRole("button", { name: "Reset address" }).click();
   await expect(creator.getByTestId("join-url")).toHaveAttribute("href", expectedJoinUrl);
@@ -221,7 +223,7 @@ test("incomplete questions autosave with actionable guidance", async ({ page }, 
   await expect(publishButton).toBeEnabled();
   await publishButton.click();
   await expect(guidance).toHaveAttribute("role", "alert");
-  await expect(guidance).toContainText("Cannot publish this quiz yet");
+  await expect(guidance).toContainText("Cannot publish this checkpoint set yet");
   await expect(guidance).toContainText("Source: Checkpoint 1");
 
   await page

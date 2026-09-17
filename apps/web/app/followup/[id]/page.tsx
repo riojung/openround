@@ -7,7 +7,8 @@ import type { ConfidenceValue, FollowupSnapshot, ResponsePayload } from "@openro
 import { Brand } from "../../../components/brand";
 import { Countdown } from "../../../components/countdown";
 import { QuestionMedia } from "../../../components/question-media";
-import { API_URL, humanError } from "../../../lib/api";
+import { API_URL, ApiClientError, humanError } from "../../../lib/api";
+import { shouldReplaceSavedAttempt } from "../../../lib/followup-resume";
 import { clientUuid } from "../../../lib/uuid";
 
 async function followupFetch<T>(path: string, token: string, init: RequestInit = {}) {
@@ -21,9 +22,13 @@ async function followupFetch<T>(path: string, token: string, init: RequestInit =
   });
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
-      error?: { message?: string };
+      error?: { code?: string; message?: string };
     } | null;
-    throw new Error(body?.error?.message ?? `Request failed (${response.status}).`);
+    throw new ApiClientError(
+      body?.error?.message ?? `Request failed (${response.status}).`,
+      body?.error?.code,
+      response.status,
+    );
   }
   return response.json() as Promise<T>;
 }
@@ -79,7 +84,8 @@ export default function FollowupPage() {
               savedAttemptToken,
             );
             result = { attemptToken: savedAttemptToken, snapshot: resumed.snapshot };
-          } catch {
+          } catch (caught) {
+            if (!shouldReplaceSavedAttempt(caught)) throw caught;
             sessionStorage.removeItem(attemptKey);
             result = await start();
           }

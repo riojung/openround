@@ -113,7 +113,7 @@ describe("public contracts", () => {
         expect.arrayContaining([
           expect.objectContaining({
             path: ["questions", 0, "prompt"],
-            message: "Enter the question text",
+            message: "Enter the checkpoint prompt",
           }),
           expect.objectContaining({
             path: ["questions", 0, "choices", 0, "label"],

@@ -3,7 +3,7 @@
 This attribution index is generated from the production dependency graph pinned by
 `pnpm-lock.yaml`. Regenerate it with `pnpm licenses:report` and review it together with
 the release SBOM. Package and image distributions retain their complete license texts.
-Platform-specific Sharp/libvips and Next.js SWC package names are normalized so this file
+Platform-specific Sharp/libvips, Canvas, and Next.js SWC package names are normalized so this file
 is reproducible across build hosts; exact native artifacts remain listed in each image SBOM.
 This file is not legal advice.
 
@@ -87,6 +87,7 @@ This file is not legal advice.
 | detect-libc                                | 2.1.2            | [Project page](https://github.com/lovell/detect-libc#readme)                                                                                 |
 | import-in-the-middle                       | 3.5.1            | [Project page](https://github.com/nodejs/import-in-the-middle#readme)                                                                        |
 | long                                       | 5.3.2            | [Project page](https://github.com/dcodeIO/long.js#readme)                                                                                    |
+| pdfjs-dist                                 | 6.3.289          | [Project page](https://mozilla.github.io/pdf.js/)                                                                                            |
 | playwright                                 | 1.63.0           | [Project page](https://playwright.dev)                                                                                                       |
 | playwright-core                            | 1.63.0           | [Project page](https://playwright.dev)                                                                                                       |
 | sharp                                      | 0.35.4           | [Project page](https://sharp.pixelplumbing.com)                                                                                              |
@@ -165,6 +166,7 @@ This file is not legal advice.
 | @fastify/cors                         | 11.3.0              | [Project page](https://github.com/fastify/fastify-cors#readme)                                      |
 | @fastify/error                        | 4.2.0               | [Project page](https://github.com/fastify/fastify-error#readme)                                     |
 | @fastify/fast-json-stringify-compiler | 5.1.0               | [Project page](https://github.com/fastify/fast-json-stringify-compiler#readme)                      |
+| @fastify/formbody                     | 8.0.2               | [Project page](https://github.com/fastify/fastify-formbody#readme)                                  |
 | @fastify/forwarded                    | 3.0.2               | [Project page](https://github.com/fastify/forwarded#readme)                                         |
 | @fastify/helmet                       | 13.1.1              | [Project page](https://github.com/fastify/fastify-helmet#readme)                                    |
 | @fastify/merge-json-schemas           | 0.2.1               | [Project page](https://github.com/fastify/merge-json-schemas#readme)                                |
@@ -175,8 +177,11 @@ This file is not legal advice.
 | @ioredis/commands                     | 2.0.0               | [Project page](https://github.com/ioredis/commands)                                                 |
 | @js-sdsl/ordered-map                  | 4.4.2               | [Project page](https://js-sdsl.org)                                                                 |
 | @lukeed/ms                            | 2.0.2               | [Project page](https://github.com/lukeed/ms#readme)                                                 |
+| @napi-rs/canvas                       | 1.0.9               | [Project page](https://github.com/Brooooooklyn/canvas#readme)                                       |
+| @napi-rs/canvas-platform-binary       | 1.0.9               | [Project page](https://github.com/Brooooooklyn/canvas#readme)                                       |
 | @next/env                             | 16.3.5              | [Project page](https://github.com/vercel/next.js#readme)                                            |
 | @next/swc-platform-binary             | 16.3.5              | [Project page](https://github.com/vercel/next.js#readme)                                            |
+| @nodable/entities                     | 3.0.0               | [Project page](https://github.com/nodable/val-parsers#readme)                                       |
 | @pinojs/redact                        | 0.4.0               | [Project page](https://github.com/pinojs/redact#readme)                                             |
 | @socket.io/component-emitter          | 3.1.2               | [Project page](https://github.com/socketio/emitter#readme)                                          |
 | @socket.io/redis-streams-adapter      | 0.3.1               | [Project page](https://github.com/socketio/socket.io-redis-streams-adapter#readme)                  |
@@ -189,6 +194,7 @@ This file is not legal advice.
 | ajv-formats                           | 3.0.1               | [Project page](https://github.com/ajv-validator/ajv-formats#readme)                                 |
 | ansi-regex                            | 5.0.1               | [Project page](https://github.com/chalk/ansi-regex#readme)                                          |
 | ansi-styles                           | 4.3.0               | [Project page](https://github.com/chalk/ansi-styles#readme)                                         |
+| anynum                                | 1.0.1               | [Project page](https://github.com/NaturalIntelligence/anynum#readme)                                |
 | atomic-sleep                          | 1.0.0               | [Project page](https://github.com/davidmarkclements/atomic-sleep#readme)                            |
 | avvio                                 | 9.3.0               | [Project page](https://github.com/fastify/avvio#readme)                                             |
 | balanced-match                        | 4.0.4               | [Project page](https://github.com/juliangruber/balanced-match#readme)                               |
@@ -196,6 +202,7 @@ This file is not legal advice.
 | bintrees                              | 1.0.2               | [Project page](https://github.com/vadimg/js_bintrees#readme)                                        |
 | bowser                                | 2.14.1              | [Project page](https://github.com/bowser-js/bowser)                                                 |
 | brace-expansion                       | 5.0.12              | [Project page](https://github.com/juliangruber/brace-expansion#readme)                              |
+| buffer-crc32                          | 1.0.0               | [Project page](https://github.com/brianloveswords/buffer-crc32)                                     |
 | bytes                                 | 3.1.2               | [Project page](https://github.com/visionmedia/bytes.js#readme)                                      |
 | cjs-module-lexer                      | 2.2.1               | [Project page](https://github.com/nodejs/cjs-module-lexer#readme)                                   |
 | client-only                           | 0.0.1               | [Project page](https://reactjs.org/)                                                                |
@@ -220,8 +227,10 @@ This file is not legal advice.
 | fast-deep-equal                       | 3.1.3               | [Project page](https://github.com/epoberezkin/fast-deep-equal#readme)                               |
 | fast-json-stringify                   | 7.0.1               | [Project page](https://github.com/fastify/fast-json-stringify#readme)                               |
 | fast-querystring                      | 1.1.2               | [Project page](https://github.com/anonrig/fast-querystring#readme)                                  |
+| fast-xml-builder                      | 1.3.1               | [Project page](https://github.com/NaturalIntelligence/fast-xml-builder#readme)                      |
+| fast-xml-parser                       | 5.11.1              | [Project page](https://github.com/NaturalIntelligence/fast-xml-parser#readme)                       |
 | fastify                               | 5.12.4              | [Project page](https://fastify.dev/)                                                                |
-| fastify-plugin                        | 6.0.0               | [Project page](https://github.com/fastify/fastify-plugin#readme)                                    |
+| fastify-plugin                        | 5.1.0, 6.0.0        | [Project page](https://github.com/fastify/fastify-plugin#readme)                                    |
 | fastify-raw-body                      | 6.0.1               | [Project page](https://github.com/Eomm/fastify-raw-body#readme)                                     |
 | find-my-way                           | 9.9.0               | [Project page](https://github.com/delvedor/find-my-way#readme)                                      |
 | forwarded-parse                       | 2.1.2               | [Project page](https://github.com/lpinca/forwarded-parse)                                           |
@@ -234,6 +243,8 @@ This file is not legal advice.
 | ipaddr.js                             | 2.5.0               | [Project page](https://github.com/whitequark/ipaddr.js#readme)                                      |
 | is-fullwidth-code-point               | 3.0.0               | [Project page](https://github.com/sindresorhus/is-fullwidth-code-point#readme)                      |
 | is-plain-object                       | 5.1.0               | [Project page](https://github.com/jonschlinkert/is-plain-object)                                    |
+| is-unsafe                             | 2.0.2               | [Project page](https://github.com/NaturalIntelligence/is-unsafe#readme)                             |
+| jose                                  | 6.2.12              | [Project page](https://github.com/panva/jose)                                                       |
 | json-schema-ref-resolver              | 3.0.0               | [Project page](https://github.com/fastify/json-schema-ref-resolver#readme)                          |
 | json-schema-traverse                  | 1.0.0               | [Project page](https://github.com/epoberezkin/json-schema-traverse#readme)                          |
 | launder                               | 1.7.1               | [Project page](https://github.com/apostrophecms/apostrophe/tree/main/packages/launder#readme)       |
@@ -245,9 +256,13 @@ This file is not legal advice.
 | nanoid                                | 3.3.19              | [Project page](https://github.com/ai/nanoid#readme)                                                 |
 | negotiator                            | 0.6.3               | [Project page](https://github.com/jshttp/negotiator#readme)                                         |
 | next                                  | 16.3.5              | [Project page](https://nextjs.org)                                                                  |
+| oauth4webapi                          | 3.8.8               | [Project page](https://github.com/panva/oauth4webapi)                                               |
 | object-assign                         | 4.1.1               | [Project page](https://github.com/sindresorhus/object-assign#readme)                                |
 | on-exit-leak-free                     | 2.1.2               | [Project page](https://github.com/mcollina/on-exit-or-gc#readme)                                    |
+| openid-client                         | 6.8.8               | [Project page](https://github.com/panva/openid-client)                                              |
 | parse-srcset                          | 1.0.2               | [Project page](https://github.com/albell/parse-srcset#readme)                                       |
+| path-expression-matcher               | 1.6.2               | [Project page](https://github.com/NaturalIntelligence/path-expression-matcher#readme)               |
+| pend                                  | 1.2.0               | [Project page](https://github.com/andrewrk/node-pend#readme)                                        |
 | pg                                    | 8.23.0              | [Project page](https://github.com/brianc/node-postgres)                                             |
 | pg-cloudflare                         | 1.4.0               | [Project page](https://github.com/brianc/node-postgres#readme)                                      |
 | pg-connection-string                  | 2.14.0              | [Project page](https://github.com/brianc/node-postgres/tree/master/packages/pg-connection-string)   |
@@ -292,6 +307,7 @@ This file is not legal advice.
 | string-width                          | 4.2.3               | [Project page](https://github.com/sindresorhus/string-width#readme)                                 |
 | strip-ansi                            | 6.0.1               | [Project page](https://github.com/chalk/strip-ansi#readme)                                          |
 | stripe                                | 22.6.2              | [Project page](https://github.com/stripe/stripe-node)                                               |
+| strnum                                | 2.4.2               | [Project page](https://github.com/NaturalIntelligence/strnum#readme)                                |
 | styled-jsx                            | 5.1.6               | [Project page](https://github.com/vercel/styled-jsx#readme)                                         |
 | tdigest                               | 0.1.3               | [Project page](https://github.com/welch/tdigest)                                                    |
 | thread-stream                         | 4.2.0               | [Project page](https://github.com/mcollina/thread-stream#readme)                                    |
@@ -302,9 +318,12 @@ This file is not legal advice.
 | vary                                  | 1.1.2               | [Project page](https://github.com/jshttp/vary#readme)                                               |
 | wrap-ansi                             | 7.0.0               | [Project page](https://github.com/chalk/wrap-ansi#readme)                                           |
 | ws                                    | 8.21.3              | [Project page](https://github.com/websockets/ws)                                                    |
+| xml-naming                            | 0.3.0               | [Project page](https://github.com/NaturalIntelligence/xml-naming#readme)                            |
 | xmlhttprequest-ssl                    | 2.1.2               | [Project page](https://github.com/mjwwit/node-XMLHttpRequest#readme)                                |
 | xtend                                 | 4.0.2               | [Project page](https://github.com/Raynos/xtend)                                                     |
 | yargs                                 | 17.7.3              | [Project page](https://yargs.js.org/)                                                               |
+| yauzl                                 | 3.4.0               | [Project page](https://github.com/thejoshwolfe/yauzl)                                               |
+| yazl                                  | 3.3.1               | [Project page](https://github.com/thejoshwolfe/yazl)                                                |
 | zod                                   | 4.6.5               | [Project page](https://zod.dev)                                                                     |
 
 ### MIT-0

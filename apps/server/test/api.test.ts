@@ -268,6 +268,17 @@ describe("creator to report journey", () => {
     }>();
     expect(session.snapshot.brandTheme).toBeNull();
 
+    const embedOriginsPreflight = await app.inject({
+      method: "OPTIONS",
+      url: "/v1/account/embed-origins",
+      headers: {
+        origin: "http://localhost:3000",
+        "access-control-request-method": "PUT",
+      },
+    });
+    expect(embedOriginsPreflight.statusCode).toBe(204);
+    expect(embedOriginsPreflight.headers["access-control-allow-methods"]).toContain("PUT");
+
     const embedOrigins = await app.inject({
       method: "PUT",
       url: "/v1/account/embed-origins",

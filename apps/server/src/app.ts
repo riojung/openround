@@ -119,7 +119,7 @@ export async function buildApp(
   await app.register(cors, {
     origin: config.WEB_ORIGIN,
     credentials: true,
-    methods: ["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"],
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["content-type", "authorization", "x-request-id", "traceparent", "tracestate"],
     exposedHeaders: ["x-request-id", "x-trace-id"],
   });

@@ -318,7 +318,7 @@ export const QuestionDraftSchema = z
 export type QuestionDraft = z.infer<typeof QuestionDraftSchema>;
 
 const CommonQuestionSchema = CommonQuestionDraftSchema.extend({
-  prompt: z.string().trim().min(1, "Enter the question text").max(500),
+  prompt: z.string().trim().min(1, "Enter the checkpoint prompt").max(500),
 });
 
 const ChoiceQuestionSchema = CommonQuestionSchema.extend({
