@@ -28,7 +28,16 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await creator.getByRole("button", { name: "Reveal answer" }).click();
   await expect(creator.locator('.answer-button[data-correct="true"]')).toContainText("True");
   await creator.getByRole("link", { name: "Back to editor" }).click();
+  await expect(creator).toHaveURL(/\/quiz\/[^/]+$/);
+  await expect(creator.getByRole("status")).toContainText("Saved", { timeout: 10_000 });
+  const publishResponsePromise = creator.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/publish"),
+  );
   await creator.getByRole("button", { name: "Publish" }).click();
+  const publishResponse = await publishResponsePromise;
+  expect(publishResponse.status()).toBe(200);
   await expect(creator.getByText("published", { exact: true })).toBeVisible();
   await creator.getByRole("link", { name: "Dashboard" }).click();
   await expect(creator.getByText(/1 of 5 published quiz slots used/)).toBeVisible({
