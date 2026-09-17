@@ -1,21 +1,28 @@
 import { expect, test } from "@playwright/test";
 
+import { testEmail } from "./test-email";
+
 test("creator can return home, manage quizzes, and sign out on a narrow screen", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
-  await page.getByRole("link", { name: "Sign in", exact: true }).click();
+  const mobileSignInLink = page
+    .locator(".site-mobile-actions")
+    .getByRole("link", { name: "Sign in", exact: true });
+  await mobileSignInLink.click();
 
   await page.getByRole("button", { name: "Workplace" }).click();
-  await page.getByLabel("Email address").fill(`navigation-${testInfo.project.name}@example.com`);
+  await page.getByLabel("Email address").fill(testEmail("navigation", testInfo));
   await page.getByLabel(/I accept the Terms/).check();
   await page.getByRole("button", { name: "Send sign-in link" }).click();
   await page.getByRole("link", { name: "Continue to dashboard" }).click();
 
   await page.getByLabel("Quiz title").fill("Navigation quiz");
   await page.getByRole("button", { name: "Create quiz" }).click();
+  await expect(page).toHaveURL(/\/quiz\//);
   await page.getByRole("link", { name: "OpenRound" }).click();
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("link", { name: "Manage my quizzes" })).toBeVisible();
 
   await page.getByRole("button", { name: "Menu" }).click();
@@ -24,13 +31,19 @@ test("creator can return home, manage quizzes, and sign out on a narrow screen",
     .getByRole("navigation", { name: "Mobile navigation" })
     .getByRole("link", { name: "My quizzes", exact: true })
     .click();
-  await expect(page.getByRole("article").filter({ hasText: "Navigation quiz" })).toBeVisible();
+  await expect(page).toHaveURL(/\/dashboard/);
+  await expect(
+    page
+      .getByRole("article")
+      .filter({ has: page.getByRole("heading", { name: "Navigation quiz", exact: true }) }),
+  ).toHaveCount(1);
 
   await page.getByRole("link", { name: "OpenRound" }).click();
+  await expect(page).toHaveURL(/\/$/);
   await page.getByRole("button", { name: "Menu" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("link", { name: "Sign in", exact: true })).toBeVisible();
+  await expect(mobileSignInLink).toBeVisible();
 
   await page.goto("/dashboard");
   await expect(page).toHaveURL(/\/signin/);
@@ -41,7 +54,7 @@ test("creator can archive, restore, export, and delete their account", async ({
 }, testInfo) => {
   await page.goto("/signin");
   await page.getByRole("button", { name: "Workplace" }).click();
-  await page.getByLabel("Email address").fill(`lifecycle-${testInfo.project.name}@example.com`);
+  await page.getByLabel("Email address").fill(testEmail("lifecycle", testInfo));
   await page.getByLabel(/I accept the Terms/).check();
   await page.getByRole("button", { name: "Send sign-in link" }).click();
   await page.getByRole("link", { name: "Continue to dashboard" }).click();
@@ -50,6 +63,7 @@ test("creator can archive, restore, export, and delete their account", async ({
   await page.getByRole("button", { name: "Create quiz" }).click();
   await expect(page).toHaveURL(/\/quiz\//);
   await page.getByRole("link", { name: "Dashboard" }).click();
+  await expect(page).toHaveURL(/\/dashboard/);
 
   const quizCard = page.getByRole("article").filter({ hasText: "Lifecycle quiz" });
   await quizCard.getByRole("button", { name: "Archive" }).click();
