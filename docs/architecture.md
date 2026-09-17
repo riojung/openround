@@ -65,6 +65,10 @@ The application follows one domain model and one release train. Splitting web an
 - Renders the complete public question and labels on participant devices.
 - Uses same-origin `/v1` and `/socket.io` routes by default, while allowing an explicit API origin
   at image build time for split hosted deployments.
+- Generates a per-request script nonce and enforced Content Security Policy, serves HSTS and other
+  browser hardening headers, and dynamically renders pages so Next.js can apply the nonce to its
+  runtime scripts. Inline styles remain permitted for the constrained React style properties used
+  by the P0 interface.
 
 The web process does not decide deadlines, answer acceptance, score, rank, or session phase.
 
@@ -76,6 +80,8 @@ The web process does not decide deadlines, answer acceptance, score, rank, or se
 - Persists accepted answers and canonical state before acknowledgement.
 - Produces role-filtered snapshots and reports.
 - Applies feature flags, plan/operator limits, rate limits, retention, and audited administration.
+- Separates process liveness from dependency readiness; the ready probe performs database and
+  Redis reads and returns 503 without exposing connection details when either dependency fails.
 
 ### Game engine
 
@@ -108,6 +114,8 @@ Question media is uploaded directly to a private quarantine prefix with a constr
 - SMTP sends single-use creator magic links. Local Compose uses Mailpit instead of external delivery.
 - Stripe Checkout, portal, and signature-verified webhooks are enabled only in hosted billing mode.
 - Prometheus metrics remain on the internal server route; optional OpenTelemetry exports spans over OTLP/HTTP.
+- Checked-in collector and Alertmanager templates define the production signal and severity-route
+  contract, but receiver credentials and proof of human delivery remain environment-owned.
 
 ## Primary data flows
 
@@ -304,6 +312,11 @@ Stable errors include `INVALID_CODE`, `SESSION_FULL`, `SESSION_LOCKED`, `NICKNAM
 - State-changing browser requests accept the configured web origin or a request that is genuinely
   same-origin with the public proxy host. This permits a LAN address behind Caddy without accepting
   unrelated browser origins. Routes and events enforce size, schema, role, and rate limits.
+- Browser documents enforce nonce-authorized scripts, deny script attributes, objects, frames, and
+  foreign form actions, and upgrade insecure requests on HTTPS deployments. HTTPS image and
+  connection schemes remain broad until final storage/API origins are fixed and independently
+  reviewed; explicitly permitted private-network HTTP community deployments also allow HTTP and
+  WebSocket resources so multi-device LAN operation remains functional.
 
 ### PostgreSQL row-level security
 
@@ -406,5 +419,8 @@ logs/metrics, alert routing, backup verification, and operator ownership; see th
 - PostgreSQL repository: [`packages/db/src/postgres.ts`](../packages/db/src/postgres.ts)
 - Schema and RLS: [`packages/db/migrations/001_initial.sql`](../packages/db/migrations/001_initial.sql)
 - Local topology: [`compose.yaml`](../compose.yaml)
+- Deployment configuration preflight: [`apps/server/src/config-check.ts`](../apps/server/src/config-check.ts)
+- Web CSP boundary: [`apps/web/proxy.ts`](../apps/web/proxy.ts)
+- Release gates and evidence: [`docs/release-readiness.json`](release-readiness.json)
 
 See the [product design](design.md) for role and interaction rationale and the [user guide](user-guide.md) for current workflows.

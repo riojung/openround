@@ -16,8 +16,12 @@ The repository contains a runnable P0 product slice:
 - PostgreSQL durability and compare-and-swap fencing, Redis owner-fenced session-code reservations and per-session mutation leases, batched Streams snapshots/replay and Socket.IO coordination, plan-stamped 30/365-day reports, server-enforced CSV entitlements, full account export/deletion, audit records, and idempotent Stripe entitlement hooks
 - Private signed image uploads, quarantine, MIME-signature and size checks, ClamAV scanning, clean-object promotion, alt text, and authorized signed delivery
 - Internal Prometheus metrics including browser event-receipt latency/timeouts, a provisioned
-  Grafana dashboard, 14 semantically tested alert rules, request/trace correlation, optional OTLP
-  tracing, and audited database-backed signup/session/media kill switches
+  Grafana dashboard, 14 semantically tested alert rules, tested Alertmanager severity routing, a
+  validated OpenTelemetry collector profile, request/trace correlation, optional OTLP tracing,
+  and audited database-backed signup/session/media kill switches
+- Dependency-aware readiness checks, fail-fast non-secret deployment preflight, per-request nonce
+  Content Security Policy, HSTS, CodeQL/dependency review workflows, and a protected manual
+  Canadian-staging correctness/load/billing evidence workflow
 - Responsive participant, host, presenter, creator, pricing, privacy, terms, and status surfaces
 - Community Compose stack, free-pilot guidance, Canadian Fly.io profiles, CI/security workflows, tests, and operations runbooks
 
@@ -123,6 +127,9 @@ pnpm smoke:observability
 pnpm smoke:restore
 pnpm test:e2e:compose
 pnpm smoke:tracing
+pnpm readiness:check
+pnpm test:alert-routing
+pnpm test:collector-config
 ```
 
 `pnpm check` runs the complete local gate. The API integration test exercises creator sign-in, authoring, immutable publishing, hosting, guest join, idempotent answering, finishing, and report reconciliation.
@@ -150,6 +157,13 @@ container after answer acknowledgement and verify durable recovery plus host-com
 retry idempotency. `SESSION_CODE=1234567 CLIENTS=100 pnpm load:socket` remains available as a
 lightweight join-only sample against a prepared room. Local results are not production capacity
 evidence.
+
+For an already deployed environment, the manual `Staging readiness` GitHub workflow validates TLS,
+dependency health, public feature flags, protected metrics, security headers, and a complete
+20- or 100-client game. It can separately replay signed, duplicate, stale, invalid, and
+cancellation billing events against a dedicated staging workspace. See the
+[staging runbook](docs/runbooks/staging-readiness.md); locally signed events do not replace a real
+Stripe test-mode checkout and delivery exercise.
 
 The test-only `compose.test.yaml` overlay raises the session ceiling to 250 without changing the
 normal community profile. Run the Phase 6 stress profiles with:
@@ -217,7 +231,9 @@ Fastify and Socket.IO server
 
 See the [documentation index](docs/README.md), [architecture and protocol](docs/architecture.md), [API reference](docs/api.md), the
 [phase delivery status](docs/implementation-status.md), and the
-[production readiness checklist](docs/runbooks/production-readiness.md).
+[production readiness checklist](docs/runbooks/production-readiness.md). The
+[machine-validated readiness ledger](docs/release-readiness.json) is intentionally still blocked
+on provider, human-review, legal, and beta evidence.
 
 ## Deployment profiles
 

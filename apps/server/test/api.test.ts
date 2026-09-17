@@ -913,3 +913,37 @@ describe("creator to report journey", () => {
     ).toBe(202);
   });
 });
+
+describe("health probes", () => {
+  it("keeps liveness healthy while failing readiness when a dependency is unavailable", async () => {
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      {
+        repository: new MemoryRepository(),
+        cache: new MemorySessionCache(),
+        readiness: async () => {
+          throw new Error("database credential expired");
+        },
+      },
+    );
+    app = built.app;
+
+    const live = await app.inject({ method: "GET", url: "/health/live" });
+    const ready = await app.inject({ method: "GET", url: "/health/ready" });
+
+    expect(live.statusCode).toBe(200);
+    expect(live.json()).toEqual({ status: "ok" });
+    expect(ready.statusCode).toBe(503);
+    expect(ready.json()).toEqual({
+      status: "not_ready",
+      dependencies: { database: "unknown", coordination: "unknown" },
+    });
+    expect(ready.body).not.toContain("credential expired");
+  });
+});

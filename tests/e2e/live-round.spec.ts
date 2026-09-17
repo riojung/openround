@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 import { testEmail } from "./test-email";
@@ -42,6 +43,7 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await expect(creator.getByLabel("Participant names")).toHaveValue("friendly_only");
   await creator.getByRole("button", { name: "Create live session" }).click();
   await expect(creator).toHaveURL(/\/host\/(?!setup\/)[^/]+$/);
+  expect((await new AxeBuilder({ page: creator }).analyze()).violations).toEqual([]);
   const code = (await creator.locator(".session-code").textContent())!.trim();
   const expectedJoinUrl = `${new URL(creator.url()).origin}/join?code=${code}`;
   await expect(creator.getByTestId("join-url")).toHaveAttribute("href", expectedJoinUrl);
@@ -72,6 +74,7 @@ test("creator and participant complete a live round", async ({ browser }, testIn
 
   await creator.getByRole("button", { name: "Start round" }).click();
   await expect(participant.getByText("Edmonton is the capital of Alberta.")).toBeVisible();
+  expect((await new AxeBuilder({ page: participant }).analyze()).violations).toEqual([]);
   await participant.getByRole("button", { name: "True", exact: true }).click();
   await expect(participant.getByText("Answer received and saved.")).toBeVisible();
   await creator.getByRole("button", { name: "Lock answers" }).click();
@@ -84,6 +87,7 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   ).toBeVisible({ timeout: 10_000 });
   await expect(creator.getByRole("link", { name: "CSV export requires Pro" })).toBeVisible();
   await expect(creator.getByText(/current free plan defaults to 30 days/)).toBeVisible();
+  expect((await new AxeBuilder({ page: creator }).analyze()).violations).toEqual([]);
 
   await participantContext.close();
   await creatorContext.close();

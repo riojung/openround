@@ -17,6 +17,14 @@ collector endpoint on a private authenticated service path. Health and metrics s
 from traces. Validate export during deployment; `pnpm smoke:tracing` verifies the application path
 against a local temporary collector but does not test a production backend.
 
+`infra/observability/otel-collector.example.yml` is a validated production starting point. It
+accepts application OTLP, scrapes the HTTPS metrics endpoint with its bearer token, batches both
+signals, and exports them to an authenticated OTLP backend. Supply all five `OPENROUND_*`
+environment values through the platform secret/configuration service, keep receiver ports private,
+and change resource limits to match the deployment. `pnpm test:collector-config` validates the
+template with the pinned collector image; successful parsing is not proof that the backend accepts
+or retains telemetry.
+
 ## Prometheus signals
 
 The server exports Node.js runtime metrics plus these OpenRound families:
@@ -77,16 +85,22 @@ days locally by default; change `OPENROUND_PROMETHEUS_RETENTION` only after sizi
 expectations.
 
 This profile is a reproducible validation and self-hosting baseline, not evidence of hosted
-monitoring. It deliberately has no default Alertmanager or paging receiver, because a silent or
-example destination would create false confidence. A production deployment must send the same
-rules to its managed Prometheus-compatible service, map `page`, `warning`, and `ticket` severities
-to owned routes, protect metrics transport, and rehearse one alert end to end.
+monitoring. It deliberately has no active paging receiver, because a silent or example destination
+would create false confidence. `infra/observability/alertmanager.example.yml` maps `page`,
+`warning`, and `ticket` labels to separate placeholder webhook receivers. Copy it into the private
+deployment configuration, replace every `.example.invalid` destination through the operations
+secret workflow, and run `pnpm test:alert-routing` before deployment. A production deployment must
+send the same rules to its managed Prometheus-compatible service, protect metrics transport, and
+rehearse each route end to end with a named responder.
 
-CI also runs `pnpm test:alerts`, which executes `promtool test rules` against
+CI runs `pnpm test:alerts`, `pnpm test:alert-routing`, and `pnpm test:collector-config`. The first
+executes `promtool test rules` against
 `infra/observability/alerts.test.yml`. The fixture feeds synthetic failure series into every rule
 and verifies all 14 alert names, hold periods, severity labels, summaries, and runbook annotations.
-This catches expression and routing-label regressions; it does not prove delivery to a human-owned
-paging destination.
+The routing check verifies that each severity reaches exactly its intended receiver, while the
+collector check parses the pinned template. These catch configuration regressions; none proves
+delivery to a human-owned paging destination. Record that separately with the
+[operations rehearsal template](../evidence/operations-rehearsal.md).
 
 ## Initial alert candidates
 

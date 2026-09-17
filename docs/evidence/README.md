@@ -1,0 +1,22 @@
+# Release evidence records
+
+The files in this directory are blank, redaction-safe templates for gates that cannot be proven by
+source code alone. Copy a template into the private operations record for each exercise; do not
+commit customer content, participant names, credentials, private provider URLs, or unredacted
+screenshots.
+
+For each completed gate:
+
+1. Record the immutable image digest, Git commit, environment, UTC start/end time, owner, and
+   reviewer.
+2. Attach redacted logs or checksums and a stable evidence URL with access appropriate to the
+   reviewers.
+3. Record failures and follow-up issues; a partial exercise is not a passing gate.
+4. Update `docs/release-readiness.json` only after the named reviewer accepts the evidence.
+5. Run `pnpm readiness:check`; run `pnpm readiness:require:beta` before tagging a beta candidate.
+
+Available templates cover [accessibility](accessibility-review.md),
+[security](security-review.md), [physical devices](device-matrix.md),
+[provider restoration](provider-restore.md), [alert delivery](operations-rehearsal.md),
+[design-partner interviews](design-partner-interview.md), and
+[observed beta sessions](session-observation.md).

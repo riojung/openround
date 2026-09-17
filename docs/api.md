@@ -4,8 +4,9 @@ All REST bodies and realtime payloads are validated by the schemas in `packages/
 
 ## Service and feature APIs
 
-- `GET /health/live` reports process liveness; `GET /health/ready` reports the configured storage
-  and media-scanning posture.
+- `GET /health/live` reports process liveness. `GET /health/ready` actively checks PostgreSQL and
+  Redis-compatible coordination, returns 503 without dependency details when either fails, and on
+  success reports dependency, storage, and media-scanning posture.
 - `GET /v1/features` returns `publicWebUrl`, the public community/billing mode, and signup,
   session-creation, and media-upload switches used by the UI. The values combine deployment
   capability ceilings with the current database-backed runtime switches. Host and presenter

@@ -10,7 +10,15 @@ credential used for migrations.
    Create a non-owner PostgreSQL runtime role using `infra/postgres/001-runtime-role.sql`.
 3. Load runtime secrets into the server app: `DATABASE_URL`, `REDIS_URL`, SMTP, S3, Stripe, and a
    random `ADMIN_TOKEN`. Do not give the server app `DATABASE_MIGRATION_URL`.
-4. Before deploying an application image, run its one-shot migration command from a restricted
+4. Validate the exact candidate image and environment before migration. The command prints public
+   URLs, feature flags, limits, and configured modes, but never secret values:
+
+   ```bash
+   docker run --rm --env-file ./server.env \
+     ghcr.io/OWNER/REPOSITORY/openround-server:VERSION node dist/config-check.js
+   ```
+
+5. Before deploying an application image, run its one-shot migration command from a restricted
    CI or maintenance environment with only `DATABASE_MIGRATION_URL` available:
 
    ```bash
@@ -21,12 +29,16 @@ credential used for migrations.
    `migration.env` must be mode `0600`, excluded from version control, and deleted after the run.
    Pin the image by digest for production. The migration is forward-only and safe to rerun.
 
-5. Deploy one always-on server machine and the web app. Verify `/health/ready`, then run the
-   synthetic creator-to-report flow before routing pilot traffic.
-6. Configure a private collector and set a random `METRICS_TOKEN` before changing
+6. Deploy one always-on server machine and the web app. `/health/live` proves only that the process
+   responds; `/health/ready` performs PostgreSQL and Redis checks and must pass before routing
+   traffic. Then run the protected `Staging readiness` workflow.
+7. Configure a private collector from `infra/observability/otel-collector.example.yml`, install
+   owned alert routes from `alertmanager.example.yml`, and set a random `METRICS_TOKEN` before changing
    `METRICS_ENABLED=true`. Configure and test SMTP before changing `FEATURE_SIGNUPS=true`.
-7. Keep one realtime process until sticky routing, two-writer process loss, target-region load,
+8. Keep one realtime process until sticky routing, two-writer process loss, target-region load,
    managed Redis failover, and database restore exercises pass.
 
 The example `fly.dev` domains match the checked-in app names. Replace them if those names are not
 available or custom domains are used. Never enable `ALLOW_INSECURE_LOCAL_HTTP` in this profile.
+See `docs/runbooks/staging-readiness.md` for GitHub environment variables, synthetic-account
+isolation, redacted artifacts, and the Stripe rehearsal boundary.

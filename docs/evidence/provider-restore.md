@@ -1,0 +1,29 @@
+# Managed provider restore and failover record
+
+- Exercise date/time (UTC):
+- Incident/exercise owner and reviewer:
+- Build commit and image digest:
+- Provider, service tier, and Canadian region:
+- Source backup timestamp and type:
+- Recovery targets: RPO 24 hours; RTO 4 hours
+
+## Exercise log
+
+| UTC time | Action                                                  | Result/evidence |
+| -------- | ------------------------------------------------------- | --------------- |
+|          | Freeze destructive maintenance and select restore point | Pending         |
+|          | Restore PostgreSQL into isolated resources              | Pending         |
+|          | Restore/version private objects                         | Pending         |
+|          | Apply forward migrations                                | Pending         |
+|          | Compare durable-table counts and hashes                 | Pending         |
+|          | Verify answer uniqueness and report reconciliation      | Pending         |
+|          | Verify sample media checksums and authorization         | Pending         |
+|          | Run a synthetic creator-to-report game                  | Pending         |
+|          | Exercise Redis loss/rebuild or managed failover         | Pending         |
+|          | Rotate exercise credentials and remove temporary data   | Pending         |
+
+- Actual RPO:
+- Actual RTO:
+- Data loss or mismatch:
+- Open blockers and issue URLs:
+- Reviewer decision: Pending

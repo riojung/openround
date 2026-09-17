@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { io, type Socket } from "socket.io-client";
 
@@ -12,6 +14,10 @@ const batchSize = Number(process.env.JOIN_BATCH_SIZE ?? "20");
 const assertPerformance = process.env.ASSERT_PERFORMANCE === "true";
 const restartServer = process.env.RESTART_SERVER === "true";
 const synchronizedStartAtMs = Number(process.env.START_AT_MS ?? "0");
+const suppliedCreatorCookie = process.env.LOAD_CREATOR_COOKIE?.trim() ?? "";
+const keepData = process.env.LOAD_KEEP_DATA === "true";
+const runId = process.env.LOAD_RUN_ID?.trim() || randomUUID();
+const outputPath = process.env.LOAD_OUTPUT?.trim();
 const runFile = promisify(execFile);
 
 if (!Number.isInteger(clientCount) || clientCount < 1 || clientCount > 250) {
@@ -22,6 +28,12 @@ if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 50) {
 }
 if (!Number.isFinite(synchronizedStartAtMs) || synchronizedStartAtMs < 0) {
   throw new Error("START_AT_MS must be a non-negative Unix timestamp in milliseconds");
+}
+if (suppliedCreatorCookie && /[\r\n]/.test(suppliedCreatorCookie)) {
+  throw new Error("LOAD_CREATOR_COOKIE must not contain line breaks");
+}
+if (restartServer && suppliedCreatorCookie) {
+  throw new Error("RESTART_SERVER cannot be used with a supplied staging creator cookie");
 }
 
 interface Ack<T> {
@@ -51,6 +63,8 @@ interface Snapshot {
 
 let creatorCookie = "";
 let accountCreated = false;
+let createdQuizId: string | null = null;
+let createdSessionId: string | null = null;
 const sockets = new Set<Socket>();
 
 async function api<T>(path: string, init: RequestInit = {}, bearer?: string): Promise<T> {
@@ -178,17 +192,23 @@ async function restartComposeServer() {
 }
 
 async function main() {
-  const email = `compose-load-${Date.now()}-${randomUUID()}@example.com`;
-  const verifyResponse = await fetch(await magicLink(email), { redirect: "manual" });
-  assert.ok([301, 302, 303, 307, 308].includes(verifyResponse.status));
-  creatorCookie = verifyResponse.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
-  assert.match(creatorCookie, /^openround_creator=/);
-  accountCreated = true;
+  if (suppliedCreatorCookie) {
+    creatorCookie = suppliedCreatorCookie;
+    await api("/v1/auth/me");
+  } else {
+    const email = `compose-load-${Date.now()}-${randomUUID()}@example.com`;
+    const verifyResponse = await fetch(await magicLink(email), { redirect: "manual" });
+    assert.ok([301, 302, 303, 307, 308].includes(verifyResponse.status));
+    creatorCookie = verifyResponse.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
+    assert.match(creatorCookie, /^openround_creator=/);
+    accountCreated = true;
+  }
 
   const created = await api<{ quiz: { id: string } }>("/v1/quizzes", {
     method: "POST",
-    body: JSON.stringify({ title: "Production-path load check", description: "" }),
+    body: JSON.stringify({ title: `Production-path load check ${runId}`, description: "" }),
   });
+  createdQuizId = created.quiz.id;
   const questionId = randomUUID();
   const correctChoiceId = randomUUID();
   const incorrectChoiceId = randomUUID();
@@ -233,6 +253,7 @@ async function main() {
       },
     }),
   });
+  createdSessionId = session.sessionId;
 
   const participants: Participant[] = [];
   for (let offset = 0; offset < clientCount; offset += batchSize) {
@@ -437,6 +458,8 @@ async function main() {
   assert.equal(report.report.metrics.accuracyPercent, 100);
 
   const results = {
+    runId,
+    target: new URL(baseUrl).origin,
     clients: clientCount,
     correctness: {
       acceptedAnswers: report.report.metrics.answerCount,
@@ -489,7 +512,12 @@ async function main() {
     assert.ok(results.latencyMs.reportAvailable < 60_000, "Report exceeded 60 seconds");
   }
 
-  process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
+  const serializedResults = `${JSON.stringify(results, null, 2)}\n`;
+  if (outputPath) {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, serializedResults, { encoding: "utf8", mode: 0o600 });
+  }
+  process.stdout.write(serializedResults);
 }
 
 void main()
@@ -498,6 +526,8 @@ void main()
     process.exitCode = 1;
   })
   .finally(async () => {
+    for (const socket of sockets) socket.disconnect();
+    if (keepData) return;
     if (accountCreated) {
       await api("/v1/account", {
         method: "DELETE",
@@ -506,6 +536,23 @@ void main()
         process.stderr.write(`Load-test account cleanup failed: ${String(error)}\n`);
         process.exitCode = 1;
       });
+      return;
     }
-    for (const socket of sockets) socket.disconnect();
+    if (createdSessionId) {
+      await api(`/v1/sessions/${createdSessionId}`, { method: "DELETE" }).catch(
+        (error: unknown) => {
+          process.stderr.write(`Load-test session cleanup failed: ${String(error)}\n`);
+          process.exitCode = 1;
+        },
+      );
+    }
+    if (createdQuizId) {
+      await api(`/v1/quizzes/${createdQuizId}/archive`, {
+        method: "POST",
+        body: JSON.stringify({ archived: true }),
+      }).catch((error: unknown) => {
+        process.stderr.write(`Load-test quiz cleanup failed: ${String(error)}\n`);
+        process.exitCode = 1;
+      });
+    }
   });

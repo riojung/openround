@@ -1,0 +1,42 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: warnings
+  group_by: [alertname, deployment]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: paging
+      matchers:
+        - severity="page"
+      repeat_interval: 30m
+    - receiver: warnings
+      matchers:
+        - severity="warning"
+    - receiver: tickets
+      matchers:
+        - severity="ticket"
+      repeat_interval: 12h
+
+receivers:
+  - name: paging
+    webhook_configs:
+      - url: https://paging.example.invalid/openround
+        send_resolved: true
+  - name: warnings
+    webhook_configs:
+      - url: https://warnings.example.invalid/openround
+        send_resolved: true
+  - name: tickets
+    webhook_configs:
+      - url: https://tickets.example.invalid/openround
+        send_resolved: true
+
+inhibit_rules:
+  - source_matchers:
+      - severity="page"
+    target_matchers:
+      - severity=~"warning|ticket"
+    equal: [alertname, deployment]

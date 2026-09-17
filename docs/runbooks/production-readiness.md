@@ -17,6 +17,10 @@
   loopback or private-network URLs and must never be enabled in hosted production. Keep
   `AUTH_DEBUG_MAGIC_LINKS=false`; exposing a sign-in token in an API response is only for explicit,
   loopback-bound local testing.
+- Build the exact candidate image and execute `node dist/config-check.js` with the deployment's
+  server environment before migration or promotion. Retain its non-secret JSON summary with the
+  release evidence. A zero exit code proves schema and cross-field validation; it does not prove
+  that external credentials authenticate.
 - Production metrics require a bearer token at startup. Keep `METRICS_ENABLED=false` until a
   private authenticated collector is ready; do not expose the route through the public ingress.
 - Application traffic uses a non-owner PostgreSQL role; only the migration job receives the
@@ -38,7 +42,8 @@
 
 ## Release evidence
 
-- `pnpm check` passes from a clean checkout.
+- `pnpm check`, `pnpm readiness:check`, alert routing, and collector configuration validation pass
+  from a clean checkout.
 - `pnpm audit --audit-level low` passes; `THIRD_PARTY_NOTICES.md` matches
   `pnpm licenses:report`; release SBOMs, provenance, signatures, and container scans are retained.
 - Database migration succeeds on a production-like copy and has a forward-repair plan.
@@ -76,4 +81,6 @@ For the local Phase 6 stress profiles, add `compose.test.yaml`, run the single-s
 burst. Do not translate either local result into a hosted SLO without a target-region rerun.
 
 See [observability and operational controls](observability.md) for metric, trace, alert, and
-kill-switch guidance.
+kill-switch guidance. Use the [Canadian staging workflow](staging-readiness.md) for the remote
+probe and target-region game, [evidence templates](../evidence/README.md) for non-code gates, and
+`pnpm readiness:require:beta` before creating a beta tag.

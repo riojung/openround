@@ -1,0 +1,126 @@
+name: Staging readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      clients:
+        description: Concurrent clients for the target-region game
+        required: true
+        default: "20"
+        type: choice
+        options: ["20", "100"]
+      run_stripe_replay:
+        description: Run the destructive signed-webhook rehearsal on the dedicated staging account
+        required: true
+        default: false
+        type: boolean
+      soak_minutes:
+        description: Repeated target-region games after the primary check
+        required: true
+        default: "0"
+        type: choice
+        options: ["0", "15", "60"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canada-staging-readiness
+  cancel-in-progress: false
+
+jobs:
+  remote-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: canada-staging
+    env:
+      READINESS_API_URL: ${{ vars.OPENROUND_API_URL }}
+      READINESS_WEB_URL: ${{ vars.OPENROUND_WEB_URL }}
+      READINESS_EXPECTED_WEB_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
+      READINESS_EXPECT_BILLING: ${{ vars.OPENROUND_EXPECTED_BILLING }}
+      READINESS_EXPECT_COMMUNITY_MODE: ${{ vars.OPENROUND_EXPECTED_COMMUNITY_MODE }}
+      READINESS_EXPECT_SIGNUPS: ${{ vars.OPENROUND_EXPECTED_SIGNUPS }}
+      READINESS_EXPECT_SESSION_CREATION: ${{ vars.OPENROUND_EXPECTED_SESSION_CREATION }}
+      READINESS_EXPECT_MEDIA_UPLOADS: ${{ vars.OPENROUND_EXPECTED_MEDIA_UPLOADS }}
+      READINESS_EXPECT_METRICS: protected
+      READINESS_OUTPUT: artifacts/readiness/remote-probe.json
+      LOAD_BASE_URL: ${{ vars.OPENROUND_API_URL }}
+      LOAD_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
+      LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
+      LOAD_OUTPUT: artifacts/readiness/target-region-load.json
+      LOAD_RUN_ID: staging-${{ github.run_id }}-${{ github.run_attempt }}
+      CLIENTS: ${{ inputs.clients }}
+      JOIN_BATCH_SIZE: "20"
+      ASSERT_PERFORMANCE: "true"
+      RESTART_SERVER: "false"
+      STRIPE_REHEARSAL_BASE_URL: ${{ vars.OPENROUND_API_URL }}
+      STRIPE_REHEARSAL_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
+      STRIPE_REHEARSAL_CREATOR_COOKIE: ${{ secrets.OPENROUND_STRIPE_REHEARSAL_COOKIE }}
+      STRIPE_REHEARSAL_WEBHOOK_SECRET: ${{ secrets.OPENROUND_STRIPE_WEBHOOK_SECRET }}
+      STRIPE_REHEARSAL_OUTPUT: artifacts/readiness/stripe-replay.json
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate required staging configuration
+        run: |
+          test -n "$READINESS_API_URL"
+          test -n "$READINESS_WEB_URL"
+          test -n "$LOAD_CREATOR_COOKIE"
+      - name: Probe deployment and dependency readiness
+        run: pnpm smoke:remote
+      - name: Run target-region correctness and latency game
+        run: pnpm load:compose
+      - name: Run repeated target-region soak
+        if: inputs.soak_minutes != '0'
+        env:
+          SOAK_MINUTES: ${{ inputs.soak_minutes }}
+        run: |
+          mkdir -p artifacts/readiness/soak
+          started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          deadline=$((SECONDS + SOAK_MINUTES * 60))
+          iteration=0
+          while (( SECONDS < deadline )); do
+            iteration=$((iteration + 1))
+            LOAD_RUN_ID="staging-${{ github.run_id }}-${{ github.run_attempt }}-soak-${iteration}" \
+              LOAD_OUTPUT="artifacts/readiness/soak/run-${iteration}.json" \
+              pnpm load:compose
+            if (( SECONDS < deadline )); then sleep 5; fi
+          done
+          finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # shellcheck disable=SC2016
+          STARTED_AT="$started_at" FINISHED_AT="$finished_at" ITERATION="$iteration" node -e '
+            const fs = require("node:fs");
+            fs.writeFileSync(
+              "artifacts/readiness/soak-summary.json",
+              `${JSON.stringify({
+                schemaVersion: 1,
+                commit: process.env.GITHUB_SHA,
+                startedAt: process.env.STARTED_AT,
+                finishedAt: process.env.FINISHED_AT,
+                requestedMinutes: Number(process.env.SOAK_MINUTES),
+                completedGames: Number(process.env.ITERATION),
+              }, null, 2)}\n`,
+              { mode: 0o600 },
+            );
+          '
+      - name: Rehearse signed Stripe webhook ordering
+        if: inputs.run_stripe_replay
+        run: |
+          test -n "$STRIPE_REHEARSAL_CREATOR_COOKIE"
+          test -n "$STRIPE_REHEARSAL_WEBHOOK_SECRET"
+          pnpm smoke:stripe-replay
+      - name: Upload redacted readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canada-staging-readiness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/readiness/
+          if-no-files-found: warn
+          retention-days: 30

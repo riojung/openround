@@ -70,6 +70,7 @@ export async function registerRoutes(
     storage: StorageService;
     retention: RetentionService;
     metrics: MetricsService;
+    readiness: () => Promise<void>;
     stripeClient?: Stripe | null;
   },
 ) {
@@ -136,11 +137,23 @@ export async function registerRoutes(
   });
 
   app.get("/health/live", async () => ({ status: "ok" }));
-  app.get("/health/ready", async () => ({
-    status: "ready",
-    storage: storage.configured ? "configured" : "disabled",
-    mediaScanning: storage.mediaUploadsEnabled ? "enabled" : "disabled",
-  }));
+  app.get("/health/ready", async (request, reply) => {
+    try {
+      await dependencies.readiness();
+      return {
+        status: "ready",
+        dependencies: { database: "ready", coordination: "ready" },
+        storage: storage.configured ? "configured" : "disabled",
+        mediaScanning: storage.mediaUploadsEnabled ? "enabled" : "disabled",
+      };
+    } catch (error) {
+      request.log.warn({ err: error }, "readiness dependency check failed");
+      return reply.code(503).send({
+        status: "not_ready",
+        dependencies: { database: "unknown", coordination: "unknown" },
+      });
+    }
+  });
 
   app.get("/metrics", async (request, reply) => {
     if (!config.METRICS_ENABLED)
