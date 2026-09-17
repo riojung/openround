@@ -1,11 +1,13 @@
 import { expect, test } from "@playwright/test";
 
+import { testEmail } from "./test-email";
+
 test("creator and participant complete a live round", async ({ browser }, testInfo) => {
   const creatorContext = await browser.newContext();
   const creator = await creatorContext.newPage();
   await creator.goto("/signin");
   await creator.getByRole("button", { name: "Education" }).click();
-  await creator.getByLabel("Email address").fill(`e2e-${testInfo.project.name}@example.com`);
+  await creator.getByLabel("Email address").fill(testEmail("live-round", testInfo));
   await creator.getByLabel(/I accept the Terms/).check();
   await creator.getByRole("button", { name: "Send sign-in link" }).click();
   await creator.getByRole("link", { name: "Continue to dashboard" }).click();
@@ -92,7 +94,7 @@ test("quiz autosave serializes overlapping edits", async ({ browser }, testInfo)
   const creator = await context.newPage();
   await creator.goto("/signin");
   await creator.getByRole("button", { name: "Workplace" }).click();
-  await creator.getByLabel("Email address").fill(`autosave-${testInfo.project.name}@example.com`);
+  await creator.getByLabel("Email address").fill(testEmail("autosave", testInfo));
   await creator.getByLabel(/I accept the Terms/).check();
   await creator.getByRole("button", { name: "Send sign-in link" }).click();
   await creator.getByRole("link", { name: "Continue to dashboard" }).click();
@@ -144,7 +146,7 @@ test("quiz autosave serializes overlapping edits", async ({ browser }, testInfo)
 test("incomplete questions autosave with actionable guidance", async ({ page }, testInfo) => {
   await page.goto("/signin");
   await page.getByRole("button", { name: "Workplace" }).click();
-  await page.getByLabel("Email address").fill(`guidance-${testInfo.project.name}@example.com`);
+  await page.getByLabel("Email address").fill(testEmail("guidance", testInfo));
   await page.getByLabel(/I accept the Terms/).check();
   await page.getByRole("button", { name: "Send sign-in link" }).click();
   await page.getByRole("link", { name: "Continue to dashboard" }).click();
