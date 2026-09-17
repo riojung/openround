@@ -26,8 +26,18 @@ async function main() {
     return value;
   }
 
+  async function request(url: string, init: RequestInit = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async function authenticated<T>(path: string): Promise<T> {
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await request(`${baseUrl}${path}`, {
       headers: { cookie: creatorCookie, origin: browserOrigin },
     });
     const body = await response.text();
@@ -49,7 +59,7 @@ async function main() {
 
   async function sendEvent(event: Record<string, unknown>, signature?: string) {
     const payload = JSON.stringify(event);
-    return fetch(`${baseUrl}/v1/webhooks/stripe`, {
+    return request(`${baseUrl}/v1/webhooks/stripe`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -59,9 +69,14 @@ async function main() {
     });
   }
 
-  function event(type: string, created: number, object: Record<string, unknown>) {
+  function event(
+    type: string,
+    created: number,
+    object: Record<string, unknown>,
+    identifier = type,
+  ) {
     return {
-      id: `evt_openround_${runId.replaceAll("-", "")}_${type.replaceAll(".", "_")}_${created}`,
+      id: `evt_openround_${runId.replaceAll("-", "")}_${identifier.replaceAll(".", "_")}_${created}`,
       object: "event",
       api_version: "2026-08-27.basil",
       created,
@@ -94,17 +109,6 @@ async function main() {
   );
 
   const created = Math.floor(Date.now() / 1_000);
-  const checkout = event("checkout.session.completed", created, {
-    id: `cs_openround_${runId}`,
-    object: "checkout.session",
-    customer: `cus_openround_${runId}`,
-    subscription: `sub_openround_${runId}`,
-    metadata: { workspaceId },
-  });
-  assert.equal((await sendEvent(checkout)).status, 204, "checkout event was rejected");
-  assert.equal((await sendEvent(checkout)).status, 204, "duplicate checkout event was rejected");
-  assert.equal((await authenticated<BillingStatus>("/v1/billing/status")).billing.plan, "pro");
-
   const subscription = {
     id: `sub_openround_${runId}`,
     object: "subscription",
@@ -112,33 +116,91 @@ async function main() {
     metadata: { workspaceId },
     status: "canceled",
   };
-  const staleDeletion = event("customer.subscription.deleted", created - 60, subscription);
-  assert.equal((await sendEvent(staleDeletion)).status, 204, "stale cancellation was rejected");
-  assert.equal(
-    (await authenticated<BillingStatus>("/v1/billing/status")).billing.plan,
-    "pro",
-    "a stale event changed the entitlement",
-  );
+  let cleanupRequired = false;
+  let rehearsalError: unknown;
 
-  const invalidPayload = JSON.stringify(
-    event("customer.subscription.deleted", created, subscription),
-  );
-  assert.equal(
-    (
-      await fetch(`${baseUrl}/v1/webhooks/stripe`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "stripe-signature": "invalid" },
-        body: invalidPayload,
-      })
-    ).status,
-    400,
-    "an invalid Stripe signature was accepted",
-  );
+  try {
+    const checkout = event("checkout.session.completed", created, {
+      id: `cs_openround_${runId}`,
+      object: "checkout.session",
+      customer: `cus_openround_${runId}`,
+      subscription: `sub_openround_${runId}`,
+      metadata: { workspaceId },
+    });
+    cleanupRequired = true;
+    assert.equal((await sendEvent(checkout)).status, 204, "checkout event was rejected");
+    assert.equal((await sendEvent(checkout)).status, 204, "duplicate checkout event was rejected");
+    assert.equal((await authenticated<BillingStatus>("/v1/billing/status")).billing.plan, "pro");
 
-  const currentDeletion = event("customer.subscription.deleted", created, subscription);
-  assert.equal((await sendEvent(currentDeletion)).status, 204, "current cancellation was rejected");
-  const final = await authenticated<BillingStatus>("/v1/billing/status");
-  assert.equal(final.billing.plan, "free", "the rehearsal did not restore the free plan");
+    const staleDeletion = event("customer.subscription.deleted", created - 60, subscription);
+    assert.equal((await sendEvent(staleDeletion)).status, 204, "stale cancellation was rejected");
+    assert.equal(
+      (await authenticated<BillingStatus>("/v1/billing/status")).billing.plan,
+      "pro",
+      "a stale event changed the entitlement",
+    );
+
+    const invalidPayload = JSON.stringify(
+      event("customer.subscription.deleted", created, subscription, "invalid-signature"),
+    );
+    assert.equal(
+      (
+        await request(`${baseUrl}/v1/webhooks/stripe`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "stripe-signature": "invalid" },
+          body: invalidPayload,
+        })
+      ).status,
+      400,
+      "an invalid Stripe signature was accepted",
+    );
+
+    const currentDeletion = event(
+      "customer.subscription.deleted",
+      created,
+      subscription,
+      "current-cancellation",
+    );
+    assert.equal(
+      (await sendEvent(currentDeletion)).status,
+      204,
+      "current cancellation was rejected",
+    );
+    const final = await authenticated<BillingStatus>("/v1/billing/status");
+    assert.equal(final.billing.plan, "free", "the rehearsal did not restore the free plan");
+    cleanupRequired = false;
+  } catch (error) {
+    rehearsalError = error;
+  }
+
+  if (cleanupRequired) {
+    try {
+      const cleanupCreated = Math.max(created, Math.floor(Date.now() / 1_000));
+      const cleanup = event(
+        "customer.subscription.deleted",
+        cleanupCreated,
+        subscription,
+        "failure-cleanup",
+      );
+      assert.equal(
+        (await sendEvent(cleanup)).status,
+        204,
+        "failure cleanup cancellation was rejected",
+      );
+      const restored = await authenticated<BillingStatus>("/v1/billing/status");
+      assert.equal(restored.billing.plan, "free", "failure cleanup did not restore the free plan");
+    } catch (cleanupError) {
+      if (rehearsalError) {
+        throw new AggregateError(
+          [rehearsalError, cleanupError],
+          "Stripe rehearsal failed and its synthetic entitlement cleanup also failed",
+        );
+      }
+      throw cleanupError;
+    }
+  }
+
+  if (rehearsalError) throw rehearsalError;
 
   const evidence = {
     schemaVersion: 1,

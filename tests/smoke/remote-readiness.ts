@@ -30,13 +30,13 @@ async function main() {
     return value === "true";
   }
 
-  async function request(path: string, target = apiUrl) {
+  async function request(path: string, target = apiUrl, redirect: "manual" | "follow" = "manual") {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15_000);
     try {
       return await fetch(new URL(path, target), {
         headers: { "user-agent": "openround-readiness-probe/1.0" },
-        redirect: "manual",
+        redirect,
         signal: controller.signal,
       });
     } finally {
@@ -110,8 +110,18 @@ async function main() {
     `metrics must be ${metricsExpectation}`,
   );
 
-  const web = await request("/", webUrl);
-  assert.ok(web.status >= 200 && web.status < 400, `web root returned ${web.status}`);
+  const expectedWebRoot = new URL("/", webUrl);
+  const web = await request("/", webUrl, "follow");
+  const finalWebUrl = new URL(web.url);
+  assert.equal(
+    finalWebUrl.href,
+    expectedWebRoot.href,
+    `web root redirected unexpectedly to ${finalWebUrl.href}`,
+  );
+  if (!allowHttp) {
+    assert.equal(finalWebUrl.protocol, "https:", "final web root must use HTTPS");
+  }
+  assert.ok(web.status >= 200 && web.status < 300, `web root returned ${web.status}`);
   const requiredHeaders: Record<string, RegExp> = {
     "content-security-policy":
       /script-src[^;]*'nonce-[^']+'[^;]*'strict-dynamic'[^;]*;.*object-src 'none'.*frame-ancestors 'none'/i,
@@ -120,7 +130,7 @@ async function main() {
     "referrer-policy": /strict-origin-when-cross-origin/i,
     "permissions-policy": /camera=\(\).*microphone=\(\).*geolocation=\(\)/i,
   };
-  if (webUrl.protocol === "https:") {
+  if (finalWebUrl.protocol === "https:") {
     requiredHeaders["strict-transport-security"] = /max-age=(?:[3-9]\d{7}|\d{9,})/i;
   }
   const observedHeaders: Record<string, string> = {};
@@ -134,7 +144,11 @@ async function main() {
     schemaVersion: 1,
     checkedAt: new Date().toISOString(),
     commit: process.env.GITHUB_SHA ?? null,
-    targets: { apiOrigin: apiUrl.origin, webOrigin: webUrl.origin },
+    targets: {
+      apiOrigin: apiUrl.origin,
+      webOrigin: webUrl.origin,
+      finalWebUrl: finalWebUrl.href,
+    },
     health: { live: live.body, ready: ready.body },
     publicFeatures: features,
     metrics: metricsExpectation,
