@@ -25,10 +25,10 @@ export function HomeCreatorActions() {
     <div className="hero-actions">
       <Link className="button" href={signedIn === false ? "/signin" : "/dashboard"}>
         {signedIn === true
-          ? "Manage my quizzes"
+          ? "Manage checkpoint sets"
           : signedIn === false
-            ? "Create a free quiz"
-            : "Create or manage quizzes"}
+            ? "Create a free checkpoint set"
+            : "Create or manage checkpoint sets"}
       </Link>
       <Link className="button-quiet" href="#how-it-works">
         See how it works

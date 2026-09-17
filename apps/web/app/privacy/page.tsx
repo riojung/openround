@@ -23,9 +23,23 @@ export default function PrivacyPage() {
         </p>
         <h2>Data used</h2>
         <p>
-          We process creator email, quiz content, session settings, participant nicknames, submitted
-          answers, scores, limited security logs, consent records, and billing status where
-          applicable.
+          We process creator email, checkpoint-set content, session settings, participant nicknames,
+          submitted responses, optional confidence, interventions, Q&A, follow-up attempts, scores,
+          limited security logs, consent records, and billing status where applicable.
+        </p>
+        <h2>Optional authoring assistant</h2>
+        <p>
+          When a deployment enables source-grounded authoring, a creator may submit pasted text or a
+          private document to the configured model provider. Live participant responses, session
+          data, reports, and Q&A are not included in those prompts. The deployment operator must
+          identify the provider, processing location, retention, and contract terms before use.
+        </p>
+        <h2>Optional institution integrations</h2>
+        <p>
+          In an approved institution workspace, a creator may explicitly link an identity-provider
+          or LMS subject to an existing OpenRound account. We do not link accounts by matching email
+          addresses. Instructor OIDC/LTI does not identify live participants; learner launch, roster
+          access, and grade passback remain disabled in this release.
         </p>
         <h2>Retention and control</h2>
         <p>

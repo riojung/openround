@@ -10,6 +10,10 @@ class CapturingMailer implements Mailer {
   async sendMagicLink(email: string, verifyUrl: string) {
     this.messages.push({ email, verifyUrl });
   }
+
+  async sendWorkspaceInvitation(email: string, verifyUrl: string) {
+    this.messages.push({ email, verifyUrl });
+  }
 }
 
 const productionDependencies = {
@@ -42,6 +46,26 @@ describe("magic-link response exposure", () => {
 
     expect(debugUrl).toMatch(/^http:\/\/localhost:8080\/v1\/auth\/verify\?token=/);
     expect(mailer.messages).toEqual([{ email: "local@example.com", verifyUrl: debugUrl }]);
+  });
+
+  it("preserves a validated local return path in the one-time link", async () => {
+    const repository = new MemoryRepository();
+    const mailer = new CapturingMailer();
+    const auth = new AuthService(
+      repository,
+      mailer,
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+      }),
+    );
+
+    const debugUrl = await auth.requestMagicLink("lti-owner@example.edu", "education", "/lti/link");
+
+    expect(new URL(debugUrl!).searchParams.get("returnTo")).toBe("/lti/link");
+    expect(mailer.messages[0]?.verifyUrl).toBe(debugUrl);
   });
 
   it("keeps the link out of a hosted production response", async () => {

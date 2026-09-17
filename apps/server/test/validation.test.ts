@@ -29,10 +29,10 @@ describe("validation issue messages", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(validationIssueMessage(result.error.issues[0]!)).toBe(
-        "Question 1: Enter the question text",
+        "Checkpoint 1: Enter the checkpoint prompt",
       );
       expect(validationIssueMessage(result.error.issues[1]!)).toBe(
-        "Question 1, answer 1: Enter an answer",
+        "Checkpoint 1, answer 1: Enter an answer",
       );
     }
   });

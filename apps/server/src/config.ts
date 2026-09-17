@@ -11,6 +11,16 @@ const defaultTrueBooleanString = z
   .default("true")
   .transform((value) => value === "true");
 
+const optionalUrl = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.string().url().optional(),
+);
+
+const optionalSecret = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.string().min(1).optional(),
+);
+
 function isPrivateHttpUrl(value: string) {
   const url = new URL(value);
   if (url.protocol !== "http:") return false;
@@ -64,6 +74,36 @@ export const ConfigSchema = z
     COMMUNITY_MODE: booleanString,
     MAX_SESSION_PARTICIPANTS: z.coerce.number().int().min(1).max(250).default(100),
     RETENTION_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1_440).default(60),
+    REPORT_WORKER_INTERVAL_MS: z.coerce.number().int().min(250).max(60_000).default(2_000),
+    REPORT_WORKER_LEASE_MS: z.coerce.number().int().min(10_000).max(600_000).default(120_000),
+    AUTHORING_AI_MODE: z.enum(["disabled", "openai_compatible"]).default("disabled"),
+    AUTHORING_AI_ENDPOINT: optionalUrl,
+    AUTHORING_AI_API_KEY: optionalSecret,
+    AUTHORING_AI_MODEL: z.string().trim().min(1).max(200).default("operator-configured"),
+    AUTHORING_AI_PROVIDER_NAME: z.string().trim().min(1).max(80).default("operator"),
+    AUTHORING_WORKER_INTERVAL_MS: z.coerce.number().int().min(500).max(60_000).default(3_000),
+    AUTHORING_WORKER_LEASE_MS: z.coerce.number().int().min(10_000).max(600_000).default(120_000),
+    AUTHORING_EXTRACTION_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(120_000)
+      .default(20_000),
+    OIDC_MODE: z.enum(["disabled", "generic"]).default("disabled"),
+    OIDC_ISSUER: optionalUrl,
+    OIDC_CLIENT_ID: optionalSecret,
+    OIDC_CLIENT_SECRET: optionalSecret,
+    OIDC_CLIENT_AUTH: z
+      .enum(["client_secret_post", "client_secret_basic", "none"])
+      .default("client_secret_post"),
+    OIDC_PROVIDER_NAME: z.string().trim().min(1).max(80).default("Institution sign-in"),
+    OIDC_TRANSACTION_TTL_SECONDS: z.coerce.number().int().min(60).max(900).default(300),
+    LTI_MODE: z.enum(["disabled", "tool"]).default("disabled"),
+    LTI_TOOL_PRIVATE_JWK: optionalSecret,
+    LTI_TOOL_KEY_ID: z.string().trim().min(1).max(200).default("openround-lti-1"),
+    LTI_TRANSACTION_TTL_SECONDS: z.coerce.number().int().min(60).max(900).default(300),
+    LTI_LAUNCH_TTL_SECONDS: z.coerce.number().int().min(300).max(3_600).default(900),
+    AUDIT_RETENTION_DAYS: z.coerce.number().int().min(30).max(3_650).default(365),
     COMMUNITY_REPORT_RETENTION_DAYS: z.coerce.number().int().min(1).max(3_650).default(365),
     MEDIA_QUARANTINE_RETENTION_HOURS: z.coerce.number().int().min(1).max(168).default(24),
     FEATURE_SIGNUPS: defaultTrueBooleanString,
@@ -133,6 +173,70 @@ export const ConfigSchema = z
         code: "custom",
         path: ["DATABASE_MIGRATION_URL"],
         message: "A database connection is required to run migrations",
+      });
+    }
+    if (config.AUTHORING_AI_MODE === "openai_compatible" && !config.AUTHORING_AI_ENDPOINT) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["AUTHORING_AI_ENDPOINT"],
+        message: "Required when the authoring assistant is enabled",
+      });
+    }
+    if (
+      config.AUTHORING_AI_MODE !== "disabled" &&
+      config.AUTHORING_WORKER_LEASE_MS <= config.AUTHORING_EXTRACTION_TIMEOUT_MS + 60_000
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["AUTHORING_WORKER_LEASE_MS"],
+        message:
+          "Must exceed AUTHORING_EXTRACTION_TIMEOUT_MS plus the 60-second generation timeout",
+      });
+    }
+    if (
+      config.NODE_ENV === "production" &&
+      config.AUTHORING_AI_ENDPOINT &&
+      new URL(config.AUTHORING_AI_ENDPOINT).protocol !== "https:" &&
+      !(config.ALLOW_INSECURE_LOCAL_HTTP && isPrivateHttpUrl(config.AUTHORING_AI_ENDPOINT))
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["AUTHORING_AI_ENDPOINT"],
+        message: "Must use HTTPS in production unless private local HTTP is explicitly allowed",
+      });
+    }
+    if (config.LTI_MODE === "tool" && !config.LTI_TOOL_PRIVATE_JWK) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["LTI_TOOL_PRIVATE_JWK"],
+        message: "Required when the LTI tool is enabled",
+      });
+    }
+    if (config.OIDC_MODE === "generic") {
+      if (!config.OIDC_ISSUER) {
+        ctx.addIssue({ code: "custom", path: ["OIDC_ISSUER"], message: "Required for OIDC" });
+      }
+      if (!config.OIDC_CLIENT_ID) {
+        ctx.addIssue({ code: "custom", path: ["OIDC_CLIENT_ID"], message: "Required for OIDC" });
+      }
+      if (config.OIDC_CLIENT_AUTH !== "none" && !config.OIDC_CLIENT_SECRET) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["OIDC_CLIENT_SECRET"],
+          message: "Required for the selected OIDC client authentication method",
+        });
+      }
+    }
+    if (
+      config.NODE_ENV === "production" &&
+      config.OIDC_ISSUER &&
+      new URL(config.OIDC_ISSUER).protocol !== "https:" &&
+      !(config.ALLOW_INSECURE_LOCAL_HTTP && isPrivateHttpUrl(config.OIDC_ISSUER))
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["OIDC_ISSUER"],
+        message: "Must use HTTPS in production unless private local HTTP is explicitly allowed",
       });
     }
     if (config.NODE_ENV === "production" && config.ALLOW_IN_MEMORY) {

@@ -1,18 +1,32 @@
-# OpenRound Live Quiz Platform
+# OpenRound Comprehension Recovery
 
-OpenRound is an independent, server-authoritative live quiz platform for classrooms and workplace learning. Creators publish focused quizzes, participants join without accounts, and every accepted answer is acknowledged, deduplicated, and retained for useful follow-up reports.
+OpenRound is an independent, server-authoritative comprehension recovery system for higher
+education and workplace learning. Facilitators ask, diagnose, intervene, recheck, and review
+carefully bounded evidence while participants join without accounts.
 
 The product uses an original interaction and visual system. It does not include or copy Kahoot! code, content, branding, layouts, sounds, scoring, or private interfaces.
 
 ## Current implementation
 
-The repository contains a runnable P0 product slice:
+The repository contains a runnable differentiated product slice:
 
 - Email magic-link creator access with secure, revocable sessions
-- Tenant-scoped quiz library, autosaving editor, two question types, duplication, archive, and immutable publish versions
+- Tenant-scoped checkpoint-set library, six response types, confidence, concepts, linked rechecks,
+  folders/tags, portability, autosave, duplication, archive, and immutable publish versions
 - Seven-digit multi-device guest join, copyable direct links, host/presenter QR, LAN/public address
   selection, friendly aliases, capacity enforcement, lobby, presenter view, and reconnect credentials
-- Server-authoritative state machine, deadlines, pause/resume, answer acknowledgements, idempotency, scoring, reveal, standings, and finish
+- Server-authoritative Recovery Loop with interventions, linked rechecks/revotes, deterministic
+  explained insights, durable canonical responses/confidence, pause/resume, scoring, and reconnect
+- Versioned asynchronous evidence reports, moderated realtime Q&A, collaboration roles, scoped
+  cohost/presenter credentials, and secure presenter embed
+- Accountless self-paced follow-up with generic/personal links, time-flex mode, and private 1.5×/2×
+  accommodation passes
+- Disabled-by-default source-grounded authoring from pasted text or private PDF/DOCX/PPTX, with
+  bounded isolated extraction, citations, draft-only human review, and BYO provider support
+- Contract-gated institution foundation with explicit generic OIDC creator linking, LTI 1.3
+  instructor launch and Deep Linking, operator-managed platform registrations, immutable workspace
+  home-region visibility, and owner audit export; learner identity, NRPS/AGS, managed SAML/SCIM,
+  K–12, and certification remain gated
 - PostgreSQL durability and compare-and-swap fencing, Redis owner-fenced session-code reservations and per-session mutation leases, batched Streams snapshots/replay and Socket.IO coordination, plan-stamped 30/365-day reports, server-enforced CSV entitlements, full account export/deletion, audit records, and idempotent Stripe entitlement hooks
 - Private signed image uploads, quarantine, MIME-signature and size checks, ClamAV scanning, clean-object promotion, alt text, and authorized signed delivery
 - Internal Prometheus metrics including browser event-receipt latency/timeouts, a provisioned
@@ -29,13 +43,15 @@ Legal text, trademark clearance, external penetration testing, school agreements
 
 ## Documentation
 
-| Guide                                             | Use it for                                                       |
-| ------------------------------------------------- | ---------------------------------------------------------------- |
-| [Quick start](docs/quick-start.md)                | Start the complete local stack and run a first quiz              |
-| [User guide](docs/user-guide.md)                  | Create, publish, host, join, report, export, and delete          |
-| [Product and experience design](docs/design.md)   | Product goals, role journeys, states, content, and accessibility |
-| [Architecture and protocol](docs/architecture.md) | Components, data flows, correctness, security, and scale gates   |
-| [Documentation index](docs/README.md)             | API, status, privacy, release, and operations references         |
+| Guide                                                                        | Use it for                                                       |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| [Quick start](docs/quick-start.md)                                           | Start the complete local stack and run a first quiz              |
+| [User guide](docs/user-guide.md)                                             | Create, publish, host, join, report, export, and delete          |
+| [Product and experience design](docs/design.md)                              | Product goals, role journeys, states, content, and accessibility |
+| [Competitive strategy and roadmap](docs/competitive-strategy-and-roadmap.md) | Market comparison, differentiation, and post-P0 phases           |
+| [Architecture and protocol](docs/architecture.md)                            | Components, data flows, correctness, security, and scale gates   |
+| [Institution integrations](docs/institution-integrations.md)                 | Configure and validate creator OIDC, LTI, audit, and pilot gates |
+| [Documentation index](docs/README.md)                                        | API, status, privacy, release, and operations references         |
 
 ## Quick start with Docker
 

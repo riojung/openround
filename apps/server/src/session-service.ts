@@ -1,17 +1,20 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { SpanStatusCode, trace, type Attributes } from "@opentelemetry/api";
-import type {
-  AnswerAck,
-  AnswerSubmit,
-  EventEnvelope,
-  HostCommand,
-  JoinRequest,
-  JoinResponse,
-  Report,
-  SessionSettings,
-  SessionSnapshot,
-  SyncRequest,
-  SyncResponse,
+import {
+  canonicalizeResponse,
+  responseForAnswer,
+  type AnswerAck,
+  type AnswerSubmit,
+  type EventEnvelope,
+  type HostCommand,
+  type JoinRequest,
+  type JoinResponse,
+  type Report,
+  type SessionSettings,
+  type SessionSnapshot,
+  type SessionStaffRole,
+  type SyncRequest,
+  type SyncResponse,
 } from "@openround/contracts";
 import {
   SessionCodeConflictError,
@@ -19,6 +22,7 @@ import {
   type CreatorContext,
   type ParticipantRecord,
   type Repository,
+  type SessionStaffCredentialRecord,
   type StoredSession,
 } from "@openround/db";
 import {
@@ -29,6 +33,7 @@ import {
   setParticipantConnection,
   snapshotForRole,
   createGameState,
+  upgradeGameState,
   type EngineAnswer,
   type EngineEvent,
   type GameState,
@@ -43,7 +48,7 @@ import {
   opaqueToken,
   safeHashEqual,
 } from "./security.js";
-import { generateReport } from "./reporting.js";
+import { createPendingReport } from "./reporting.js";
 import type { MetricsService } from "./metrics.js";
 import { entitlementsFor, retentionExpiry } from "./entitlements.js";
 
@@ -54,6 +59,14 @@ export interface SessionMutation {
 }
 
 type MutationListener = (mutation: SessionMutation) => void | Promise<void>;
+
+export interface SessionAuxiliaryEvent {
+  sessionId: string;
+  type: `qna.${string}` | "session.staff.revoked";
+  payload: Record<string, unknown>;
+}
+
+type AuxiliaryListener = (event: SessionAuxiliaryEvent) => void | Promise<void>;
 
 interface PendingAnswer {
   input: AnswerSubmit;
@@ -101,6 +114,7 @@ export class SessionError extends Error {
       | "ANSWER_LATE"
       | "ANSWER_INVALID"
       | "ENTITLEMENT_LIMIT"
+      | "INSTITUTION_AUTH_REQUIRED"
       | "UNAUTHORIZED"
       | "NOT_FOUND"
       | "CONFLICT",
@@ -119,6 +133,7 @@ export class SessionService {
   private readonly joinBatches = new Map<string, JoinBatch>();
   private readonly participantCredentials = new Map<string, ParticipantRecord>();
   private readonly listeners = new Set<MutationListener>();
+  private readonly auxiliaryListeners = new Set<AuxiliaryListener>();
   private readonly tracer = trace.getTracer("openround-game-service");
   private closing = false;
 
@@ -132,6 +147,15 @@ export class SessionService {
   subscribe(listener: MutationListener) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  subscribeAuxiliary(listener: AuxiliaryListener) {
+    this.auxiliaryListeners.add(listener);
+    return () => this.auxiliaryListeners.delete(listener);
+  }
+
+  async publishAuxiliary(event: SessionAuxiliaryEvent) {
+    for (const listener of this.auxiliaryListeners) await listener(event);
   }
 
   private traceOperation<T>(name: string, attributes: Attributes, work: () => Promise<T>) {
@@ -258,7 +282,10 @@ export class SessionService {
       return null;
     }
     const cached = await this.cache.get(sessionId);
-    if (cached && cached.version >= persisted.state.version) persisted.state = cached;
+    persisted.state = upgradeGameState(persisted.state);
+    if (cached && cached.version >= persisted.state.version) {
+      persisted.state = upgradeGameState(cached);
+    }
     this.active.set(sessionId, persisted);
     this.metrics.setActiveSessions(this.active.size);
     this.scheduleDeadline(persisted);
@@ -276,7 +303,7 @@ export class SessionService {
       }
       const cached = await this.cache.get(sessionId);
       if (cached && cached.version >= active.state.version) {
-        active.state = cached;
+        active.state = upgradeGameState(cached);
         this.scheduleDeadline(active);
         return active;
       }
@@ -291,6 +318,111 @@ export class SessionService {
     const participant = await this.repository.getParticipantByToken(tokenHash);
     if (participant) this.participantCredentials.set(tokenHash, participant);
     return participant;
+  }
+
+  private async staffForTokenHash(tokenHash: string) {
+    return this.repository.getSessionStaffByToken(tokenHash, new Date());
+  }
+
+  private async authorizeStaffTokenHash(
+    session: StoredSession,
+    tokenHash: string,
+    allowedRoles: SessionStaffRole[],
+  ): Promise<{ rootHost: boolean; credential: SessionStaffCredentialRecord | null }> {
+    if (safeHashEqual(session.hostTokenHash, tokenHash)) {
+      return { rootHost: true, credential: null };
+    }
+    const credential = await this.staffForTokenHash(tokenHash);
+    if (
+      !credential ||
+      credential.sessionId !== session.id ||
+      credential.workspaceId !== session.workspaceId ||
+      !allowedRoles.includes(credential.role)
+    ) {
+      throw new SessionError("UNAUTHORIZED", "Session staff credential is invalid or expired");
+    }
+    return { rootHost: false, credential };
+  }
+
+  private authorizeStaff(session: StoredSession, token: string, allowedRoles: SessionStaffRole[]) {
+    return this.authorizeStaffTokenHash(session, hashToken(token), allowedRoles);
+  }
+
+  async realtimeStaffIdentity(sessionId: string, token: string, role: "host" | "presenter") {
+    const session = await this.loadSession(sessionId);
+    if (!session) throw new SessionError("NOT_FOUND", "Session not found");
+    const tokenHash = hashToken(token);
+    const staff = await this.authorizeStaffTokenHash(
+      session,
+      tokenHash,
+      role === "presenter" ? ["cohost", "presenter"] : ["cohost"],
+    );
+    return {
+      credentialId: staff.credential?.id ?? null,
+      expiresAtMs: staff.credential?.expiresAt.getTime() ?? null,
+      tokenHash,
+    };
+  }
+
+  async revalidateRealtimeStaff(sessionId: string, tokenHash: string, role: "host" | "presenter") {
+    const session = await this.loadSession(sessionId);
+    if (!session) throw new SessionError("NOT_FOUND", "Session not found");
+    await this.authorizeStaffTokenHash(
+      session,
+      tokenHash,
+      role === "presenter" ? ["cohost", "presenter"] : ["cohost"],
+    );
+  }
+
+  async createSessionStaffCredential(
+    creator: CreatorContext,
+    sessionId: string,
+    input: { role: SessionStaffRole; label: string; expiresInMinutes: number },
+  ) {
+    if (creator.role === "viewer") {
+      throw new SessionError("UNAUTHORIZED", "Viewers cannot create session staff credentials");
+    }
+    const session = await this.repository.getSessionById(sessionId);
+    if (!session || session.workspaceId !== creator.workspaceId) {
+      throw new SessionError("NOT_FOUND", "Session not found");
+    }
+    const token = opaqueToken();
+    const embedPolicyKey = input.role === "presenter" ? opaqueToken() : undefined;
+    const embedAllowedOrigins =
+      input.role === "presenter"
+        ? await this.repository.getEmbedAllowedOrigins(creator.workspaceId)
+        : [];
+    const now = new Date();
+    const requestedExpiry = new Date(now.getTime() + input.expiresInMinutes * 60_000);
+    const record = await this.repository.createSessionStaffCredential({
+      id: randomUUID(),
+      workspaceId: creator.workspaceId,
+      sessionId,
+      role: input.role,
+      label: input.label,
+      tokenHash: hashToken(token),
+      embedPolicyKeyHash: embedPolicyKey ? hashToken(embedPolicyKey) : null,
+      embedAllowedOrigins,
+      createdBy: creator.userId,
+      expiresAt:
+        requestedExpiry < session.expiresAt ? requestedExpiry : new Date(session.expiresAt),
+      revokedAt: null,
+      createdAt: now,
+    });
+    return {
+      token,
+      ...(embedPolicyKey ? { embedPolicyKey } : {}),
+      ...(input.role === "presenter" ? { embedAllowedOrigins } : {}),
+      credential: {
+        id: record.id,
+        sessionId: record.sessionId,
+        role: record.role,
+        label: record.label,
+        expiresAt: record.expiresAt.toISOString(),
+        revokedAt: record.revokedAt?.toISOString() ?? null,
+        createdAt: record.createdAt.toISOString(),
+      },
+    };
   }
 
   private async save(
@@ -371,6 +503,16 @@ export class SessionService {
     quizId: string,
     settings: SessionSettings,
   ): Promise<{ sessionId: string; code: string; hostToken: string; snapshot: SessionSnapshot }> {
+    if (creator.role === "viewer") {
+      throw new SessionError("UNAUTHORIZED", "Viewers cannot host live rounds");
+    }
+    const institutionPolicy = await this.repository.getInstitutionPolicy(creator.workspaceId);
+    if (institutionPolicy.identityRequirement === "institution") {
+      throw new SessionError(
+        "INSTITUTION_AUTH_REQUIRED",
+        "Institution-identified live participation is not enabled in this release; keep guest or optional identity to host a round",
+      );
+    }
     const quiz = await this.repository.getQuiz(creator.workspaceId, quizId);
     if (!quiz?.currentVersionId)
       throw new SessionError("NOT_FOUND", "Publish the quiz before hosting it");
@@ -489,6 +631,13 @@ export class SessionService {
 
     const stored = await this.repository.getSessionByCode(input.code);
     if (!stored) throw new SessionError("INVALID_CODE", "Check the code and try again");
+    const institutionPolicy = await this.repository.getInstitutionPolicy(stored.workspaceId);
+    if (institutionPolicy.identityRequirement === "institution") {
+      throw new SessionError(
+        "INSTITUTION_AUTH_REQUIRED",
+        "This workspace requires institution identity; anonymous code entry is disabled",
+      );
+    }
     return this.queueJoin(stored.id, input);
   }
 
@@ -754,6 +903,21 @@ export class SessionService {
       const session = await this.loadSessionForMutation(sessionId);
       if (!session) throw new SessionError("NOT_FOUND", "Session not found");
       const priorState = session.state;
+      const durableAnswers = await this.repository.findAnswers(
+        session.workspaceId,
+        session.id,
+        items.map(({ input, participant }) => ({
+          participantId: participant.id,
+          roundId: input.roundId,
+          idempotencyKey: input.idempotencyKey,
+        })),
+      );
+      const durableByIdempotencyKey = new Map(
+        durableAnswers.map((answer) => [answer.idempotencyKey, answer]),
+      );
+      const durableByParticipantRound = new Map(
+        durableAnswers.map((answer) => [`${answer.participantId}:${answer.roundId}`, answer]),
+      );
       let nextState = priorState;
       const newAnswers: EngineAnswer[] = [];
       const events: EngineEvent[] = [];
@@ -762,12 +926,49 @@ export class SessionService {
 
       for (const item of items) {
         try {
+          const durableForKey = durableByIdempotencyKey.get(item.input.idempotencyKey);
+          const durableForRound = durableByParticipantRound.get(
+            `${item.participant.id}:${item.input.roundId}`,
+          );
+          const durable = durableForKey ?? durableForRound;
+          if (durable) {
+            const idempotentRequestMatches =
+              !durableForKey ||
+              (durable.participantId === item.participant.id &&
+                durable.roundId === item.input.roundId &&
+                durable.confidence === (item.input.confidence ?? null) &&
+                JSON.stringify(canonicalizeResponse(durable.response)) ===
+                  JSON.stringify(responseForAnswer(item.input)));
+            if (durable.participantId !== item.participant.id || !idempotentRequestMatches) {
+              outcomes.push({
+                item,
+                acknowledgement: {
+                  accepted: false,
+                  duplicate: false,
+                  code: "ANSWER_INVALID",
+                },
+              });
+            } else {
+              outcomes.push({
+                item,
+                acknowledgement: {
+                  accepted: true,
+                  answerId: durable.answerId,
+                  acceptedAt: new Date(durable.acceptedAtMs).toISOString(),
+                  score: durable.score,
+                  duplicate: true,
+                },
+              });
+            }
+            continue;
+          }
           const beforeAnswer = nextState;
           const result = acceptAnswer(beforeAnswer, {
             answerId: randomUUID(),
             participantId: item.participant.id,
             roundId: item.input.roundId,
-            choiceId: item.input.choiceId,
+            response: responseForAnswer(item.input),
+            confidence: item.input.confidence,
             idempotencyKey: item.input.idempotencyKey,
             nowMs: item.receivedAtMs,
           });
@@ -875,9 +1076,7 @@ export class SessionService {
         return this.mutate(input.sessionId, "host", async () => {
           const session = await this.loadSessionForMutation(input.sessionId);
           if (!session) throw new SessionError("NOT_FOUND", "Session not found");
-          if (!safeHashEqual(session.hostTokenHash, hashToken(input.hostToken))) {
-            throw new SessionError("UNAUTHORIZED", "Host token is invalid");
-          }
+          const staffActor = await this.authorizeStaff(session, input.hostToken, ["cohost"]);
           try {
             const commandTime = new Date(closesAnswerIngress ? commandReceivedAtMs : Date.now());
             const priorState = session.state;
@@ -888,6 +1087,9 @@ export class SessionService {
               expectedVersion: input.expectedVersion,
               action: input.action,
               participantId: input.participantId,
+              interventionType: input.interventionType,
+              recheckMode: input.recheckMode,
+              recheckQuestionId: input.recheckQuestionId,
               nowMs: commandTime.getTime(),
               newRoundId: randomUUID,
             });
@@ -905,7 +1107,7 @@ export class SessionService {
               }
               const report =
                 session.state.phase === "finished"
-                  ? generateReport(session.state, session.retentionExpiresAt)
+                  ? createPendingReport(session.state, session.retentionExpiresAt)
                   : undefined;
               try {
                 await this.save(session, result.events, expectedVersion, report);
@@ -916,13 +1118,24 @@ export class SessionService {
                 this.metrics.setActiveSessions(this.active.size);
                 throw error;
               }
-              if (report) {
-                this.metrics.reportGenerated();
-              }
               await this.publish({
                 state: session.state,
                 events: result.events,
                 reportId: report?.id,
+              });
+              await this.repository.recordAudit({
+                workspaceId: session.workspaceId,
+                actorId: staffActor.rootHost ? session.hostId : null,
+                action: `session.command.${input.action}`,
+                targetType: "game_session",
+                targetId: session.id,
+                requestId: input.commandId,
+                metadata: staffActor.credential
+                  ? {
+                      staffCredentialId: staffActor.credential.id,
+                      staffRole: staffActor.credential.role,
+                    }
+                  : {},
               });
             }
             this.metrics.recordHostCommand(
@@ -953,9 +1166,11 @@ export class SessionService {
     const session = await this.loadSession(input.sessionId);
     if (!session) throw new SessionError("NOT_FOUND", "Session not found");
     if (input.hostToken) {
-      if (!safeHashEqual(session.hostTokenHash, hashToken(input.hostToken))) {
-        throw new SessionError("UNAUTHORIZED", "Host token is invalid");
-      }
+      await this.authorizeStaff(
+        session,
+        input.hostToken,
+        input.role === "presenter" ? ["cohost", "presenter"] : ["cohost"],
+      );
       return snapshotForRole(session.state, {
         role: input.role === "presenter" ? "presenter" : "host",
       });
@@ -1079,6 +1294,10 @@ export class SessionService {
     );
     if (!referenced) throw new SessionError("NOT_FOUND", "Media is not part of this session");
     if (safeHashEqual(session.hostTokenHash, hashToken(credential))) return session.workspaceId;
+    const staff = await this.staffForTokenHash(hashToken(credential));
+    if (staff?.sessionId === session.id && staff.workspaceId === session.workspaceId) {
+      return session.workspaceId;
+    }
     const participant = await this.participantForToken(credential);
     const participantState = participant ? session.state.participants[participant.id] : null;
     if (

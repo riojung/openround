@@ -1,225 +1,249 @@
 # OpenRound user guide
 
-OpenRound lets a facilitator prepare a quiz, run it live, and review the results. Participants join as session-scoped guests and do not create accounts.
+OpenRound helps a facilitator run a complete comprehension-recovery loop:
+**ask → diagnose → intervene → recheck → prove**. Participants join as session-scoped guests and
+do not need accounts.
+
+For a local first run, complete the [quick start](quick-start.md) first.
 
 ## Roles and screens
 
-| Role                | Main job                                         | Main screens                                                |
-| ------------------- | ------------------------------------------------ | ----------------------------------------------------------- |
-| Creator/facilitator | Create, publish, host, and review                | Sign in, dashboard, editor, host controls, reports, account |
-| Presenter           | Show the room a clean shared view                | Lobby, question, reveal, standings, finish                  |
-| Participant         | Join and answer on a personal device             | Join, lobby, question, result, finish                       |
-| Community operator  | Deploy, secure, back up, and support the service | Compose/deployment configuration, metrics, logs, runbooks   |
+| Role               | Main job                                                       | Access                                        |
+| ------------------ | -------------------------------------------------------------- | --------------------------------------------- |
+| Workspace owner    | Manage people, billing, deletion, content, rounds, and reports | Full workspace                                |
+| Editor             | Create checkpoint sets, host rounds, and use reports           | No membership, billing, or workspace deletion |
+| Viewer             | Review content and reports                                     | Read only                                     |
+| Session cohost     | Help control one assigned live round                           | Revocable round-scoped credential             |
+| Presenter          | Show a clean room-facing display                               | Separate read-only credential                 |
+| Participant        | Join, answer, ask questions, and resume on one device          | Accountless, round-scoped credential          |
+| Community operator | Deploy, secure, back up, and support the service               | Deployment and runbooks                       |
 
-For a local first run, complete the [quick start](quick-start.md) before using this guide.
+Education onboarding defaults to accuracy scoring, private results, generated aliases, calmer
+motion, Q&A premoderation, and participant replies off. Workplace onboarding defaults to speed
+scoring, a leaderboard, entered aliases, Q&A postmoderation, and participant replies on. A
+facilitator can change round settings before creating a room.
 
-## Segment defaults
+## Sign in and workspace access
 
-The segment selected during a creator's first sign-in changes session defaults, not the game engine.
+1. Select **Create a free checkpoint set** or open `/signin`.
+2. Choose education or workplace learning.
+3. Enter an email address, accept the displayed policies, and request a sign-in link.
+4. Follow the single-use link. Local Compose captures it in Mailpit at
+   <http://localhost:8025>.
 
-| Setting   | Education                                           | Workplace learning                                                          |
-| --------- | --------------------------------------------------- | --------------------------------------------------------------------------- |
-| Scoring   | Accuracy: a correct answer receives the base points | Speed: a correct answer receives a time-weighted portion of the base points |
-| Results   | Private participant results                         | Leaderboard enabled                                                         |
-| Nicknames | System-generated friendly aliases                   | Participant-entered nickname, with a generated fallback                     |
-| Late join | Allowed                                             | Allowed                                                                     |
+Use **My checkpoint sets** to return to the dashboard and **Sign out** to revoke the current
+browser session. Owners can invite editors or viewers from **Account**. An invitation is
+single-use and expiring. A person who belongs to multiple workspaces can switch the active
+workspace there.
 
-The live-session setup screen starts with these defaults. The facilitator can change every setting
-for an individual round before creating its room code.
+## Create and organize checkpoint sets
 
-## Sign in
+From **Your checkpoint sets**, enter a title and select **Create checkpoint set**. Draft changes
+autosave after a short pause. Wait for **Saved** before leaving the editor.
 
-1. Open the product and select **Create a free quiz** or go to `/signin`.
-2. Choose the segment you mainly facilitate.
-3. Enter your email, accept the Terms and Privacy notice, and request a magic link.
-4. Follow the single-use link on the same browser profile.
+The editor supports:
 
-The local Compose stack captures the message in Mailpit at <http://localhost:8025>. Native
-development mode displays **Continue to dashboard**; Compose can expose the same shortcut only when
-an operator explicitly enables its loopback-only testing configuration. A hosted production operator
-must keep debug magic links disabled and configure SMTP plus an approved public origin.
+- Single select and true/false
+- Multiple select with exact-set scoring
+- Numeric responses with decimal normalization, absolute tolerance, and an optional unit
+- Unscored ratings and polls
 
-### Return to your quizzes or sign out
+For a diagnostic or practice checkpoint, choose whether confidence is off, optional, or required.
+Confidence uses **Not sure**, **Somewhat sure**, and **Very sure**. Add concept keys to connect
+evidence across a main checkpoint and its linked recheck. For wrong choices, optional private
+misconception keys and participant feedback turn the distribution into a more useful diagnosis.
+Ratings and polls are always opinion checkpoints, unscored, and confidence-free.
 
-- From the home page, open **Menu** on a phone or narrow browser. On a wider screen, use the creator
-  links beside the OpenRound logo.
-- Select **My quizzes** to return to the creator dashboard and manage drafts, published quizzes, and
-  archived quizzes.
-- Select **Sign out** to revoke the current browser session. Afterward, the same menu provides
-  **Sign in** when you return.
+Use **Add linked recheck** to create a differently worded check for the same concept. Rechecks are
+unscored by default. A main checkpoint may link to one recheck; a recheck cannot link onward.
 
-## Create a quiz
+Optional images are private. When an operator enables malware scanning, provide meaningful alt
+text, select a JPEG, PNG, or WebP file up to 10 MB, and wait for upload and safety checking to
+finish.
 
-From **Your quizzes**, enter a title under **Start a new quiz** and select **Create quiz**.
+Select **Preview** to inspect the participant experience, then **Publish**. Publishing creates an
+immutable version. Editing afterward changes only the draft until it is published again; an
+active round always retains the version it started with.
 
-### Edit quiz details
+### Source-grounded authoring assistant
 
-- Give the quiz a clear title and optional description.
-- Changes autosave after a short pause, including incomplete questions. Wait for **Saved** before
-  navigating away.
-- The **Draft checklist** names the quiz field or question that needs attention and explains how to
-  resolve it. Every question must be complete before previewing or publishing.
-- Use the left question list to move between questions.
+When an operator configures an approved provider, expand **Draft checkpoints from a trusted
+source** on the dashboard.
 
-### Add questions
+1. Paste at least 50 characters or choose a private PDF, DOCX, or PPTX file up to 6 MB.
+2. Select **Create review proposal**. Arbitrary URL ingestion is intentionally unavailable.
+3. Wait while an isolated worker extracts bounded text and asks the configured provider for a
+   main checkpoint, linked recheck, answers, rationales, misconception labels, and citations.
+4. Compare every citation and answer with the source.
+5. Select **Create unpublished review draft** only when the proposal is useful.
+6. Edit and explicitly publish through the normal editor.
 
-OpenRound P0 supports:
+The assistant never publishes content. Its citations remain on the created draft and are private
+to creators; participant/session data is never sent in authoring prompts. If the panel says the
+assistant is disabled, the deployment sends no source to a model. Hosted Free allows three jobs
+per month, Hosted Pro allows 100, and a community operator controls provider access.
 
-- **Multiple choice:** two to six answer choices and exactly one correct answer.
-- **True or false:** fixed True and False choices and exactly one correct answer.
+### Import, export, folders, and tags
 
-For each question:
+Use folders, tags, and search to organize the library. Imports support bulk paste, CSV, versioned
+OpenRound JSON, and the supported QTI 3 profile. Every import displays validation errors and
+warnings; unsupported content is never silently discarded. OpenRound JSON is the lossless native
+format. QTI supports selected-response, multiple-select, and numeric checkpoints; unsupported
+types and omitted media are reported.
 
-1. Write the question prompt.
-2. Complete every answer label and use the radio control to mark the correct answer.
-3. Choose a time limit from 5 seconds to 5 minutes.
-4. Choose 0, 500, 1,000, or 2,000 base points.
-5. Optionally add an explanation that appears after reveal.
-6. Use **Move up**, **Move down**, **Duplicate**, or **Delete question** to organize the quiz.
-
-A focused live question should be readable on a phone, have one unambiguous best answer, and leave enough time for the intended audience to read all choices.
-
-### Add a question image
-
-Image upload appears only when the operator enables malware scanning.
-
-1. Enter alt text that communicates the instructional meaning of the image.
-2. Select a JPEG, PNG, or WebP file no larger than 10 MB.
-3. Wait through upload and safety checking until the preview appears.
-
-The image remains private. It is first uploaded to quarantine, checked by signature and size, scanned, and then promoted for authorized delivery. If scanning is disabled or unhealthy, new uploads stay unavailable.
-
-### Publish
-
-Select **Preview** to save the draft and inspect every question in the participant layout. Use
-**Previous question**, **Next question**, and **Reveal answer** to check answer labels, timing,
-images, correctness, and explanations, then return to the editor.
-
-Select **Publish** after the draft is saved and valid. Publishing freezes an immutable version. The quiz card then offers **Host**.
-
-Editing a published quiz changes its draft but does not change an active session. Publish again when you want future sessions to use the new version.
-
-## Manage the quiz library
-
-From the dashboard you can:
-
-- Search by quiz title or description.
-- **Edit** any non-archived quiz.
-- **Host** a quiz that has a published version.
-- **Duplicate** a quiz to make an independent copy.
-- **Archive** a quiz to remove it from the normal library.
-- Select **Include archived quizzes**, then **Restore** an archived quiz.
-
-Archiving is reversible; deleting session or account data is not.
+Export a checkpoint set as OpenRound JSON, formula-safe UTF-8 CSV, or QTI ZIP. Hosted portability
+exports require Pro; community deployments do not impose an application paywall.
 
 ## Host a live round
 
-Select **Host** on a published quiz. Before a room is created, review or change:
+Select **Host** on a published set. Review audience, scoring, result visibility, late joining,
+nickname policy, and Q&A settings before creating the room. OpenRound then issues a seven-digit
+code, direct link, downloadable QR, and one-time host credential.
 
-- Maximum participants, up to the current plan or operator limit
-- Whether participants may join after the round starts
-- Accuracy or speed scoring
-- Private results or leaderboard results
-- Friendly generated aliases or participant-entered nicknames
+Keep the host tab open. Host, cohost, and presenter credentials are separate and stored only in
+the tab that received them. From the host screen you can issue revocable cohost or presenter
+access instead of sharing the host credential.
 
-Select **Create live session**. OpenRound then creates a session with a seven-digit code, direct
-join URL, QR code, and session-scoped host credential. The session uses the latest immutable
-published version, even if its editable draft changes later.
+### Lobby and multi-device entry
 
-Keep the host tab open. The host credential is stored in that tab's session storage and is not available in an unrelated tab or browser.
+- Share the same room code, direct link, or QR with every participant; each receives an
+  independent resume credential.
+- If a local QR contains `localhost`, use **Change join address** and enter the computer's
+  reachable trusted-LAN address. A public event requires a deployed HTTPS domain.
+- Watch the roster, remove or ban abusive guests, and lock or unlock admission.
+- Open the presenter popout for a room-facing display. The dedicated embed route is read-only and
+  works only for HTTPS origins on the workspace allowlist.
 
-### Prepare the lobby
+### Run the Recovery Loop
 
-- Share the code, copyable direct link, or QR code. Every participant in the session uses the same code; it is a room identifier, not a one-use credential.
-- If the QR warning says `localhost`, expand **Change join address** and enter the host computer's reachable LAN address or the deployment's public HTTPS address. The QR updates immediately and remembers the override in that browser.
-- Watch participants appear in the roster.
-- Remove an inappropriate or unintended participant with **Remove**.
-- Use **Lock lobby** to stop further admission; **Unlock lobby** reopens it.
-- Select **Presenter view** for a clean room-facing display. Use **Host controls** to return.
-- **Start round** becomes available after at least one participant joins.
+1. **Start round** opens the main checkpoint using a server-owned deadline.
+2. Participants answer and optionally report confidence. An answer is complete only after
+   **Answer received and saved**.
+3. Lock at the deadline or select **Lock answers** early.
+4. Review the measured participation, correctness, confidence, and misconception signals. Every
+   insight card shows the threshold and measurement behind its suggestion; it is guidance, not an
+   automated judgment.
+5. Before reveal, peer discussion is available. After reveal, record an explanation, example, or
+   break intervention.
+6. Run the linked recheck, or use a same-checkpoint revote when no linked recheck exists.
+7. Finish the recovery branch before showing standings or moving to the next main checkpoint.
 
-The presenter lobby also displays the QR and direct link. For a local event, participant devices must share a network with the host and be able to reach port `8080`. For participants outside that network, use a deployed HTTPS service; do not expose the development stack directly to the internet.
+Pause and resume preserve server time. Reconnect restores the exact lobby, checkpoint,
+intervention, or recheck state. Open checkpoint payloads never expose answer keys, explanations,
+misconception labels, private citations, or response distributions.
 
-### Run each question
+## Audience Q&A
 
-The host interface only offers actions valid for the current phase:
+When Q&A is enabled, participants can submit questions and vote once per question. Depending on
+the round settings, a question appears immediately or waits for a host/cohost moderator. Hosts and
+cohosts can publish, answer, dismiss, or remove it, add replies, and remove abusive replies.
+Participant replies are optional.
 
-1. **Start round** opens the first question and starts the server-owned deadline.
-2. **Pause** freezes the active timer; **Resume** continues it.
-3. **Lock answers** closes answering early. The server also locks at the deadline.
-4. **Reveal answer** displays the correct choice and explanation.
-5. **Show standings** displays the leaderboard when that session uses public standings.
-6. **Next question** opens the next item. On the last question, the action becomes **Finish round**.
-
-Use **End session** only when the round must stop early. It finishes the session and cannot return it to the lobby.
-
-The server, not the browser countdown, decides whether an answer was on time. If the connection drops, the client shows **Reconnecting…** and requests an authoritative snapshot after reconnecting.
+Education's default public display is anonymous while retaining a facilitator-visible alias for
+moderation. Workplace defaults show aliases publicly. Q&A has independent rate and payload limits,
+cursor pagination, sanitization, kick/ban integration, retention, export, and deletion.
 
 ## Join and participate
 
-Participants can use the join form on the home page, open `/join`, follow a direct link, or scan the host QR code.
+Open the home join form, `/join`, a direct link, or the QR code.
 
-1. Enter the seven-digit code.
-2. Enter a nickname if custom names are enabled. Education sessions ignore entered names and assign friendly aliases.
-3. Select **Join round** and wait in the lobby.
-4. When a question opens, read the full question and labels on the participant device and select one answer.
-5. Wait for **Answer received and saved**. A second answer is not accepted.
-6. After reveal, review the result and explanation.
+1. Enter the seven-digit code and, when enabled, a nickname.
+2. Wait in the lobby until a checkpoint opens.
+3. Submit the displayed response format: one choice, an exact set of choices, a decimal value, a
+   rating, or a poll selection.
+4. If confidence is requested, choose one of the three confidence levels.
+5. Wait for the durable saved acknowledgement. Retrying the same submission cannot create a
+   second score effect.
+6. After reveal, review private correctness, explanation, and choice feedback when available.
 
-No participant account is created. The participant resume credential is stored only in that browser tab's session storage. Refreshing the same tab can recover the live state; moving to another tab or browser requires joining again and may create a new participant row.
+No persistent learner identity is created. The resume credential lives in that browser tab's
+session storage. Refreshing the same tab can recover state; another browser normally joins as a
+new guest.
 
-## Review and export results
+## Reports and recovery evidence
 
-At the end of a round, the host can select **Open report**. A report includes:
+Reports are generated asynchronously from durable answers and should be ready within 60 seconds.
+They include initial accuracy, confidence-versus-correctness, misconception distribution,
+interventions, linked-recheck recovery, separately labelled revote improvement, unresolved
+concepts, participation, response time, Q&A, and participant-private feedback.
 
-- Participant count, answer count, and overall accuracy
-- Per-question response count, correct count, accuracy, and difficult-question indicator
-- Participant nickname, score, correct-answer count, and answer count
-- **Download CSV** for a UTF-8 export on hosted Pro/Team or any community deployment. Hosted Free
-  shows the upgrade path instead.
+Linked recovery always displays its numerator, denominator, evidence type, and a small-sample
+warning. It means initially incorrect participants who answered both checks and later answered the
+linked recheck correctly. It is session evidence, not proof of long-term learning.
 
-The report page displays its stored deletion deadline. Hosted Free reports default to 30 days and
-hosted Pro/Team reports to 365 days. A self-hosting operator controls its default with
-`COMMUNITY_REPORT_RETENTION_DAYS`. Upgrading changes the default for reports generated afterward;
-an existing report keeps the deadline recorded when its session finished.
+Download versioned JSON or formula-safe UTF-8 CSV where the edition permits it. Use **Delete
+session and report** to permanently remove the session tree. Hosted Free defaults to 30-day report
+retention, Hosted Pro to 365 days, and community operators configure their own default.
 
-Use **Delete session and report** to permanently remove the session, participant rows, answers, and report. Confirm this choice carefully; it cannot be undone from the product interface.
+## Create an accountless follow-up
+
+Pro and community facilitators can select unresolved concepts on a completed report and create an
+immutable self-paced follow-up.
+
+- Choose timed or no-countdown time-flex mode and an optional close date.
+- Copy the generic anonymous link or download one-time personal links for live participants.
+- Create a revocable 1.5× or 2× accommodation pass without storing a reason or revealing it to
+  others.
+- Close the follow-up early or revoke an individual link from the report.
+
+Personal bearer links allow one attempt by default. A generic link creates an unpaired anonymous
+attempt. Progress and deadlines are server-owned, attempts can resume on the same device, and
+follow-up deletion/retention cascades with its source session.
 
 ## Account and data controls
 
-Open **Account** from the dashboard to:
+Open **Account** to manage members, workspace selection, branding, secure embed origins, billing,
+data export, and deletion. Workspace themes require readable colours and are copied into each new
+round. Account export includes owned collaboration, Q&A, recovery, follow-up, and authoring data
+without bearer-token hashes. Permanent deletion requires typing `DELETE` and removes private
+objects before durable workspace records.
 
-- See the current segment and plan.
-- Save one workspace name, background colour, and action colour on hosted Pro/Team or community
-  deployments. Each colour must pass 4.5:1 contrast against white text. New sessions copy the saved
-  theme into host, presenter, and participant views; an already-created room does not change.
-- Open hosted billing management when the deployment enables it. Billing is disabled in community mode.
-- Download a UTF-8 JSON export of the creator's account and owned workspace data.
-- Permanently delete the account and associated quizzes, media, sessions, answers, reports, and cached live state by typing `DELETE`.
+### Institution-enabled workspaces
 
-The privacy and terms pages included in this repository are drafts. A public operator must replace them with counsel-approved text and set an appropriate policy version.
+An operator-approved institution workspace also shows its permanent home region, capability
+policy, linked identities, LMS registrations, and—when approved—an owner-only audit export.
+Workspace owners cannot self-enable contract-gated capabilities.
 
-## Facilitation and accessibility tips
+For creator OIDC, first sign in by email and explicitly link the institution identity from
+**Account**. OpenRound keys the link by workspace, issuer, and subject; it never links by matching
+email. The Account screen then provides the workspace-specific institution sign-in URL and lets
+you revoke the link.
 
-- Ask participants to join before locking the lobby, and verify the roster count aloud.
-- Prefer accuracy mode for formative learning and use speed scoring only when response speed is meaningful.
-- Do not put essential information only in an image; provide useful alt text and include the relevant facts in the question.
-- Allow extra time for reading, translation, assistive technology, or a slower connection.
-- Participants do not need to see a shared projector: complete prompts and answer labels appear on their devices.
-- Avoid collecting names when anonymous participation is sufficient, especially in educational settings.
-- Test keyboard navigation, zoom, screen reader behavior, and reduced motion in the environment used for the event.
+For LTI 1.3, an LMS administrator and the OpenRound operator must register matching issuer,
+client, deployment, authorization, JWKS, and return-origin values. The first verified instructor
+launch requires explicit linking to an existing creator. A Deep Linking launch opens a selection
+screen containing published checkpoint sets and returns one signed resource link to the LMS.
+Learner LTI launch, roster access, and grade passback are not available in this release; continue
+to use the anonymous live-round QR or direct link for participants.
 
-## Troubleshooting a live round
+See the [institution integration guide](institution-integrations.md) for operator configuration,
+security behavior, and pilot gates.
 
-| Message or symptom                                      | Meaning and response                                                                                                            |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Invalid code**                                        | Check all seven digits. The session may have finished or expired. Ask the host for the current code.                            |
-| **Session is not accepting participants**               | The lobby is locked, late joining is disabled, or the round ended. The host can unlock the lobby only while still in the lobby. |
-| **Session has reached its participant limit**           | The configured plan/operator ceiling is full. Remove an unintended lobby entry or run another session.                          |
-| **Choose another nickname**                             | The nickname is empty after normalization or reserved. Enter a different name.                                                  |
-| **Time expired before the server received that answer** | The authoritative deadline passed before receipt. The host can allow more time on future questions.                             |
-| **This tab does not have the host credential**          | Return to the original host tab and start the session from the dashboard if the credential is gone.                             |
-| **Reconnecting…**                                       | Leave the tab open. If it persists, check the network and ask the operator to inspect realtime service logs.                    |
-| Report says **Finalizing…**                             | Wait briefly. If it does not appear, the operator should inspect server logs and report reconciliation metrics.                 |
+The included legal pages are drafts. A public operator must replace them with counsel-approved
+text and set the corresponding policy version.
 
-Operators should continue with the [production readiness checklist](runbooks/production-readiness.md) and [incident response runbook](runbooks/incident-response.md).
+## Accessibility and facilitation
+
+- Prefer accuracy mode for formative learning; use speed only when speed has instructional value.
+- Use time-flex follow-up or accommodation passes where timing is not part of the construct.
+- Keep prompts concise, but put every essential fact and answer label on participant devices.
+- Never rely on colour, position, a projector, or an image alone.
+- Test keyboard operation, screen readers, 200% zoom, reduced motion, contrast, and the actual
+  participant network before an important event.
+- Use anonymous participation when names are unnecessary, especially in education.
+
+## Troubleshooting
+
+| Message or symptom                                      | Meaning and response                                                                 |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| **Invalid code**                                        | Check all seven digits; the round may have ended or expired.                         |
+| **Session is not accepting participants**               | The lobby is locked, late join is off, or the round ended.                           |
+| **Time expired before the server received that answer** | The authoritative deadline passed before receipt.                                    |
+| **This tab does not have the host credential**          | Return to the original host tab or issue a new scoped staff credential.              |
+| **Reconnecting…**                                       | Leave the tab open; the client requests an authoritative snapshot.                   |
+| Report says **Finalizing…**                             | Wait up to 60 seconds, then ask the operator to inspect report jobs.                 |
+| Authoring says **disabled**                             | The operator has not configured an approved provider; no source is sent.             |
+| An authoring proposal **needs attention**               | Review its extraction/provider message and submit a corrected source or retry later. |
+
+Operators should continue with the [production readiness checklist](runbooks/production-readiness.md)
+and [incident response runbook](runbooks/incident-response.md).

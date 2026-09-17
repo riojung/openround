@@ -47,12 +47,15 @@ The server exports Node.js runtime metrics plus these OpenRound families:
 - `openround_billing_webhooks_total` and `openround_billing_webhook_lag_seconds`
 - `openround_retention_records_total` and `openround_media_deletion_backlog`
 - `openround_reports_generated_total`
+- `openround_authoring_jobs_total` and `openround_authoring_job_duration_seconds`
 - `openround_database_connections`
 
 Build dashboards around rates and histograms rather than raw counters. At minimum, correlate HTTP
 5xx rate, answer acknowledgement p95/p99, failed broadcasts, reconnect snapshot fallbacks,
 database waiters, rejected/error media finalizations, webhook lag, and deletion backlog with
-active sessions. For multi-writer deployments, break lease wait and version conflicts down by
+active sessions. When authoring is enabled, monitor completed, retry-scheduled, extraction-failed,
+and generation-failed attempts by source type without adding workspace, file, or creator labels.
+For multi-writer deployments, break lease wait and version conflicts down by
 outcome/operation and correlate them with Redis latency and process restarts.
 
 `openround_broadcast_duration_seconds` measures server fan-out work. The client-receipt histogram
@@ -119,6 +122,8 @@ conditions are:
 - investigate an unexpected version-conflict increase; the fence preserves correctness, but a
   continuing rate indicates lease loss, excessive pauses, or an uncoordinated writer;
 - warn when reconnect synchronization falls back to a snapshot unusually often.
+- ticket on sustained authoring extraction/generation failures or a latency/cost shift from the
+  provider-specific baseline; disable authoring while investigating without affecting live rounds.
 
 Avoid alerting on a single event or an idle, scale-to-zero pilot. Record the final query, window,
 severity, owner, escalation route, and rehearsal date in the production environment's operations

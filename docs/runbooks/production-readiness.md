@@ -26,6 +26,8 @@
 - Application traffic uses a non-owner PostgreSQL role; only the migration job receives the
   owner-level `DATABASE_MIGRATION_URL`, and the production-like forced-RLS test passes.
 - Database and storage are in `ca-central-1`; realtime and Redis are in Toronto.
+- `AUDIT_RETENTION_DAYS` matches the approved institutional policy, and a scheduled retention run
+  has demonstrated that records at the cutoff are purged while newer records remain exportable.
 - Database backups, point-in-time recovery, and a restore exercise are current.
 - Production has Redis available for both the Streams transport adapter and owner-fenced
   per-session mutation leases; PostgreSQL version compare-and-swap remains the durable fence.
@@ -35,6 +37,22 @@
 - TLS, origin allowlist, rate limits, CSP, private storage, ClamAV signature freshness and failure
   behaviour, email authentication, Stripe signatures, administrator controls, and log redaction
   are verified.
+- Keep `AUTHORING_AI_MODE=disabled` until the exact endpoint/model passes privacy, DPA,
+  subprocessors, residency, source-retention, prompt-leakage, citation-quality, correction-rate,
+  latency, cost, redirect, oversized-response, and failure-mode review. When enabled, use HTTPS,
+  store the API key in the secret manager, verify that participant/session data never enters a
+  prompt, and rehearse disabling the capability independently of live rounds.
+- Keep `OIDC_MODE=disabled` and `LTI_MODE=disabled` unless an institution contract and
+  operator-granted workspace capability exist. Before enabling OIDC, verify discovery, issuer,
+  callback, PKCE/state/nonce, explicit linking, revocation, removed membership, and provider key
+  rotation. Before enabling LTI, store a dedicated RSA private JWK in the secret manager, verify
+  that the public JWKS exposes no private parameters, register exact platform issuers/clients/
+  deployments/return origins, and test replay, wrong audience/deployment, disabled registration,
+  return-origin rejection, and key rotation in the real LMS.
+- Keep identified learner launch, NRPS, AGS, managed SAML/SCIM, and K–12 disabled. Instructor LTI
+  and creator OIDC are not evidence that learner privacy, roster, grade, provisioning, or school
+  contract requirements are met. Complete independent interop/certification, DPA, residency,
+  identity threat-model, and counsel review before an institution pilot.
 - `/metrics` is reachable only from the monitoring network, an OTLP collector is configured when
   tracing is enabled, alert thresholds have owners, and signup/session/media kill switches are
   rehearsed without interrupting an active game.
@@ -48,6 +66,12 @@
   `pnpm licenses:report`; release SBOMs, provenance, signatures, and container scans are retained.
 - Database migration succeeds on a production-like copy and has a forward-repair plan.
 - Chromium, WebKit, Firefox, mobile Safari, and mobile Chrome critical flows pass.
+- Recovery interventions/rechecks, cohosting, Q&A moderation, hostile portability imports,
+  secure embed, follow-up expiry/revocation/accommodations, and source-authoring review paths pass.
+- For an institution candidate, creator OIDC link/login/revoke and LTI instructor first-link,
+  repeat launch, Deep Linking, idempotent response, state replay, and audit export pass against the
+  named provider/LMS; retain platform/version and result evidence. Repository tests do not replace
+  1EdTech certification.
 - Keyboard, screen-reader, 200% zoom, contrast, reduced-motion, and extended-time tests pass.
 - A 100-player session is supported; 250-player single-session and 1,000-player multi-session load suites pass without answer loss or duplicate scores.
 - Join p95 is below 500 ms; answer acknowledgement p95 below 250 ms and p99 below 600 ms;

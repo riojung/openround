@@ -1,8 +1,33 @@
 # Phased delivery status
 
-This repository implements the technical P0 baseline from the phased plan. It does not turn
-calendar-, legal-, research-, or production-observation gates into software claims. `OpenRound`
-is a working identity pending independent name and trademark review.
+This repository implements the technical P0 baseline and the differentiated Recovery Loop through
+the source-grounded authoring, self-paced follow-up, and institution-integration foundation. It
+does not turn calendar, demand, legal, research, provider, certification, or production-observation
+gates into software claims. `OpenRound` is a working identity pending independent name and
+trademark review.
+
+## Differentiated product roadmap
+
+No version tag in this table should be inferred merely from code presence. A phase is releasable
+only after its stated product, operational, accessibility, privacy, security, demand, and legal
+gates pass.
+
+| Phase                     | Repository status                                                                                                                                                                                                                                                                                                                                                                                                                     | Still required for the phase exit                                                                                                                                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — demand validation     | Interview/evidence templates and measurable demand gates are documented                                                                                                                                                                                                                                                                                                                                                               | Six higher-education and six L&D interviews, six accepted pilots, observed prototype completion, and willingness-to-pay evidence                                                                                                        |
+| 1 — safe evolution        | Ordered transactional migration ledger, advisory lock, checksums, P0 bootstrap/upgrade, repeated-run/failure tests, state/report schema versions, compact live history, and report-job skeleton                                                                                                                                                                                                                                       | Clean-host CI and production backup/forward-repair rehearsal                                                                                                                                                                            |
+| 2 — Signal (`v0.10`)      | Six checkpoint types, canonical versioned responses, legacy `choiceId`, confidence, purposes, concepts, exact-set multi-select, decimal numeric scoring, and editor/player/report compatibility                                                                                                                                                                                                                                       | Design-partner usability and real-device accessibility evidence                                                                                                                                                                         |
+| 3 — Recover (`v0.11`)     | Main/linked-recheck/revote rounds, intervention transitions, deterministic explained insight cards, misconception signals, reconnect, process restoration, and private payload projections                                                                                                                                                                                                                                            | Observed facilitator use and target-region process-loss evidence                                                                                                                                                                        |
+| 4 — Evidence (`v0.12`)    | Database-backed report worker, report v2, confidence matrix, misconceptions, intervention timeline, linked recovery, separate revote evidence, unresolved concepts, JSON/CSV, Q&A summary, and private feedback                                                                                                                                                                                                                       | Six-partner paid beta, report-under-60-second production evidence, and reconciliation monitoring                                                                                                                                        |
+| 5 — Collaborate (`v0.13`) | Owner/editor/viewer roles, invitations, workspace switching, revocable cohost/presenter credentials, audited actors, persistent moderated Q&A, replies, votes, realtime updates, limits, and retention                                                                                                                                                                                                                                | Moderation rehearsal, abuse testing, and multi-facilitator partner evidence                                                                                                                                                             |
+| 6 — Portable (`v0.14`)    | Folders/tags, bulk/CSV/native JSON/QTI import/export with validation, formula escaping, archive/XML hardening, presenter popout, QR assets, deep links, and allowlisted secure embed                                                                                                                                                                                                                                                  | External QTI corpus interoperability and paying-partner companion-mode validation                                                                                                                                                       |
+| 7 — Canadian GA (`v1.0`)  | Product code and Canadian deployment/runbook profiles exist                                                                                                                                                                                                                                                                                                                                                                           | Successful paid beta plus uninterrupted 30-day reliability, support, accessibility, privacy, billing, backup, legal, and demand gates                                                                                                   |
+| 8 — Create (`v1.1`)       | Provider-neutral async assistant, disabled-by-default/BYO configuration, isolated bounded PDF/DOCX/PPTX extraction, grounded citations, rationales/misconceptions, retries, monthly limits, draft-only review, source cleanup, and idempotent apply                                                                                                                                                                                   | Approved hosted provider/model, privacy/DPA/residency review, real corpus quality/cost evaluation, and human-review usability evidence                                                                                                  |
+| 9 — Follow Up (`v1.2`)    | Immutable unresolved-concept follow-ups, generic/personal hashed links, one-attempt semantics, resume, timed/flex modes, revocation/close, 1.5×/2× passes, private feedback, and cascading retention/deletion                                                                                                                                                                                                                         | Browser/accessibility matrix, partner use, and production expiry/revocation monitoring                                                                                                                                                  |
+| 10 — Institution (`v2.0`) | Operator-only contract/capability policy, permanent workspace-region visibility, generic creator OIDC with explicit issuer/subject linking, LTI 1.3 instructor launch and Deep Linking with one-time state/nonce and public JWKS, LMS registration controls, external-identity retention/deletion, versioned owner audit export, and configurable scheduled audit retention are implemented; K–12 and learner launches remain blocked | Managed hosted SAML/SCIM broker, identified learner model, NRPS/AGS and idempotent grade delivery, real LMS interoperability/certification, institutional pilots, vendor selection, contracts, and independent identity/security review |
+| 11 — expansion hardening  | Existing P0 security, accessibility, observability, load, restore, deployment, and runbook foundations apply                                                                                                                                                                                                                                                                                                                          | Independent reviews, institutional pilots, provider restore/failover, US posture, counsel, and final operator evidence                                                                                                                  |
+
+## Original P0 delivery record
 
 | Phase                               | Delivered in this repository                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Remaining implementation or evidence before the exit gate can be claimed                                                                                                         |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -20,19 +45,23 @@ is a working identity pending independent name and trademark review.
 ## Latest verified baseline
 
 The established production-path baseline below passed on the dates recorded by its linked runs.
-On 2026-09-17, the current branch additionally passed 75 unit/integration tests (with the two
-environment-dependent suites skipped), strict TypeScript checks, all production builds, the
-release-ledger validator, Alertmanager route tests, OpenTelemetry collector validation, and the
-expanded browser matrix. Thirty native checks passed in desktop Chromium, mobile Chromium, and
-mobile WebKit; the same ten scenarios passed desktop Firefox in the official Playwright Linux
-image because the local macOS Firefox installation could not start. Those checks include public
-and authenticated axe scans plus host-lobby, participant-question, and report states; they exposed
-and led to correction of contrast, heading, and narrow-screen report-table defects. The pull
-request and main workflows must still pass independently. Repository and local-network correctness
-are not substitutes for the external phase evidence above.
+On 2026-09-17, the current branch additionally passed 137 unit/integration tests through
+`pnpm check`, with four environment-dependent tests skipped in that command. The complete database
+suite then passed all 10 tests against a fresh PostgreSQL 17 instance, including all migrations,
+forced RLS, institution identity/LTI persistence, and audit retention. Strict TypeScript checks and
+all production builds also passed. Earlier on this branch, the release-ledger validator,
+Alertmanager route tests, OpenTelemetry collector validation, and expanded browser matrix passed.
+Thirty native checks passed in desktop Chromium, mobile Chromium, and mobile WebKit; the same ten
+scenarios passed desktop Firefox in the official Playwright Linux image because the local macOS
+Firefox installation could not start. Those checks include public and authenticated axe scans plus
+host-lobby, participant-question, and report states; they exposed and led to correction of
+contrast, heading, and narrow-screen report-table defects. The pull request and main workflows
+must still pass independently. Repository and local-network correctness are not substitutes for
+the external phase evidence above.
 
-- `pnpm check`: formatting, lint, strict type checks, 75 unit/integration tests, and production
-  builds for all five workspace packages on the current branch.
+- `pnpm check`: formatting, lint, strict type checks, 137 passing unit/integration tests, and
+  production builds for all six workspace packages on the current branch. Three PostgreSQL tests
+  and one multi-writer test are intentionally environment-gated in this default command.
 - PostgreSQL integration: one production-like test covering forced RLS, unscoped and
   cross-workspace denial, media isolation/deletion, enriched account export, atomic billing event
   ordering, consent, immutable versions, audited operational-feature persistence, PostgreSQL
@@ -138,16 +167,24 @@ are not substitutes for the external phase evidence above.
 
 ## Remaining implementation sequence
 
-1. Merge this branch only after CI, CodeQL, dependency review, the expanded browser matrix, and the
-   production-path smoke are green; then apply the documented protected-main ruleset.
-2. Provision Canadian staging and its private telemetry/alert destinations, run the remote
-   readiness and 100-client workflows, and rehearse named alert responders.
-3. Complete managed Redis failover, database/object restore, rolling multi-writer routing, soak,
-   physical-device, real Stripe test-mode, independent security/accessibility, and legal reviews.
-4. Recruit and observe the required education and workplace partners, update the evidence ledger,
-   then publish the signed `v0.9.0` candidate.
-5. Build the separate US stack and minimal global code-to-region directory only after the Canadian
-   launch and legal gates pass.
+1. Put the current branch through clean-host CI, CodeQL, dependency review, browser/Compose smoke,
+   migration upgrade, and signed-artifact checks before merging or assigning a release label.
+2. Complete Phase 0 demand work: 12 interviews, six pilots, uncoached Recovery Loop observation,
+   repeat-use measurement, and willingness-to-pay evidence. Revise the ICP or packaging if the
+   defined demand gates fail.
+3. Provision Canadian staging and private telemetry/paging; complete managed Redis failover,
+   database/object restore, rolling multi-writer routing, soak, physical-device QR, Stripe,
+   independent security/accessibility, privacy, and legal reviews.
+4. Evaluate source-grounded authoring against an approved real provider and representative private
+   corpus. Record citation accuracy, answer quality, human correction rate, latency, cost, data
+   handling, and failure behavior before enabling it in hosted production.
+5. Complete the remaining contract-gated institution work. The repository now includes generic
+   creator OIDC, instructor LTI launch/Deep Linking, operator policy/registration controls,
+   region visibility, and audit export. Still required are managed hosted SAML/SCIM, an approved
+   identified-learner model, NRPS/AGS with idempotent grade delivery, LMS certification/interop,
+   and institutional pilot verification. K–12 remains disabled pending implementation and counsel.
+6. Build a separate US stack and minimal code-to-region directory only after Canadian launch,
+   residency, contract, and counsel gates pass.
 
 ## Release boundary
 

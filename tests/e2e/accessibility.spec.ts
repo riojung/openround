@@ -25,12 +25,12 @@ test("authenticated creator surfaces have no automatically detectable accessibil
   await page.getByRole("button", { name: "Send sign-in link" }).click();
   await page.getByRole("link", { name: "Continue to dashboard" }).click();
   await page.waitForURL(/\/dashboard/, { waitUntil: "load" });
-  await expect(page.getByRole("heading", { name: "Your quizzes", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your checkpoint sets", level: 1 })).toBeVisible();
 
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
-  await page.getByLabel("Quiz title").fill("Accessible authoring check");
-  await page.getByRole("button", { name: "Create quiz" }).click();
+  await page.getByLabel("Checkpoint set title").fill("Accessible authoring check");
+  await page.getByRole("button", { name: "Create checkpoint set" }).click();
   await page.waitForURL(/\/quiz\//, { waitUntil: "load" });
   await expect(
     page.getByRole("heading", { name: "Accessible authoring check", level: 1 }),

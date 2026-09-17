@@ -50,6 +50,59 @@ describe("memory repository", () => {
     expect(await repository.consumeMagicToken(tokenHash, new Date())).toBeNull();
   });
 
+  it("exports shared workspace membership without exporting another owner's data", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date();
+    await repository.createMagicToken({
+      id: randomUUID(),
+      email: "owner@example.com",
+      segment: "education",
+      tokenHash: "owner-export-token",
+      policyVersion: "test-v1",
+      expiresAt: new Date(now.getTime() + 60_000),
+      consumedAt: null,
+    });
+    const owner = await repository.consumeMagicToken("owner-export-token", now);
+    expect(owner).not.toBeNull();
+    await repository.createMediaAsset({
+      id: randomUUID(),
+      workspaceId: owner!.workspaceId,
+      objectKey: `media/${owner!.workspaceId}/private.png`,
+      mimeType: "image/png",
+      sizeBytes: 128,
+      scanStatus: "clean",
+      altText: "Private owner asset",
+      createdAt: now,
+    });
+    await repository.createWorkspaceInvitation({
+      id: randomUUID(),
+      workspaceId: owner!.workspaceId,
+      email: "viewer@example.com",
+      role: "viewer",
+      tokenHash: "viewer-invitation-token",
+      invitedBy: owner!.userId,
+      expiresAt: new Date(now.getTime() + 60_000),
+      acceptedAt: null,
+      revokedAt: null,
+      createdAt: now,
+    });
+    const viewer = await repository.acceptWorkspaceInvitation(
+      "viewer-invitation-token",
+      now,
+      "test-v1",
+    );
+    expect(viewer).not.toBeNull();
+
+    const exported = await repository.exportAccount(viewer!.userId);
+    expect(exported.workspaceMemberships).toEqual([
+      expect.objectContaining({ id: owner!.workspaceId, role: "viewer" }),
+    ]);
+    expect(exported.workspaces).toEqual([]);
+    expect(exported.mediaAssets).toEqual([]);
+    expect(exported.quizzes).toEqual([]);
+    expect(exported.auditEvents).toEqual([]);
+  });
+
   it("isolates media assets and tracks scan promotion", async () => {
     const repository = new MemoryRepository();
     const mediaId = randomUUID();

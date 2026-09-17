@@ -6,6 +6,7 @@ COPY apps/server/package.json apps/server/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/game-engine/package.json packages/game-engine/package.json
+COPY packages/insights/package.json packages/insights/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps/server apps/server
 COPY packages packages

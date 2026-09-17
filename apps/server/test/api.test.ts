@@ -10,6 +10,23 @@ import { MemorySessionCache } from "../src/cache.js";
 
 let app: FastifyInstance | undefined;
 
+async function signIn(target: FastifyInstance, email: string) {
+  const magic = await target.inject({
+    method: "POST",
+    url: "/v1/auth/magic-link",
+    payload: { email, segment: "workplace", acceptPolicies: true },
+  });
+  const token = new URL(magic.json<{ debugUrl: string }>().debugUrl).searchParams.get("token")!;
+  const verified = await target.inject({ method: "GET", url: `/v1/auth/verify?token=${token}` });
+  const setCookie = verified.headers["set-cookie"]!;
+  const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(";")[0]!;
+  const me = await target.inject({ method: "GET", url: "/v1/auth/me", headers: { cookie } });
+  return {
+    cookie,
+    creator: me.json<{ creator: { userId: string; workspaceId: string } }>().creator,
+  };
+}
+
 afterEach(async () => {
   if (app) await app.close();
   app = undefined;
@@ -59,6 +76,84 @@ describe("creator to report journey", () => {
       brandTheme: unknown;
     }>();
     expect(creator).toMatchObject({ entitlements: { brandTheme: false }, brandTheme: null });
+
+    const invited = await app.inject({
+      method: "POST",
+      url: "/v1/workspace/invitations",
+      headers: { cookie },
+      payload: { email: "collaborator@example.com", role: "editor" },
+    });
+    expect(invited.statusCode).toBe(201);
+    expect(invited.body).not.toContain("tokenHash");
+    const invitation = invited.json<{
+      invitation: { id: string };
+      debugUrl: string;
+    }>();
+    const invitationToken = new URL(invitation.debugUrl).searchParams.get("token")!;
+    const acceptedInvitation = await app.inject({
+      method: "POST",
+      url: "/v1/invitations/accept",
+      payload: { token: invitationToken, acceptPolicies: true },
+    });
+    expect(acceptedInvitation.statusCode).toBe(200);
+    expect(acceptedInvitation.json()).toMatchObject({
+      creator: {
+        workspaceId: creator.creator.workspaceId,
+        email: "collaborator@example.com",
+        role: "editor",
+      },
+    });
+    const collaboratorSetCookie = acceptedInvitation.headers["set-cookie"]!;
+    const collaboratorCookie = (
+      Array.isArray(collaboratorSetCookie) ? collaboratorSetCookie[0]! : collaboratorSetCookie
+    ).split(";")[0]!;
+    const memberList = await app.inject({
+      method: "GET",
+      url: "/v1/workspace/members",
+      headers: { cookie },
+    });
+    expect(memberList.statusCode).toBe(200);
+    expect(memberList.body).not.toContain("tokenHash");
+    const collaborator = memberList
+      .json<{ members: Array<{ userId: string; email: string; role: string }> }>()
+      .members.find((member) => member.email === "collaborator@example.com")!;
+    expect(collaborator.role).toBe("editor");
+    const changedRole = await app.inject({
+      method: "PATCH",
+      url: `/v1/workspace/members/${collaborator.userId}`,
+      headers: { cookie },
+      payload: { role: "viewer" },
+    });
+    expect(changedRole.json()).toMatchObject({ member: { role: "viewer" } });
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/v1/quizzes",
+          headers: { cookie: collaboratorCookie },
+          payload: { title: "Viewer cannot create", description: "" },
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await app.inject({
+          method: "DELETE",
+          url: `/v1/workspace/members/${collaborator.userId}`,
+          headers: { cookie },
+        })
+      ).statusCode,
+    ).toBe(204);
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: "/v1/auth/me",
+          headers: { cookie: collaboratorCookie },
+        })
+      ).statusCode,
+    ).toBe(401);
+
     const freeTheme = await app.inject({
       method: "PUT",
       url: "/v1/account/theme",
@@ -173,6 +268,110 @@ describe("creator to report journey", () => {
     }>();
     expect(session.snapshot.brandTheme).toBeNull();
 
+    const embedOriginsPreflight = await app.inject({
+      method: "OPTIONS",
+      url: "/v1/account/embed-origins",
+      headers: {
+        origin: "http://localhost:3000",
+        "access-control-request-method": "PUT",
+      },
+    });
+    expect(embedOriginsPreflight.statusCode).toBe(204);
+    expect(embedOriginsPreflight.headers["access-control-allow-methods"]).toContain("PUT");
+
+    const embedOrigins = await app.inject({
+      method: "PUT",
+      url: "/v1/account/embed-origins",
+      headers: { cookie },
+      payload: {
+        origins: ["https://lms.example.edu", "https://slides.example.org/"],
+      },
+    });
+    expect(embedOrigins.statusCode).toBe(200);
+    expect(embedOrigins.json()).toEqual({
+      origins: ["https://lms.example.edu", "https://slides.example.org"],
+    });
+
+    const presenterCredentialResponse = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/staff`,
+      headers: { cookie },
+      payload: { role: "presenter", label: "Projector" },
+    });
+    expect(presenterCredentialResponse.statusCode).toBe(201);
+    const presenterCredential = presenterCredentialResponse.json<{
+      token: string;
+      embedPolicyKey: string;
+      embedAllowedOrigins: string[];
+      credential: { id: string };
+    }>();
+    expect(presenterCredential.embedAllowedOrigins).toEqual([
+      "https://lms.example.edu",
+      "https://slides.example.org",
+    ]);
+    const embedPolicy = await app.inject({
+      method: "GET",
+      url: `/v1/embed/policies/${session.sessionId}/${presenterCredential.embedPolicyKey}`,
+    });
+    expect(embedPolicy.statusCode).toBe(200);
+    expect(embedPolicy.json()).toMatchObject({
+      sessionId: session.sessionId,
+      allowedOrigins: ["https://lms.example.edu", "https://slides.example.org"],
+    });
+    const presenterSnapshot = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.sessionId}/snapshot?role=presenter`,
+      headers: { authorization: `Bearer ${presenterCredential.token}` },
+    });
+    expect(presenterSnapshot.statusCode).toBe(200);
+    const presenterCommand = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/commands`,
+      headers: { authorization: `Bearer ${presenterCredential.token}` },
+      payload: {
+        commandId: randomUUID(),
+        expectedVersion: session.snapshot.version,
+        action: "start",
+      },
+    });
+    expect(presenterCommand.statusCode).toBe(401);
+    const staffList = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.sessionId}/staff`,
+      headers: { cookie },
+    });
+    expect(staffList.statusCode).toBe(200);
+    expect(staffList.body).not.toContain("tokenHash");
+    expect(staffList.json()).toMatchObject({
+      credentials: [{ id: presenterCredential.credential.id, role: "presenter" }],
+    });
+    expect(
+      (
+        await app.inject({
+          method: "DELETE",
+          url: `/v1/sessions/${session.sessionId}/staff/${presenterCredential.credential.id}`,
+          headers: { cookie },
+        })
+      ).statusCode,
+    ).toBe(204);
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: `/v1/sessions/${session.sessionId}/snapshot?role=presenter`,
+          headers: { authorization: `Bearer ${presenterCredential.token}` },
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: `/v1/embed/policies/${session.sessionId}/${presenterCredential.embedPolicyKey}`,
+        })
+      ).statusCode,
+    ).toBe(404);
+
     const joined = await app.inject({
       method: "POST",
       url: "/v1/sessions/join",
@@ -181,6 +380,93 @@ describe("creator to report journey", () => {
     expect(joined.statusCode).toBe(201);
     const participant = joined.json<{ participantToken: string; snapshot: SessionSnapshot }>();
     expect(participant.snapshot.participants[0]?.nickname).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
+
+    const submittedQuestion = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/qna/questions`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+      payload: { body: "<strong>Could you explain</strong> why Edmonton is correct?" },
+    });
+    expect(submittedQuestion.statusCode).toBe(201);
+    const audienceQuestion = submittedQuestion.json<{ id: string; body: string; status: string }>();
+    expect(audienceQuestion).toMatchObject({
+      body: "Could you explain why Edmonton is correct?",
+      status: "pending",
+    });
+    const participantQuestions = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.sessionId}/qna/questions`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+    });
+    expect(participantQuestions.json()).toMatchObject({
+      settings: {
+        displayMode: "anonymous_public",
+        moderationMode: "pre",
+        participantReplies: false,
+      },
+      questions: [{ id: audienceQuestion.id, author: { displayName: "You", mine: true } }],
+    });
+    const hostQuestions = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.sessionId}/qna/questions`,
+      headers: { authorization: `Bearer ${session.hostToken}` },
+    });
+    expect(hostQuestions.statusCode).toBe(200);
+    expect(hostQuestions.json()).toMatchObject({
+      questions: [
+        {
+          id: audienceQuestion.id,
+          status: "pending",
+          author: { displayName: participant.snapshot.participants[0]!.nickname },
+        },
+      ],
+    });
+    const pendingVote = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/qna/questions/${audienceQuestion.id}/vote`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+    });
+    expect(pendingVote.statusCode).toBe(409);
+    expect(pendingVote.json()).toMatchObject({ error: { code: "MODERATION_REQUIRED" } });
+    const publishedQuestion = await app.inject({
+      method: "PATCH",
+      url: `/v1/sessions/${session.sessionId}/qna/questions/${audienceQuestion.id}`,
+      headers: { authorization: `Bearer ${session.hostToken}` },
+      payload: { status: "published", label: "Clarification" },
+    });
+    expect(publishedQuestion.statusCode).toBe(200);
+    expect(publishedQuestion.json()).toMatchObject({
+      id: audienceQuestion.id,
+      status: "published",
+      label: "Clarification",
+    });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const voted = await app.inject({
+        method: "POST",
+        url: `/v1/sessions/${session.sessionId}/qna/questions/${audienceQuestion.id}/vote`,
+        headers: { authorization: `Bearer ${participant.participantToken}` },
+      });
+      expect(voted.json()).toMatchObject({ voteCount: 1, voted: true });
+    }
+    const blockedReply = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/qna/questions/${audienceQuestion.id}/replies`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+      payload: { body: "I have the same question." },
+    });
+    expect(blockedReply.statusCode).toBe(409);
+    expect(blockedReply.json()).toMatchObject({ error: { code: "QNA_DISABLED" } });
+    const facilitatorReply = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/qna/questions/${audienceQuestion.id}/replies`,
+      headers: { authorization: `Bearer ${session.hostToken}` },
+      payload: { body: "We will revisit the provincial-capital distinction." },
+    });
+    expect(facilitatorReply.statusCode).toBe(201);
+    expect(facilitatorReply.json()).toMatchObject({
+      status: "published",
+      author: { kind: "staff" },
+    });
 
     const started = await app.inject({
       method: "POST",
@@ -264,6 +550,18 @@ describe("creator to report journey", () => {
       action: "next",
     });
     expect(finished.phase).toBe("finished");
+    const delayedRetry = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/answers`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+      payload: { roundId: open.roundId, choiceId: correctChoiceId, idempotencyKey },
+    });
+    expect(delayedRetry.statusCode).toBe(200);
+    expect(delayedRetry.json()).toMatchObject({
+      accepted: true,
+      duplicate: true,
+      answerId: acknowledgements[0]!.answerId,
+    });
     const replayed = await built.sessions.sync({
       sessionId: session.sessionId,
       hostToken: session.hostToken,
@@ -271,11 +569,11 @@ describe("creator to report journey", () => {
       lastSeq: open.seq,
     });
     expect(replayed.replayComplete).toBe(true);
-    expect(replayed.replay.map(({ seq }) => seq)).toEqual([3, 4, 5, 6]);
+    expect(replayed.replay.map(({ seq }) => seq)).toEqual([3, 4, 5, 6, 7]);
     expect(replayed.replay.map(({ eventId }) => eventId)).toEqual(
-      [3, 4, 5, 6].map((seq) => `${session.sessionId}:${seq}`),
+      [3, 4, 5, 6, 7].map((seq) => `${session.sessionId}:${seq}`),
     );
-    expect(replayed.snapshot.seq).toBe(6);
+    expect(replayed.snapshot.seq).toBe(7);
 
     await built.sessions.disconnect(participant.participantToken);
     const disconnected = await built.sessions.snapshot({
@@ -293,6 +591,18 @@ describe("creator to report journey", () => {
     expect(reconnected.snapshot.participants[0]?.connected).toBe(true);
 
     const storedSession = await repository.getSessionById(session.sessionId);
+    expect(storedSession?.state.answers).toEqual({});
+    const pendingReport = storedSession
+      ? await repository.getReportBySession(storedSession.workspaceId, session.sessionId)
+      : null;
+    expect(pendingReport).toMatchObject({ status: "pending", schemaVersion: 2 });
+    const pendingCsv = await app.inject({
+      method: "GET",
+      url: `/v1/reports/${pendingReport!.id}.csv`,
+      headers: { cookie },
+    });
+    expect(pendingCsv.statusCode).toBe(409);
+    await built.reportWorker.runUntilIdle();
     const report = storedSession
       ? await repository.getReportBySession(storedSession.workspaceId, session.sessionId)
       : null;
@@ -300,6 +610,11 @@ describe("creator to report journey", () => {
       participantCount: 1,
       answerCount: 1,
       accuracyPercent: 100,
+    });
+    expect(report).toMatchObject({
+      schemaVersion: 2,
+      status: "ready",
+      initialAccuracy: { correct: 1, responses: 1, percent: 100 },
     });
     const generatedAt = new Date((report as Report).generatedAt!).getTime();
     const expiresAt = new Date((report as Report).expiresAt).getTime();
@@ -332,6 +647,15 @@ describe("creator to report journey", () => {
     expect(proCsv.statusCode).toBe(200);
     expect(proCsv.headers["content-type"]).toContain("text/csv");
     expect(proCsv.body).toContain("participant_id,nickname,score");
+    expect(proCsv.body).toContain("report_schema_version,2");
+    const proJson = await app.inject({
+      method: "GET",
+      url: `/v1/reports/${(report as Report).id}.json`,
+      headers: { cookie },
+    });
+    expect(proJson.statusCode).toBe(200);
+    expect(proJson.headers["content-type"]).toContain("application/json");
+    expect(proJson.json()).toMatchObject({ schemaVersion: 2, status: "ready" });
     const brandedSession = await app.inject({
       method: "POST",
       url: "/v1/sessions",
@@ -407,6 +731,26 @@ describe("creator to report journey", () => {
         role: "host",
       }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    const user = [...repository.users.values()].find(
+      (candidate) => candidate.email === "facilitator@example.com",
+    )!;
+    user.role = "viewer";
+    const viewerRead = await app.inject({
+      method: "GET",
+      url: "/v1/quizzes",
+      headers: { cookie },
+    });
+    expect(viewerRead.statusCode).toBe(200);
+    const viewerWrite = await app.inject({
+      method: "POST",
+      url: "/v1/quizzes",
+      headers: { cookie },
+      payload: { title: "Blocked viewer set", description: "" },
+    });
+    expect(viewerWrite.statusCode).toBe(403);
+    expect(viewerWrite.json()).toMatchObject({ error: { code: "UNAUTHORIZED" } });
+    user.role = "owner";
   });
 
   it("returns the stable RATE_LIMITED error envelope", async () => {
@@ -511,6 +855,64 @@ describe("creator to report journey", () => {
     });
     expect(deleted.statusCode).toBe(204);
     expect(await repository.exportAccount(creator.userId)).toEqual({});
+  });
+
+  it("deletes only owned workspaces when the active workspace is shared", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        AUTH_DEBUG_MAGIC_LINKS: "true",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+    const member = await signIn(app, "member-delete@example.com");
+    const owner = await signIn(app, "shared-owner@example.com");
+    const invitation = await app.inject({
+      method: "POST",
+      url: "/v1/workspace/invitations",
+      headers: { cookie: owner.cookie },
+      payload: { email: "member-delete@example.com", role: "editor" },
+    });
+    const invitationToken = new URL(
+      invitation.json<{ debugUrl: string }>().debugUrl,
+    ).searchParams.get("token")!;
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/v1/invitations/accept",
+      payload: { token: invitationToken, acceptPolicies: true },
+    });
+    const acceptedCookieHeader = accepted.headers["set-cookie"]!;
+    const sharedCookie = (
+      Array.isArray(acceptedCookieHeader) ? acceptedCookieHeader[0]! : acceptedCookieHeader
+    ).split(";")[0]!;
+    const sharedAssetId = randomUUID();
+    await repository.createMediaAsset({
+      id: sharedAssetId,
+      workspaceId: owner.creator.workspaceId,
+      objectKey: `media/${owner.creator.workspaceId}/${sharedAssetId}.png`,
+      mimeType: "image/png",
+      sizeBytes: 128,
+      scanStatus: "clean",
+      altText: "Shared workspace asset",
+      createdAt: new Date(),
+    });
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: "/v1/account",
+      headers: { cookie: sharedCookie },
+      payload: { confirmation: "DELETE" },
+    });
+
+    expect(deleted.statusCode).toBe(204);
+    expect(repository.workspaces.has(member.creator.workspaceId)).toBe(false);
+    expect(repository.workspaces.has(owner.creator.workspaceId)).toBe(true);
+    expect(await repository.getMediaAsset(owner.creator.workspaceId, sharedAssetId)).not.toBeNull();
   });
 
   it("verifies and applies Stripe events atomically and in order", async () => {

@@ -15,6 +15,7 @@ const escapeMarkdown = (value) => String(value).replaceAll("|", "\\|");
 const portablePackageName = (name) => {
   if (name.startsWith("@img/sharp-libvips-")) return "@img/sharp-libvips-platform-binary";
   if (name.startsWith("@img/sharp-")) return "@img/sharp-platform-binary";
+  if (name.startsWith("@napi-rs/canvas-")) return "@napi-rs/canvas-platform-binary";
   if (name.startsWith("@next/swc-")) return "@next/swc-platform-binary";
   return name;
 };
@@ -24,7 +25,7 @@ const lines = [
   "This attribution index is generated from the production dependency graph pinned by",
   "`pnpm-lock.yaml`. Regenerate it with `pnpm licenses:report` and review it together with",
   "the release SBOM. Package and image distributions retain their complete license texts.",
-  "Platform-specific Sharp/libvips and Next.js SWC package names are normalized so this file",
+  "Platform-specific Sharp/libvips, Canvas, and Next.js SWC package names are normalized so this file",
   "is reproducible across build hosts; exact native artifacts remain listed in each image SBOM.",
   "This file is not legal advice.",
   "",

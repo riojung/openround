@@ -52,7 +52,7 @@ export default function HostSetupPage() {
     ])
       .then(([quizResponse, account]) => {
         if (!quizResponse.quiz.currentVersionId) {
-          setError("Publish this quiz before creating a live session.");
+          setError("Publish this checkpoint set before creating a live round.");
           return;
         }
         setQuiz(quizResponse.quiz);
@@ -96,7 +96,7 @@ export default function HostSetupPage() {
         <div className="button-row">
           {quiz ? (
             <Link className="button-quiet small-button" href={`/quiz/${quiz.id}/preview`}>
-              Preview quiz
+              Preview checkpoint set
             </Link>
           ) : null}
           <Link className="button-quiet small-button" href="/dashboard">
@@ -153,7 +153,7 @@ export default function HostSetupPage() {
                     }
                     type="checkbox"
                   />
-                  Allow participants to join after the first question starts
+                  Allow participants to join after the first checkpoint starts
                 </label>
               </section>
 

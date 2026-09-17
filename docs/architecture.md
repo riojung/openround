@@ -1,6 +1,10 @@
 # OpenRound architecture and protocol
 
-This document describes the implemented P0 architecture, its correctness boundaries, and the gates for production scale. OpenRound is a TypeScript modular monolith with separately deployable web and API/realtime processes. PostgreSQL is the durable source of truth; Redis-compatible storage accelerates active sessions and coordinates writers.
+This document describes the implemented differentiated-product architecture, its correctness
+boundaries, and the gates for production scale. OpenRound is a TypeScript modular monolith with
+separately deployable web and API/realtime processes. PostgreSQL is the durable source of truth;
+Redis-compatible storage accelerates active sessions and coordinates writers. The core domain is
+the accountless Recovery Loop: ask, diagnose, intervene, recheck, and prove.
 
 Read the [implementation status](implementation-status.md) for verified and outstanding release work. Architecture intent is not a substitute for production readiness evidence.
 
@@ -14,6 +18,7 @@ flowchart TB
   Edge[Caddy or hosted edge]
   Web[Next.js web]
   Server[Fastify + Socket.IO server]
+  Worker[Database-backed report and authoring workers]
   DB[(PostgreSQL)]
   Redis[(Valkey or Redis)]
   Objects[(Private S3-compatible storage)]
@@ -21,6 +26,9 @@ flowchart TB
   Stripe[Stripe, hosted mode only]
   Observe[Prometheus / OTLP]
   Scan[ClamAV]
+  AI[Optional approved authoring provider]
+  IdP[Optional institution OIDC provider]
+  LMS[Registered LTI 1.3 platform]
 
   Creator -->|HTTPS| Edge
   Host -->|HTTPS + Socket.IO| Edge
@@ -34,21 +42,29 @@ flowchart TB
   Server --> Stripe
   Server --> Observe
   Server --> Scan
+  Server --> Worker
+  Worker --> DB
+  Worker --> AI
+  Creator -->|OIDC redirect| IdP
+  IdP -->|code callback| Server
+  LMS -->|OIDC login + signed launch| Server
+  Server -->|signed Deep Linking response| LMS
 ```
 
 The browser receives all public pages from Next.js. Fastify owns versioned REST routes, authentication, webhooks, reports, retention, administrative endpoints, and health/metrics. Socket.IO shares the same server process and owns live joins, host commands, answer acknowledgements, snapshots, and broadcasts.
 
 ## Repository structure
 
-| Path                   | Responsibility                                                                                                                              |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web`             | Next.js creator, host, presenter, participant, report, policy, pricing, status, and account interfaces                                      |
-| `apps/server`          | Fastify application, Socket.IO transport, auth, session orchestration, storage, scanning, billing, reports, retention, metrics, and tracing |
-| `packages/contracts`   | Shared Zod schemas, public DTOs, realtime envelopes, commands, acknowledgements, and stable error codes                                     |
-| `packages/game-engine` | Pure state transitions, scoring, deadlines, ranking, and role-filtered snapshot projection                                                  |
-| `packages/db`          | Repository interface, PostgreSQL implementation, in-memory development implementation, and migrations                                       |
-| `infra`                | Caddy routing, PostgreSQL runtime role initialization, and Cloud Run/Fly deployment profiles                                                |
-| `tests`                | Browser, integration, smoke, multi-writer, restart/recovery, and load scenarios                                                             |
+| Path                   | Responsibility                                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`             | Next.js creator, collaboration, host/cohost, presenter/embed, participant, Q&A, report, follow-up, institution-linking, policy, pricing, and account interfaces |
+| `apps/server`          | Fastify, Socket.IO, auth/OIDC/LTI, sessions, Q&A, report/authoring workers, follow-up, portability, storage, billing, retention, metrics, and tracing           |
+| `packages/contracts`   | Shared Zod schemas, public DTOs, realtime envelopes, commands, acknowledgements, and stable error codes                                                         |
+| `packages/game-engine` | Pure state transitions, scoring, deadlines, ranking, and role-filtered snapshot projection                                                                      |
+| `packages/insights`    | Pure deterministic diagnostic measurements and facilitator recommendation rules                                                                                 |
+| `packages/db`          | Repository interface, PostgreSQL implementation, in-memory development implementation, and migrations                                                           |
+| `infra`                | Caddy routing, PostgreSQL runtime role initialization, and Cloud Run/Fly deployment profiles                                                                    |
+| `tests`                | Browser, integration, smoke, multi-writer, restart/recovery, and load scenarios                                                                                 |
 
 The application follows one domain model and one release train. Splitting web and realtime deployment does not create independent business services or databases.
 
@@ -58,11 +74,14 @@ The application follows one domain model and one release train. Splitting web an
 
 - Renders public, creator, live, and reporting surfaces.
 - Saves and renders mutable drafts in a participant-style preview without creating a live session.
+- Creates and reviews source-grounded authoring jobs without allowing model output to publish.
 - Presents segment-seeded session settings before requesting a room code or host credential.
 - Calls `/v1` APIs with creator cookies or session-scoped credentials as required.
 - Stores host and participant resume credentials in tab-scoped `sessionStorage`.
 - Uses shared contracts for response and event shapes.
 - Renders the complete public question and labels on participant devices.
+- Keeps Q&A, intervention/recheck, follow-up, collaboration, portability, and secure embed flows
+  role-specific and accessible.
 - Uses same-origin `/v1` and `/socket.io` routes by default, while allowing an explicit API origin
   at image build time for split hosted deployments.
 - Generates a per-request script nonce and enforced Content Security Policy, serves HSTS and other
@@ -77,19 +96,35 @@ The web process does not decide deadlines, answer acceptance, score, rank, or se
 - Validates environment, HTTP input, event input, and webhook input at boundaries.
 - Issues and verifies creator, host, and participant credentials.
 - Coordinates game mutations through `SessionService`.
+- Runs Q&A and follow-up services outside the canonical live-game snapshot.
 - Persists accepted answers and canonical state before acknowledgement.
-- Produces role-filtered snapshots and reports.
+- Produces role-filtered snapshots and queues versioned reports from durable evidence.
+- Claims report and authoring jobs with database leases and retry/failure state.
 - Applies feature flags, plan/operator limits, rate limits, retention, and audited administration.
 - Separates process liveness from dependency readiness; the ready probe performs database and
   Redis reads and returns 503 without exposing connection details when either dependency fails.
 
 ### Game engine
 
-The game engine is a pure transition module. A transition receives current state, a command, and server-controlled time, then returns next state and domain events. It has no network or database dependency, which makes arbitrary command sequences, deadlines, scoring boundaries, and replay behavior testable without a running server.
+The game engine is a pure transition module. A transition receives current state, a command, and
+server-controlled time, then returns next state and domain events. Main, linked-recheck, revote,
+and intervention states are guarded transitions. The engine has no network or database dependency,
+which makes arbitrary command sequences, deadlines, scoring boundaries, recovery branches, and
+replay behavior testable without a running server. Historical answers stay in PostgreSQL rather
+than accumulating in the active state snapshot.
 
 ### PostgreSQL
 
-PostgreSQL stores creator identity, workspaces, memberships, magic links, creator sessions, quiz drafts, immutable quiz versions, media metadata, game sessions, participants, rounds, accepted answers, event history, reports, subscriptions, billing events, consent, and audit events.
+PostgreSQL stores creator identity, workspaces, roles/invitations, magic links, creator sessions,
+checkpoint-set drafts, immutable versions, folders/tags, media metadata, live sessions,
+round/intervention evidence, accepted canonical responses and confidence, Q&A, staff credentials,
+versioned report jobs, self-paced follow-ups, authoring jobs, subscriptions, consent, institution
+policies, external identity links, LTI registrations/launches, and audit events.
+
+Ordered transactional migration files are tracked in `_openround_migrations` with version, name,
+checksum, and application time. An advisory lock serializes migration execution; startup fails when
+an applied file's checksum changes. The baseline safely records a legacy P0 database before
+applying later migrations.
 
 Durable state owns correctness. A Redis loss can reduce replay efficiency or stop coordinated writes, but it must not erase an acknowledged answer.
 
@@ -113,6 +148,12 @@ Question media is uploaded directly to a private quarantine prefix with a constr
 
 - SMTP sends single-use creator magic links. Local Compose uses Mailpit instead of external delivery.
 - Stripe Checkout, portal, and signature-verified webhooks are enabled only in hosted billing mode.
+- An optional operator-approved OpenAI-compatible endpoint receives only bounded authoring source
+  sections. It is disabled by default and is not used during a live round.
+- Optional generic OIDC supports explicitly linked creator identities. It is disabled by default;
+  a workspace policy and deployment provider configuration are both required.
+- Optional LTI 1.3 supports registered-platform instructor launch and Deep Linking. Its private
+  signing key remains in the secret manager; OpenRound publishes only a public JWKS.
 - Prometheus metrics remain on the internal server route; optional OpenTelemetry exports spans over OTLP/HTTP.
 - Checked-in collector and Alertmanager templates define the production signal and severity-route
   contract, but receiver credentials and proof of human delivery remain environment-owned.
@@ -141,13 +182,104 @@ to start with sign-ups enabled unless SMTP is configured, and public origins plu
 must use HTTPS and secure attributes. The explicit private-LAN HTTP exception is limited to
 non-billing community operation.
 
+### Institution creator identity and LTI
+
+OIDC uses authorization code with PKCE, state, and nonce. The one-time transaction stores only a
+state hash plus the short-lived verifier and nonce. Link mode requires the same signed-in creator
+and workspace when the callback returns. Login mode accepts only a previously linked
+workspace/provider/issuer/subject tuple; a matching email claim is only a display hint and never
+links an account.
+
+```mermaid
+sequenceDiagram
+  participant C as Existing creator
+  participant S as OpenRound
+  participant D as PostgreSQL
+  participant I as Institution IdP
+
+  C->>S: Start explicit link for workspace
+  S->>D: Store hashed one-time state + PKCE + nonce
+  S-->>C: Authorization URL
+  C->>I: Authenticate
+  I-->>S: Authorization-code callback
+  S->>I: Code + verifier; validate issuer/state/nonce
+  S->>D: Bind issuer + subject to signed-in creator
+```
+
+LTI third-party login resolves exactly one active operator registration, then stores hashed state
+and nonce. The form-post launch consumes state before validation and verifies platform signature,
+issuer, audience/authorized party, nonce, deployment, version, message type, signed target, and
+role. An unknown instructor subject receives a short-lived explicit-link token in a URL fragment;
+it is never auto-linked by email. Deep Linking accepts only a published checkpoint set, only an
+`ltiResourceLink`, and only a return origin registered by the operator. The signed response is
+stored and returned idempotently on retry.
+
+Institution policies cannot be self-enabled by owners. Database and public-contract constraints
+keep K–12 false, require managed SSO before SCIM can be flagged, and require LTI plus institution
+identity before NRPS/AGS can be flagged. This release still blocks learner LTI launches and does
+not implement roster or grade services; those flags are contract-state preparation, not usable
+features. See the [institution integration guide](institution-integrations.md).
+
 ### Author and publish
 
-The creator updates a mutable quiz draft. Opening participant preview first persists that draft,
-then renders its questions and answer reveal locally without creating a session or exposing it to
-guests. Publish validates the complete draft, inserts a new immutable `quiz_versions` record, and
-points the quiz at that version. Session creation resolves and stores the current version, so
-later draft edits cannot change a running game.
+The creator updates a mutable checkpoint-set draft. Opening participant preview first persists that
+draft, then renders its checkpoints and answer reveal locally without creating a session or
+exposing it to guests. Publish validates response-type rules, confidence/purpose constraints, and
+acyclic recheck links, inserts a new immutable `quiz_versions` record, and points the legacy quiz
+record at that version. Existing table names, IDs, URLs, and `/v1/quizzes` APIs intentionally
+remain compatible. Session creation resolves and stores the current version, so later draft edits
+cannot change a running game.
+
+Native JSON, CSV, bulk text, and a constrained QTI 3 package flow through bounded validators before
+creating a draft. Archive and XML readers enforce path, entry, expansion, compression, entity,
+remote-reference, and media limits. Imports return errors/warnings instead of silently discarding
+unsupported content; CSV output escapes formula prefixes.
+
+### Source-grounded authoring
+
+```mermaid
+sequenceDiagram
+  participant C as Creator
+  participant S as Server
+  participant D as PostgreSQL
+  participant W as Isolated extraction worker
+  participant A as Approved provider
+
+  C->>S: Paste text or upload PDF/DOCX/PPTX
+  S->>D: Store private pending job + source digest
+  W->>D: Claim with lease / SKIP LOCKED
+  W->>W: Enforce file, archive, XML, page, time, memory, and text limits
+  W->>A: Bounded source sections only
+  A-->>W: Structured proposal + exact citations
+  W->>W: Validate schema, links, answers, and citation grounding
+  W->>D: Store proposal; clear source bytes
+  C->>S: Explicitly create review draft
+  S->>D: Idempotently create one unpublished checkpoint set
+```
+
+The provider never receives participants, responses, sessions, reports, or Q&A. Provider failure
+retries three times; extraction/security failure stops immediately. Ready and terminal jobs clear
+the submitted source while retaining its digest and cited proposal until retention purges the job.
+Creator review and normal publication remain mandatory.
+
+### Recovery evidence and report jobs
+
+Round state stores only current indexes and aggregates. PostgreSQL owns historical accepted
+responses, confidence, round kind, intervention links, and timing. `packages/insights` derives
+deterministic measurements and recommendation explanations without network or model calls.
+
+Finishing a session inserts a versioned pending report. A database worker claims it with
+`FOR UPDATE SKIP LOCKED`, retries transient failure, and reconstructs report v2 from durable rows.
+Linked recovery and revote improvement use separate evidence types. Older report schemas remain
+renderable; new report creation targets 60 seconds.
+
+### Q&A and scoped session staff
+
+Q&A is persisted outside the game snapshot so conversation traffic cannot enlarge or corrupt the
+authoritative round state. Questions, replies, votes, moderation state, aliases, and audit actors
+are workspace/session scoped. Unique votes, sanitization, independent limits, cursor pagination,
+and realtime events support moderation. Cohost and presenter credentials are separately hashed,
+revocable, role-scoped records; the presenter never reuses the host token.
 
 ### Create and join a session
 
@@ -214,24 +346,33 @@ Clients send their last observed sequence in `sync.request`. If the bounded Redi
 
 Intentional realtime-process shutdown avoids converting every attached guest into a durable disconnect mutation. Ordinary network disconnects still update presence through the guarded session queue.
 
-### Report, export, and deletion
+### Report, follow-up, export, and deletion
 
-Finishing a session derives report totals from durable participant and answer records and stamps a
-purge deadline from the then-active plan. Hosted Free retains the full session tree for 30 days;
-hosted Pro/Team retains it for 365 days; community operators configure their own duration. A later
-downgrade does not shorten an already stored deadline. The report API returns the creator-scoped
-structured report; CSV is server-enforced for hosted Pro/Team and remains ungated in community
-mode. Scheduled retention independently closes expired live sessions before cascading deletion of
-the session, participants, answers, and report at the stored deadline. Explicit session deletion
-removes that same tree immediately and invalidates active cache. Account export gathers owned data
-while excluding secret token hashes; account deletion removes or anonymizes owned records and
-private objects according to the repository workflow.
+Finishing a session stamps a purge deadline from the then-active plan and queues report generation
+from durable participant, answer, intervention, and Q&A rows. Hosted Free retains the full session
+tree for 30 days; hosted Pro/Team retains it for 365 days; community operators configure their own
+duration. A later downgrade does not shorten an existing deadline. Versioned JSON and formula-safe
+UTF-8 CSV are server-enforced for the entitled edition.
+
+A Pro/community facilitator may select unresolved concepts and create one immutable self-paced
+follow-up. The service hashes generic, personal, accommodation, and resume tokens; server time owns
+timed attempts while flex mode has no countdown. Answers remain idempotent and durable. Follow-up
+rows reference the source session with cascading deletion and cannot outlive its retention window.
+
+Scheduled retention closes expired live/follow-up access, removes expired authoring jobs, then
+cascades deletion at the stored deadline. Explicit session deletion removes the same tree and
+invalidates active cache. Account export gathers collaboration, Q&A, recovery, follow-up, and
+authoring/institution data while excluding bearer hashes and LTI response JWTs; account deletion
+removes or anonymizes owned records and private objects according to the repository workflow. An
+approved institution owner can separately export up to 10,000 ordered audit events with explicit
+truncation and workspace home-region metadata.
 
 One entitlement policy supplies API enforcement and UI capability data. Hosted Free receives 20
-participants, five published quiz slots, 30-day reports, no CSV, and no applied workspace theme.
-Hosted Pro receives 100 participants, unlimited published quizzes, 365-day reports, CSV, and one
-workspace theme. Community mode removes application paywalls while preserving operator-configured
-participant and retention ceilings.
+participants, five published checkpoint sets, 30-day reports, aggregate Recovery Loop/Q&A, and
+three authoring jobs. Hosted Pro receives 100 participants, unlimited sets, exports/QTI, follow-up,
+cohosting, one workspace theme, 365-day reports, and 100 authoring jobs. Community mode removes
+application paywalls while preserving operator-configured participant, retention, and provider
+ceilings.
 
 A workspace theme contains an organization name plus primary and accent hexadecimal colours. The
 shared contract requires both colours to maintain at least 4.5:1 contrast with white text, and the
@@ -243,13 +384,19 @@ values; arbitrary style text is never accepted.
 ## Game invariants
 
 - Exactly one round may be open.
+- A round is `main`, `linked_recheck`, or `revote`; rechecks default to unscored and a recovery
+  branch completes before standings or the next main checkpoint.
+- Peer discussion precedes reveal; explanation, example, and break interventions follow reveal.
 - Session version and event sequence are monotonic.
 - A host transition applies once per `commandId` and only against `expectedVersion`.
 - A participant receives at most one accepted answer and score effect per round.
 - A repeated answer `idempotencyKey` returns the original acknowledgement.
+- Legacy `choiceId` input canonicalizes to the versioned response payload; durable uniqueness
+  remains participant + round and idempotency key.
 - Server receipt time and deadline determine acceptance; the rendered countdown is advisory.
 - Published quiz versions are immutable, and running sessions retain their frozen version.
-- Open-question payloads omit correctness, explanation, and score outcome.
+- Open-checkpoint payloads omit correctness, explanation, misconception metadata, source
+  citations, distributions, and score outcome.
 - Participant snapshots reveal only that participant's private result in private-result mode.
 - Ties resolve by correct-answer count, aggregate accepted response time, then stable participant ID.
 
@@ -297,7 +444,11 @@ generated with browser Web Crypto random bytes. The helper does not depend on
 development remains functional. Host and participant credentials are separate server-generated
 secrets.
 
-Required client messages are `session.join`, `answer.submit`, `host.command`, and `sync.request`. Principal server messages are `lobby.updated`, `question.open`, `question.locked`, `question.reveal`, `leaderboard.updated`, `session.snapshot`, and `game.finished`.
+Required client messages are `session.join`, `answer.submit`, `host.command`, and `sync.request`.
+Principal server messages are `lobby.updated`, `question.open`, `question.locked`,
+`question.reveal`, `leaderboard.updated`, `session.snapshot`, and `game.finished`. Q&A uses
+`qna.question.*`, `qna.reply.*`, and `qna.vote.updated` notifications; durable REST responses remain
+the acknowledgement boundary.
 
 Stable errors include `INVALID_CODE`, `SESSION_FULL`, `SESSION_LOCKED`, `NICKNAME_REJECTED`, `STALE_VERSION`, `ANSWER_LATE`, `ANSWER_INVALID`, `ENTITLEMENT_LIMIT`, `UNAUTHORIZED`, and `RATE_LIMITED`. See the [API and realtime reference](api.md) for endpoint, credential, and payload details.
 
@@ -306,7 +457,14 @@ Stable errors include `INVALID_CODE`, `SESSION_FULL`, `SESSION_LOCKED`, `NICKNAM
 ### Credentials and authorization
 
 - Creator access uses an HttpOnly session cookie issued after a single-use email link.
-- Host and participant credentials are random, session-bound, returned once, hashed at rest, and redacted from structured logs.
+- Generic OIDC can establish the same creator session only after explicit issuer/subject linking;
+  unknown identities and removed workspace memberships are rejected.
+- LTI instructor access uses verified platform launch claims and an explicit first-link step. Tool
+  signing keys are private, public JWKS contain no private RSA parameters, and learner launches are
+  blocked until the identified-participant model is approved and implemented.
+- Host, cohost, presenter, participant, embed, follow-up, accommodation, and authoring access are
+  distinct scopes. Bearer credentials are random, returned only where required, hashed at rest,
+  and redacted from structured logs.
 - Every creator resource lookup is scoped to its workspace.
 - Realtime synchronization projects state for `host`, `presenter`, or the individual participant role.
 - State-changing browser requests accept the configured web origin or a request that is genuinely
@@ -341,6 +499,16 @@ flowchart LR
 
 The browser cannot choose an arbitrary bucket key or make an object public. Account deletion and scheduled quarantine cleanup include blob deletion and cache invalidation paths.
 
+### Document and AI trust boundary
+
+Uploaded authoring files remain private database job data while processing. Extraction happens in
+a memory-bounded worker with file, archive, expansion, compression, page, XML, text, and timeout
+limits. Office extraction reads only expected document/slide XML and rejects declarations/entities;
+PDF extraction does not fetch remote URLs. The provider endpoint is operator-configured, disallows
+redirects, has a request deadline and 2 MB response ceiling, and must use HTTPS in production
+unless an explicit private community-network exception applies. Output must pass shared content
+schemas and exact citation grounding before it is saved.
+
 ## Deployment topologies
 
 ### Local community profile
@@ -371,15 +539,22 @@ The code includes per-session Redis leases, PostgreSQL compare-and-swap fencing,
 
 ## Failure behavior
 
-| Failure                             | Expected behavior                                                                                                                                              |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Browser network interruption        | Client shows reconnecting state, reconnects, and requests an authoritative role-filtered snapshot.                                                             |
-| Duplicate answer retry              | Database/idempotency lookup returns the first acknowledgement; score is not applied twice.                                                                     |
-| Duplicate or stale host command     | Previously applied command is idempotent; incompatible expected version returns `STALE_VERSION` and triggers sync.                                             |
-| Realtime process loss               | A surviving process can load canonical state; cache-journal gaps fall back to a snapshot.                                                                      |
-| Redis unavailable                   | Production coordination is unhealthy and readiness should fail rather than silently allowing uncoordinated writers. Durable PostgreSQL data remains canonical. |
-| Object fails validation or scanning | Object is not promoted or served; cleanup removes rejected/quarantined content according to policy.                                                            |
-| Billing webhook retry               | Signature and provider event identity are checked; processing is idempotent before entitlement changes.                                                        |
+| Failure                              | Expected behavior                                                                                                                                              |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browser network interruption         | Client shows reconnecting state, reconnects, and requests an authoritative role-filtered snapshot.                                                             |
+| Duplicate answer retry               | Database/idempotency lookup returns the first acknowledgement; score is not applied twice.                                                                     |
+| Duplicate or stale host command      | Previously applied command is idempotent; incompatible expected version returns `STALE_VERSION` and triggers sync.                                             |
+| Realtime process loss                | A surviving process can load canonical state; cache-journal gaps fall back to a snapshot.                                                                      |
+| Redis unavailable                    | Production coordination is unhealthy and readiness should fail rather than silently allowing uncoordinated writers. Durable PostgreSQL data remains canonical. |
+| Object fails validation or scanning  | Object is not promoted or served; cleanup removes rejected/quarantined content according to policy.                                                            |
+| Billing webhook retry                | Signature and provider event identity are checked; processing is idempotent before entitlement changes.                                                        |
+| Report worker/process loss           | Expired leases make pending jobs claimable again; durable evidence remains unchanged.                                                                          |
+| Authoring extraction rejected        | Job fails without calling the provider and private source bytes are cleared.                                                                                   |
+| Authoring provider interruption      | The job retries with bounded backoff, fails after three attempts, and never creates or publishes content automatically.                                        |
+| Duplicate authoring apply            | A row lock and stored applied checkpoint-set ID return the first unpublished draft instead of creating another.                                                |
+| Replayed OIDC or LTI state           | Atomic one-time consumption rejects the callback/launch; no creator session or identity link is issued.                                                        |
+| Unknown federated identity           | OpenRound rejects login and requires email authentication plus an explicit link in the same workspace.                                                         |
+| Changed or disabled LMS registration | New launches fail; an already verified launch remains short-lived and workspace scoped.                                                                        |
 
 ## Operations boundary
 
@@ -405,6 +580,9 @@ logs/metrics, alert routing, backup verification, and operator ownership; see th
 | Redis for coordination, not truth | Fast leases, replay, codes, and fan-out without risking durable loss   | Production realtime requires Redis health and provider-specific failover testing         |
 | Immutable quiz versions           | Running sessions cannot change underneath participants                 | Creators must republish edits for future sessions                                        |
 | Session-scoped guests             | Low-friction joining and reduced child/privacy surface                 | No cross-session learner history or roster identity in P0                                |
+| Q&A outside game state            | Conversation traffic and moderation do not bloat live snapshots        | Q&A requires its own persistence, limits, retention, and realtime events                 |
+| Database-backed background jobs   | Reports and authoring survive process loss and retry safely            | Job latency and exhausted failures require operator monitoring                           |
+| Human-reviewed authoring AI       | Citations and draft-only output reduce ungrounded publishing risk      | Provider quality/cost still require evaluation; human verification remains mandatory     |
 | One regional home per workspace   | Clear residency and routing boundary                                   | Cross-region migration and global sessions are deferred                                  |
 | One launch realtime process       | Lower early operational risk                                           | Horizontal capacity waits on sticky-session and failure testing                          |
 
@@ -418,6 +596,17 @@ logs/metrics, alert routing, backup verification, and operator ownership; see th
 - Redis coordination/replay: [`apps/server/src/cache.ts`](../apps/server/src/cache.ts)
 - PostgreSQL repository: [`packages/db/src/postgres.ts`](../packages/db/src/postgres.ts)
 - Schema and RLS: [`packages/db/migrations/001_initial.sql`](../packages/db/migrations/001_initial.sql)
+- Ordered migration runner: [`packages/db/src/migrations.ts`](../packages/db/src/migrations.ts)
+- Deterministic insights: [`packages/insights/src/index.ts`](../packages/insights/src/index.ts)
+- Report worker: [`apps/server/src/report-worker.ts`](../apps/server/src/report-worker.ts)
+- Q&A service: [`apps/server/src/qna-service.ts`](../apps/server/src/qna-service.ts)
+- Follow-up service: [`apps/server/src/followup-service.ts`](../apps/server/src/followup-service.ts)
+- Portability and QTI: [`apps/server/src/portability.ts`](../apps/server/src/portability.ts),
+  [`apps/server/src/qti.ts`](../apps/server/src/qti.ts)
+- Authoring assistant/worker: [`apps/server/src/authoring-assistant.ts`](../apps/server/src/authoring-assistant.ts),
+  [`apps/server/src/authoring-worker.ts`](../apps/server/src/authoring-worker.ts)
+- Institution identity and LTI: [`apps/server/src/oidc-service.ts`](../apps/server/src/oidc-service.ts),
+  [`apps/server/src/lti-service.ts`](../apps/server/src/lti-service.ts)
 - Local topology: [`compose.yaml`](../compose.yaml)
 - Deployment configuration preflight: [`apps/server/src/config-check.ts`](../apps/server/src/config-check.ts)
 - Web CSP boundary: [`apps/web/proxy.ts`](../apps/web/proxy.ts)

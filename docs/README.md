@@ -1,16 +1,19 @@
 # OpenRound documentation
 
-OpenRound is a pre-release, independently branded live quiz platform for classrooms and workplace learning. Use this index to choose the shortest path for your role.
+OpenRound is a pre-release, independently branded comprehension recovery system for higher
+education and workplace learning. Use this index to choose the shortest path for your role.
 
 ## Start here
 
-| I want to…                                                | Read                                         |
-| --------------------------------------------------------- | -------------------------------------------- |
-| Run OpenRound locally and complete a first round          | [Quick start](quick-start.md)                |
-| Create, host, join, and review quizzes                    | [User guide](user-guide.md)                  |
-| Understand product behavior and interaction choices       | [Product and experience design](design.md)   |
-| Understand services, state, storage, and trust boundaries | [Architecture and protocol](architecture.md) |
-| Integrate with REST or realtime interfaces                | [API and realtime reference](api.md)         |
+| I want to…                                                | Read                                                                    |
+| --------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Run OpenRound locally and complete a first round          | [Quick start](quick-start.md)                                           |
+| Create, host, join, recover, and review understanding     | [User guide](user-guide.md)                                             |
+| Understand product behavior and interaction choices       | [Product and experience design](design.md)                              |
+| Review the competitive position and post-P0 roadmap       | [Competitive strategy and roadmap](competitive-strategy-and-roadmap.md) |
+| Understand services, state, storage, and trust boundaries | [Architecture and protocol](architecture.md)                            |
+| Integrate with REST or realtime interfaces                | [API and realtime reference](api.md)                                    |
+| Configure a gated institution pilot                       | [Institution integration guide](institution-integrations.md)            |
 
 ## Build and operate
 
@@ -28,6 +31,8 @@ OpenRound is a pre-release, independently branded live quiz platform for classro
   [Canadian Fly profile](../infra/fly/README.md) document provider boundaries and the one-shot
   migration workflow.
 - [Privacy data map](privacy-data-map.md) identifies stored data, purpose, and retention behavior.
+- [Institution integrations](institution-integrations.md) documents creator OIDC, instructor LTI,
+  audit export, residency evidence, and the capabilities that remain deliberately disabled.
 - [Asset register](asset-register.md) records the origin and licensing of bundled product assets.
 - [Creator authentication ADR](decisions/001-creator-authentication.md) records the deliberate P0
   choice and migration triggers.

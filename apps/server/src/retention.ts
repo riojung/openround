@@ -5,6 +5,7 @@ import type { MetricsService } from "./metrics.js";
 export interface RetentionResult {
   expiredLiveSessions: number;
   purgedSessions: number;
+  purgedAuditEvents: number;
   purgedMedia: number;
   failedMedia: number;
 }
@@ -16,6 +17,7 @@ export class RetentionService {
     private readonly quarantineRetentionHours: number,
     private readonly metrics?: MetricsService,
     private readonly onSessionsPurged?: (sessionIds: string[]) => Promise<void>,
+    private readonly auditRetentionDays = 365,
   ) {}
 
   async run(now = new Date()): Promise<RetentionResult> {
@@ -27,12 +29,15 @@ export class RetentionService {
     }
     const expiredLiveSessions = expiredLiveSessionIds.length;
     const purgedSessions = purgedSessionIds.length;
+    const auditCutoff = new Date(now.getTime() - this.auditRetentionDays * 24 * 60 * 60 * 1_000);
+    const purgedAuditEvents = await this.repository.purgeAuditEvents(auditCutoff);
     const cutoff = new Date(now.getTime() - this.quarantineRetentionHours * 60 * 60 * 1_000);
     const staleMedia = await this.repository.listStaleMedia(cutoff, 100);
     if (!this.storage.configured) {
       const result = {
         expiredLiveSessions,
         purgedSessions,
+        purgedAuditEvents,
         purgedMedia: 0,
         failedMedia: staleMedia.length,
       };
@@ -50,7 +55,13 @@ export class RetentionService {
         failedMedia += 1;
       }
     }
-    const result = { expiredLiveSessions, purgedSessions, purgedMedia, failedMedia };
+    const result = {
+      expiredLiveSessions,
+      purgedSessions,
+      purgedAuditEvents,
+      purgedMedia,
+      failedMedia,
+    };
     this.metrics?.recordRetention(result);
     return result;
   }

@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { QuizContentSchema, type BrandTheme, type QuizDraft } from "@openround/contracts";
+import {
+  QuizContentSchema,
+  type BrandTheme,
+  type QuestionDraft,
+  type QuizDraft,
+} from "@openround/contracts";
 import { Brand } from "../../../../components/brand";
 import { apiFetch, humanError } from "../../../../lib/api";
 import { liveThemeStyle } from "../../../../lib/theme";
@@ -14,24 +19,33 @@ interface QuizRecord {
   draft: QuizDraft;
 }
 
+function isChoiceQuestion(
+  question: QuestionDraft,
+): question is Extract<
+  QuestionDraft,
+  { type: "single_select" | "true_false" | "multi_select" | "poll" }
+> {
+  return ["single_select", "true_false", "multi_select", "poll"].includes(question.type);
+}
+
 function previewValidationError(draft: QuizDraft) {
   const result = QuizContentSchema.safeParse(draft);
   if (result.success) return { content: result.data, message: null };
 
   const issue = result.error.issues[0];
   const [root, itemIndex, field, choiceIndex] = issue?.path ?? [];
-  let source = "Quiz";
-  if (root === "title") source = "Quiz title";
+  let source = "Checkpoint set";
+  if (root === "title") source = "Checkpoint set title";
   else if (root === "questions" && typeof itemIndex === "number") {
-    source = `Question ${itemIndex + 1}`;
+    source = `Checkpoint ${itemIndex + 1}`;
     if (field === "choices" && typeof choiceIndex === "number") {
       source += `, answer ${choiceIndex + 1}`;
     }
-  } else if (root === "questions") source = "Questions";
+  } else if (root === "questions") source = "Checkpoints";
 
   return {
     content: null,
-    message: `Preview unavailable. ${source}: ${issue?.message ?? "Complete the quiz before previewing"}. Return to the editor and finish this draft.`,
+    message: `Preview unavailable. ${source}: ${issue?.message ?? "Complete the checkpoint set before previewing"}. Return to the editor and finish this draft.`,
   };
 }
 
@@ -128,7 +142,7 @@ export default function QuizPreviewPage() {
         {quiz && !question ? (
           <section className="live-card">
             <p className="eyebrow">Participant preview</p>
-            <h1>Add a question to preview this quiz.</h1>
+            <h1>Add a checkpoint to preview this set.</h1>
             <Link className="button" href={`/quiz/${id}`}>
               Return to editor
             </Link>
@@ -140,7 +154,7 @@ export default function QuizPreviewPage() {
               <div>
                 <p className="eyebrow">Participant preview · {quiz.status}</p>
                 <span className="status-pill">
-                  Question {questionIndex + 1} of {quiz.draft.questions.length}
+                  Checkpoint {questionIndex + 1} of {quiz.draft.questions.length}
                 </span>
               </div>
               <span className="countdown" aria-label={`${question.timeLimitSeconds} second timer`}>
@@ -157,20 +171,49 @@ export default function QuizPreviewPage() {
                 width={640}
               />
             ) : null}
-            <div className="answer-grid" aria-label="Answer choices">
-              {question.choices.map((choice, index) => (
-                <div
-                  className="answer-button"
-                  data-correct={(revealed && choice.isCorrect) || undefined}
-                  key={choice.id}
-                >
-                  <span aria-hidden="true" style={{ marginRight: 10 }}>
-                    {String.fromCharCode(65 + index)}.
-                  </span>
-                  {choice.label}
+            {isChoiceQuestion(question) ? (
+              <div className="answer-grid" aria-label="Answer choices">
+                {question.choices.map((choice, index) => (
+                  <div
+                    className="answer-button"
+                    data-correct={(revealed && choice.isCorrect) || undefined}
+                    key={choice.id}
+                  >
+                    <span aria-hidden="true" style={{ marginRight: 10 }}>
+                      {String.fromCharCode(65 + index)}.
+                    </span>
+                    {choice.label}
+                  </div>
+                ))}
+              </div>
+            ) : question.type === "numeric" ? (
+              <div className="field">
+                <label htmlFor="preview-numeric">Numeric response {question.unit ?? ""}</label>
+                <input className="input" disabled id="preview-numeric" inputMode="decimal" />
+                {revealed ? (
+                  <p className="success">
+                    Accepted value: {question.correctValue} ± {question.tolerance} {question.unit}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <fieldset style={{ border: 0, margin: 0, padding: 0 }}>
+                <legend className="field-label">Choose a rating</legend>
+                <div className="button-row">
+                  {Array.from(
+                    { length: question.max - question.min + 1 },
+                    (_, index) => question.min + index,
+                  ).map((value) => (
+                    <button className="answer-button" disabled key={value} type="button">
+                      {value}
+                    </button>
+                  ))}
                 </div>
-              ))}
-            </div>
+                <p className="muted">
+                  {question.minLabel} · {question.maxLabel}
+                </p>
+              </fieldset>
+            )}
             {revealed ? (
               <div className="success" role="status">
                 <strong>Correct answer revealed</strong>
@@ -184,7 +227,7 @@ export default function QuizPreviewPage() {
                 onClick={() => move(-1)}
                 type="button"
               >
-                Previous question
+                Previous checkpoint
               </button>
               <button
                 className="button-quiet"
@@ -199,7 +242,7 @@ export default function QuizPreviewPage() {
                 onClick={() => move(1)}
                 type="button"
               >
-                Next question
+                Next checkpoint
               </button>
             </div>
           </section>

@@ -16,7 +16,7 @@ export class AuthService {
     return this.config.COMMUNITY_MODE ? { ...creator, plan: "team" } : creator;
   }
 
-  async requestMagicLink(email: string, segment: Segment) {
+  async requestMagicLink(email: string, segment: Segment, returnTo?: string) {
     const token = opaqueToken();
     await this.repository.createMagicToken({
       id: randomUUID(),
@@ -27,24 +27,81 @@ export class AuthService {
       expiresAt: new Date(Date.now() + 15 * 60_000),
       consumedAt: null,
     });
-    const verifyUrl = `${this.config.PUBLIC_API_URL}/v1/auth/verify?token=${encodeURIComponent(token)}`;
-    await this.mailer.sendMagicLink(email, verifyUrl);
+    const verifyUrl = new URL("/v1/auth/verify", this.config.PUBLIC_API_URL);
+    verifyUrl.searchParams.set("token", token);
+    if (returnTo) verifyUrl.searchParams.set("returnTo", returnTo);
+    await this.mailer.sendMagicLink(email, verifyUrl.href);
     return this.config.NODE_ENV !== "production" || this.config.AUTH_DEBUG_MAGIC_LINKS
-      ? verifyUrl
+      ? verifyUrl.href
       : undefined;
   }
 
   async verifyMagicLink(token: string) {
     const creator = await this.repository.consumeMagicToken(hashToken(token), new Date());
     if (!creator) return null;
+    return this.issueCreatorSession(creator);
+  }
+
+  async issueCreatorSession(creator: CreatorContext) {
     const sessionToken = opaqueToken();
     await this.repository.createCreatorSession({
       id: randomUUID(),
       userId: creator.userId,
       tokenHash: hashToken(sessionToken),
       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000),
+      activeWorkspaceId: creator.workspaceId,
     });
     return { creator: this.effectiveCreator(creator), sessionToken };
+  }
+
+  async inviteWorkspace(creator: CreatorContext, email: string, role: "editor" | "viewer") {
+    const token = opaqueToken();
+    const invitation = await this.repository.createWorkspaceInvitation({
+      id: randomUUID(),
+      workspaceId: creator.workspaceId,
+      email,
+      role,
+      tokenHash: hashToken(token),
+      invitedBy: creator.userId,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60_000),
+      acceptedAt: null,
+      revokedAt: null,
+      createdAt: new Date(),
+    });
+    const acceptUrl = `${this.config.WEB_ORIGIN}/invite?token=${encodeURIComponent(token)}`;
+    try {
+      await this.mailer.sendWorkspaceInvitation(email, acceptUrl);
+    } catch (error) {
+      await this.repository.revokeWorkspaceInvitation(creator.workspaceId, invitation.id);
+      throw error;
+    }
+    return {
+      invitation,
+      debugUrl:
+        this.config.NODE_ENV !== "production" || this.config.AUTH_DEBUG_MAGIC_LINKS
+          ? acceptUrl
+          : undefined,
+    };
+  }
+
+  async acceptWorkspaceInvitation(token: string) {
+    const creator = await this.repository.acceptWorkspaceInvitation(
+      hashToken(token),
+      new Date(),
+      this.config.POLICY_VERSION,
+    );
+    if (!creator) return null;
+    return this.issueCreatorSession(creator);
+  }
+
+  async switchWorkspace(request: FastifyRequest, creator: CreatorContext, workspaceId: string) {
+    const token = request.cookies[this.config.COOKIE_NAME];
+    if (!token) return false;
+    return this.repository.setCreatorSessionWorkspace(
+      hashToken(token),
+      creator.userId,
+      workspaceId,
+    );
   }
 
   setSessionCookie(reply: FastifyReply, token: string) {

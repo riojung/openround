@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  AnswerSubmitSchema,
   BrandThemeSchema,
+  canonicalizeResponse,
   EntitlementsSchema,
   HostCommandSchema,
+  normalizeDecimalString,
   OperationalFeaturesUpdateSchema,
   QuizContentSchema,
   QuizDraftSchema,
@@ -22,6 +25,8 @@ describe("public contracts", () => {
         reportRetentionDays: 30,
         csvExport: false,
         brandTheme: false,
+        followups: false,
+        authoringJobsPerMonth: 3,
       }),
     ).toMatchObject({ maxPublishedQuizzes: 5, csvExport: false });
     expect(
@@ -32,6 +37,8 @@ describe("public contracts", () => {
         reportRetentionDays: 365,
         csvExport: true,
         brandTheme: true,
+        followups: true,
+        authoringJobsPerMonth: 100,
       }).maxPublishedQuizzes,
     ).toBeNull();
   });
@@ -106,7 +113,7 @@ describe("public contracts", () => {
         expect.arrayContaining([
           expect.objectContaining({
             path: ["questions", 0, "prompt"],
-            message: "Enter the question text",
+            message: "Enter the checkpoint prompt",
           }),
           expect.objectContaining({
             path: ["questions", 0, "choices", 0, "label"],
@@ -191,5 +198,125 @@ describe("public contracts", () => {
     expect(OperationalFeaturesUpdateSchema.parse({ sessionCreation: false })).toStrictEqual({
       sessionCreation: false,
     });
+  });
+
+  it("accepts legacy and canonical answer requests, but never both at once", () => {
+    const base = {
+      sessionId: randomUUID(),
+      roundId: randomUUID(),
+      participantToken: "a-secure-participant-token-long-enough",
+      idempotencyKey: randomUUID(),
+    };
+    const choiceId = randomUUID();
+
+    expect(AnswerSubmitSchema.safeParse({ ...base, choiceId }).success).toBe(true);
+    expect(
+      AnswerSubmitSchema.safeParse({
+        ...base,
+        response: { kind: "choice", choiceIds: [choiceId] },
+        confidence: 3,
+      }).success,
+    ).toBe(true);
+    expect(
+      AnswerSubmitSchema.safeParse({
+        ...base,
+        choiceId,
+        response: { kind: "choice", choiceIds: [choiceId] },
+      }).success,
+    ).toBe(false);
+    expect(AnswerSubmitSchema.safeParse(base).success).toBe(false);
+  });
+
+  it("canonicalizes decimals and choice sets without floating-point coercion", () => {
+    expect(normalizeDecimalString("+00042.5000")).toBe("42.5");
+    expect(normalizeDecimalString("-.5000")).toBe("-0.5");
+    expect(() => normalizeDecimalString("1e3")).toThrow(/without exponent notation/);
+
+    const first = randomUUID();
+    const second = randomUUID();
+    expect(canonicalizeResponse({ kind: "choice", choiceIds: [second, first] })).toStrictEqual({
+      kind: "choice",
+      choiceIds: [first, second].sort(),
+    });
+  });
+
+  it("enforces unscored opinion rules for rating and poll checkpoints", () => {
+    const common = {
+      id: randomUUID(),
+      prompt: "How useful was this checkpoint?",
+      purpose: "opinion" as const,
+      confidence: "off" as const,
+      delivery: "main" as const,
+      conceptKeys: [],
+      linkedRecheckQuestionId: null,
+      timeLimitSeconds: 20,
+      basePoints: 0,
+      explanation: "",
+      mediaId: null,
+      mediaAlt: null,
+    };
+    expect(
+      QuestionSchema.safeParse({
+        ...common,
+        type: "rating",
+        min: 1,
+        max: 5,
+        minLabel: "Not useful",
+        maxLabel: "Very useful",
+      }).success,
+    ).toBe(true);
+    expect(
+      QuestionSchema.safeParse({
+        ...common,
+        type: "poll",
+        basePoints: 1_000,
+        choices: [
+          { id: randomUUID(), label: "Yes", isCorrect: false },
+          { id: randomUUID(), label: "No", isCorrect: false },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires linked checkpoints to exist and be marked as rechecks", () => {
+    const linkedId = randomUUID();
+    const common = {
+      prompt: "Choose one",
+      type: "single_select" as const,
+      purpose: "diagnostic" as const,
+      confidence: "off" as const,
+      conceptKeys: [],
+      timeLimitSeconds: 20,
+      basePoints: 1_000,
+      explanation: "",
+      mediaId: null,
+      mediaAlt: null,
+      choices: [
+        { id: randomUUID(), label: "A", isCorrect: true },
+        { id: randomUUID(), label: "B", isCorrect: false },
+      ],
+    };
+    const content = {
+      title: "Recovery set",
+      description: "",
+      questions: [
+        {
+          ...common,
+          id: randomUUID(),
+          delivery: "main" as const,
+          linkedRecheckQuestionId: linkedId,
+        },
+        {
+          ...common,
+          id: linkedId,
+          delivery: "recheck" as const,
+          linkedRecheckQuestionId: null,
+        },
+      ],
+    };
+    expect(QuizContentSchema.safeParse(content).success).toBe(true);
+    expect(
+      QuizContentSchema.safeParse({ ...content, questions: [content.questions[0]] }).success,
+    ).toBe(false);
   });
 });
