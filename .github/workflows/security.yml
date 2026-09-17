@@ -29,7 +29,7 @@ jobs:
       - run: pnpm audit --audit-level low
       - run: pnpm licenses:report
       - run: git diff --exit-code -- THIRD_PARTY_NOTICES.md
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
