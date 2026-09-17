@@ -100,10 +100,9 @@ async function joinParticipant(browser: Browser, code: string, nickname: string)
 }
 
 async function answerChoice(page: Page, choice: string) {
-  await expect(
-    page.getByRole("button", { name: new RegExp(choice.replace("%", "%")) }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: new RegExp(choice.replace("%", "%")) }).click();
+  const choiceButton = page.getByRole("button", { name: choice, exact: true });
+  await expect(choiceButton).toBeVisible();
+  await choiceButton.click();
   await page.getByRole("button", { name: "Very sure" }).click();
   await page.getByRole("button", { name: "Submit response" }).click();
   await expect(page.getByText("Answer received and saved.")).toBeVisible();
