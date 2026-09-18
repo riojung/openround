@@ -424,14 +424,45 @@ const ChoiceQuestionSchema = CommonQuestionSchema.extend({
 
 export function normalizeDecimalString(value: string): string {
   const trimmed = value.trim();
-  if (!/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(trimmed)) {
+  let cursor = trimmed.startsWith("+") || trimmed.startsWith("-") ? 1 : 0;
+  let decimalPoint = -1;
+  let hasDigit = false;
+
+  for (; cursor < trimmed.length; cursor += 1) {
+    const character = trimmed.charAt(cursor);
+    if (character >= "0" && character <= "9") {
+      hasDigit = true;
+      continue;
+    }
+    if (character === "." && decimalPoint === -1) {
+      decimalPoint = cursor;
+      continue;
+    }
     throw new Error("Enter a decimal number without exponent notation");
   }
+
+  if (!hasDigit) {
+    throw new Error("Enter a decimal number without exponent notation");
+  }
+
   const negative = trimmed.startsWith("-");
-  const unsigned = trimmed.replace(/^[+-]/, "");
-  const [integerPart = "0", fractionPart = ""] = unsigned.split(".");
-  const integer = integerPart.replace(/^0+(?=\d)/, "") || "0";
-  const fraction = fractionPart.replace(/0+$/, "");
+  const numberStart = trimmed.startsWith("+") || negative ? 1 : 0;
+  const integerEnd = decimalPoint === -1 ? trimmed.length : decimalPoint;
+  let integerStart = numberStart;
+  while (integerStart < integerEnd - 1 && trimmed[integerStart] === "0") {
+    integerStart += 1;
+  }
+  const integer = integerStart === integerEnd ? "0" : trimmed.slice(integerStart, integerEnd);
+
+  let fractionEnd = trimmed.length;
+  while (
+    decimalPoint !== -1 &&
+    fractionEnd > decimalPoint + 1 &&
+    trimmed[fractionEnd - 1] === "0"
+  ) {
+    fractionEnd -= 1;
+  }
+  const fraction = decimalPoint === -1 ? "" : trimmed.slice(decimalPoint + 1, fractionEnd);
   const normalized = fraction ? `${integer}.${fraction}` : integer;
   return negative && normalized !== "0" ? `-${normalized}` : normalized;
 }

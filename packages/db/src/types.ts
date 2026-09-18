@@ -436,6 +436,8 @@ export interface SessionHistoryRecord {
   questionCount: number;
   questionPosition: number | null;
   createdAt: Date;
+  /** Exact database timestamp used to create the next opaque keyset cursor. */
+  cursorCreatedAt?: string;
   updatedAt: Date;
   expiresAt: Date;
   reportId: string | null;
@@ -475,6 +477,8 @@ export interface FollowupHistoryRecord {
   closesAt: Date;
   expiresAt: Date;
   createdAt: Date;
+  /** Exact database timestamp used to create the next opaque keyset cursor. */
+  cursorCreatedAt?: string;
 }
 
 export interface HistoryPage<T> {

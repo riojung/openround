@@ -120,7 +120,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     return result!;
   }
 
-  it("paginates reports without losing PostgreSQL microsecond precision", async () => {
+  it("paginates histories without losing PostgreSQL microsecond precision", async () => {
     const owner = await creator("report-cursor");
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 24 * 60 * 60_000);
@@ -150,9 +150,11 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       contentHash: randomUUID(),
       publishedAt: now,
     });
+    const sessionIds: string[] = [];
     const reportIds: string[] = [];
     for (let index = 0; index < 2; index += 1) {
       const sessionId = randomUUID();
+      sessionIds.push(sessionId);
       await repository.createSession({
         id: sessionId,
         workspaceId: owner.workspaceId,
@@ -208,6 +210,15 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
          WHERE id = ANY($3::uuid[])`,
         [reportIds[0], reportIds[1], reportIds],
       );
+      await client.query(
+        `UPDATE game_sessions
+         SET created_at = CASE id
+           WHEN $1::uuid THEN '2026-09-18T12:00:00.000900Z'::timestamptz
+           WHEN $2::uuid THEN '2026-09-18T12:00:00.000100Z'::timestamptz
+         END
+         WHERE id = ANY($3::uuid[])`,
+        [sessionIds[0], sessionIds[1], sessionIds],
+      );
       await client.query("COMMIT");
     } finally {
       client.release();
@@ -232,6 +243,88 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       now,
     });
     expect(secondPage.items.map(({ id }) => id)).toEqual([reportIds[1]]);
+
+    const firstSessionPage = await repository.listSessionHistory(owner.workspaceId, {
+      limit: 1,
+      now,
+    });
+    expect(firstSessionPage).toMatchObject({
+      hasMore: true,
+      items: [{ id: sessionIds[0], cursorCreatedAt: "2026-09-18T12:00:00.000900Z" }],
+    });
+    const firstSession = firstSessionPage.items[0]!;
+    const secondSessionPage = await repository.listSessionHistory(owner.workspaceId, {
+      limit: 1,
+      cursor: {
+        createdAt: firstSession.createdAt,
+        cursorCreatedAt: firstSession.cursorCreatedAt,
+        id: firstSession.id,
+      },
+      now,
+    });
+    expect(secondSessionPage.items.map(({ id }) => id)).toEqual([sessionIds[1]]);
+
+    const followupIds = [randomUUID(), randomUUID()];
+    const exactFollowupCreatedAts = ["2026-09-18T12:00:00.000900Z", "2026-09-18T12:00:00.000100Z"];
+    const followupClient = await runtimePool.connect();
+    try {
+      await followupClient.query("BEGIN");
+      await followupClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        owner.workspaceId,
+      ]);
+      for (let index = 0; index < followupIds.length; index += 1) {
+        await followupClient.query(
+          `INSERT INTO followups
+             (id, workspace_id, source_session_id, source_report_id, title, content,
+              concept_keys, time_mode, generic_token_hash, opens_at, closes_at, expires_at,
+              closed_at, created_by, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+          [
+            followupIds[index],
+            owner.workspaceId,
+            sessionIds[index],
+            reportIds[index],
+            `Cursor follow-up ${index + 1}`,
+            JSON.stringify(content),
+            ["cursor-precision"],
+            "flex",
+            randomUUID(),
+            now,
+            expiresAt,
+            expiresAt,
+            null,
+            owner.userId,
+            exactFollowupCreatedAts[index],
+          ],
+        );
+      }
+      await followupClient.query("COMMIT");
+    } catch (error) {
+      await followupClient.query("ROLLBACK");
+      throw error;
+    } finally {
+      followupClient.release();
+    }
+
+    const firstFollowupPage = await repository.listFollowupHistory(owner.workspaceId, {
+      limit: 1,
+      now,
+    });
+    expect(firstFollowupPage).toMatchObject({
+      hasMore: true,
+      items: [{ id: followupIds[0], cursorCreatedAt: "2026-09-18T12:00:00.000900Z" }],
+    });
+    const firstFollowup = firstFollowupPage.items[0]!;
+    const secondFollowupPage = await repository.listFollowupHistory(owner.workspaceId, {
+      limit: 1,
+      cursor: {
+        createdAt: firstFollowup.createdAt,
+        cursorCreatedAt: firstFollowup.cursorCreatedAt,
+        id: firstFollowup.id,
+      },
+      now,
+    });
+    expect(secondFollowupPage.items.map(({ id }) => id)).toEqual([followupIds[1]]);
   });
 
   it("shows only the active workspace and rejects cross-tenant writes", async () => {

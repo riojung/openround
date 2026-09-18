@@ -381,6 +381,11 @@ describe("public contracts", () => {
     });
   });
 
+  it("rejects adversarial decimal input without regex backtracking", () => {
+    const longInvalidDecimal = `${"1".repeat(100_000)}x`;
+    expect(() => normalizeDecimalString(longInvalidDecimal)).toThrow(/without exponent notation/);
+  });
+
   it("enforces unscored opinion rules for rating and poll checkpoints", () => {
     const common = {
       id: randomUUID(),

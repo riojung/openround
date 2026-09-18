@@ -29,6 +29,7 @@ import type {
   FollowupRecord,
   FollowupHistoryRecord,
   FederatedAuthTransactionRecord,
+  HistoryCursor,
   ExternalIdentityRecord,
   InstitutionPolicyRecord,
   InteractionSettingsRecord,
@@ -979,7 +980,7 @@ export class MemoryRepository implements Repository {
   async listSessionHistory(
     workspaceId: string,
     options: {
-      cursor?: { createdAt: Date; id: string };
+      cursor?: HistoryCursor;
       limit: number;
       status?: SessionHistoryRecord["status"];
       quizId?: string;
@@ -2284,7 +2285,7 @@ export class MemoryRepository implements Repository {
   async listReportHistory(
     workspaceId: string,
     options: {
-      cursor?: { createdAt: Date; cursorCreatedAt?: string; id: string };
+      cursor?: HistoryCursor;
       limit: number;
       status?: Report["status"];
       quizId?: string;
@@ -2407,7 +2408,7 @@ export class MemoryRepository implements Repository {
   async listFollowupHistory(
     workspaceId: string,
     options: {
-      cursor?: { createdAt: Date; id: string };
+      cursor?: HistoryCursor;
       limit: number;
       status?: FollowupHistoryRecord["status"];
       from?: Date;

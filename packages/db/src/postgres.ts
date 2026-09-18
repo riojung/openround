@@ -42,6 +42,7 @@ import type {
   FollowupRecord,
   FollowupHistoryRecord,
   FederatedAuthTransactionRecord,
+  HistoryCursor,
   ExternalIdentityRecord,
   InstitutionPolicyRecord,
   InteractionSettingsRecord,
@@ -436,6 +437,7 @@ function mapFollowupHistory(row: QueryResultRow, now: Date): FollowupHistoryReco
     closesAt,
     expiresAt,
     createdAt: date(row.created_at),
+    cursorCreatedAt: row.cursor_created_at ? String(row.cursor_created_at) : undefined,
   };
 }
 
@@ -2090,7 +2092,7 @@ export class PostgresRepository implements Repository {
   async listSessionHistory(
     workspaceId: string,
     options: {
-      cursor?: { createdAt: Date; id: string };
+      cursor?: HistoryCursor;
       limit: number;
       status?: SessionHistoryRecord["status"];
       quizId?: string;
@@ -2103,6 +2105,10 @@ export class PostgresRepository implements Repository {
       workspaceId,
       `SELECT game_sessions.*, quiz_versions.quiz_id,
               reports.id AS report_id,
+              to_char(
+                game_sessions.created_at AT TIME ZONE 'UTC',
+                'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+              ) AS cursor_created_at,
               (SELECT count(*)::integer FROM answers
                WHERE answers.workspace_id = game_sessions.workspace_id
                  AND answers.session_id = game_sessions.id) AS answer_count
@@ -2124,7 +2130,7 @@ export class PostgresRepository implements Repository {
        LIMIT $9`,
       [
         workspaceId,
-        options.cursor?.createdAt ?? null,
+        options.cursor?.cursorCreatedAt ?? options.cursor?.createdAt ?? null,
         options.cursor?.id ?? null,
         options.quizId ?? null,
         options.from ?? null,
@@ -2155,6 +2161,7 @@ export class PostgresRepository implements Repository {
           ).length,
           questionPosition: sessionQuestionPosition(state),
           createdAt: date(row.created_at),
+          cursorCreatedAt: row.cursor_created_at ? String(row.cursor_created_at) : undefined,
           updatedAt: date(row.updated_at),
           expiresAt: date(row.expires_at),
           reportId: row.report_id ? String(row.report_id) : null,
@@ -3971,7 +3978,7 @@ export class PostgresRepository implements Repository {
   async listReportHistory(
     workspaceId: string,
     options: {
-      cursor?: { createdAt: Date; cursorCreatedAt?: string; id: string };
+      cursor?: HistoryCursor;
       limit: number;
       status?: Report["status"];
       quizId?: string;
@@ -4101,7 +4108,7 @@ export class PostgresRepository implements Repository {
   async listFollowupHistory(
     workspaceId: string,
     options: {
-      cursor?: { createdAt: Date; id: string };
+      cursor?: HistoryCursor;
       limit: number;
       status?: FollowupHistoryRecord["status"];
       from?: Date;
@@ -4112,6 +4119,10 @@ export class PostgresRepository implements Repository {
     const result = await this.workspaceQuery(
       workspaceId,
       `SELECT followups.*,
+              to_char(
+                followups.created_at AT TIME ZONE 'UTC',
+                'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+              ) AS cursor_created_at,
               count(followup_attempts.id)::integer AS attempt_count,
               count(followup_attempts.id) FILTER (
                 WHERE followup_attempts.status = 'completed'
@@ -4139,7 +4150,7 @@ export class PostgresRepository implements Repository {
        LIMIT $8`,
       [
         workspaceId,
-        options.cursor?.createdAt ?? null,
+        options.cursor?.cursorCreatedAt ?? options.cursor?.createdAt ?? null,
         options.cursor?.id ?? null,
         options.from ?? null,
         options.to ?? null,

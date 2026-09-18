@@ -1734,7 +1734,13 @@ export async function registerRoutes(
     const page = await repository.listSessionHistory(creator.workspaceId, {
       limit: query.limit,
       ...(query.cursor
-        ? { cursor: { createdAt: new Date(query.cursor.createdAt), id: query.cursor.id } }
+        ? {
+            cursor: {
+              createdAt: new Date(query.cursor.createdAt),
+              cursorCreatedAt: query.cursor.createdAt,
+              id: query.cursor.id,
+            },
+          }
         : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.quizId ? { quizId: query.quizId } : {}),
@@ -2343,7 +2349,13 @@ export async function registerRoutes(
     const page = await repository.listFollowupHistory(creator.workspaceId, {
       limit: query.limit,
       ...(query.cursor
-        ? { cursor: { createdAt: new Date(query.cursor.createdAt), id: query.cursor.id } }
+        ? {
+            cursor: {
+              createdAt: new Date(query.cursor.createdAt),
+              cursorCreatedAt: query.cursor.createdAt,
+              id: query.cursor.id,
+            },
+          }
         : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.from ? { from: new Date(query.from) } : {}),

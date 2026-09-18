@@ -161,6 +161,128 @@ describe("P0 beta creator APIs", () => {
     );
   });
 
+  it("preserves exact database timestamps in session and follow-up cursors", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+    const { cookie } = await signIn(app, "exact-history-cursors@example.com");
+    const exactCreatedAt = "2026-09-18T12:00:00.000900Z";
+    const createdAt = new Date(exactCreatedAt);
+    const future = new Date("2026-09-19T12:00:00.000Z");
+    const sessionId = randomUUID();
+    let receivedSessionCursor:
+      Parameters<MemoryRepository["listSessionHistory"]>[1]["cursor"] | undefined;
+    repository.listSessionHistory = async (_workspaceId, options) => {
+      receivedSessionCursor = options.cursor;
+      return options.cursor
+        ? { items: [], hasMore: false }
+        : {
+            items: [
+              {
+                id: sessionId,
+                quizId: randomUUID(),
+                title: "Exact session cursor",
+                status: "active",
+                phase: "lobby",
+                code: "1234567",
+                participantCount: 0,
+                answerCount: 0,
+                questionCount: 0,
+                questionPosition: null,
+                createdAt,
+                cursorCreatedAt: exactCreatedAt,
+                updatedAt: createdAt,
+                expiresAt: future,
+                reportId: null,
+              },
+            ],
+            hasMore: true,
+          };
+    };
+
+    const firstSessionPage = await app.inject({
+      method: "GET",
+      url: "/v1/sessions?limit=1",
+      headers: { cookie },
+    });
+    const sessionCursor = firstSessionPage.json<{ nextCursor: string }>().nextCursor;
+    expect(JSON.parse(Buffer.from(sessionCursor, "base64url").toString("utf8"))).toMatchObject({
+      createdAt: exactCreatedAt,
+      id: sessionId,
+    });
+    await app.inject({
+      method: "GET",
+      url: `/v1/sessions?limit=1&cursor=${encodeURIComponent(sessionCursor)}`,
+      headers: { cookie },
+    });
+    expect(receivedSessionCursor).toMatchObject({
+      cursorCreatedAt: exactCreatedAt,
+      id: sessionId,
+    });
+
+    const followupId = randomUUID();
+    let receivedFollowupCursor:
+      Parameters<MemoryRepository["listFollowupHistory"]>[1]["cursor"] | undefined;
+    repository.listFollowupHistory = async (_workspaceId, options) => {
+      receivedFollowupCursor = options.cursor;
+      return options.cursor
+        ? { items: [], hasMore: false }
+        : {
+            items: [
+              {
+                id: followupId,
+                sourceSessionId: sessionId,
+                sourceReportId: randomUUID(),
+                title: "Exact follow-up cursor",
+                status: "open",
+                conceptKeys: [],
+                checkpointCount: 1,
+                attemptCount: 0,
+                completedAttemptCount: 0,
+                opensAt: createdAt,
+                closesAt: future,
+                expiresAt: future,
+                createdAt,
+                cursorCreatedAt: exactCreatedAt,
+              },
+            ],
+            hasMore: true,
+          };
+    };
+
+    const firstFollowupPage = await app.inject({
+      method: "GET",
+      url: "/v1/followups?limit=1",
+      headers: { cookie },
+    });
+    expect(firstFollowupPage.statusCode, firstFollowupPage.body).toBe(200);
+    const followupCursor = firstFollowupPage.json<{ nextCursor: string | null }>().nextCursor;
+    expect(followupCursor).not.toBeNull();
+    expect(JSON.parse(Buffer.from(followupCursor!, "base64url").toString("utf8"))).toMatchObject({
+      createdAt: exactCreatedAt,
+      id: followupId,
+    });
+    await app.inject({
+      method: "GET",
+      url: `/v1/followups?limit=1&cursor=${encodeURIComponent(followupCursor!)}`,
+      headers: { cookie },
+    });
+    expect(receivedFollowupCursor).toMatchObject({
+      cursorCreatedAt: exactCreatedAt,
+      id: followupId,
+    });
+  });
+
   it("paginates histories, resumes securely, accepts bounded telemetry, and creates V3 follow-ups", async () => {
     const allowlistedWorkspaceId = randomUUID();
     const repository = new MemoryRepository({ initialWorkspaceId: allowlistedWorkspaceId });
