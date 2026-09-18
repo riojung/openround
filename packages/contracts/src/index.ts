@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+function isHttpOrHttpsUrl(value: string) {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
 export const errorCodes = [
   "INVALID_CODE",
   "SESSION_FULL",
@@ -63,6 +71,11 @@ export type ApiError = z.infer<typeof ApiErrorSchema>;
 
 export const PublicFeaturesSchema = z.object({
   publicWebUrl: z.string().url(),
+  developmentEmailInboxUrl: z
+    .string()
+    .url()
+    .refine(isHttpOrHttpsUrl, "Must use HTTP or HTTPS")
+    .optional(),
   mediaUploads: z.boolean(),
   billing: z.enum(["disabled", "stripe"]),
   communityMode: z.boolean(),

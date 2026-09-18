@@ -1428,6 +1428,8 @@ describe("creator to report journey", () => {
         ALLOW_IN_MEMORY: "true",
         WEB_ORIGIN: "http://localhost:3000",
         PUBLIC_API_URL: "http://localhost:4000",
+        COMMUNITY_MODE: "true",
+        DEVELOPMENT_EMAIL_INBOX_URL: "http://localhost:8025",
         FEATURE_SIGNUPS: "false",
         FEATURE_SESSION_CREATION: "false",
         FEATURE_MEDIA_UPLOADS: "false",
@@ -1443,6 +1445,7 @@ describe("creator to report journey", () => {
     const features = await app.inject({ method: "GET", url: "/v1/features" });
     expect(features.json()).toMatchObject({
       publicWebUrl: "http://localhost:3000",
+      developmentEmailInboxUrl: "http://localhost:8025",
       signups: false,
       sessionCreation: false,
       mediaUploads: false,

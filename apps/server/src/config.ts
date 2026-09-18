@@ -16,6 +16,19 @@ const optionalUrl = z.preprocess(
   z.string().url().optional(),
 );
 
+function isHttpOrHttpsUrl(value: string) {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+const optionalHttpUrl = optionalUrl.refine(
+  (value) => !value || isHttpOrHttpsUrl(value),
+  "Must use HTTP or HTTPS",
+);
+
 const optionalSecret = z.preprocess(
   (value) => (value === "" ? undefined : value),
   z.string().min(1).optional(),
@@ -132,6 +145,7 @@ export const ConfigSchema = z
     OTEL_SERVICE_VERSION: z.string().trim().min(1).max(80).default("0.1.0"),
     SMTP_URL: z.string().min(1).optional(),
     EMAIL_FROM: z.string().default("OpenRound <noreply@localhost>"),
+    DEVELOPMENT_EMAIL_INBOX_URL: optionalHttpUrl,
     AUTH_DEBUG_MAGIC_LINKS: booleanString,
     POLICY_VERSION: z.string().trim().min(1).max(80).default("2026-09-14-draft"),
     BILLING_MODE: z.enum(["disabled", "stripe"]).default("disabled"),

@@ -192,11 +192,25 @@ describe("production configuration", () => {
       COMMUNITY_MODE: "true",
       ALLOW_INSECURE_LOCAL_HTTP: "true",
       SMTP_URL: "smtp://mailpit:1025",
+      DEVELOPMENT_EMAIL_INBOX_URL: "http://localhost:8025",
       FEATURE_SIGNUPS: "true",
     });
 
     expect(config.ALLOW_INSECURE_LOCAL_HTTP).toBe(true);
     expect(config.AUTH_DEBUG_MAGIC_LINKS).toBe(false);
+    expect(config.DEVELOPMENT_EMAIL_INBOX_URL).toBe("http://localhost:8025");
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        DEVELOPMENT_EMAIL_INBOX_URL: "ftp://localhost/inbox",
+      }),
+    ).toThrow(/Must use HTTP or HTTPS/);
+    expect(
+      ConfigSchema.safeParse({
+        ...productionConfig,
+        DEVELOPMENT_EMAIL_INBOX_URL: "not a URL",
+      }).success,
+    ).toBe(false);
   });
 
   it("allows debug magic links for an explicit loopback-only community profile", () => {

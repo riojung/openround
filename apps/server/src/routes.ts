@@ -504,6 +504,9 @@ export async function registerRoutes(
     const { effective } = await operationalFeatures();
     return PublicFeaturesSchema.parse({
       publicWebUrl: config.WEB_ORIGIN,
+      ...(config.COMMUNITY_MODE && config.DEVELOPMENT_EMAIL_INBOX_URL
+        ? { developmentEmailInboxUrl: config.DEVELOPMENT_EMAIL_INBOX_URL }
+        : {}),
       mediaUploads: effective.mediaUploads,
       billing: config.BILLING_MODE,
       communityMode: config.COMMUNITY_MODE,

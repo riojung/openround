@@ -38,11 +38,16 @@ Open:
 2. Choose **Workplace learning** or **Education**. This sets the session defaults described in the [user guide](user-guide.md#segment-defaults).
 3. Enter any valid development email address.
 4. Accept the draft Terms and Privacy notice, then select **Send sign-in link**.
-5. Open Mailpit at <http://localhost:8025>, select the new OpenRound message, and open its sign-in
-   link.
+5. Select **Open local email inbox** in the confirmation, choose the newest OpenRound message, and
+   open its sign-in link. You can also open Mailpit directly at <http://localhost:8025>.
 
 Mailpit keeps local messages inside the development stack; it does not send external email. The
 Compose profile does not return sign-in bearer tokens in API responses by default.
+
+Sign-in cookies belong to the configured `OPENROUND_PUBLIC_URL`. If the browser is using a
+different origin—for example, `localhost` while the stack is configured for a LAN IP—the sign-in
+page identifies both addresses and links to the configured one. Continue using that configured
+address after opening the email link.
 
 For isolated, one-computer testing only, you can expose **Continue to dashboard** while also binding
 the product to loopback so another LAN client cannot request a token for an existing creator:

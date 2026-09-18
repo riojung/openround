@@ -8,6 +8,7 @@ import {
   HostCommandSchema,
   normalizeDecimalString,
   OperationalFeaturesUpdateSchema,
+  PublicFeaturesSchema,
   QuizContentSchema,
   QuizDraftSchema,
   QuestionSchema,
@@ -16,6 +17,40 @@ import {
 } from "../src/index.js";
 
 describe("public contracts", () => {
+  it("allows a development inbox hint without requiring it in hosted deployments", () => {
+    const base = {
+      publicWebUrl: "http://localhost:8080",
+      mediaUploads: true,
+      billing: "disabled" as const,
+      communityMode: true,
+      signups: true,
+      sessionCreation: true,
+      roundExperiences: true,
+      audiencePulse: true,
+      roomChat: true,
+    };
+
+    expect(PublicFeaturesSchema.parse(base).developmentEmailInboxUrl).toBeUndefined();
+    expect(
+      PublicFeaturesSchema.parse({
+        ...base,
+        developmentEmailInboxUrl: "http://localhost:8025",
+      }).developmentEmailInboxUrl,
+    ).toBe("http://localhost:8025");
+    expect(
+      PublicFeaturesSchema.safeParse({
+        ...base,
+        developmentEmailInboxUrl: "javascript:alert(1)",
+      }).success,
+    ).toBe(false);
+    expect(
+      PublicFeaturesSchema.safeParse({
+        ...base,
+        developmentEmailInboxUrl: "not a URL",
+      }).success,
+    ).toBe(false);
+  });
+
   it("represents finite Free limits and unlimited paid quiz publishing", () => {
     expect(
       EntitlementsSchema.parse({

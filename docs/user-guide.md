@@ -29,7 +29,9 @@ facilitator can change round settings before creating a room.
 2. Choose education or workplace learning.
 3. Enter an email address, accept the displayed policies, and request a sign-in link.
 4. Follow the single-use link. Local Compose captures it in Mailpit at
-   <http://localhost:8025>.
+   <http://localhost:8025>; after requesting the link, select **Open local email inbox** on the
+   sign-in page. If the configured public address differs from the browser address, move to the
+   configured sign-in page first and continue using that origin after authentication.
 
 Use **My checkpoint sets** to return to the dashboard and **Sign out** to revoke the current
 browser session. Owners can invite editors or viewers from **Account**. An invitation is

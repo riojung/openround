@@ -11,6 +11,7 @@ const summary = {
   persistence: config.DATABASE_URL ? "postgresql" : "memory",
   coordination: config.REDIS_URL ? "redis-streams" : "process-local",
   email: config.SMTP_URL ? "smtp" : "disabled",
+  developmentEmailInbox: config.DEVELOPMENT_EMAIL_INBOX_URL ? "configured" : "disabled",
   billing: config.BILLING_MODE,
   media: config.S3_ENDPOINT ? config.MEDIA_SCAN_MODE : "disabled",
   metrics: config.METRICS_ENABLED

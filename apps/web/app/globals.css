@@ -880,6 +880,16 @@ h3 {
   color: #05603a;
 }
 
+.auth-origin {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.auth-status-action {
+  display: inline-flex;
+  margin-top: 4px;
+}
+
 .validation-guidance > strong {
   display: block;
   margin-bottom: 6px;
