@@ -395,25 +395,27 @@ export async function registerRoutes(
         signal: event.signal,
         createdAt: event.createdAt.toISOString(),
       })),
-      messages: interactionEvidence.chatMessages.map((message) => ({
-        id: message.id,
-        replyToMessageId: message.replyToId,
-        participantId: message.participantId,
-        alias:
+      messages: interactionEvidence.chatMessages.map((message) => {
+        const privateParticipantForViewer = Boolean(
           message.participantId &&
           message.identityModeAtCreation === "alias_private" &&
-          creator.role === "viewer"
-            ? "Anonymous"
-            : message.authorAlias,
-        identityModeAtCreation: message.identityModeAtCreation,
-        body: message.status === "removed" && !includeRemovedBodies ? null : message.body,
-        status: message.status,
-        pinned: message.pinned,
-        reactions: interactionEvidence.reactions.filter(
-          (reaction) => reaction.messageId === message.id,
-        ).length,
-        createdAt: message.createdAt.toISOString(),
-      })),
+          creator.role === "viewer",
+        );
+        return {
+          id: message.id,
+          replyToMessageId: message.replyToId,
+          participantId: privateParticipantForViewer ? null : message.participantId,
+          alias: privateParticipantForViewer ? "Anonymous" : message.authorAlias,
+          identityModeAtCreation: message.identityModeAtCreation,
+          body: message.status === "removed" && !includeRemovedBodies ? null : message.body,
+          status: message.status,
+          pinned: message.pinned,
+          reactions: interactionEvidence.reactions.filter(
+            (reaction) => reaction.messageId === message.id,
+          ).length,
+          createdAt: message.createdAt.toISOString(),
+        };
+      }),
       counts: {
         reports: interactionEvidence.reports,
         moderationActions: interactionEvidence.moderationActions,

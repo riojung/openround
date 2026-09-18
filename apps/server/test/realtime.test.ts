@@ -400,6 +400,141 @@ describe("realtime authorization", () => {
     expect(client.connected).toBe(false);
   });
 
+  it("disconnects a kicked participant before delivering audience chat", async () => {
+    const sessionId = crypto.randomUUID();
+    const participantId = crypto.randomUUID();
+    let audienceListener:
+      ((event: SessionAudienceEvent) => boolean | void | Promise<boolean | void>) | undefined;
+    const snapshot = {
+      mode: "live" as const,
+      stateSchemaVersion: 4,
+      sessionId,
+      code: "1234567",
+      version: 0,
+      seq: 0,
+      phase: "lobby" as const,
+      roundId: null,
+      roundKind: "main" as const,
+      sourceRoundId: null,
+      questionIndex: null,
+      questionPosition: null,
+      questionCount: 1,
+      question: null,
+      deadline: null,
+      participants: [
+        {
+          id: participantId,
+          nickname: "Removed participant",
+          score: 0,
+          connected: true,
+          answered: false,
+        },
+      ],
+      myParticipantId: participantId,
+      answerCount: 0,
+      lobbyLocked: false,
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy" as const,
+        resultVisibility: "private" as const,
+        allowLateJoin: true,
+        nicknamePolicy: "custom" as const,
+      },
+      brandTheme: null,
+      pausedRemainingMs: null,
+      intervention: null,
+    };
+    const sessions = {
+      subscribe: vi.fn(() => vi.fn()),
+      subscribeAuxiliary: vi.fn(() => vi.fn()),
+      subscribeAudience: vi.fn(
+        (listener: (event: SessionAudienceEvent) => boolean | void | Promise<boolean | void>) => {
+          audienceListener = listener;
+          return vi.fn();
+        },
+      ),
+      sync: vi.fn().mockResolvedValue({ snapshot, replay: [], replayComplete: true }),
+      revalidateRealtimeParticipant: vi
+        .fn()
+        .mockRejectedValue(new SessionError("UNAUTHORIZED", "Participant was kicked")),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+    } as unknown as SessionService;
+    const projectRealtimeChat = vi.fn().mockReturnValue({
+      message: { id: crypto.randomUUID(), body: "Private room message" },
+    });
+    const interactions = {
+      prepareRealtimeChat: vi.fn().mockResolvedValue({ message: {} }),
+      projectRealtimeChat,
+      realtimeSummaries: vi.fn().mockResolvedValue({
+        publicSummary: {},
+        moderatorSummary: {},
+      }),
+    } as unknown as InteractionService;
+    httpServer = createServer();
+    await new Promise<void>((resolve) => httpServer!.listen(0, "127.0.0.1", resolve));
+    const address = httpServer.address();
+    if (!address || typeof address === "string") throw new Error("Test server did not bind a port");
+    const origin = `http://127.0.0.1:${address.port}`;
+    realtime = await attachRealtime(
+      httpServer,
+      sessions,
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        WEB_ORIGIN: origin,
+        PUBLIC_API_URL: origin,
+        LOG_LEVEL: "silent",
+      }),
+      new MetricsService(),
+      interactions,
+    );
+    client = createClient(origin, {
+      transports: ["websocket"],
+      reconnection: false,
+      extraHeaders: { origin },
+    });
+    await new Promise<void>((resolve, reject) => {
+      client!.once("connect", resolve);
+      client!.once("connect_error", reject);
+    });
+    await new Promise<void>((resolve) => {
+      client!.emit(
+        "sync.request",
+        {
+          sessionId,
+          role: "participant",
+          participantToken: "participant-token-long-enough",
+          lastSeq: 0,
+        },
+        () => resolve(),
+      );
+    });
+    const received = vi.fn();
+    client.on("chat.message.created", received);
+    const disconnected = new Promise<void>((resolve) =>
+      client!.once("disconnect", () => resolve()),
+    );
+
+    await audienceListener?.({
+      eventId: crypto.randomUUID(),
+      sessionId,
+      audienceSeq: 1,
+      type: "chat.message.created",
+      payload: { messageId: crypto.randomUUID() },
+      createdAt: new Date(),
+    });
+    await disconnected;
+
+    expect(sessions.revalidateRealtimeParticipant).toHaveBeenCalledWith(
+      sessionId,
+      "participant-token-long-enough",
+      participantId,
+    );
+    expect(projectRealtimeChat).not.toHaveBeenCalled();
+    expect(received).not.toHaveBeenCalled();
+    expect(client.connected).toBe(false);
+  });
+
   it("keeps coalesced audience events pending until the delayed summary is emitted", async () => {
     const sessionId = crypto.randomUUID();
     let audienceListener:

@@ -139,6 +139,19 @@ export class QnaService {
     return actor.kind === "staff" && (actor.rootHost || actor.credential?.role === "cohost");
   }
 
+  private async ensureOpen(session: StoredSession) {
+    const [current, interactionSettings] = await Promise.all([
+      this.repository.getSessionById(session.id),
+      this.repository.getInteractionSettings(session.workspaceId, session.id),
+    ]);
+    if (!current || current.workspaceId !== session.workspaceId) {
+      throw new QnaError("NOT_FOUND", "Live round not found");
+    }
+    if (current.state.phase === "finished" || interactionSettings?.closedAt) {
+      throw new QnaError("QNA_DISABLED", "Q&A is closed because this live round has finished");
+    }
+  }
+
   private async settingsFor(session: StoredSession): Promise<QnaSettingsRecord> {
     const existing = await this.repository.getQnaSettings(session.workspaceId, session.id);
     if (existing) return existing;
@@ -270,6 +283,7 @@ export class QnaService {
     if (actor.kind !== "participant") {
       throw new QnaError("UNAUTHORIZED", "Only participants can submit audience questions");
     }
+    await this.ensureOpen(actor.session);
     const settings = await this.settingsFor(actor.session);
     if (!settings.enabled) throw new QnaError("QNA_DISABLED", "Q&A is disabled for this round");
     if (
@@ -303,6 +317,7 @@ export class QnaService {
 
   async createReply(sessionId: string, questionId: string, token: string, body: string) {
     const actor = await this.authenticate(sessionId, token);
+    await this.ensureOpen(actor.session);
     const settings = await this.settingsFor(actor.session);
     if (!settings.enabled) throw new QnaError("QNA_DISABLED", "Q&A is disabled for this round");
     const question = await this.repository.getQnaQuestion(actor.session.workspaceId, questionId);
@@ -383,6 +398,7 @@ export class QnaService {
     if (actor.kind !== "participant") {
       throw new QnaError("UNAUTHORIZED", "Only participants can vote on questions");
     }
+    await this.ensureOpen(actor.session);
     const settings = await this.settingsFor(actor.session);
     if (!settings.enabled) throw new QnaError("QNA_DISABLED", "Q&A is disabled for this round");
     const question = await this.repository.getQnaQuestion(actor.session.workspaceId, questionId);
@@ -419,6 +435,7 @@ export class QnaService {
     if (!this.canModerate(actor)) {
       throw new QnaError("UNAUTHORIZED", "Only a host or cohost can change Q&A settings");
     }
+    await this.ensureOpen(actor.session);
     const current = await this.settingsFor(actor.session);
     const saved = await this.repository.saveQnaSettings({
       ...current,
@@ -449,6 +466,7 @@ export class QnaService {
     if (!this.canModerate(actor)) {
       throw new QnaError("UNAUTHORIZED", "Only a host or cohost can moderate Q&A");
     }
+    await this.ensureOpen(actor.session);
     const current = await this.repository.getQnaQuestion(actor.session.workspaceId, questionId);
     if (!current || current.sessionId !== sessionId) {
       throw new QnaError("NOT_FOUND", "Q&A question not found");
@@ -494,6 +512,7 @@ export class QnaService {
     if (!this.canModerate(actor)) {
       throw new QnaError("UNAUTHORIZED", "Only a host or cohost can moderate Q&A");
     }
+    await this.ensureOpen(actor.session);
     const current = await this.repository.getQnaReply(actor.session.workspaceId, replyId);
     if (!current || current.sessionId !== sessionId) {
       throw new QnaError("NOT_FOUND", "Q&A reply not found");

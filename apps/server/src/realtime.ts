@@ -156,7 +156,21 @@ export async function attachRealtime(
   ) => {
     const role = socket.data.role as RealtimeRole | undefined;
     if (!role) return null;
-    if (role === "participant") return role;
+    if (role === "participant") {
+      const participantToken = socket.data.participantToken as string | undefined;
+      const participantId = socket.data.participantId as string | undefined;
+      if (!participantToken || !participantId) {
+        socket.disconnect(true);
+        return null;
+      }
+      try {
+        await sessions.revalidateRealtimeParticipant(sessionId, participantToken, participantId);
+      } catch {
+        socket.disconnect(true);
+        return null;
+      }
+      return role;
+    }
     const staffExpiresAtMs = socket.data.staffExpiresAtMs as number | undefined;
     if (staffExpiresAtMs !== undefined && staffExpiresAtMs <= Date.now()) {
       socket.disconnect(true);

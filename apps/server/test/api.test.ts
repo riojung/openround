@@ -762,6 +762,16 @@ describe("creator to report journey", () => {
     });
     expect(lateChat.statusCode).toBe(409);
     expect(lateChat.json()).toMatchObject({ error: { code: "INTERACTIONS_DISABLED" } });
+    const questionCountAtFinish = repository.qnaQuestions.size;
+    const lateQuestion = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/qna/questions`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+      payload: { body: "This must not be persisted after the round finishes." },
+    });
+    expect(lateQuestion.statusCode).toBe(409);
+    expect(lateQuestion.json()).toMatchObject({ error: { code: "QNA_DISABLED" } });
+    expect(repository.qnaQuestions.size).toBe(questionCountAtFinish);
     expect(
       await repository.getInteractionSettings(creator.creator.workspaceId, session.sessionId),
     ).toMatchObject({ chatEnabled: false, signalsEnabled: false, closedAt: expect.any(Date) });
@@ -881,6 +891,27 @@ describe("creator to report journey", () => {
     expect(interactionCsv.statusCode).toBe(200);
     expect(interactionCsv.body).toContain("signal");
     expect(interactionCsv.body).toContain("I need a worked example");
+    const facilitatorUser = [...repository.users.values()].find(
+      (candidate) => candidate.email === "facilitator@example.com",
+    )!;
+    facilitatorUser.role = "viewer";
+    const viewerTranscript = await app.inject({
+      method: "GET",
+      url: `/v1/reports/${(report as Report).id}/interactions`,
+      headers: { cookie },
+    });
+    expect(viewerTranscript.statusCode).toBe(200);
+    const viewerPrivateMessage = viewerTranscript
+      .json<{
+        transcript: {
+          messages: Array<{ id: string; participantId: string | null; alias: string }>;
+        };
+      }>()
+      .transcript.messages.find((message) => message.id === chatMessage.id);
+    expect(viewerPrivateMessage).toEqual(
+      expect.objectContaining({ participantId: null, alias: "Anonymous" }),
+    );
+    facilitatorUser.role = "owner";
     const brandedSession = await app.inject({
       method: "POST",
       url: "/v1/sessions",

@@ -399,6 +399,31 @@ export class SessionService {
     );
   }
 
+  async revalidateRealtimeParticipant(
+    sessionId: string,
+    participantToken: string,
+    expectedParticipantId: string,
+  ) {
+    const [session, participant] = await Promise.all([
+      this.repository.getSessionById(sessionId),
+      this.repository.getParticipantByToken(hashToken(participantToken)),
+    ]);
+    if (!session || session.expiresAt.getTime() <= Date.now()) {
+      throw new SessionError("NOT_FOUND", "Session not found");
+    }
+    if (
+      !participant ||
+      participant.sessionId !== sessionId ||
+      participant.id !== expectedParticipantId
+    ) {
+      throw new SessionError("UNAUTHORIZED", "Participant credential is invalid");
+    }
+    const runtimeParticipant = session.state.participants[participant.id];
+    if (!runtimeParticipant || runtimeParticipant.kicked || participant.status === "kicked") {
+      throw new SessionError("UNAUTHORIZED", "Participant access has been revoked");
+    }
+  }
+
   async createSessionStaffCredential(
     creator: CreatorContext,
     sessionId: string,
