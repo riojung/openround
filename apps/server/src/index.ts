@@ -7,8 +7,26 @@ const [{ buildApp }, { attachRealtime }] = await Promise.all([
   import("./app.js"),
   import("./realtime.js"),
 ]);
-const { app, sessions, retention, reportWorker, authoringWorker, metrics } = await buildApp(config);
-const realtime = await attachRealtime(app.server, sessions, config, metrics);
+const {
+  app,
+  sessions,
+  interactions,
+  audienceOutboxWorker,
+  retention,
+  reportWorker,
+  authoringWorker,
+  metrics,
+} = await buildApp(config);
+const realtime = await attachRealtime(app.server, sessions, config, metrics, interactions);
+const audienceOutboxTimer = setInterval(() => {
+  void audienceOutboxWorker
+    .runUntilIdle()
+    .then((results) => {
+      if (results.includes("retry")) app.log.warn("audience outbox delivery will retry");
+    })
+    .catch((error: unknown) => app.log.error({ err: error }, "audience outbox relay failed"));
+}, 250);
+audienceOutboxTimer.unref();
 const retentionTimer = setInterval(() => {
   void retention
     .run(new Date())
@@ -56,6 +74,7 @@ const shutdown = async (signal: string) => {
   clearInterval(retentionTimer);
   clearInterval(reportTimer);
   clearInterval(authoringTimer);
+  clearInterval(audienceOutboxTimer);
   await realtime.close();
   await app.close();
   await telemetry.shutdown();

@@ -15,14 +15,16 @@ embed, and follow-up routes use their own scoped credentials as documented by th
 - `GET /health/live` — process liveness.
 - `GET /health/ready` — active PostgreSQL and Redis-compatible checks; returns 503 without secret
   connection detail when either is unavailable.
-- `GET /v1/features` — public URL, edition mode, and effective signup/session/media switches.
+- `GET /v1/features` — public URL, edition mode, and effective
+  signup/session/media/experience/Pulse/chat switches.
 - `GET /metrics` — private Prometheus output when enabled and authorized.
 
 ## Authentication, workspaces, and account
 
 - `POST /v1/auth/magic-link`
 - `GET /v1/auth/verify?token=...`
-- `GET /v1/auth/me`
+- `GET /v1/auth/me` — creator/workspace context, entitlements, branding, and workspace-resolved
+  `productFeatures` after the partner allowlist and global switches are applied.
 - `POST /v1/auth/logout`
 - `GET /v1/workspaces`
 - `POST /v1/workspaces/{id}/select`
@@ -40,7 +42,8 @@ embed, and follow-up routes use their own scoped credentials as documented by th
 
 Owners manage members, billing, and workspace deletion. Editors create and host. Viewers have
 read-only content/report access. Account export excludes bearer-token hashes and includes
-collaboration, Q&A, recovery, follow-up, and authoring records owned by the workspace.
+collaboration, Pulse, chat, moderation, Q&A, recovery, follow-up, and authoring records owned by
+the workspace.
 
 ## Institution identity and LTI APIs
 
@@ -135,6 +138,40 @@ embed credential is read-only and never reuses the host token.
 Normal routes deny framing. `/embed/present/{sessionId}` is constrained by a server-issued policy
 and the workspace's allowlist of at most ten HTTPS origins.
 
+## Round Experience and audience interaction APIs
+
+- `GET /v1/experience-presets` — immutable public registry summaries and validated semantic
+  tokens.
+- `GET|PATCH /v1/sessions/{id}/interactions/settings`
+- `GET /v1/sessions/{id}/interactions/summary`
+- `GET /v1/sessions/{id}/interactions/sync?limit=...`
+- `PUT /v1/sessions/{id}/signals/current`
+- `GET|POST /v1/sessions/{id}/chat/messages`
+- `PATCH /v1/sessions/{id}/chat/messages/{messageId}`
+- `PUT|DELETE /v1/sessions/{id}/chat/messages/{messageId}/reaction`
+- `POST /v1/sessions/{id}/chat/messages/{messageId}/report`
+- `PATCH /v1/sessions/{id}/interactions/participants/{participantId}`
+
+Interaction synchronization includes `capabilities.audiencePulse` and `capabilities.roomChat` so
+clients can disable unavailable controls instead of treating a rollout gate as a session setting.
+
+Checkpoint drafts and OpenRound JSON v2 carry `category` and `{ id, version }` experience preset
+metadata. JSON v1 remains importable and defaults to General/Focus with a visible validation
+warning. `POST /v1/sessions` may carry a one-session preset override and presenter-sound choice;
+its returned snapshot contains the frozen validated theme.
+
+Interaction list endpoints use opaque cursor pagination and accept at most 50 rows. Mutations use
+idempotency keys—inside the validated Pulse/chat body where specified, otherwise in
+`x-idempotency-key`. A durable acknowledgement includes the newly allocated audience sequence.
+Presenter credentials are read-only. Chat begins disabled, supports only plain text, and limits
+replies to one level. Private-at-creation aliases remain anonymous on every non-moderator read even
+after the current identity setting changes.
+
+Participant summaries return only that participant’s own current signal. Public/presenter signal
+counts are null until five unique participants have signalled in the current context. Host/cohost
+summaries additionally include participant activity and moderation projection but never individual
+answer content or correctness while a checkpoint is open.
+
 ## Q&A APIs
 
 - `GET|POST /v1/sessions/{id}/qna/questions`
@@ -155,6 +192,8 @@ moderation, kick/ban, retention, export, and deletion are enforced server-side.
 - `GET /v1/reports/{id}`
 - `GET /v1/reports/{id}.csv`
 - `GET /v1/reports/{id}.json`
+- `GET /v1/reports/{id}/interactions`
+- `GET /v1/reports/{id}/interactions.csv`
 - `POST /v1/reports/{id}/followups`
 - `GET /v1/followups/{id}` — creator view and access management.
 - `POST /v1/followups/{id}/accommodation-passes`
@@ -166,8 +205,11 @@ moderation, kick/ban, retention, export, and deletion are enforced server-side.
 - `POST /v1/followups/{id}/advance`
 
 Finished rounds create pending versioned reports. Until the worker completes, export returns a
-conflict with an actionable “still being generated” message. Report v2 derives from durable rows,
-not cached historical state.
+conflict with an actionable “still being generated” message. Report v3 derives from durable rows,
+not cached historical state, and adds the frozen experience plus aggregate Pulse, chat, reaction,
+report, and moderation evidence. Report v1/v2 remain renderable. The standard report omits raw
+chat and participant-level signals; the transcript requires report access, CSV follows the export
+entitlement, and revealing removed bodies additionally requires owner/editor audit access.
 
 Follow-up start accepts a generic/personal bearer and returns a separate attempt credential.
 Attempt answer and advance calls require that attempt bearer. Personal links allow one attempt by
@@ -215,12 +257,34 @@ After reconnect, send `sync.request` with the last observed sequence. The respon
 role-filtered authoritative snapshot, bounded replay metadata, and `replayComplete`. Treat the
 snapshot as authoritative whenever the journal cannot cover the full gap.
 
+Audience interaction uses an independent `audienceSeq` and envelope with `eventId`, `sessionId`,
+`schemaVersion`, `serverTime`, `type`, and role-filtered payload. Server events are:
+
+- `audience.settings.updated`
+- `audience.signal.updated` for host/cohost projection only
+- `audience.summary.updated`, coalesced for public aggregate projection
+- `chat.message.created|updated|removed|pinned`
+- `chat.reaction.updated`
+- `audience.moderation.updated`
+- `audience.event`, carrying sequenced `qna.*` envelopes during the compatibility release
+
+Send `audience.sync.request` with the last audience cursor after reconnect or a gap. The response
+contains current settings, visible recent messages, aggregate signal state, the participant’s own
+signal where applicable, and moderation state. Clients deduplicate at-least-once delivery by
+`eventId`. Existing direct `qna.*` notifications remain available for compatibility while the same
+committed Q&A changes also advance the audience cursor through `audience.event`.
+
 ## Stable errors
 
 Core stable errors include `INVALID_CODE`, `SESSION_FULL`, `SESSION_LOCKED`,
 `NICKNAME_REJECTED`, `STALE_VERSION`, `ANSWER_LATE`, `ANSWER_INVALID`, `ENTITLEMENT_LIMIT`,
 `UNAUTHORIZED`, and `RATE_LIMITED`, plus the Q&A, follow-up, portability, and authoring errors
 described above.
+
+Experience/audience errors add `THEME_NOT_FOUND`, `THEME_VERSION_UNSUPPORTED`,
+`INTERACTIONS_DISABLED`, `CHAT_DISABLED`, `CHAT_MUTED`, `CHAT_RATE_LIMITED`,
+`CHAT_CAPACITY_REACHED`, `AUDIENCE_BANNED`, `SIGNAL_RATE_LIMITED`, `MESSAGE_REMOVED`,
+`INVALID_REACTION`, and `AUDIENCE_SYNC_REQUIRED`.
 
 ## Administrative APIs
 

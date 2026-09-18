@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+function isHttpOrHttpsUrl(value: string) {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
 export const errorCodes = [
   "INVALID_CODE",
   "SESSION_FULL",
@@ -18,6 +26,18 @@ export const errorCodes = [
   "QNA_DISABLED",
   "MODERATION_REQUIRED",
   "QNA_RATE_LIMITED",
+  "THEME_NOT_FOUND",
+  "THEME_VERSION_UNSUPPORTED",
+  "INTERACTIONS_DISABLED",
+  "CHAT_DISABLED",
+  "CHAT_MUTED",
+  "CHAT_RATE_LIMITED",
+  "CHAT_CAPACITY_REACHED",
+  "AUDIENCE_BANNED",
+  "SIGNAL_RATE_LIMITED",
+  "MESSAGE_REMOVED",
+  "INVALID_REACTION",
+  "AUDIENCE_SYNC_REQUIRED",
   "IMPORT_VALIDATION_FAILED",
   "EXPORT_VALIDATION_FAILED",
   "FOLLOWUP_NOT_OPEN",
@@ -51,11 +71,19 @@ export type ApiError = z.infer<typeof ApiErrorSchema>;
 
 export const PublicFeaturesSchema = z.object({
   publicWebUrl: z.string().url(),
+  developmentEmailInboxUrl: z
+    .string()
+    .url()
+    .refine(isHttpOrHttpsUrl, "Must use HTTP or HTTPS")
+    .optional(),
   mediaUploads: z.boolean(),
   billing: z.enum(["disabled", "stripe"]),
   communityMode: z.boolean(),
   signups: z.boolean(),
   sessionCreation: z.boolean(),
+  roundExperiences: z.boolean(),
+  audiencePulse: z.boolean(),
+  roomChat: z.boolean(),
 });
 export type PublicFeatures = z.infer<typeof PublicFeaturesSchema>;
 
@@ -63,6 +91,9 @@ export const OperationalFeatureFlagsSchema = z.object({
   signups: z.boolean(),
   sessionCreation: z.boolean(),
   mediaUploads: z.boolean(),
+  roundExperiences: z.boolean(),
+  audiencePulse: z.boolean(),
+  roomChat: z.boolean(),
 });
 export type OperationalFeatureFlags = z.infer<typeof OperationalFeatureFlagsSchema>;
 
@@ -134,6 +165,68 @@ export const BrandThemeSchema = z
     }
   });
 export type BrandTheme = z.infer<typeof BrandThemeSchema>;
+
+export const RoundCategorySchema = z.enum([
+  "general",
+  "education",
+  "business",
+  "technical",
+  "safety_compliance",
+  "icebreaker",
+]);
+export type RoundCategory = z.infer<typeof RoundCategorySchema>;
+
+export const ExperiencePresetIdSchema = z.enum([
+  "focus",
+  "campus",
+  "studio",
+  "blueprint",
+  "signal",
+  "spark",
+]);
+export type ExperiencePresetId = z.infer<typeof ExperiencePresetIdSchema>;
+
+export const ExperiencePresetRefSchema = z.object({
+  id: ExperiencePresetIdSchema,
+  version: z.literal(1),
+});
+export type ExperiencePresetRef = z.infer<typeof ExperiencePresetRefSchema>;
+
+export const ExperienceMotionSchema = z.enum(["calm", "standard", "lively"]);
+export const ExperienceSoundCueSchema = z.enum(["none", "subtle", "celebration"]);
+
+export const ExperienceThemeTokensSchema = z.object({
+  canvas: HexColorSchema,
+  surface: HexColorSchema,
+  surfaceStrong: HexColorSchema,
+  text: HexColorSchema,
+  mutedText: HexColorSchema,
+  primary: HexColorSchema,
+  accent: HexColorSchema,
+  choiceColors: z.array(HexColorSchema).length(6),
+  pattern: z.enum(["none", "dots", "grid", "stripes", "signals", "confetti"]),
+  typography: z.enum(["humanist", "academic", "studio", "technical", "signal", "playful"]),
+  corners: z.enum(["compact", "soft", "round"]),
+});
+export type ExperienceThemeTokens = z.infer<typeof ExperienceThemeTokensSchema>;
+
+export const ExperienceThemeSnapshotSchema = z.object({
+  preset: ExperiencePresetRefSchema,
+  name: z.string().min(1).max(80),
+  category: RoundCategorySchema,
+  motion: ExperienceMotionSchema,
+  soundCue: ExperienceSoundCueSchema,
+  soundEnabled: z.boolean(),
+  tokens: ExperienceThemeTokensSchema,
+});
+export type ExperienceThemeSnapshot = z.infer<typeof ExperienceThemeSnapshotSchema>;
+
+export const ExperiencePresetSummarySchema = ExperienceThemeSnapshotSchema.omit({
+  soundEnabled: true,
+}).extend({
+  description: z.string().min(1).max(240),
+});
+export type ExperiencePresetSummary = z.infer<typeof ExperiencePresetSummarySchema>;
 
 export const QuestionTypeSchema = z.enum([
   "single_select",
@@ -382,14 +475,23 @@ export type Question = z.infer<typeof QuestionSchema>;
 export const QuizDraftSchema = z.object({
   title: z.string().trim().max(160),
   description: z.string().trim().max(1_000).default(""),
+  category: RoundCategorySchema.default("general"),
+  experiencePreset: ExperiencePresetRefSchema.default({ id: "focus", version: 1 }),
   questions: z.array(QuestionDraftSchema).max(200),
 });
-export type QuizDraft = z.infer<typeof QuizDraftSchema>;
+type ParsedQuizDraft = z.infer<typeof QuizDraftSchema>;
+/** Presentation fields stay optional in the TypeScript compatibility shape through v1. */
+export type QuizDraft = Omit<ParsedQuizDraft, "category" | "experiencePreset"> & {
+  category?: RoundCategory;
+  experiencePreset?: ExperiencePresetRef;
+};
 
 export const QuizContentSchema = z
   .object({
     title: z.string().trim().min(1, "Enter a quiz title").max(160),
     description: z.string().trim().max(1_000).default(""),
+    category: RoundCategorySchema.default("general"),
+    experiencePreset: ExperiencePresetRefSchema.default({ id: "focus", version: 1 }),
     questions: z.array(QuestionSchema).min(1, "Add at least one question").max(200),
   })
   .superRefine((quiz, context) => {
@@ -412,14 +514,30 @@ export const QuizContentSchema = z
       }
     }
   });
-export type QuizContent = z.infer<typeof QuizContentSchema>;
+type ParsedQuizContent = z.infer<typeof QuizContentSchema>;
+export type QuizContent = Omit<ParsedQuizContent, "category" | "experiencePreset"> & {
+  category?: RoundCategory;
+  experiencePreset?: ExperiencePresetRef;
+};
 
-export const OpenRoundCheckpointSetExportSchema = z.object({
+export const OpenRoundCheckpointSetExportV1Schema = z.object({
   format: z.literal("openround.checkpoint-set"),
   version: z.literal(1),
   exportedAt: z.string().datetime(),
+  checkpointSet: QuizDraftSchema.omit({ category: true, experiencePreset: true }),
+});
+
+export const OpenRoundCheckpointSetExportV2Schema = z.object({
+  format: z.literal("openround.checkpoint-set"),
+  version: z.literal(2),
+  exportedAt: z.string().datetime(),
   checkpointSet: QuizDraftSchema,
 });
+
+export const OpenRoundCheckpointSetExportSchema = z.union([
+  OpenRoundCheckpointSetExportV2Schema,
+  OpenRoundCheckpointSetExportV1Schema,
+]);
 export type OpenRoundCheckpointSetExport = z.infer<typeof OpenRoundCheckpointSetExportSchema>;
 
 export const CheckpointSetImportRequestSchema = z
@@ -690,6 +808,7 @@ export const SessionSnapshotSchema = z.object({
   lobbyLocked: z.boolean(),
   settings: SessionSettingsSchema,
   brandTheme: BrandThemeSchema.nullable(),
+  experienceTheme: ExperienceThemeSnapshotSchema,
   pausedRemainingMs: z.number().int().nonnegative().nullable(),
   myParticipantId: z.string().uuid().nullable().optional(),
   myAnswerChoiceId: z.string().uuid().nullable().optional(),
@@ -1103,6 +1222,148 @@ export const QnaPageSchema = z.object({
 });
 export type QnaPage = z.infer<typeof QnaPageSchema>;
 
+export const AudienceSignalSchema = z.enum(["got_it", "unsure", "need_example", "too_fast"]);
+export type AudienceSignal = z.infer<typeof AudienceSignalSchema>;
+
+export const ChatReactionSchema = z.enum(["like", "love", "insight", "laugh"]);
+export type ChatReaction = z.infer<typeof ChatReactionSchema>;
+
+export const InteractionSettingsSchema = z.object({
+  signalsEnabled: z.boolean(),
+  chatEnabled: z.boolean(),
+  chatIdentityMode: z.enum(["alias_public", "alias_private"]),
+  slowModeSeconds: z.union([z.literal(0), z.literal(5), z.literal(15), z.literal(30)]),
+  presenterFeedMode: z.enum(["off", "pinned", "live"]),
+});
+export type InteractionSettings = z.infer<typeof InteractionSettingsSchema>;
+
+export const UpdateInteractionSettingsSchema = InteractionSettingsSchema.partial().refine(
+  (update) => Object.keys(update).length > 0,
+  "Provide at least one interaction setting",
+);
+
+export const SetAudienceSignalSchema = z.object({
+  signal: AudienceSignalSchema.nullable(),
+  idempotencyKey: z.string().min(8).max(160),
+});
+
+export const CreateChatMessageSchema = z.object({
+  body: z.string().trim().min(1).max(500),
+  replyToMessageId: z.string().uuid().nullable().default(null),
+  idempotencyKey: z.string().min(8).max(160),
+});
+
+export const ModerateChatMessageSchema = z
+  .object({
+    status: z.enum(["published", "removed"]).optional(),
+    pinned: z.boolean().optional(),
+  })
+  .refine((update) => update.status !== undefined || update.pinned !== undefined, {
+    message: "Provide a moderation change",
+  });
+
+export const SetChatReactionSchema = z.object({
+  reaction: ChatReactionSchema,
+});
+
+export const ModerateAudienceParticipantSchema = z.object({
+  action: z.enum(["mute", "unmute", "ban", "unban"]),
+  durationMinutes: z.union([z.literal(5), z.literal(15), z.literal(60)]).optional(),
+});
+
+export const ChatAuthorSchema = z.object({
+  displayName: z.string(),
+  kind: z.enum(["participant", "staff"]),
+  mine: z.boolean(),
+});
+
+export const ChatMessageSchema = z.object({
+  id: z.string().uuid(),
+  audienceSeq: z.number().int().nonnegative(),
+  body: z.string(),
+  status: z.enum(["published", "removed"]),
+  author: ChatAuthorSchema,
+  replyToMessageId: z.string().uuid().nullable(),
+  pinned: z.boolean(),
+  reactions: z.record(ChatReactionSchema, z.number().int().nonnegative()),
+  myReaction: ChatReactionSchema.nullable(),
+  createdAt: z.string().datetime(),
+  moderationParticipantId: z.string().uuid().optional(),
+});
+export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+
+export const ChatPageSchema = z.object({
+  messages: z.array(ChatMessageSchema),
+  nextCursor: z.string().nullable(),
+  settings: InteractionSettingsSchema,
+  audienceSeq: z.number().int().nonnegative(),
+});
+export type ChatPage = z.infer<typeof ChatPageSchema>;
+
+export const SignalCountsSchema = z.object({
+  got_it: z.number().int().nonnegative(),
+  unsure: z.number().int().nonnegative(),
+  need_example: z.number().int().nonnegative(),
+  too_fast: z.number().int().nonnegative(),
+});
+
+export const ParticipantInteractionViewSchema = z.object({
+  participantId: z.string().uuid(),
+  nickname: z.string(),
+  connected: z.boolean(),
+  answered: z.boolean(),
+  currentSignal: AudienceSignalSchema.nullable(),
+  lastSignalAt: z.string().datetime().nullable(),
+  lastActivityAt: z.string().datetime().nullable(),
+  chatMessageCount: z.number().int().nonnegative(),
+  mutedUntil: z.string().datetime().nullable(),
+  banned: z.boolean(),
+});
+export type ParticipantInteractionView = z.infer<typeof ParticipantInteractionViewSchema>;
+
+export const InteractionSummarySchema = z.object({
+  audienceSeq: z.number().int().nonnegative(),
+  contextKey: z.string(),
+  connectedParticipants: z.number().int().nonnegative(),
+  disconnectedParticipants: z.number().int().nonnegative(),
+  answeredParticipants: z.number().int().nonnegative(),
+  uniqueSignalers: z.number().int().nonnegative(),
+  signalCounts: SignalCountsSchema.nullable(),
+  signalsLastMinute: z.number().int().nonnegative(),
+  messagesLastMinute: z.number().int().nonnegative(),
+  uniqueChatContributors: z.number().int().nonnegative(),
+  moderationCount: z.number().int().nonnegative(),
+  reportedCount: z.number().int().nonnegative(),
+  mySignal: AudienceSignalSchema.nullable().optional(),
+  participants: z.array(ParticipantInteractionViewSchema).optional(),
+});
+export type InteractionSummary = z.infer<typeof InteractionSummarySchema>;
+
+export const AudienceEventEnvelopeSchema = z.object({
+  eventId: z.string().uuid(),
+  sessionId: z.string().uuid(),
+  audienceSeq: z.number().int().nonnegative(),
+  schemaVersion: z.literal(1),
+  serverTime: z.string().datetime(),
+  type: z.string(),
+  payload: z.unknown(),
+});
+export type AudienceEventEnvelope<T = unknown> = Omit<
+  z.infer<typeof AudienceEventEnvelopeSchema>,
+  "payload"
+> & { payload: T };
+
+export const AudienceSyncRequestSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+    participantToken: z.string().min(20).max(1_000).optional(),
+    hostToken: z.string().min(20).max(1_000).optional(),
+    limit: z.number().int().min(1).max(50).default(50),
+  })
+  .refine((input) => Boolean(input.participantToken) !== Boolean(input.hostToken), {
+    message: "Provide exactly one audience synchronization credential",
+  });
+
 export const AnswerSubmitSchema = z
   .object({
     sessionId: z.string().uuid(),
@@ -1269,6 +1530,8 @@ export const UpdateQuizSchema = QuizDraftSchema;
 export const CreateSessionSchema = z.object({
   quizId: z.string().uuid(),
   settings: SessionSettingsSchema,
+  experiencePresetOverride: ExperiencePresetIdSchema.optional(),
+  presenterSoundEnabled: z.boolean().default(false),
 });
 
 export const CreateSessionResponseSchema = z.object({
@@ -1414,9 +1677,40 @@ export const ReportV2Schema = z.object({
   evidenceNote: z.string(),
 });
 
-export const ReportSchema = z.union([ReportV2Schema, LegacyReportSchema]);
+export const ReportV3Schema = ReportV2Schema.extend({
+  schemaVersion: z.literal(3),
+  experience: z.object({
+    category: RoundCategorySchema,
+    preset: ExperiencePresetRefSchema,
+  }),
+  audiencePulse: z.object({
+    uniqueParticipants: z.number().int().nonnegative(),
+    events: z.number().int().nonnegative(),
+    bySignal: SignalCountsSchema,
+    contexts: z.array(
+      z.object({
+        contextKey: z.string(),
+        uniqueParticipants: z.number().int().nonnegative(),
+        bySignal: SignalCountsSchema,
+      }),
+    ),
+  }),
+  conversation: z.object({
+    messages: z.number().int().nonnegative(),
+    uniqueContributors: z.number().int().nonnegative(),
+    reactions: z.number().int().nonnegative(),
+    reports: z.number().int().nonnegative(),
+    removed: z.number().int().nonnegative(),
+    moderationActions: z.number().int().nonnegative(),
+    peakMessagesPerMinute: z.number().int().nonnegative(),
+    transcriptAvailable: z.boolean(),
+  }),
+});
+
+export const ReportSchema = z.union([ReportV3Schema, ReportV2Schema, LegacyReportSchema]);
 export type Report = z.infer<typeof ReportSchema>;
 export type ReportV2 = z.infer<typeof ReportV2Schema>;
+export type ReportV3 = z.infer<typeof ReportV3Schema>;
 
 export const FollowupTimeModeSchema = z.enum(["timed", "flex"]);
 export type FollowupTimeMode = z.infer<typeof FollowupTimeModeSchema>;

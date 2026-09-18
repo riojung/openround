@@ -702,7 +702,13 @@ function parseQtiItem(content: Buffer, fileName: string, row: number, issues: Im
 }
 
 export async function importQtiPackage(data: string, title?: string): Promise<QtiImportResult> {
-  const issues: ImportIssue[] = [];
+  const issues: ImportIssue[] = [
+    issue(
+      "warning",
+      "PRESENTATION_DEFAULTED",
+      "The QTI profile does not carry OpenRound presentation metadata; General with the Focus preset was selected.",
+    ),
+  ];
   let files: Map<string, Buffer>;
   try {
     files = await readQtiArchive(data);

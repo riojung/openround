@@ -11,11 +11,18 @@ import type {
   SessionSnapshot,
 } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
+import { AudiencePanel, type AudienceRealtimeUpdate } from "../../../components/audience-panel";
+import { ExperiencePreferences } from "../../../components/experience-preferences";
 import { Countdown } from "../../../components/countdown";
 import { QuestionMedia } from "../../../components/question-media";
 import { QnaPanel } from "../../../components/qna-panel";
-import { createRealtimeClient, withRealtimeReceipt } from "../../../lib/realtime";
-import { liveThemeStyle } from "../../../lib/theme";
+import {
+  audienceContextKey,
+  createAudienceRealtimeReceipt,
+  createRealtimeClient,
+  withRealtimeReceipt,
+} from "../../../lib/realtime";
+import { experienceThemeStyle } from "../../../lib/theme";
 import { clientUuid } from "../../../lib/uuid";
 
 type Ack<T> = { data?: T; error?: { code: string; message: string } };
@@ -35,6 +42,9 @@ export default function PlayerPage() {
   const [ratingValue, setRatingValue] = useState<number | null>(null);
   const [confidence, setConfidence] = useState<ConfidenceValue | null>(null);
   const [qnaRevision, setQnaRevision] = useState(0);
+  const [audienceSyncRevision, setAudienceSyncRevision] = useState(0);
+  const [audienceRealtimeUpdate, setAudienceRealtimeUpdate] =
+    useState<AudienceRealtimeUpdate | null>(null);
 
   function resetResponse() {
     setAcknowledged(null);
@@ -71,13 +81,23 @@ export default function PlayerPage() {
       );
     };
     const update = withRealtimeReceipt((envelope: EventEnvelope<{ snapshot: SessionSnapshot }>) => {
+      if (
+        audienceContextKey(envelope.payload.snapshot) !== audienceContextKey(snapshotRef.current)
+      ) {
+        setAudienceSyncRevision((current) => current + 1);
+      }
       setSnapshot(envelope.payload.snapshot);
       if (envelope.payload.snapshot.roundId !== snapshotRef.current?.roundId) resetResponse();
     });
     const qnaUpdate = withRealtimeReceipt(() => setQnaRevision((current) => current + 1));
+    const audienceUpdate = createAudienceRealtimeReceipt((gap, envelope) => {
+      setAudienceRealtimeUpdate({ gap, envelope });
+      if (envelope.type.startsWith("qna.")) setQnaRevision((current) => current + 1);
+    });
     socket.on("connect", () => {
       setConnected(true);
       setError("");
+      setAudienceSyncRevision((current) => current + 1);
       sync();
     });
     socket.on("disconnect", () => setConnected(false));
@@ -103,6 +123,17 @@ export default function PlayerPage() {
       "qna.settings.updated",
     ])
       socket.on(event, qnaUpdate);
+    for (const event of [
+      "audience.settings.updated",
+      "audience.summary.updated",
+      "chat.message.created",
+      "chat.message.updated",
+      "chat.message.removed",
+      "chat.message.pinned",
+      "chat.reaction.updated",
+      "audience.event",
+    ])
+      socket.on(event, audienceUpdate);
     socket.connect();
     return () => {
       socket.removeAllListeners();
@@ -215,17 +246,32 @@ export default function PlayerPage() {
   return (
     <div
       className="live-shell"
-      data-branded={snapshot?.brandTheme ? "true" : undefined}
-      style={liveThemeStyle(snapshot?.brandTheme)}
+      data-corners={snapshot?.experienceTheme.tokens.corners}
+      data-motion={snapshot?.experienceTheme.motion}
+      data-pattern={snapshot?.experienceTheme.tokens.pattern}
+      data-typography={snapshot?.experienceTheme.tokens.typography}
+      style={experienceThemeStyle(snapshot?.experienceTheme)}
     >
       <header className="shell live-topbar">
         <Brand inverted name={snapshot?.brandTheme?.organizationName} />
-        <span className="connection" data-connected={connected} role="status">
-          <span className="connection-dot" aria-hidden="true" />
-          {connected ? "Connected" : "Reconnecting…"}
-        </span>
+        <div className="button-row">
+          <ExperiencePreferences />
+          <span className="connection" data-connected={connected} role="status">
+            <span className="connection-dot" aria-hidden="true" />
+            {connected ? "Connected" : "Reconnecting…"}
+          </span>
+        </div>
       </header>
-      <main className="shell live-stage" aria-live="polite">
+      <main className="shell live-stage">
+        <p aria-atomic="true" aria-live="polite" className="sr-only">
+          {snapshot?.phase === "question_open"
+            ? `Checkpoint open: ${snapshot.question?.prompt ?? "new checkpoint"}`
+            : snapshot?.phase === "finished"
+              ? "The live round is complete."
+              : snapshot
+                ? `Round status: ${snapshot.phase.replaceAll("_", " ")}`
+                : "Connecting to the live round."}
+        </p>
         {error ? (
           <section className="live-card">
             <p className="error" role="alert">
@@ -426,6 +472,15 @@ export default function PlayerPage() {
             <h1>Thanks for taking part.</h1>
             <p className="lead">Your final score is {myRow?.score ?? 0}.</p>
           </section>
+        ) : null}
+        {snapshot && snapshot.phase !== "finished" && mediaCredential ? (
+          <AudiencePanel
+            realtimeUpdate={audienceRealtimeUpdate}
+            role="participant"
+            sessionId={sessionId}
+            syncRevision={audienceSyncRevision}
+            token={mediaCredential}
+          />
         ) : null}
         {snapshot && mediaCredential ? (
           <QnaPanel

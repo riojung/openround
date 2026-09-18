@@ -11,13 +11,20 @@ import type {
   SessionSnapshot,
 } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
+import { AudiencePanel, type AudienceRealtimeUpdate } from "../../../components/audience-panel";
+import { ExperiencePreferences } from "../../../components/experience-preferences";
 import { Countdown } from "../../../components/countdown";
 import { JoinAccess } from "../../../components/join-access";
 import { QuestionMedia } from "../../../components/question-media";
 import { QnaPanel } from "../../../components/qna-panel";
 import { apiFetch, humanError } from "../../../lib/api";
-import { createRealtimeClient, withRealtimeReceipt } from "../../../lib/realtime";
-import { liveThemeStyle } from "../../../lib/theme";
+import {
+  audienceContextKey,
+  createAudienceRealtimeReceipt,
+  createRealtimeClient,
+  withRealtimeReceipt,
+} from "../../../lib/realtime";
+import { experienceThemeStyle } from "../../../lib/theme";
 import { clientUuid } from "../../../lib/uuid";
 
 type Ack<T> = { data?: T; error?: { code: string; message: string } };
@@ -102,6 +109,9 @@ export default function HostPage() {
   const [reportId, setReportId] = useState("");
   const [mediaCredential, setMediaCredential] = useState("");
   const [qnaRevision, setQnaRevision] = useState(0);
+  const [audienceSyncRevision, setAudienceSyncRevision] = useState(0);
+  const [audienceRealtimeUpdate, setAudienceRealtimeUpdate] =
+    useState<AudienceRealtimeUpdate | null>(null);
   const [staffCredentials, setStaffCredentials] = useState<SessionStaffCredential[]>([]);
   const [cohostLabel, setCohostLabel] = useState("");
   const [cohostLink, setCohostLink] = useState("");
@@ -134,15 +144,25 @@ export default function HostPage() {
     };
     const update = withRealtimeReceipt(
       (envelope: EventEnvelope<{ snapshot: SessionSnapshot; reportId?: string }>) => {
+        if (
+          audienceContextKey(envelope.payload.snapshot) !== audienceContextKey(snapshotRef.current)
+        ) {
+          setAudienceSyncRevision((current) => current + 1);
+        }
         setSnapshot(envelope.payload.snapshot);
         if (envelope.payload.reportId) setReportId(envelope.payload.reportId);
         setBusy(false);
       },
     );
     const qnaUpdate = withRealtimeReceipt(() => setQnaRevision((current) => current + 1));
+    const audienceUpdate = createAudienceRealtimeReceipt((gap, envelope) => {
+      setAudienceRealtimeUpdate({ gap, envelope });
+      if (envelope.type.startsWith("qna.")) setQnaRevision((current) => current + 1);
+    });
     socket.on("connect", () => {
       setConnected(true);
       setError("");
+      setAudienceSyncRevision((current) => current + 1);
       sync();
     });
     socket.on("disconnect", () => setConnected(false));
@@ -168,6 +188,19 @@ export default function HostPage() {
       "qna.settings.updated",
     ])
       socket.on(event, qnaUpdate);
+    for (const event of [
+      "audience.settings.updated",
+      "audience.signal.updated",
+      "audience.summary.updated",
+      "chat.message.created",
+      "chat.message.updated",
+      "chat.message.removed",
+      "chat.message.pinned",
+      "chat.reaction.updated",
+      "audience.moderation.updated",
+      "audience.event",
+    ])
+      socket.on(event, audienceUpdate);
     socket.connect();
     return () => {
       socket.removeAllListeners();
@@ -372,12 +405,16 @@ export default function HostPage() {
   return (
     <div
       className="live-shell"
-      data-branded={snapshot?.brandTheme ? "true" : undefined}
-      style={liveThemeStyle(snapshot?.brandTheme)}
+      data-corners={snapshot?.experienceTheme.tokens.corners}
+      data-motion={snapshot?.experienceTheme.motion}
+      data-pattern={snapshot?.experienceTheme.tokens.pattern}
+      data-typography={snapshot?.experienceTheme.tokens.typography}
+      style={experienceThemeStyle(snapshot?.experienceTheme)}
     >
       <header className="shell live-topbar">
         <Brand inverted name={snapshot?.brandTheme?.organizationName} />
         <div className="button-row">
+          <ExperiencePreferences />
           <span className="connection" data-connected={connected} role="status">
             <span className="connection-dot" aria-hidden="true" />
             {connected ? "Connected" : "Reconnecting…"}
@@ -748,6 +785,16 @@ export default function HostPage() {
             </aside>
           </div>
         )}
+        {snapshot && snapshot.phase !== "finished" && mediaCredential ? (
+          <AudiencePanel
+            onKick={(participantId) => command("kick", { participantId })}
+            realtimeUpdate={audienceRealtimeUpdate}
+            role="moderator"
+            sessionId={sessionId}
+            syncRevision={audienceSyncRevision}
+            token={mediaCredential}
+          />
+        ) : null}
         {snapshot && mediaCredential ? (
           <QnaPanel
             revision={qnaRevision}

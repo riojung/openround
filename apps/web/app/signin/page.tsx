@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
-import type { OidcStatus } from "@openround/contracts";
+import type { OidcStatus, PublicFeatures } from "@openround/contracts";
 import { Brand } from "../../components/brand";
 import { apiFetch, humanError } from "../../lib/api";
+import { resolveSignInEnvironment, type SignInEnvironment } from "../../lib/signin-environment";
 
 export default function SignInPage() {
   const [email, setEmail] = useState("");
@@ -12,11 +13,14 @@ export default function SignInPage() {
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = useState("");
   const [debugUrl, setDebugUrl] = useState("");
+  const [sentEmail, setSentEmail] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [acceptPolicies, setAcceptPolicies] = useState(false);
   const [oidcStatus, setOidcStatus] = useState<OidcStatus | null>(null);
   const [federatedBusy, setFederatedBusy] = useState(false);
   const [returnTo, setReturnTo] = useState<string | null>(null);
+  const [publicFeatures, setPublicFeatures] = useState<PublicFeatures | null>(null);
+  const [signInEnvironment, setSignInEnvironment] = useState<SignInEnvironment | null>(null);
 
   useEffect(() => {
     setHydrated(true);
@@ -31,8 +35,24 @@ export default function SignInPage() {
       .catch(() => setOidcStatus(null));
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    const currentLocation = window.location.href;
+    apiFetch<PublicFeatures>("/v1/features")
+      .then((features) => {
+        if (!active) return;
+        setPublicFeatures(features);
+        setSignInEnvironment(resolveSignInEnvironment(features.publicWebUrl, currentLocation));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
+    const submittedEmail = email.trim().toLowerCase();
     setStatus("sending");
     setError("");
     try {
@@ -41,7 +61,7 @@ export default function SignInPage() {
         {
           method: "POST",
           body: JSON.stringify({
-            email,
+            email: submittedEmail,
             segment,
             acceptPolicies,
             ...(returnTo ? { returnTo } : {}),
@@ -49,6 +69,7 @@ export default function SignInPage() {
         },
       );
       setDebugUrl(result.debugUrl ?? "");
+      setSentEmail(submittedEmail);
       setStatus("sent");
     } catch (caught) {
       setError(humanError(caught));
@@ -87,6 +108,23 @@ export default function SignInPage() {
           <p className="muted">
             We will send a single-use link. No password or memory puzzle required.
           </p>
+          {signInEnvironment?.originMismatch ? (
+            <div className="notice" role="status">
+              <strong>Use the configured address to sign in.</strong>
+              <p>
+                This page is open at{" "}
+                <span className="auth-origin">{signInEnvironment.currentOrigin}</span>, but sign-in
+                links and browser cookies use{" "}
+                <span className="auth-origin">{signInEnvironment.configuredOrigin}</span>.
+              </p>
+              <a
+                className="button-quiet small-button auth-status-action"
+                href={signInEnvironment.configuredSignInUrl}
+              >
+                Open the configured sign-in page
+              </a>
+            </div>
+          ) : null}
           {oidcStatus?.enabled ? (
             <div className="institution-signin">
               <button
@@ -169,8 +207,31 @@ export default function SignInPage() {
                   <div style={{ marginTop: 10 }}>
                     Your local sign-in link is ready. <a href={debugUrl}>Continue to dashboard</a>.
                   </div>
+                ) : publicFeatures?.developmentEmailInboxUrl ? (
+                  <div>
+                    <strong>Your local sign-in email is ready.</strong>
+                    <p>
+                      Open the development inbox and select the newest message sent to {sentEmail}.
+                      The link expires in 15 minutes and can be used once.
+                    </p>
+                    <a
+                      className="button-quiet small-button auth-status-action"
+                      href={publicFeatures.developmentEmailInboxUrl}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      Open local email inbox
+                    </a>
+                    {signInEnvironment?.originMismatch ? (
+                      <p>
+                        The email signs you in at{" "}
+                        <span className="auth-origin">{signInEnvironment.configuredOrigin}</span>.
+                        Continue using that address after opening the link.
+                      </p>
+                    ) : null}
+                  </div>
                 ) : (
-                  "Check your inbox for the sign-in link."
+                  `A sign-in email was sent to ${sentEmail}. Open the newest message within 15 minutes.`
                 )}
               </div>
             ) : null}

@@ -45,7 +45,7 @@ describe("report worker", () => {
     await expect(repository.getReport(workspaceId, pending.id)).resolves.toMatchObject({
       id: pending.id,
       sessionId,
-      schemaVersion: 2,
+      schemaVersion: 3,
       status: "ready",
       generatedAt: now.toISOString(),
     });

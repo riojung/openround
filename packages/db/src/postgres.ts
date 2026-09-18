@@ -10,6 +10,7 @@ import {
   type Report,
 } from "@openround/contracts";
 import {
+  AudienceStoreError,
   FollowupVersionConflictError,
   PublishedQuizLimitError,
   SessionCodeConflictError,
@@ -17,11 +18,19 @@ import {
 } from "./types.js";
 import { runMigrations } from "./migrations.js";
 import type {
+  AudienceEventInput,
+  AudienceMutation,
+  AudienceOutboxRecord,
+  AudienceRestrictionRecord,
   AuditEventRecord,
   AuditInput,
   AnswerLookup,
   AuthoringJobRecord,
   BillingEventInput,
+  ChatMessageListOptions,
+  ChatMessageRecord,
+  ChatReactionRecord,
+  ChatReactionSummaryRecord,
   CreatorContext,
   FolderRecord,
   FollowupAccessRecord,
@@ -31,6 +40,7 @@ import type {
   FederatedAuthTransactionRecord,
   ExternalIdentityRecord,
   InstitutionPolicyRecord,
+  InteractionSettingsRecord,
   LtiLaunchRecord,
   LtiLoginTransactionRecord,
   LtiRegistrationRecord,
@@ -40,6 +50,7 @@ import type {
   OperationalFeaturesRecord,
   OperationalFeaturesUpdate,
   ParticipantRecord,
+  ParticipantSignalRecord,
   Plan,
   QnaQuestionRecord,
   QnaReplyRecord,
@@ -288,12 +299,18 @@ function mapOperationalFeatures(row: QueryResultRow | undefined): OperationalFea
         signups: row.signups_enabled,
         sessionCreation: row.session_creation_enabled,
         mediaUploads: row.media_uploads_enabled,
+        roundExperiences: row.round_experiences_enabled,
+        audiencePulse: row.audience_pulse_enabled,
+        roomChat: row.room_chat_enabled,
         updatedAt: date(row.updated_at),
       }
     : {
         signups: true,
         sessionCreation: true,
         mediaUploads: true,
+        roundExperiences: true,
+        audiencePulse: true,
+        roomChat: true,
         updatedAt: null,
       };
 }
@@ -458,6 +475,93 @@ function mapQnaReply(row: QueryResultRow): QnaReplyRecord {
   };
 }
 
+function mapInteractionSettings(row: QueryResultRow): InteractionSettingsRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    sessionId: String(row.session_id),
+    signalsEnabled: Boolean(row.signals_enabled),
+    chatEnabled: Boolean(row.chat_enabled),
+    chatIdentityMode: row.chat_identity_mode,
+    slowModeSeconds: Number(row.slow_mode_seconds) as 0 | 5 | 15 | 30,
+    presenterFeedMode: row.presenter_feed_mode,
+    audienceSeq: Number(row.audience_seq),
+    closedAt: row.closed_at ? date(row.closed_at) : null,
+    updatedAt: date(row.updated_at),
+  };
+}
+
+function mapParticipantSignal(row: QueryResultRow): ParticipantSignalRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    sessionId: String(row.session_id),
+    contextKey: String(row.context_key),
+    participantId: String(row.participant_id),
+    signal: row.signal,
+    updatedAt: date(row.updated_at),
+  };
+}
+
+function mapChatMessage(row: QueryResultRow): ChatMessageRecord {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    sessionId: String(row.session_id),
+    participantId: row.participant_id,
+    actorId: row.actor_id,
+    staffCredentialId: row.staff_credential_id,
+    replyToId: row.reply_to_id,
+    body: String(row.body),
+    authorAlias: String(row.author_alias),
+    identityModeAtCreation: row.identity_mode_at_creation,
+    status: row.status,
+    pinned: Boolean(row.pinned),
+    idempotencyKey: String(row.idempotency_key),
+    audienceSeq: Number(row.audience_seq),
+    createdAt: date(row.created_at),
+    updatedAt: date(row.updated_at),
+  };
+}
+
+function mapChatReaction(row: QueryResultRow): ChatReactionRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    sessionId: String(row.session_id),
+    messageId: String(row.message_id),
+    participantId: String(row.participant_id),
+    reaction: row.reaction,
+    updatedAt: date(row.updated_at),
+  };
+}
+
+function mapAudienceRestriction(row: QueryResultRow): AudienceRestrictionRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    sessionId: String(row.session_id),
+    participantId: String(row.participant_id),
+    mutedUntil: row.muted_until ? date(row.muted_until) : null,
+    bannedAt: row.banned_at ? date(row.banned_at) : null,
+    actorId: row.actor_id,
+    staffCredentialId: row.staff_credential_id,
+    updatedAt: date(row.updated_at),
+  };
+}
+
+function mapAudienceOutbox(row: QueryResultRow): AudienceOutboxRecord {
+  return {
+    eventId: String(row.event_id),
+    workspaceId: String(row.workspace_id),
+    sessionId: String(row.session_id),
+    audienceSeq: Number(row.audience_seq),
+    type: String(row.event_type),
+    idempotencyKey: String(row.idempotency_key),
+    payload: (row.payload ?? {}) as Record<string, unknown>,
+    attempts: Number(row.attempts),
+    claimedAt: row.claimed_at ? date(row.claimed_at) : null,
+    deliveredAt: row.delivered_at ? date(row.delivered_at) : null,
+    createdAt: date(row.created_at),
+  };
+}
+
 export class PostgresRepository implements Repository {
   readonly pool: Pool;
   private readonly migrationsDirectory: string;
@@ -499,9 +603,11 @@ export class PostgresRepository implements Repository {
         const updatedAt = new Date();
         const result = await client.query(
           `INSERT INTO operational_settings
-             (id, signups_enabled, session_creation_enabled, media_uploads_enabled, updated_at)
+             (id, signups_enabled, session_creation_enabled, media_uploads_enabled,
+              round_experiences_enabled, audience_pulse_enabled, room_chat_enabled, updated_at)
            VALUES ('global', COALESCE($1::boolean, true), COALESCE($2::boolean, true),
-                   COALESCE($3::boolean, true), $4)
+                   COALESCE($3::boolean, true), COALESCE($4::boolean, true),
+                   COALESCE($5::boolean, true), COALESCE($6::boolean, true), $7)
            ON CONFLICT (id) DO UPDATE SET
              signups_enabled = COALESCE($1::boolean, operational_settings.signups_enabled),
              session_creation_enabled = COALESCE(
@@ -510,12 +616,22 @@ export class PostgresRepository implements Repository {
              media_uploads_enabled = COALESCE(
                $3::boolean, operational_settings.media_uploads_enabled
              ),
-             updated_at = $4
+             round_experiences_enabled = COALESCE(
+               $4::boolean, operational_settings.round_experiences_enabled
+             ),
+             audience_pulse_enabled = COALESCE(
+               $5::boolean, operational_settings.audience_pulse_enabled
+             ),
+             room_chat_enabled = COALESCE($6::boolean, operational_settings.room_chat_enabled),
+             updated_at = $7
            RETURNING *`,
           [
             input.signups ?? null,
             input.sessionCreation ?? null,
             input.mediaUploads ?? null,
+            input.roundExperiences ?? null,
+            input.audiencePulse ?? null,
+            input.roomChat ?? null,
             updatedAt,
           ],
         );
@@ -562,6 +678,96 @@ export class PostgresRepository implements Repository {
 
   private async systemQuery(sql: string, values: unknown[] = []) {
     return this.transaction((client) => client.query(sql, values), { system: true });
+  }
+
+  private async lockInteractionSettings(
+    client: PoolClient,
+    workspaceId: string,
+    sessionId: string,
+  ) {
+    const result = await client.query(
+      `SELECT * FROM session_interaction_settings
+       WHERE workspace_id = $1 AND session_id = $2 FOR UPDATE`,
+      [workspaceId, sessionId],
+    );
+    if (!result.rows[0]) {
+      throw new AudienceStoreError("NOT_FOUND", "Audience interaction settings were not found");
+    }
+    const settings = mapInteractionSettings(result.rows[0]);
+    if (settings.closedAt) {
+      throw new AudienceStoreError(
+        "CONFLICT",
+        "Audience interactions are closed because this live round has finished",
+      );
+    }
+    return settings;
+  }
+
+  private async existingAudienceEvent(
+    client: PoolClient,
+    sessionId: string,
+    idempotencyKey: string,
+  ) {
+    const result = await client.query(
+      `SELECT * FROM audience_outbox WHERE session_id = $1 AND idempotency_key = $2`,
+      [sessionId, idempotencyKey],
+    );
+    return result.rows[0] ? mapAudienceOutbox(result.rows[0]) : null;
+  }
+
+  private async appendAudienceEventLocked(
+    client: PoolClient,
+    workspaceId: string,
+    sessionId: string,
+    event: AudienceEventInput,
+    createdAt: Date,
+  ) {
+    const sequence = await client.query(
+      `UPDATE session_interaction_settings SET audience_seq = audience_seq + 1
+       WHERE workspace_id = $1 AND session_id = $2 RETURNING audience_seq`,
+      [workspaceId, sessionId],
+    );
+    if (!sequence.rows[0]) {
+      throw new AudienceStoreError("NOT_FOUND", "Audience interaction settings were not found");
+    }
+    const inserted = await client.query(
+      `INSERT INTO audience_outbox
+         (event_id, workspace_id, session_id, audience_seq, event_type, idempotency_key,
+          payload, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [
+        event.eventId,
+        workspaceId,
+        sessionId,
+        Number(sequence.rows[0].audience_seq),
+        event.type,
+        event.idempotencyKey,
+        JSON.stringify(event.payload),
+        createdAt,
+      ],
+    );
+    return mapAudienceOutbox(inserted.rows[0]!);
+  }
+
+  private async chatReactionSummary(
+    client: PoolClient,
+    messageId: string,
+    participantId: string,
+  ): Promise<ChatReactionSummaryRecord> {
+    const result = await client.query(
+      `SELECT reaction, count(*)::integer AS count,
+              bool_or(participant_id = $2::uuid) AS selected_by_viewer
+       FROM chat_message_reactions WHERE message_id = $1 GROUP BY reaction`,
+      [messageId, participantId],
+    );
+    const counts: ChatReactionSummaryRecord["counts"] = {};
+    let viewerReaction: ChatReactionSummaryRecord["viewerReaction"] = null;
+    for (const row of result.rows) {
+      const reaction = row.reaction as ChatReactionRecord["reaction"];
+      counts[reaction] = Number(row.count);
+      if (row.selected_by_viewer) viewerReaction = reaction;
+    }
+    return { messageId, counts, viewerReaction };
   }
 
   private async syncSessionEvidence(client: PoolClient, session: StoredSession) {
@@ -1707,11 +1913,16 @@ export class PostgresRepository implements Repository {
     try {
       await this.workspaceQuery(
         input.workspaceId,
-        `INSERT INTO game_sessions
-         (id, workspace_id, quiz_version_id, host_id, code, state, version, seq, deadline,
-          settings, state_snapshot, state_schema_version, host_token_hash, expires_at,
-          retention_expires_at, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+        `WITH inserted_session AS (
+           INSERT INTO game_sessions
+             (id, workspace_id, quiz_version_id, host_id, code, state, version, seq, deadline,
+              settings, state_snapshot, state_schema_version, host_token_hash, expires_at,
+              retention_expires_at, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+           RETURNING id, workspace_id
+         )
+         INSERT INTO session_interaction_settings (session_id, workspace_id)
+         SELECT id, workspace_id FROM inserted_session`,
         [
           input.id,
           input.workspaceId,
@@ -1795,6 +2006,15 @@ export class PostgresRepository implements Repository {
         );
         if (result.rowCount !== 1) {
           throw new SessionVersionConflictError(input.id, expectedVersion);
+        }
+        if (state.phase === "finished") {
+          await client.query(
+            `UPDATE session_interaction_settings
+             SET closed_at = COALESCE(closed_at, now()), signals_enabled = false,
+                 chat_enabled = false, updated_at = now()
+             WHERE workspace_id = $1 AND session_id = $2`,
+            [input.workspaceId, input.id],
+          );
         }
         await this.syncSessionEvidence(client, input);
         if (report) {
@@ -2214,6 +2434,834 @@ export class PostgresRepository implements Repository {
     );
   }
 
+  async getInteractionSettings(workspaceId: string, sessionId: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT * FROM session_interaction_settings
+       WHERE workspace_id = $1 AND session_id = $2`,
+      [workspaceId, sessionId],
+    );
+    return result.rows[0] ? mapInteractionSettings(result.rows[0]) : null;
+  }
+
+  async appendAudienceEvent(
+    workspaceId: string,
+    sessionId: string,
+    eventInput: AudienceEventInput,
+    createdAt: Date,
+  ): Promise<AudienceMutation<null>> {
+    return this.transaction(
+      async (client) => {
+        await this.lockInteractionSettings(client, workspaceId, sessionId);
+        const existing = await this.existingAudienceEvent(
+          client,
+          sessionId,
+          eventInput.idempotencyKey,
+        );
+        if (existing) return { record: null, event: existing, duplicate: true };
+        const event = await this.appendAudienceEventLocked(
+          client,
+          workspaceId,
+          sessionId,
+          eventInput,
+          createdAt,
+        );
+        return { record: null, event, duplicate: false };
+      },
+      { workspaceId },
+    );
+  }
+
+  async saveInteractionSettings(
+    input: Omit<InteractionSettingsRecord, "audienceSeq" | "closedAt">,
+    eventInput: AudienceEventInput,
+  ): Promise<AudienceMutation<InteractionSettingsRecord>> {
+    return this.transaction(
+      async (client) => {
+        await client.query(
+          `INSERT INTO session_interaction_settings
+             (session_id, workspace_id, signals_enabled, chat_enabled, chat_identity_mode,
+              slow_mode_seconds, presenter_feed_mode, updated_at)
+           SELECT $1,$2,$3,$4,$5,$6,$7,$8
+           FROM game_sessions
+           WHERE id = $1 AND workspace_id = $2 AND ended_at IS NULL AND deleted_at IS NULL
+           ON CONFLICT (session_id) DO NOTHING`,
+          [
+            input.sessionId,
+            input.workspaceId,
+            input.signalsEnabled,
+            input.chatEnabled,
+            input.chatIdentityMode,
+            input.slowModeSeconds,
+            input.presenterFeedMode,
+            input.updatedAt,
+          ],
+        );
+        await this.lockInteractionSettings(client, input.workspaceId, input.sessionId);
+        const existingEvent = await this.existingAudienceEvent(
+          client,
+          input.sessionId,
+          eventInput.idempotencyKey,
+        );
+        if (existingEvent) {
+          const current = await client.query(
+            `SELECT * FROM session_interaction_settings WHERE session_id = $1`,
+            [input.sessionId],
+          );
+          return {
+            record: mapInteractionSettings(current.rows[0]!),
+            event: existingEvent,
+            duplicate: true,
+          };
+        }
+        await client.query(
+          `UPDATE session_interaction_settings SET
+             signals_enabled = $3, chat_enabled = $4, chat_identity_mode = $5,
+             slow_mode_seconds = $6, presenter_feed_mode = $7, updated_at = $8
+           WHERE workspace_id = $1 AND session_id = $2`,
+          [
+            input.workspaceId,
+            input.sessionId,
+            input.signalsEnabled,
+            input.chatEnabled,
+            input.chatIdentityMode,
+            input.slowModeSeconds,
+            input.presenterFeedMode,
+            input.updatedAt,
+          ],
+        );
+        const event = await this.appendAudienceEventLocked(
+          client,
+          input.workspaceId,
+          input.sessionId,
+          eventInput,
+          input.updatedAt,
+        );
+        const saved = await client.query(
+          `SELECT * FROM session_interaction_settings WHERE session_id = $1`,
+          [input.sessionId],
+        );
+        return {
+          record: mapInteractionSettings(saved.rows[0]!),
+          event,
+          duplicate: false,
+        };
+      },
+      { workspaceId: input.workspaceId },
+    );
+  }
+
+  async listParticipantSignals(workspaceId: string, sessionId: string, contextKey: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT * FROM participant_signal_state
+       WHERE workspace_id = $1 AND session_id = $2 AND context_key = $3
+       ORDER BY updated_at DESC, participant_id`,
+      [workspaceId, sessionId, contextKey],
+    );
+    return result.rows.map(mapParticipantSignal);
+  }
+
+  async countRecentSignalEvents(workspaceId: string, sessionId: string, since: Date) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT count(*)::integer AS count FROM participant_signal_events
+       WHERE workspace_id = $1 AND session_id = $2 AND created_at >= $3`,
+      [workspaceId, sessionId, since],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async setParticipantSignal(
+    input: {
+      workspaceId: string;
+      sessionId: string;
+      contextKey: string;
+      participantId: string;
+      signal: ParticipantSignalRecord["signal"] | null;
+      now: Date;
+    },
+    eventInput: AudienceEventInput,
+  ): Promise<AudienceMutation<ParticipantSignalRecord | null>> {
+    return this.transaction(
+      async (client) => {
+        await this.lockInteractionSettings(client, input.workspaceId, input.sessionId);
+        const existingEvent = await this.existingAudienceEvent(
+          client,
+          input.sessionId,
+          eventInput.idempotencyKey,
+        );
+        if (existingEvent) {
+          const current = await client.query(
+            `SELECT * FROM participant_signal_state
+             WHERE session_id = $1 AND context_key = $2 AND participant_id = $3`,
+            [input.sessionId, input.contextKey, input.participantId],
+          );
+          return {
+            record: current.rows[0] ? mapParticipantSignal(current.rows[0]) : null,
+            event: existingEvent,
+            duplicate: true,
+          };
+        }
+        const restriction = await client.query(
+          `SELECT banned_at FROM session_audience_restrictions
+           WHERE session_id = $1 AND participant_id = $2`,
+          [input.sessionId, input.participantId],
+        );
+        if (restriction.rows[0]?.banned_at) {
+          throw new AudienceStoreError(
+            "AUDIENCE_BANNED",
+            "Audience interaction access was revoked",
+          );
+        }
+        const recent = await client.query(
+          `SELECT count(*)::integer AS count FROM participant_signal_events
+           WHERE session_id = $1 AND participant_id = $2 AND created_at > $3`,
+          [input.sessionId, input.participantId, new Date(input.now.getTime() - 60_000)],
+        );
+        if (Number(recent.rows[0]?.count ?? 0) >= 30) {
+          throw new AudienceStoreError(
+            "SIGNAL_RATE_LIMITED",
+            "Too many pulse changes; wait before trying again",
+          );
+        }
+        let record: ParticipantSignalRecord | null = null;
+        if (input.signal) {
+          const saved = await client.query(
+            `INSERT INTO participant_signal_state
+               (workspace_id, session_id, context_key, participant_id, signal, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6)
+             ON CONFLICT (session_id, context_key, participant_id) DO UPDATE SET
+               signal = EXCLUDED.signal, updated_at = EXCLUDED.updated_at
+             RETURNING *`,
+            [
+              input.workspaceId,
+              input.sessionId,
+              input.contextKey,
+              input.participantId,
+              input.signal,
+              input.now,
+            ],
+          );
+          record = mapParticipantSignal(saved.rows[0]!);
+        } else {
+          await client.query(
+            `DELETE FROM participant_signal_state
+             WHERE workspace_id = $1 AND session_id = $2 AND context_key = $3
+               AND participant_id = $4`,
+            [input.workspaceId, input.sessionId, input.contextKey, input.participantId],
+          );
+        }
+        const event = await this.appendAudienceEventLocked(
+          client,
+          input.workspaceId,
+          input.sessionId,
+          eventInput,
+          input.now,
+        );
+        await client.query(
+          `INSERT INTO participant_signal_events
+             (id, workspace_id, session_id, context_key, participant_id, signal,
+              idempotency_key, audience_seq, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            eventInput.eventId,
+            input.workspaceId,
+            input.sessionId,
+            input.contextKey,
+            input.participantId,
+            input.signal,
+            eventInput.idempotencyKey,
+            event.audienceSeq,
+            input.now,
+          ],
+        );
+        return { record, event, duplicate: false };
+      },
+      { workspaceId: input.workspaceId },
+    );
+  }
+
+  async getChatMessage(workspaceId: string, messageId: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT * FROM chat_messages WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, messageId],
+    );
+    return result.rows[0] ? mapChatMessage(result.rows[0]) : null;
+  }
+
+  async listChatMessages(
+    workspaceId: string,
+    sessionId: string,
+    options: ChatMessageListOptions = {},
+  ) {
+    const values: unknown[] = [workspaceId, sessionId];
+    const predicates = ["workspace_id = $1", "session_id = $2"];
+    if (options.pinnedOnly) predicates.push("pinned = true");
+    if (options.cursor) {
+      values.push(options.cursor.createdAt, options.cursor.id);
+      predicates.push(`(created_at, id) < ($${values.length - 1}, $${values.length}::uuid)`);
+    }
+    const limit = options.limit;
+    if (limit !== undefined) values.push(limit);
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT * FROM chat_messages WHERE ${predicates.join(" AND ")}
+       ORDER BY created_at DESC, id DESC${limit !== undefined ? ` LIMIT $${values.length}` : ""}`,
+      values,
+    );
+    return result.rows.map(mapChatMessage);
+  }
+
+  async createChatMessage(
+    input: Omit<ChatMessageRecord, "audienceSeq">,
+    eventInput: AudienceEventInput,
+  ): Promise<AudienceMutation<ChatMessageRecord>> {
+    return this.transaction(
+      async (client) => {
+        const settings = await this.lockInteractionSettings(
+          client,
+          input.workspaceId,
+          input.sessionId,
+        );
+        const existingEvent = await this.existingAudienceEvent(
+          client,
+          input.sessionId,
+          eventInput.idempotencyKey,
+        );
+        if (existingEvent) {
+          const existing = await client.query(
+            `SELECT * FROM chat_messages WHERE session_id = $1 AND idempotency_key = $2`,
+            [input.sessionId, eventInput.idempotencyKey],
+          );
+          if (!existing.rows[0]) {
+            throw new AudienceStoreError("CONFLICT", "The chat request could not be reconciled");
+          }
+          return {
+            record: mapChatMessage(existing.rows[0]),
+            event: existingEvent,
+            duplicate: true,
+          };
+        }
+        if (!settings.chatEnabled) {
+          throw new AudienceStoreError("CHAT_DISABLED", "Chat is disabled for this live round");
+        }
+        if (input.replyToId) {
+          const parent = await client.query(
+            `SELECT reply_to_id, status FROM chat_messages WHERE session_id = $1 AND id = $2`,
+            [input.sessionId, input.replyToId],
+          );
+          if (!parent.rows[0] || parent.rows[0].status === "removed") {
+            throw new AudienceStoreError(
+              "NOT_FOUND",
+              "The chat message being replied to was not found",
+            );
+          }
+          if (parent.rows[0].reply_to_id) {
+            throw new AudienceStoreError("CONFLICT", "Chat supports one level of replies");
+          }
+        }
+        const sessionCount = await client.query(
+          `SELECT count(*)::integer AS count FROM chat_messages WHERE session_id = $1`,
+          [input.sessionId],
+        );
+        if (Number(sessionCount.rows[0]?.count ?? 0) >= 10_000) {
+          throw new AudienceStoreError(
+            "CHAT_CAPACITY_REACHED",
+            "This round has reached its chat message limit",
+          );
+        }
+        if (input.participantId) {
+          const restriction = await client.query(
+            `SELECT muted_until, banned_at FROM session_audience_restrictions
+             WHERE session_id = $1 AND participant_id = $2`,
+            [input.sessionId, input.participantId],
+          );
+          if (restriction.rows[0]?.banned_at) {
+            throw new AudienceStoreError(
+              "AUDIENCE_BANNED",
+              "Audience interaction access was revoked",
+            );
+          }
+          if (
+            restriction.rows[0]?.muted_until &&
+            date(restriction.rows[0].muted_until) > input.createdAt
+          ) {
+            throw new AudienceStoreError(
+              "CHAT_MUTED",
+              "Chat is temporarily muted for this participant",
+            );
+          }
+          const participantCount = await client.query(
+            `SELECT count(*)::integer AS session_count,
+                    count(*) FILTER (WHERE created_at > $3)::integer AS minute_count,
+                    max(created_at) AS latest_at
+             FROM chat_messages WHERE session_id = $1 AND participant_id = $2`,
+            [input.sessionId, input.participantId, new Date(input.createdAt.getTime() - 60_000)],
+          );
+          const counts = participantCount.rows[0]!;
+          if (Number(counts.session_count) >= 200) {
+            throw new AudienceStoreError(
+              "CHAT_CAPACITY_REACHED",
+              "This participant has reached the session chat limit",
+            );
+          }
+          if (Number(counts.minute_count) >= 12) {
+            throw new AudienceStoreError(
+              "CHAT_RATE_LIMITED",
+              "Too many messages; wait before posting again",
+            );
+          }
+          if (
+            counts.latest_at &&
+            input.createdAt.getTime() - date(counts.latest_at).getTime() <
+              settings.slowModeSeconds * 1_000
+          ) {
+            throw new AudienceStoreError(
+              "CHAT_RATE_LIMITED",
+              `Slow mode allows one message every ${settings.slowModeSeconds} seconds`,
+            );
+          }
+        }
+        const event = await this.appendAudienceEventLocked(
+          client,
+          input.workspaceId,
+          input.sessionId,
+          eventInput,
+          input.createdAt,
+        );
+        const inserted = await client.query(
+          `INSERT INTO chat_messages
+             (id, workspace_id, session_id, participant_id, actor_id, staff_credential_id,
+              reply_to_id, body, author_alias, identity_mode_at_creation, status, pinned,
+              idempotency_key, audience_seq, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+          [
+            input.id,
+            input.workspaceId,
+            input.sessionId,
+            input.participantId,
+            input.actorId,
+            input.staffCredentialId,
+            input.replyToId,
+            input.body,
+            input.authorAlias,
+            settings.chatIdentityMode,
+            input.status,
+            input.pinned,
+            input.idempotencyKey,
+            event.audienceSeq,
+            input.createdAt,
+            input.updatedAt,
+          ],
+        );
+        return { record: mapChatMessage(inserted.rows[0]!), event, duplicate: false };
+      },
+      { workspaceId: input.workspaceId },
+    );
+  }
+
+  async updateChatMessage(
+    workspaceId: string,
+    sessionId: string,
+    messageId: string,
+    update: { status?: ChatMessageRecord["status"]; pinned?: boolean },
+    eventInput: AudienceEventInput,
+    updatedAt: Date,
+  ): Promise<AudienceMutation<ChatMessageRecord>> {
+    return this.transaction(
+      async (client) => {
+        await this.lockInteractionSettings(client, workspaceId, sessionId);
+        const existingEvent = await this.existingAudienceEvent(
+          client,
+          sessionId,
+          eventInput.idempotencyKey,
+        );
+        if (existingEvent) {
+          const current = await client.query(
+            `SELECT * FROM chat_messages WHERE workspace_id = $1 AND session_id = $2 AND id = $3`,
+            [workspaceId, sessionId, messageId],
+          );
+          if (!current.rows[0]) throw new AudienceStoreError("NOT_FOUND", "Chat message not found");
+          return {
+            record: mapChatMessage(current.rows[0]),
+            event: existingEvent,
+            duplicate: true,
+          };
+        }
+        const event = await this.appendAudienceEventLocked(
+          client,
+          workspaceId,
+          sessionId,
+          eventInput,
+          updatedAt,
+        );
+        const result = await client.query(
+          `UPDATE chat_messages SET
+             status = COALESCE($4::text, status), pinned = COALESCE($5::boolean, pinned),
+             audience_seq = $6, updated_at = $7
+           WHERE workspace_id = $1 AND session_id = $2 AND id = $3 RETURNING *`,
+          [
+            workspaceId,
+            sessionId,
+            messageId,
+            update.status ?? null,
+            update.pinned ?? null,
+            event.audienceSeq,
+            updatedAt,
+          ],
+        );
+        if (!result.rows[0]) throw new AudienceStoreError("NOT_FOUND", "Chat message not found");
+        return { record: mapChatMessage(result.rows[0]), event, duplicate: false };
+      },
+      { workspaceId },
+    );
+  }
+
+  async listChatReactions(workspaceId: string, sessionId: string, messageIds?: string[]) {
+    if (messageIds?.length === 0) return [];
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT * FROM chat_message_reactions
+       WHERE workspace_id = $1 AND session_id = $2
+         ${messageIds ? "AND message_id = ANY($3::uuid[])" : ""}`,
+      messageIds ? [workspaceId, sessionId, messageIds] : [workspaceId, sessionId],
+    );
+    return result.rows.map(mapChatReaction);
+  }
+
+  async getChatActivitySummary(workspaceId: string, sessionId: string, since: Date) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT
+         count(*) FILTER (WHERE status = 'published' AND created_at >= $3)::integer
+           AS messages_last_minute,
+         count(DISTINCT COALESCE(
+           participant_id::text,
+           'actor:' || actor_id::text,
+           'staff:' || staff_credential_id::text
+         )) FILTER (WHERE status = 'published')::integer AS unique_contributors,
+         count(*) FILTER (WHERE status = 'removed')::integer AS removed_messages,
+         (SELECT count(*)::integer FROM chat_message_reports
+          WHERE workspace_id = $1 AND session_id = $2) AS report_count
+       FROM chat_messages WHERE workspace_id = $1 AND session_id = $2`,
+      [workspaceId, sessionId, since],
+    );
+    const row = result.rows[0];
+    return {
+      messagesLastMinute: Number(row?.messages_last_minute ?? 0),
+      uniqueContributors: Number(row?.unique_contributors ?? 0),
+      removedMessages: Number(row?.removed_messages ?? 0),
+      reportCount: Number(row?.report_count ?? 0),
+    };
+  }
+
+  async listParticipantChatActivity(workspaceId: string, sessionId: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT participant_id, count(*)::integer AS message_count, max(created_at) AS latest_message_at
+       FROM chat_messages
+       WHERE workspace_id = $1 AND session_id = $2 AND participant_id IS NOT NULL
+       GROUP BY participant_id`,
+      [workspaceId, sessionId],
+    );
+    return result.rows.map((row) => ({
+      participantId: String(row.participant_id),
+      messageCount: Number(row.message_count),
+      latestMessageAt: row.latest_message_at ? date(row.latest_message_at) : null,
+    }));
+  }
+
+  async setChatReaction(
+    input: {
+      workspaceId: string;
+      sessionId: string;
+      messageId: string;
+      participantId: string;
+      reaction: ChatReactionRecord["reaction"] | null;
+      now: Date;
+    },
+    eventInput: AudienceEventInput,
+  ): Promise<AudienceMutation<ChatReactionSummaryRecord>> {
+    return this.transaction(
+      async (client) => {
+        await this.lockInteractionSettings(client, input.workspaceId, input.sessionId);
+        const existingEvent = await this.existingAudienceEvent(
+          client,
+          input.sessionId,
+          eventInput.idempotencyKey,
+        );
+        if (existingEvent) {
+          return {
+            record: await this.chatReactionSummary(client, input.messageId, input.participantId),
+            event: existingEvent,
+            duplicate: true,
+          };
+        }
+        const message = await client.query(
+          `SELECT status FROM chat_messages WHERE session_id = $1 AND id = $2`,
+          [input.sessionId, input.messageId],
+        );
+        if (!message.rows[0]) throw new AudienceStoreError("NOT_FOUND", "Chat message not found");
+        if (message.rows[0].status === "removed") {
+          throw new AudienceStoreError(
+            "MESSAGE_REMOVED",
+            "Removed messages cannot receive reactions",
+          );
+        }
+        if (input.reaction) {
+          await client.query(
+            `INSERT INTO chat_message_reactions
+               (workspace_id, session_id, message_id, participant_id, reaction, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6)
+             ON CONFLICT (message_id, participant_id) DO UPDATE SET
+               reaction = EXCLUDED.reaction, updated_at = EXCLUDED.updated_at`,
+            [
+              input.workspaceId,
+              input.sessionId,
+              input.messageId,
+              input.participantId,
+              input.reaction,
+              input.now,
+            ],
+          );
+        } else {
+          await client.query(
+            `DELETE FROM chat_message_reactions
+             WHERE workspace_id = $1 AND session_id = $2 AND message_id = $3
+               AND participant_id = $4`,
+            [input.workspaceId, input.sessionId, input.messageId, input.participantId],
+          );
+        }
+        const event = await this.appendAudienceEventLocked(
+          client,
+          input.workspaceId,
+          input.sessionId,
+          eventInput,
+          input.now,
+        );
+        return {
+          record: await this.chatReactionSummary(client, input.messageId, input.participantId),
+          event,
+          duplicate: false,
+        };
+      },
+      { workspaceId: input.workspaceId },
+    );
+  }
+
+  async reportChatMessage(
+    workspaceId: string,
+    sessionId: string,
+    messageId: string,
+    participantId: string,
+    now: Date,
+    eventInput: AudienceEventInput,
+  ): Promise<AudienceMutation<number>> {
+    return this.transaction(
+      async (client) => {
+        await this.lockInteractionSettings(client, workspaceId, sessionId);
+        const existingEvent = await this.existingAudienceEvent(
+          client,
+          sessionId,
+          eventInput.idempotencyKey,
+        );
+        if (!existingEvent) {
+          const inserted = await client.query(
+            `INSERT INTO chat_message_reports
+               (workspace_id, session_id, message_id, participant_id, created_at)
+             SELECT $1,$2,$3,$4,$5 FROM chat_messages
+             WHERE workspace_id = $1 AND session_id = $2 AND id = $3
+             ON CONFLICT (message_id, participant_id) DO NOTHING`,
+            [workspaceId, sessionId, messageId, participantId, now],
+          );
+          if (inserted.rowCount === 0) {
+            const exists = await client.query(
+              `SELECT 1 FROM chat_messages WHERE workspace_id = $1 AND session_id = $2 AND id = $3`,
+              [workspaceId, sessionId, messageId],
+            );
+            if (!exists.rows[0])
+              throw new AudienceStoreError("NOT_FOUND", "Chat message not found");
+          }
+        }
+        const event =
+          existingEvent ??
+          (await this.appendAudienceEventLocked(client, workspaceId, sessionId, eventInput, now));
+        const count = await client.query(
+          `SELECT count(*)::integer AS count FROM chat_message_reports WHERE message_id = $1`,
+          [messageId],
+        );
+        return {
+          record: Number(count.rows[0]?.count ?? 0),
+          event,
+          duplicate: Boolean(existingEvent),
+        };
+      },
+      { workspaceId },
+    );
+  }
+
+  async countChatReports(workspaceId: string, sessionId: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT count(*)::integer AS count FROM chat_message_reports
+       WHERE workspace_id = $1 AND session_id = $2`,
+      [workspaceId, sessionId],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async getAudienceRestriction(workspaceId: string, sessionId: string, participantId: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT * FROM session_audience_restrictions
+       WHERE workspace_id = $1 AND session_id = $2 AND participant_id = $3`,
+      [workspaceId, sessionId, participantId],
+    );
+    return result.rows[0] ? mapAudienceRestriction(result.rows[0]) : null;
+  }
+
+  async listAudienceRestrictions(workspaceId: string, sessionId: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT * FROM session_audience_restrictions
+       WHERE workspace_id = $1 AND session_id = $2`,
+      [workspaceId, sessionId],
+    );
+    return result.rows.map(mapAudienceRestriction);
+  }
+
+  async saveAudienceRestriction(
+    input: AudienceRestrictionRecord,
+    eventInput: AudienceEventInput,
+  ): Promise<AudienceMutation<AudienceRestrictionRecord>> {
+    return this.transaction(
+      async (client) => {
+        await this.lockInteractionSettings(client, input.workspaceId, input.sessionId);
+        const existingEvent = await this.existingAudienceEvent(
+          client,
+          input.sessionId,
+          eventInput.idempotencyKey,
+        );
+        if (existingEvent) {
+          const current = await client.query(
+            `SELECT * FROM session_audience_restrictions
+             WHERE session_id = $1 AND participant_id = $2`,
+            [input.sessionId, input.participantId],
+          );
+          if (!current.rows[0]) {
+            throw new AudienceStoreError(
+              "CONFLICT",
+              "The moderation request could not be reconciled",
+            );
+          }
+          return {
+            record: mapAudienceRestriction(current.rows[0]),
+            event: existingEvent,
+            duplicate: true,
+          };
+        }
+        const result = await client.query(
+          `INSERT INTO session_audience_restrictions
+             (workspace_id, session_id, participant_id, muted_until, banned_at, actor_id,
+              staff_credential_id, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           ON CONFLICT (session_id, participant_id) DO UPDATE SET
+             muted_until = EXCLUDED.muted_until, banned_at = EXCLUDED.banned_at,
+             actor_id = EXCLUDED.actor_id, staff_credential_id = EXCLUDED.staff_credential_id,
+             updated_at = EXCLUDED.updated_at
+           RETURNING *`,
+          [
+            input.workspaceId,
+            input.sessionId,
+            input.participantId,
+            input.mutedUntil,
+            input.bannedAt,
+            input.actorId,
+            input.staffCredentialId,
+            input.updatedAt,
+          ],
+        );
+        if (input.bannedAt) {
+          await client.query(
+            `INSERT INTO qna_bans (workspace_id, session_id, participant_id, actor_id)
+             VALUES ($1,$2,$3,$4) ON CONFLICT (session_id, participant_id) DO NOTHING`,
+            [input.workspaceId, input.sessionId, input.participantId, input.actorId],
+          );
+        } else {
+          await client.query(
+            `DELETE FROM qna_bans
+             WHERE workspace_id = $1 AND session_id = $2 AND participant_id = $3`,
+            [input.workspaceId, input.sessionId, input.participantId],
+          );
+        }
+        const event = await this.appendAudienceEventLocked(
+          client,
+          input.workspaceId,
+          input.sessionId,
+          eventInput,
+          input.updatedAt,
+        );
+        return {
+          record: mapAudienceRestriction(result.rows[0]!),
+          event,
+          duplicate: false,
+        };
+      },
+      { workspaceId: input.workspaceId },
+    );
+  }
+
+  async claimAudienceOutbox(now: Date, staleBefore: Date) {
+    return this.transaction(
+      async (client) => {
+        const result = await client.query(
+          `WITH candidate AS (
+             SELECT event_id FROM audience_outbox
+             WHERE delivered_at IS NULL AND (claimed_at IS NULL OR claimed_at < $2)
+             ORDER BY created_at, event_id FOR UPDATE SKIP LOCKED LIMIT 1
+           )
+           UPDATE audience_outbox SET claimed_at = $1, attempts = attempts + 1
+           WHERE event_id = (SELECT event_id FROM candidate) RETURNING *`,
+          [now, staleBefore],
+        );
+        return result.rows[0] ? mapAudienceOutbox(result.rows[0]) : null;
+      },
+      { system: true },
+    );
+  }
+
+  async completeAudienceOutbox(eventId: string, deliveredAt: Date) {
+    const result = await this.systemQuery(
+      `UPDATE audience_outbox SET delivered_at = $2, claimed_at = NULL
+       WHERE event_id = $1 AND delivered_at IS NULL RETURNING event_id`,
+      [eventId, deliveredAt],
+    );
+    return result.rowCount === 1;
+  }
+
+  async getAudienceOutboxStatus() {
+    const result = await this.systemQuery(
+      `SELECT
+         (SELECT count(*)::integer FROM audience_outbox WHERE delivered_at IS NULL) AS pending,
+         (SELECT min(created_at) FROM audience_outbox WHERE delivered_at IS NULL)
+           AS oldest_created_at,
+         (SELECT count(*)::integer FROM session_interaction_settings settings
+          JOIN game_sessions session ON session.id = settings.session_id
+          WHERE settings.chat_enabled AND session.ended_at IS NULL
+            AND session.deleted_at IS NULL AND session.expires_at > now())
+           AS chat_enabled_sessions`,
+    );
+    return {
+      pending: Number(result.rows[0]?.pending ?? 0),
+      oldestCreatedAt: result.rows[0]?.oldest_created_at
+        ? date(result.rows[0].oldest_created_at)
+        : null,
+      chatEnabledSessions: Number(result.rows[0]?.chat_enabled_sessions ?? 0),
+    };
+  }
+
   async getSessionEvidence(workspaceId: string, sessionId: string) {
     return this.transaction(
       async (client) => {
@@ -2236,6 +3284,31 @@ export class PostgresRepository implements Repository {
              count(*) FILTER (WHERE status = 'answered')::integer AS answered,
              count(*) FILTER (WHERE status IN ('pending', 'published'))::integer AS unresolved
            FROM qna_questions WHERE workspace_id = $1 AND session_id = $2`,
+          [workspaceId, sessionId],
+        );
+        const signalResult = await client.query(
+          `SELECT context_key, participant_id, signal, created_at
+           FROM participant_signal_events
+           WHERE workspace_id = $1 AND session_id = $2 ORDER BY created_at, id`,
+          [workspaceId, sessionId],
+        );
+        const chatResult = await client.query(
+          `SELECT * FROM chat_messages WHERE workspace_id = $1 AND session_id = $2
+           ORDER BY created_at, id`,
+          [workspaceId, sessionId],
+        );
+        const reactionResult = await client.query(
+          `SELECT * FROM chat_message_reactions WHERE workspace_id = $1 AND session_id = $2`,
+          [workspaceId, sessionId],
+        );
+        const interactionCountResult = await client.query(
+          `SELECT
+             (SELECT count(*)::integer FROM chat_message_reports
+              WHERE workspace_id = $1 AND session_id = $2) AS reports,
+             (SELECT count(*)::integer FROM audience_outbox
+              WHERE workspace_id = $1 AND session_id = $2
+                AND event_type IN ('audience.moderation.updated', 'chat.message.removed'))
+               AS moderation_actions`,
           [workspaceId, sessionId],
         );
         return {
@@ -2262,6 +3335,18 @@ export class PostgresRepository implements Repository {
             questions: Number(qnaResult.rows[0]?.questions ?? 0),
             answered: Number(qnaResult.rows[0]?.answered ?? 0),
             unresolved: Number(qnaResult.rows[0]?.unresolved ?? 0),
+          },
+          interactions: {
+            signalEvents: signalResult.rows.map((row) => ({
+              contextKey: String(row.context_key),
+              participantId: String(row.participant_id),
+              signal: row.signal,
+              createdAt: date(row.created_at),
+            })),
+            chatMessages: chatResult.rows.map(mapChatMessage),
+            reactions: reactionResult.rows.map(mapChatReaction),
+            reports: Number(interactionCountResult.rows[0]?.reports ?? 0),
+            moderationActions: Number(interactionCountResult.rows[0]?.moderation_actions ?? 0),
           },
         };
       },
@@ -3382,6 +4467,46 @@ export class PostgresRepository implements Repository {
           `SELECT id, workspace_id, session_id, status, metrics, generated_at, created_at
            FROM reports WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
         );
+        const interactionSettings = await queryWorkspaceData(
+          `SELECT session_id, workspace_id, signals_enabled, chat_enabled, chat_identity_mode,
+                  slow_mode_seconds, presenter_feed_mode, audience_seq, updated_at
+           FROM session_interaction_settings WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY session_id`,
+        );
+        const participantSignals = await queryWorkspaceData(
+          `SELECT workspace_id, session_id, context_key, participant_id, signal, updated_at
+           FROM participant_signal_state WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY session_id, context_key, participant_id`,
+        );
+        const signalEvents = await queryWorkspaceData(
+          `SELECT id, workspace_id, session_id, context_key, participant_id, signal,
+                  audience_seq, created_at
+           FROM participant_signal_events WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY session_id, audience_seq`,
+        );
+        const chatMessages = await queryWorkspaceData(
+          `SELECT id, workspace_id, session_id, participant_id, actor_id, staff_credential_id,
+                  reply_to_id, body, author_alias, identity_mode_at_creation, status, pinned,
+                  audience_seq, created_at, updated_at
+           FROM chat_messages WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY session_id, audience_seq`,
+        );
+        const chatReactions = await queryWorkspaceData(
+          `SELECT workspace_id, session_id, message_id, participant_id, reaction, updated_at
+           FROM chat_message_reactions WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY session_id, message_id, participant_id`,
+        );
+        const chatReports = await queryWorkspaceData(
+          `SELECT workspace_id, session_id, message_id, participant_id, created_at
+           FROM chat_message_reports WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY session_id, message_id, participant_id`,
+        );
+        const audienceRestrictions = await queryWorkspaceData(
+          `SELECT workspace_id, session_id, participant_id, muted_until, banned_at, actor_id,
+                  staff_credential_id, updated_at
+           FROM session_audience_restrictions WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY session_id, participant_id`,
+        );
         const followups = await queryWorkspaceData(
           `SELECT id, workspace_id, source_session_id, source_report_id, title, content,
                   concept_keys, time_mode, opens_at, closes_at, expires_at, closed_at,
@@ -3466,6 +4591,13 @@ export class PostgresRepository implements Repository {
           participants: participants.rows,
           answers: answers.rows,
           reports: reports.rows,
+          interactionSettings: interactionSettings.rows,
+          participantSignals: participantSignals.rows,
+          signalEvents: signalEvents.rows,
+          chatMessages: chatMessages.rows,
+          chatReactions: chatReactions.rows,
+          chatReports: chatReports.rows,
+          audienceRestrictions: audienceRestrictions.rows,
           followups: followups.rows,
           followupAccess: followupAccess.rows,
           followupAttempts: followupAttempts.rows,

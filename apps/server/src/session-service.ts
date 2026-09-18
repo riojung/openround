@@ -6,6 +6,7 @@ import {
   type AnswerAck,
   type AnswerSubmit,
   type EventEnvelope,
+  type ExperiencePresetId,
   type HostCommand,
   type JoinRequest,
   type JoinResponse,
@@ -16,9 +17,11 @@ import {
   type SyncRequest,
   type SyncResponse,
 } from "@openround/contracts";
+import { resolveExperienceTheme } from "@openround/experience";
 import {
   SessionCodeConflictError,
   SessionVersionConflictError,
+  type AudienceOutboxRecord,
   type CreatorContext,
   type ParticipantRecord,
   type Repository,
@@ -67,6 +70,13 @@ export interface SessionAuxiliaryEvent {
 }
 
 type AuxiliaryListener = (event: SessionAuxiliaryEvent) => void | Promise<void>;
+
+export type SessionAudienceEvent = Pick<
+  AudienceOutboxRecord,
+  "eventId" | "sessionId" | "audienceSeq" | "type" | "payload" | "createdAt"
+>;
+
+type AudienceListener = (event: SessionAudienceEvent) => boolean | void | Promise<boolean | void>;
 
 interface PendingAnswer {
   input: AnswerSubmit;
@@ -134,6 +144,7 @@ export class SessionService {
   private readonly participantCredentials = new Map<string, ParticipantRecord>();
   private readonly listeners = new Set<MutationListener>();
   private readonly auxiliaryListeners = new Set<AuxiliaryListener>();
+  private readonly audienceListeners = new Set<AudienceListener>();
   private readonly tracer = trace.getTracer("openround-game-service");
   private closing = false;
 
@@ -156,6 +167,19 @@ export class SessionService {
 
   async publishAuxiliary(event: SessionAuxiliaryEvent) {
     for (const listener of this.auxiliaryListeners) await listener(event);
+  }
+
+  subscribeAudience(listener: AudienceListener) {
+    this.audienceListeners.add(listener);
+    return () => this.audienceListeners.delete(listener);
+  }
+
+  async publishAudience(event: SessionAudienceEvent) {
+    let delivered = true;
+    for (const listener of this.audienceListeners) {
+      if ((await listener(event)) === false) delivered = false;
+    }
+    return delivered;
   }
 
   private traceOperation<T>(name: string, attributes: Attributes, work: () => Promise<T>) {
@@ -359,6 +383,7 @@ export class SessionService {
     );
     return {
       credentialId: staff.credential?.id ?? null,
+      credentialRole: staff.credential?.role ?? "host",
       expiresAtMs: staff.credential?.expiresAt.getTime() ?? null,
       tokenHash,
     };
@@ -372,6 +397,31 @@ export class SessionService {
       tokenHash,
       role === "presenter" ? ["cohost", "presenter"] : ["cohost"],
     );
+  }
+
+  async revalidateRealtimeParticipant(
+    sessionId: string,
+    participantToken: string,
+    expectedParticipantId: string,
+  ) {
+    const [session, participant] = await Promise.all([
+      this.repository.getSessionById(sessionId),
+      this.repository.getParticipantByToken(hashToken(participantToken)),
+    ]);
+    if (!session || session.expiresAt.getTime() <= Date.now()) {
+      throw new SessionError("NOT_FOUND", "Session not found");
+    }
+    if (
+      !participant ||
+      participant.sessionId !== sessionId ||
+      participant.id !== expectedParticipantId
+    ) {
+      throw new SessionError("UNAUTHORIZED", "Participant credential is invalid");
+    }
+    const runtimeParticipant = session.state.participants[participant.id];
+    if (!runtimeParticipant || runtimeParticipant.kicked || participant.status === "kicked") {
+      throw new SessionError("UNAUTHORIZED", "Participant access has been revoked");
+    }
   }
 
   async createSessionStaffCredential(
@@ -502,6 +552,10 @@ export class SessionService {
     creator: CreatorContext,
     quizId: string,
     settings: SessionSettings,
+    experience: {
+      experiencePresetOverride?: ExperiencePresetId;
+      presenterSoundEnabled?: boolean;
+    } = {},
   ): Promise<{ sessionId: string; code: string; hostToken: string; snapshot: SessionSnapshot }> {
     if (creator.role === "viewer") {
       throw new SessionError("UNAUTHORIZED", "Viewers cannot host live rounds");
@@ -534,6 +588,13 @@ export class SessionService {
     const brandTheme = entitlements.brandTheme
       ? await this.repository.getBrandTheme(creator.workspaceId)
       : null;
+    const category = version.content.category ?? "general";
+    const experienceTheme = resolveExperienceTheme({
+      category,
+      presetId: experience.experiencePresetOverride ?? version.content.experiencePreset?.id,
+      soundEnabled: experience.presenterSoundEnabled,
+      brandTheme,
+    });
 
     const sessionId = randomUUID();
     const hostToken = opaqueToken();
@@ -566,6 +627,7 @@ export class SessionService {
             quiz: version.content,
             settings,
             brandTheme,
+            experienceTheme,
           }),
           expiresAt: new Date(now.getTime() + ttlMs),
           retentionExpiresAt: retentionExpiry(now, entitlements),

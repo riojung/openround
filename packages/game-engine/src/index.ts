@@ -6,6 +6,7 @@ import {
   questionPurpose,
   type BrandTheme,
   type ConfidenceValue,
+  type ExperienceThemeSnapshot,
   type HostAction,
   type InterventionType,
   type ParticipantView,
@@ -18,9 +19,10 @@ import {
   type SessionSettings,
   type SessionSnapshot,
 } from "@openround/contracts";
+import { resolveExperienceTheme } from "@openround/experience";
 import { deriveCheckpointInsight } from "@openround/insights";
 
-export const CURRENT_GAME_STATE_SCHEMA_VERSION = 3;
+export const CURRENT_GAME_STATE_SCHEMA_VERSION = 4;
 
 export interface EngineParticipant {
   id: string;
@@ -88,6 +90,7 @@ export interface GameState {
   lobbyLocked: boolean;
   settings: SessionSettings;
   brandTheme: BrandTheme | null;
+  experienceTheme: ExperienceThemeSnapshot;
   participants: Record<string, EngineParticipant>;
   answers: Record<string, EngineAnswer>;
   rounds: Record<string, EngineRound>;
@@ -168,12 +171,20 @@ export function upgradeGameState(input: GameState): GameState {
     intervention?: EngineIntervention | null;
     interventionReturnPhase?: "question_locked" | "question_reveal" | null;
     interventions?: Record<string, EngineIntervention>;
+    experienceTheme?: ExperienceThemeSnapshot;
     rounds: Record<
       string,
       EngineRound | { questionId: string; position: number; kind?: RoundKind }
     >;
   };
+  if ((legacy.stateSchemaVersion ?? 1) > CURRENT_GAME_STATE_SCHEMA_VERSION) {
+    throw new Error(
+      `Game state schema ${legacy.stateSchemaVersion} is newer than supported schema ${CURRENT_GAME_STATE_SCHEMA_VERSION}`,
+    );
+  }
   if (legacy.stateSchemaVersion === CURRENT_GAME_STATE_SCHEMA_VERSION) return legacy;
+  const category = legacy.quiz.category ?? "general";
+  const presetId = legacy.quiz.experiencePreset?.id;
   return {
     ...legacy,
     stateSchemaVersion: CURRENT_GAME_STATE_SCHEMA_VERSION,
@@ -184,6 +195,9 @@ export function upgradeGameState(input: GameState): GameState {
     interventions:
       legacy.interventions ??
       (legacy.intervention ? { [legacy.intervention.id]: legacy.intervention } : {}),
+    experienceTheme:
+      legacy.experienceTheme ??
+      resolveExperienceTheme({ category, presetId, brandTheme: legacy.brandTheme }),
     answers: Object.fromEntries(
       Object.entries(legacy.answers ?? {}).map(([id, answer]) => [id, legacyAnswer(answer)]),
     ),
@@ -216,7 +230,9 @@ export function createGameState(input: {
   quiz: QuizDraft;
   settings: SessionSettings;
   brandTheme?: BrandTheme | null;
+  experienceTheme?: ExperienceThemeSnapshot;
 }): GameState {
+  const brandTheme = input.brandTheme ?? null;
   return {
     stateSchemaVersion: CURRENT_GAME_STATE_SCHEMA_VERSION,
     sessionId: input.sessionId,
@@ -238,7 +254,14 @@ export function createGameState(input: {
     interventions: {},
     lobbyLocked: false,
     settings: input.settings,
-    brandTheme: input.brandTheme ?? null,
+    brandTheme,
+    experienceTheme:
+      input.experienceTheme ??
+      resolveExperienceTheme({
+        category: input.quiz.category ?? "general",
+        presetId: input.quiz.experiencePreset?.id,
+        brandTheme,
+      }),
     participants: {},
     answers: {},
     rounds: {},
@@ -974,6 +997,7 @@ export function snapshotForRole(
     lobbyLocked: state.lobbyLocked,
     settings: state.settings,
     brandTheme: state.brandTheme ?? null,
+    experienceTheme: state.experienceTheme,
     pausedRemainingMs: state.pausedRemainingMs,
     myParticipantId: options.participantId ?? null,
     myAnswerChoiceId: participantAnswer?.choiceId ?? null,

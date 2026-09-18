@@ -6,6 +6,24 @@ does not turn calendar, demand, legal, research, provider, certification, or pro
 gates into software claims. `OpenRound` is a working identity pending independent name and
 trademark review.
 
+## Themed Experiences and Audience Interaction
+
+The current branch contains the complete single-process product slice and durable schema for Round
+Experiences, Audience Pulse, room chat, interaction reporting, privacy lifecycle, and moderation.
+Repository presence is not evidence that partner, mixed-load, process-loss, accessibility, or
+production-promotion gates have passed.
+
+| Phase                           | Repository status                                                                                                                                                                                                                                                                                 | Still required for exit                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| 0 — validate interaction design | Six presets, role previews, Pulse controls, dashboard, chat, and moderation workflow are available for testing                                                                                                                                                                                    | Three higher-education and three workplace facilitator sessions; five-of-six uncoached success evidence  |
+| 1 — safe contracts/storage      | Category/preset contracts, JSON v2/v1 compatibility, game state v4/v3 upgrader, report v3 backward rendering, migrations 011–013 with forced RLS and an atomic finish cutoff, monotonic audience sequence, distributed limits, transactional outbox, and audited rollout switches are implemented | Production-copy migration/rollback rehearsal                                                             |
+| 2 — Round Experiences           | Focus, Campus, Studio, Blueprint, Signal, and Spark registry; author/setup previews; frozen session tokens; workspace-brand layering; role surfaces; local contrast/motion/mute; opt-in original Web Audio cues                                                                                   | Manual VoiceOver/NVDA, projector/phone, 200% zoom, and visual-regression evidence for every preset       |
+| 3 — Audience Pulse              | Four contextual signals, host-only participant projection, five-person public threshold, rolling activity, participant filters, independent audience sync, and at-most-4-Hz public summary notifications                                                                                          | Target-region 250-participant mixed load, Redis disruption, process-loss, and answer-SLO evidence        |
+| 4 — Live Conversation           | Disabled-by-default chat, plain text, one-level replies, reactions, immutable private aliases, slow/hard limits, presenter feed, pin/remove/report, 5/15/60-minute mute, ban, Q&A integration, sequenced Q&A compatibility events, and durable at-least-once fan-out                              | Two-process committed-message-loss/duplicate-display tests and observed moderation rehearsal             |
+| 5 — Evidence/hardening          | Aggregate report v3, authorized transcript/CSV, formula escaping, account export, session/account cascading deletion, bounded metrics, privacy/data-map updates, and moderation/incident runbooks                                                                                                 | Full mixed-load, security, accessibility, retention, backup/restore, and report-under-60-second evidence |
+| 6 — partner beta                | Workspace roles, scoped staff credentials, and a validated workspace-UUID rollout allowlist support selected partners                                                                                                                                                                             | Six live partners, repeat-use evidence, support observation, and no severe incident                      |
+| 7 — production promotion        | Presets, Pulse, and chat have independent startup ceilings and audited runtime kill switches                                                                                                                                                                                                      | Controlled production promotion and 30 uninterrupted stable days                                         |
+
 ## Differentiated product roadmap
 
 No version tag in this table should be inferred merely from code presence. A phase is releasable
@@ -45,11 +63,15 @@ gates pass.
 ## Latest verified baseline
 
 The established production-path baseline below passed on the dates recorded by its linked runs.
-On 2026-09-17, the current branch additionally passed 137 unit/integration tests through
-`pnpm check`, with four environment-dependent tests skipped in that command. The complete database
-suite then passed all 10 tests against a fresh PostgreSQL 17 instance, including all migrations,
-forced RLS, institution identity/LTI persistence, and audit retention. Strict TypeScript checks and
-all production builds also passed. Earlier on this branch, the release-ledger validator,
+On 2026-09-17, the current branch additionally passed 155 unit/integration tests through
+`pnpm check`, with five environment-dependent tests skipped in that command. The complete database
+suite then passed all 12 tests against a fresh PostgreSQL 17 instance, including all 12 migrations,
+forced RLS, interaction sequencing/outbox behavior, immutable private aliases, institution
+identity/LTI persistence, and audit retention. Strict TypeScript checks and all workspace
+production builds also passed. The themed live-round journey passed desktop Chromium, mobile
+Chromium, and mobile WebKit, including immutable published presets, a session override, Pulse,
+chat, pinning, reactions, presenter projection, Q&A, and report completion. Earlier on this branch,
+the release-ledger validator,
 Alertmanager route tests, OpenTelemetry collector validation, and expanded browser matrix passed.
 Thirty native checks passed in desktop Chromium, mobile Chromium, and mobile WebKit; the same ten
 scenarios passed desktop Firefox in the official Playwright Linux image because the local macOS
@@ -59,8 +81,8 @@ contrast, heading, and narrow-screen report-table defects. The pull request and 
 must still pass independently. Repository and local-network correctness are not substitutes for
 the external phase evidence above.
 
-- `pnpm check`: formatting, lint, strict type checks, 137 passing unit/integration tests, and
-  production builds for all six workspace packages on the current branch. Three PostgreSQL tests
+- `pnpm check`: formatting, lint, strict type checks, 155 passing unit/integration tests, and
+  production builds for all seven workspace packages on the current branch. Four PostgreSQL tests
   and one multi-writer test are intentionally environment-gated in this default command.
 - PostgreSQL integration: one production-like test covering forced RLS, unscoped and
   cross-workspace denial, media isolation/deletion, enriched account export, atomic billing event

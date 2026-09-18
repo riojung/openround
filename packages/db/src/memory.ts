@@ -1,16 +1,25 @@
 import type { EngineAnswer } from "@openround/game-engine";
 import {
+  AudienceStoreError,
   FollowupVersionConflictError,
   PublishedQuizLimitError,
   SessionCodeConflictError,
   SessionVersionConflictError,
 } from "./types.js";
 import type {
+  AudienceEventInput,
+  AudienceMutation,
+  AudienceOutboxRecord,
+  AudienceRestrictionRecord,
   AuditEventRecord,
   AuditInput,
   AnswerLookup,
   AuthoringJobRecord,
   BillingEventInput,
+  ChatMessageListOptions,
+  ChatMessageRecord,
+  ChatReactionRecord,
+  ChatReactionSummaryRecord,
   CreatorContext,
   FolderRecord,
   FollowupAccessRecord,
@@ -20,6 +29,7 @@ import type {
   FederatedAuthTransactionRecord,
   ExternalIdentityRecord,
   InstitutionPolicyRecord,
+  InteractionSettingsRecord,
   LtiLaunchRecord,
   LtiLoginTransactionRecord,
   LtiRegistrationRecord,
@@ -29,6 +39,7 @@ import type {
   OperationalFeaturesRecord,
   OperationalFeaturesUpdate,
   ParticipantRecord,
+  ParticipantSignalRecord,
   Plan,
   QnaQuestionRecord,
   QnaReplyRecord,
@@ -95,6 +106,22 @@ export class MemoryRepository implements Repository {
   readonly qnaReplies = new Map<string, QnaReplyRecord>();
   readonly qnaVotes = new Set<string>();
   readonly qnaBans = new Set<string>();
+  readonly interactionSettings = new Map<string, InteractionSettingsRecord>();
+  readonly participantSignals = new Map<string, ParticipantSignalRecord>();
+  readonly signalEvents: Array<{
+    workspaceId: string;
+    sessionId: string;
+    participantId: string;
+    contextKey: string;
+    signal: ParticipantSignalRecord["signal"] | null;
+    idempotencyKey: string;
+    createdAt: Date;
+  }> = [];
+  readonly chatMessages = new Map<string, ChatMessageRecord>();
+  readonly chatReactions = new Map<string, ChatReactionRecord>();
+  readonly chatReports = new Set<string>();
+  readonly audienceRestrictions = new Map<string, AudienceRestrictionRecord>();
+  readonly audienceOutbox = new Map<string, AudienceOutboxRecord>();
   readonly mediaAssets = new Map<string, MediaAssetRecord>();
   readonly answers = new Map<string, EngineAnswer>();
   readonly reports = new Map<string, Report>();
@@ -122,6 +149,9 @@ export class MemoryRepository implements Repository {
     signups: true,
     sessionCreation: true,
     mediaUploads: true,
+    roundExperiences: true,
+    audiencePulse: true,
+    roomChat: true,
     updatedAt: null,
   };
 
@@ -886,6 +916,18 @@ export class MemoryRepository implements Repository {
     );
     if (conflict) throw new SessionCodeConflictError(input.state.code);
     this.sessions.set(input.id, structuredClone(input));
+    this.interactionSettings.set(input.id, {
+      workspaceId: input.workspaceId,
+      sessionId: input.id,
+      signalsEnabled: true,
+      chatEnabled: false,
+      chatIdentityMode: "alias_public",
+      slowModeSeconds: 5,
+      presenterFeedMode: "pinned",
+      audienceSeq: 0,
+      closedAt: null,
+      updatedAt: new Date(input.createdAt),
+    });
   }
 
   async getSessionById(sessionId: string) {
@@ -920,6 +962,15 @@ export class MemoryRepository implements Repository {
     const storedSession = structuredClone({ ...input, updatedAt: new Date() });
     const storedReport = report ? structuredClone(report) : undefined;
     this.sessions.set(input.id, storedSession);
+    if (storedSession.state.phase === "finished") {
+      const settings = this.interactionSettings.get(input.id);
+      if (settings) {
+        settings.closedAt ??= new Date();
+        settings.signalsEnabled = false;
+        settings.chatEnabled = false;
+        settings.updatedAt = new Date();
+      }
+    }
     if (storedReport) {
       const prior = [...this.reports.entries()].find(
         ([, candidate]) => candidate.sessionId === storedReport.sessionId,
@@ -971,6 +1022,32 @@ export class MemoryRepository implements Repository {
     }
     for (const ban of this.qnaBans) {
       if (ban.startsWith(`${sessionId}:`)) this.qnaBans.delete(ban);
+    }
+    this.interactionSettings.delete(sessionId);
+    for (const [key, signal] of this.participantSignals) {
+      if (signal.sessionId === sessionId) this.participantSignals.delete(key);
+    }
+    for (let index = this.signalEvents.length - 1; index >= 0; index -= 1) {
+      if (this.signalEvents[index]?.sessionId === sessionId) this.signalEvents.splice(index, 1);
+    }
+    const chatMessageIds = new Set<string>();
+    for (const [id, message] of this.chatMessages) {
+      if (message.sessionId === sessionId) {
+        chatMessageIds.add(id);
+        this.chatMessages.delete(id);
+      }
+    }
+    for (const [key, reaction] of this.chatReactions) {
+      if (reaction.sessionId === sessionId) this.chatReactions.delete(key);
+    }
+    for (const report of this.chatReports) {
+      if (chatMessageIds.has(report.split(":", 1)[0]!)) this.chatReports.delete(report);
+    }
+    for (const [key, restriction] of this.audienceRestrictions) {
+      if (restriction.sessionId === sessionId) this.audienceRestrictions.delete(key);
+    }
+    for (const [id, event] of this.audienceOutbox) {
+      if (event.sessionId === sessionId) this.audienceOutbox.delete(id);
     }
     for (const key of this.answers.keys()) {
       if (key.startsWith(`${sessionId}:`)) this.answers.delete(key);
@@ -1208,6 +1285,604 @@ export class MemoryRepository implements Repository {
     this.qnaBans.add(`${sessionId}:${participantId}`);
   }
 
+  private findAudienceEvent(sessionId: string, idempotencyKey: string) {
+    return [...this.audienceOutbox.values()].find(
+      (event) => event.sessionId === sessionId && event.idempotencyKey === idempotencyKey,
+    );
+  }
+
+  private requireOpenInteractionSettings(workspaceId: string, sessionId: string) {
+    const settings = this.interactionSettings.get(sessionId);
+    if (!settings || settings.workspaceId !== workspaceId) {
+      throw new AudienceStoreError("NOT_FOUND", "Audience interaction settings were not found");
+    }
+    if (settings.closedAt) {
+      throw new AudienceStoreError(
+        "CONFLICT",
+        "Audience interactions are closed because this live round has finished",
+      );
+    }
+    return settings;
+  }
+
+  private allocateAudienceEvent(
+    workspaceId: string,
+    sessionId: string,
+    input: AudienceEventInput,
+    createdAt: Date,
+  ) {
+    const settings = this.requireOpenInteractionSettings(workspaceId, sessionId);
+    settings.audienceSeq += 1;
+    settings.updatedAt = createdAt;
+    const event: AudienceOutboxRecord = {
+      eventId: input.eventId,
+      workspaceId,
+      sessionId,
+      audienceSeq: settings.audienceSeq,
+      type: input.type,
+      idempotencyKey: input.idempotencyKey,
+      payload: structuredClone(input.payload),
+      attempts: 0,
+      claimedAt: null,
+      deliveredAt: null,
+      createdAt,
+    };
+    this.audienceOutbox.set(event.eventId, structuredClone(event));
+    return event;
+  }
+
+  async getInteractionSettings(workspaceId: string, sessionId: string) {
+    const settings = this.interactionSettings.get(sessionId);
+    return settings?.workspaceId === workspaceId ? structuredClone(settings) : null;
+  }
+
+  async appendAudienceEvent(
+    workspaceId: string,
+    sessionId: string,
+    eventInput: AudienceEventInput,
+    createdAt: Date,
+  ): Promise<AudienceMutation<null>> {
+    const existing = this.findAudienceEvent(sessionId, eventInput.idempotencyKey);
+    if (existing) {
+      return { record: null, event: structuredClone(existing), duplicate: true };
+    }
+    const event = this.allocateAudienceEvent(workspaceId, sessionId, eventInput, createdAt);
+    return { record: null, event: structuredClone(event), duplicate: false };
+  }
+
+  async saveInteractionSettings(
+    input: Omit<InteractionSettingsRecord, "audienceSeq" | "closedAt">,
+    eventInput: AudienceEventInput,
+  ): Promise<AudienceMutation<InteractionSettingsRecord>> {
+    const existingEvent = this.findAudienceEvent(input.sessionId, eventInput.idempotencyKey);
+    const existing = this.interactionSettings.get(input.sessionId);
+    const session = this.sessions.get(input.sessionId);
+    if (!session || session.workspaceId !== input.workspaceId) {
+      throw new AudienceStoreError("NOT_FOUND", "Live round not found");
+    }
+    if (session.state.phase === "finished" || existing?.closedAt) {
+      throw new AudienceStoreError(
+        "CONFLICT",
+        "Audience interactions are closed because this live round has finished",
+      );
+    }
+    if (existingEvent && existing) {
+      return {
+        record: structuredClone(existing),
+        event: structuredClone(existingEvent),
+        duplicate: true,
+      };
+    }
+    const base: InteractionSettingsRecord = {
+      ...structuredClone(input),
+      audienceSeq: existing?.audienceSeq ?? 0,
+      closedAt: null,
+    };
+    this.interactionSettings.set(input.sessionId, base);
+    const event = this.allocateAudienceEvent(
+      input.workspaceId,
+      input.sessionId,
+      eventInput,
+      input.updatedAt,
+    );
+    const saved = this.interactionSettings.get(input.sessionId)!;
+    return { record: structuredClone(saved), event: structuredClone(event), duplicate: false };
+  }
+
+  async listParticipantSignals(workspaceId: string, sessionId: string, contextKey: string) {
+    return [...this.participantSignals.values()]
+      .filter(
+        (signal) =>
+          signal.workspaceId === workspaceId &&
+          signal.sessionId === sessionId &&
+          signal.contextKey === contextKey,
+      )
+      .map((signal) => structuredClone(signal));
+  }
+
+  async countRecentSignalEvents(workspaceId: string, sessionId: string, since: Date) {
+    return this.signalEvents.filter(
+      (event) =>
+        event.workspaceId === workspaceId &&
+        event.sessionId === sessionId &&
+        event.createdAt >= since,
+    ).length;
+  }
+
+  async setParticipantSignal(
+    input: {
+      workspaceId: string;
+      sessionId: string;
+      contextKey: string;
+      participantId: string;
+      signal: ParticipantSignalRecord["signal"] | null;
+      now: Date;
+    },
+    eventInput: AudienceEventInput,
+  ): Promise<AudienceMutation<ParticipantSignalRecord | null>> {
+    this.requireOpenInteractionSettings(input.workspaceId, input.sessionId);
+    const key = `${input.sessionId}:${input.contextKey}:${input.participantId}`;
+    const existingEvent = this.findAudienceEvent(input.sessionId, eventInput.idempotencyKey);
+    if (existingEvent) {
+      return {
+        record: structuredClone(this.participantSignals.get(key) ?? null),
+        event: structuredClone(existingEvent),
+        duplicate: true,
+      };
+    }
+    const recentSignals = this.signalEvents.filter(
+      (candidate) =>
+        candidate.sessionId === input.sessionId &&
+        candidate.participantId === input.participantId &&
+        input.now.getTime() - candidate.createdAt.getTime() < 60_000,
+    );
+    if (recentSignals.length >= 30) {
+      throw new AudienceStoreError(
+        "SIGNAL_RATE_LIMITED",
+        "Too many pulse changes; wait before trying again",
+      );
+    }
+    const record = input.signal
+      ? {
+          workspaceId: input.workspaceId,
+          sessionId: input.sessionId,
+          contextKey: input.contextKey,
+          participantId: input.participantId,
+          signal: input.signal,
+          updatedAt: input.now,
+        }
+      : null;
+    if (record) this.participantSignals.set(key, structuredClone(record));
+    else this.participantSignals.delete(key);
+    this.signalEvents.push({
+      workspaceId: input.workspaceId,
+      sessionId: input.sessionId,
+      participantId: input.participantId,
+      contextKey: input.contextKey,
+      signal: input.signal,
+      idempotencyKey: eventInput.idempotencyKey,
+      createdAt: input.now,
+    });
+    const event = this.allocateAudienceEvent(
+      input.workspaceId,
+      input.sessionId,
+      eventInput,
+      input.now,
+    );
+    return {
+      record: structuredClone(record),
+      event: structuredClone(event),
+      duplicate: false,
+    };
+  }
+
+  async getChatMessage(workspaceId: string, messageId: string) {
+    const message = this.chatMessages.get(messageId);
+    return message?.workspaceId === workspaceId ? structuredClone(message) : null;
+  }
+
+  async listChatMessages(
+    workspaceId: string,
+    sessionId: string,
+    options: ChatMessageListOptions = {},
+  ) {
+    const messages = [...this.chatMessages.values()]
+      .filter((message) => message.workspaceId === workspaceId && message.sessionId === sessionId)
+      .filter((message) => !options.pinnedOnly || message.pinned)
+      .filter(
+        (message) =>
+          !options.cursor ||
+          message.createdAt < options.cursor.createdAt ||
+          (message.createdAt.getTime() === options.cursor.createdAt.getTime() &&
+            message.id.localeCompare(options.cursor.id) < 0),
+      )
+      .sort(
+        (left, right) =>
+          right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id),
+      );
+    return messages
+      .slice(0, options.limit ?? messages.length)
+      .map((message) => structuredClone(message));
+  }
+
+  async createChatMessage(
+    input: Omit<ChatMessageRecord, "audienceSeq">,
+    eventInput: AudienceEventInput,
+  ): Promise<AudienceMutation<ChatMessageRecord>> {
+    this.requireOpenInteractionSettings(input.workspaceId, input.sessionId);
+    const existingEvent = this.findAudienceEvent(input.sessionId, eventInput.idempotencyKey);
+    const existingMessage = [...this.chatMessages.values()].find(
+      (message) =>
+        message.sessionId === input.sessionId &&
+        message.idempotencyKey === eventInput.idempotencyKey,
+    );
+    if (existingEvent && existingMessage) {
+      return {
+        record: structuredClone(existingMessage),
+        event: structuredClone(existingEvent),
+        duplicate: true,
+      };
+    }
+    const settings = this.interactionSettings.get(input.sessionId);
+    if (!settings?.chatEnabled) {
+      throw new AudienceStoreError("CHAT_DISABLED", "Chat is disabled for this live round");
+    }
+    if (input.replyToId) {
+      const parent = this.chatMessages.get(input.replyToId);
+      if (!parent || parent.sessionId !== input.sessionId || parent.status === "removed") {
+        throw new AudienceStoreError(
+          "NOT_FOUND",
+          "The chat message being replied to was not found",
+        );
+      }
+      if (parent.replyToId) {
+        throw new AudienceStoreError("CONFLICT", "Chat supports one level of replies");
+      }
+    }
+    const sessionMessages = [...this.chatMessages.values()].filter(
+      (message) => message.sessionId === input.sessionId,
+    );
+    if (sessionMessages.length >= 10_000) {
+      throw new AudienceStoreError(
+        "CHAT_CAPACITY_REACHED",
+        "This round has reached its chat message limit",
+      );
+    }
+    if (input.participantId) {
+      const restriction = this.audienceRestrictions.get(
+        `${input.sessionId}:${input.participantId}`,
+      );
+      if (restriction?.bannedAt) {
+        throw new AudienceStoreError("AUDIENCE_BANNED", "Audience interaction access was revoked");
+      }
+      if (restriction?.mutedUntil && restriction.mutedUntil > input.createdAt) {
+        throw new AudienceStoreError(
+          "CHAT_MUTED",
+          "Chat is temporarily muted for this participant",
+        );
+      }
+      const mine = sessionMessages.filter(
+        (message) => message.participantId === input.participantId,
+      );
+      if (mine.length >= 200) {
+        throw new AudienceStoreError(
+          "CHAT_CAPACITY_REACHED",
+          "This participant has reached the session chat limit",
+        );
+      }
+      const minuteCount = mine.filter(
+        (message) => input.createdAt.getTime() - message.createdAt.getTime() < 60_000,
+      ).length;
+      if (minuteCount >= 12) {
+        throw new AudienceStoreError(
+          "CHAT_RATE_LIMITED",
+          "Too many messages; wait before posting again",
+        );
+      }
+      const latest = mine.sort(
+        (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
+      )[0];
+      if (
+        latest &&
+        input.createdAt.getTime() - latest.createdAt.getTime() < settings.slowModeSeconds * 1_000
+      ) {
+        throw new AudienceStoreError(
+          "CHAT_RATE_LIMITED",
+          `Slow mode allows one message every ${settings.slowModeSeconds} seconds`,
+        );
+      }
+    }
+    const event = this.allocateAudienceEvent(
+      input.workspaceId,
+      input.sessionId,
+      eventInput,
+      input.createdAt,
+    );
+    const message = { ...structuredClone(input), audienceSeq: event.audienceSeq };
+    this.chatMessages.set(message.id, message);
+    return { record: structuredClone(message), event: structuredClone(event), duplicate: false };
+  }
+
+  async updateChatMessage(
+    workspaceId: string,
+    sessionId: string,
+    messageId: string,
+    update: { status?: ChatMessageRecord["status"]; pinned?: boolean },
+    eventInput: AudienceEventInput,
+    updatedAt: Date,
+  ): Promise<AudienceMutation<ChatMessageRecord>> {
+    this.requireOpenInteractionSettings(workspaceId, sessionId);
+    const existingEvent = this.findAudienceEvent(sessionId, eventInput.idempotencyKey);
+    const message = this.chatMessages.get(messageId);
+    if (!message || message.workspaceId !== workspaceId || message.sessionId !== sessionId) {
+      throw new AudienceStoreError("NOT_FOUND", "Chat message not found");
+    }
+    if (existingEvent) {
+      return {
+        record: structuredClone(message),
+        event: structuredClone(existingEvent),
+        duplicate: true,
+      };
+    }
+    if (update.status) message.status = update.status;
+    if (update.pinned !== undefined) message.pinned = update.pinned;
+    message.updatedAt = updatedAt;
+    const event = this.allocateAudienceEvent(workspaceId, sessionId, eventInput, updatedAt);
+    message.audienceSeq = event.audienceSeq;
+    return { record: structuredClone(message), event: structuredClone(event), duplicate: false };
+  }
+
+  async listChatReactions(workspaceId: string, sessionId: string, messageIds?: string[]) {
+    const selected = messageIds ? new Set(messageIds) : null;
+    return [...this.chatReactions.values()]
+      .filter(
+        (reaction) => reaction.workspaceId === workspaceId && reaction.sessionId === sessionId,
+      )
+      .filter((reaction) => !selected || selected.has(reaction.messageId))
+      .map((reaction) => structuredClone(reaction));
+  }
+
+  async getChatActivitySummary(workspaceId: string, sessionId: string, since: Date) {
+    const messages = [...this.chatMessages.values()].filter(
+      (message) => message.workspaceId === workspaceId && message.sessionId === sessionId,
+    );
+    const contributorKeys = messages
+      .filter((message) => message.status === "published")
+      .map(
+        (message) =>
+          message.participantId ??
+          (message.actorId ? `actor:${message.actorId}` : `staff:${message.staffCredentialId}`),
+      );
+    return {
+      messagesLastMinute: messages.filter(
+        (message) => message.status === "published" && message.createdAt >= since,
+      ).length,
+      uniqueContributors: new Set(contributorKeys).size,
+      removedMessages: messages.filter((message) => message.status === "removed").length,
+      reportCount: await this.countChatReports(workspaceId, sessionId),
+    };
+  }
+
+  async listParticipantChatActivity(workspaceId: string, sessionId: string) {
+    const activity = new Map<
+      string,
+      { participantId: string; messageCount: number; latestMessageAt: Date | null }
+    >();
+    for (const message of this.chatMessages.values()) {
+      if (
+        message.workspaceId !== workspaceId ||
+        message.sessionId !== sessionId ||
+        !message.participantId
+      )
+        continue;
+      const current = activity.get(message.participantId) ?? {
+        participantId: message.participantId,
+        messageCount: 0,
+        latestMessageAt: null,
+      };
+      current.messageCount += 1;
+      if (!current.latestMessageAt || message.createdAt > current.latestMessageAt) {
+        current.latestMessageAt = new Date(message.createdAt);
+      }
+      activity.set(message.participantId, current);
+    }
+    return [...activity.values()].map((record) => structuredClone(record));
+  }
+
+  private chatReactionSummary(messageId: string, participantId: string) {
+    const records = [...this.chatReactions.values()].filter(
+      (reaction) => reaction.messageId === messageId,
+    );
+    const counts: ChatReactionSummaryRecord["counts"] = {};
+    for (const record of records) counts[record.reaction] = (counts[record.reaction] ?? 0) + 1;
+    return {
+      messageId,
+      counts,
+      viewerReaction:
+        records.find((record) => record.participantId === participantId)?.reaction ?? null,
+    };
+  }
+
+  async setChatReaction(
+    input: {
+      workspaceId: string;
+      sessionId: string;
+      messageId: string;
+      participantId: string;
+      reaction: ChatReactionRecord["reaction"] | null;
+      now: Date;
+    },
+    eventInput: AudienceEventInput,
+  ): Promise<AudienceMutation<ChatReactionSummaryRecord>> {
+    this.requireOpenInteractionSettings(input.workspaceId, input.sessionId);
+    const existingEvent = this.findAudienceEvent(input.sessionId, eventInput.idempotencyKey);
+    if (existingEvent) {
+      return {
+        record: this.chatReactionSummary(input.messageId, input.participantId),
+        event: structuredClone(existingEvent),
+        duplicate: true,
+      };
+    }
+    const message = this.chatMessages.get(input.messageId);
+    if (!message || message.sessionId !== input.sessionId) {
+      throw new AudienceStoreError("NOT_FOUND", "Chat message not found");
+    }
+    if (message.status === "removed") {
+      throw new AudienceStoreError("MESSAGE_REMOVED", "Removed messages cannot receive reactions");
+    }
+    const key = `${input.messageId}:${input.participantId}`;
+    if (input.reaction) {
+      this.chatReactions.set(key, {
+        workspaceId: input.workspaceId,
+        sessionId: input.sessionId,
+        messageId: input.messageId,
+        participantId: input.participantId,
+        reaction: input.reaction,
+        updatedAt: input.now,
+      });
+    } else this.chatReactions.delete(key);
+    const event = this.allocateAudienceEvent(
+      input.workspaceId,
+      input.sessionId,
+      eventInput,
+      input.now,
+    );
+    return {
+      record: this.chatReactionSummary(input.messageId, input.participantId),
+      event: structuredClone(event),
+      duplicate: false,
+    };
+  }
+
+  async reportChatMessage(
+    workspaceId: string,
+    sessionId: string,
+    messageId: string,
+    participantId: string,
+    now: Date,
+    eventInput: AudienceEventInput,
+  ): Promise<AudienceMutation<number>> {
+    this.requireOpenInteractionSettings(workspaceId, sessionId);
+    const existingEvent = this.findAudienceEvent(sessionId, eventInput.idempotencyKey);
+    const prefix = `${messageId}:`;
+    if (existingEvent) {
+      return {
+        record: [...this.chatReports].filter((key) => key.startsWith(prefix)).length,
+        event: structuredClone(existingEvent),
+        duplicate: true,
+      };
+    }
+    const message = this.chatMessages.get(messageId);
+    if (!message || message.workspaceId !== workspaceId || message.sessionId !== sessionId) {
+      throw new AudienceStoreError("NOT_FOUND", "Chat message not found");
+    }
+    this.chatReports.add(`${messageId}:${participantId}`);
+    const event = this.allocateAudienceEvent(workspaceId, sessionId, eventInput, now);
+    return {
+      record: [...this.chatReports].filter((key) => key.startsWith(prefix)).length,
+      event: structuredClone(event),
+      duplicate: false,
+    };
+  }
+
+  async countChatReports(workspaceId: string, sessionId: string) {
+    const messageIds = new Set(
+      [...this.chatMessages.values()]
+        .filter((message) => message.workspaceId === workspaceId && message.sessionId === sessionId)
+        .map((message) => message.id),
+    );
+    return [...this.chatReports].filter((key) => messageIds.has(key.split(":", 1)[0]!)).length;
+  }
+
+  async getAudienceRestriction(workspaceId: string, sessionId: string, participantId: string) {
+    const restriction = this.audienceRestrictions.get(`${sessionId}:${participantId}`);
+    return restriction?.workspaceId === workspaceId ? structuredClone(restriction) : null;
+  }
+
+  async listAudienceRestrictions(workspaceId: string, sessionId: string) {
+    return [...this.audienceRestrictions.values()]
+      .filter(
+        (restriction) =>
+          restriction.workspaceId === workspaceId && restriction.sessionId === sessionId,
+      )
+      .map((restriction) => structuredClone(restriction));
+  }
+
+  async saveAudienceRestriction(
+    input: AudienceRestrictionRecord,
+    eventInput: AudienceEventInput,
+  ): Promise<AudienceMutation<AudienceRestrictionRecord>> {
+    this.requireOpenInteractionSettings(input.workspaceId, input.sessionId);
+    const existingEvent = this.findAudienceEvent(input.sessionId, eventInput.idempotencyKey);
+    const key = `${input.sessionId}:${input.participantId}`;
+    const existing = this.audienceRestrictions.get(key);
+    if (existingEvent && existing) {
+      return {
+        record: structuredClone(existing),
+        event: structuredClone(existingEvent),
+        duplicate: true,
+      };
+    }
+    this.audienceRestrictions.set(key, structuredClone(input));
+    const qnaBanKey = `${input.sessionId}:${input.participantId}`;
+    if (input.bannedAt) this.qnaBans.add(qnaBanKey);
+    else this.qnaBans.delete(qnaBanKey);
+    const event = this.allocateAudienceEvent(
+      input.workspaceId,
+      input.sessionId,
+      eventInput,
+      input.updatedAt,
+    );
+    return { record: structuredClone(input), event: structuredClone(event), duplicate: false };
+  }
+
+  async claimAudienceOutbox(now: Date, staleBefore: Date) {
+    const event = [...this.audienceOutbox.values()]
+      .filter(
+        (candidate) =>
+          !candidate.deliveredAt &&
+          (!candidate.claimedAt || candidate.claimedAt.getTime() < staleBefore.getTime()),
+      )
+      .sort(
+        (left, right) =>
+          left.createdAt.getTime() - right.createdAt.getTime() ||
+          left.eventId.localeCompare(right.eventId),
+      )[0];
+    if (!event) return null;
+    event.claimedAt = now;
+    event.attempts += 1;
+    return structuredClone(event);
+  }
+
+  async completeAudienceOutbox(eventId: string, deliveredAt: Date) {
+    const event = this.audienceOutbox.get(eventId);
+    if (!event) return false;
+    event.deliveredAt = deliveredAt;
+    event.claimedAt = null;
+    return true;
+  }
+
+  async getAudienceOutboxStatus() {
+    const pending = [...this.audienceOutbox.values()]
+      .filter((event) => !event.deliveredAt)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    const now = new Date();
+    const chatEnabledSessions = [...this.interactionSettings.values()].filter((settings) => {
+      const session = this.sessions.get(settings.sessionId);
+      return Boolean(
+        settings.chatEnabled &&
+        session &&
+        session.state.phase !== "finished" &&
+        session.expiresAt > now,
+      );
+    }).length;
+    return {
+      pending: pending.length,
+      oldestCreatedAt: pending[0]?.createdAt ?? null,
+      chatEnabledSessions,
+    };
+  }
+
   async getSessionEvidence(workspaceId: string, sessionId: string) {
     const session = this.sessions.get(sessionId);
     if (!session || session.workspaceId !== workspaceId) {
@@ -1216,6 +1891,13 @@ export class MemoryRepository implements Repository {
         rounds: [],
         interventions: [],
         qna: { questions: 0, answered: 0, unresolved: 0 },
+        interactions: {
+          signalEvents: [],
+          chatMessages: [],
+          reactions: [],
+          reports: 0,
+          moderationActions: 0,
+        },
       };
     }
     const qnaQuestions = [...this.qnaQuestions.values()].filter(
@@ -1237,6 +1919,33 @@ export class MemoryRepository implements Repository {
         answered: qnaQuestions.filter((question) => question.status === "answered").length,
         unresolved: qnaQuestions.filter((question) =>
           ["pending", "published"].includes(question.status),
+        ).length,
+      },
+      interactions: {
+        signalEvents: this.signalEvents
+          .filter((event) => event.workspaceId === workspaceId && event.sessionId === sessionId)
+          .map((event) => ({
+            contextKey: event.contextKey,
+            participantId: event.participantId,
+            signal: event.signal,
+            createdAt: new Date(event.createdAt),
+          })),
+        chatMessages: [...this.chatMessages.values()]
+          .filter(
+            (message) => message.workspaceId === workspaceId && message.sessionId === sessionId,
+          )
+          .map((message) => structuredClone(message)),
+        reactions: [...this.chatReactions.values()]
+          .filter(
+            (reaction) => reaction.workspaceId === workspaceId && reaction.sessionId === sessionId,
+          )
+          .map((reaction) => structuredClone(reaction)),
+        reports: await this.countChatReports(workspaceId, sessionId),
+        moderationActions: [...this.audienceOutbox.values()].filter(
+          (event) =>
+            event.workspaceId === workspaceId &&
+            event.sessionId === sessionId &&
+            (event.type === "audience.moderation.updated" || event.type === "chat.message.removed"),
         ).length,
       },
     };
@@ -1796,6 +2505,35 @@ export class MemoryRepository implements Repository {
         .filter(([key]) => sessionIds.has(key.split(":", 1)[0]!))
         .map(([, answer]) => structuredClone(answer)),
       reports: [...this.reports.values()].filter((report) => sessionIds.has(report.sessionId)),
+      interactionSettings: [...this.interactionSettings.values()].filter((settings) =>
+        sessionIds.has(settings.sessionId),
+      ),
+      participantSignals: [...this.participantSignals.values()].filter((signal) =>
+        sessionIds.has(signal.sessionId),
+      ),
+      signalEvents: this.signalEvents.filter((event) => sessionIds.has(event.sessionId)),
+      chatMessages: [...this.chatMessages.values()].filter((message) =>
+        sessionIds.has(message.sessionId),
+      ),
+      chatReactions: [...this.chatReactions.values()].filter((reaction) =>
+        sessionIds.has(reaction.sessionId),
+      ),
+      chatReports: [...this.chatReports]
+        .map((report) => {
+          const separator = report.indexOf(":");
+          return {
+            messageId: report.slice(0, separator),
+            participantId: report.slice(separator + 1),
+          };
+        })
+        .filter((report) =>
+          [...this.chatMessages.values()].some(
+            (message) => message.id === report.messageId && sessionIds.has(message.sessionId),
+          ),
+        ),
+      audienceRestrictions: [...this.audienceRestrictions.values()].filter((restriction) =>
+        sessionIds.has(restriction.sessionId),
+      ),
       followups: [...this.followups.values()]
         .filter((followup) => ownedWorkspaceIds.has(followup.workspaceId))
         .map(({ genericTokenHash: _genericTokenHash, ...followup }) => structuredClone(followup)),

@@ -11,6 +11,7 @@ const summary = {
   persistence: config.DATABASE_URL ? "postgresql" : "memory",
   coordination: config.REDIS_URL ? "redis-streams" : "process-local",
   email: config.SMTP_URL ? "smtp" : "disabled",
+  developmentEmailInbox: config.DEVELOPMENT_EMAIL_INBOX_URL ? "configured" : "disabled",
   billing: config.BILLING_MODE,
   media: config.S3_ENDPOINT ? config.MEDIA_SCAN_MODE : "disabled",
   metrics: config.METRICS_ENABLED
@@ -24,7 +25,11 @@ const summary = {
     signups: config.FEATURE_SIGNUPS,
     sessionCreation: config.FEATURE_SESSION_CREATION,
     mediaUploads: config.FEATURE_MEDIA_UPLOADS,
+    roundExperiences: config.FEATURE_ROUND_EXPERIENCES,
+    audiencePulse: config.FEATURE_AUDIENCE_PULSE,
+    roomChat: config.FEATURE_ROOM_CHAT,
   },
+  themedInteractionsWorkspaceAllowlistSize: config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST.length,
 };
 
 process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);

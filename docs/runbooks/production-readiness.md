@@ -54,8 +54,8 @@
   contract requirements are met. Complete independent interop/certification, DPA, residency,
   identity threat-model, and counsel review before an institution pilot.
 - `/metrics` is reachable only from the monitoring network, an OTLP collector is configured when
-  tracing is enabled, alert thresholds have owners, and signup/session/media kill switches are
-  rehearsed without interrupting an active game.
+  tracing is enabled, alert thresholds have owners, and signup/session/media/experience/Pulse/chat
+  kill switches are rehearsed without interrupting an active game.
 - Status page, security contact, privacy contact, support rota, incident commander, and escalation contacts are live.
 
 ## Release evidence
@@ -68,6 +68,13 @@
 - Chromium, WebKit, Firefox, mobile Safari, and mobile Chrome critical flows pass.
 - Recovery interventions/rechecks, cohosting, Q&A moderation, hostile portability imports,
   secure embed, follow-up expiry/revocation/accommodations, and source-authoring review paths pass.
+- All six Round Experience presets pass contrast, keyboard, screen-reader, reduced-motion, 200%
+  zoom, phone, projector, and visual-regression checks. Presenter sound begins muted and every cue
+  has an equivalent visual state.
+- Audience Pulse/chat are independently feature-flagged. A two-process rehearsal proves
+  monotonic audience sequence allocation, outbox retry/deduplication, sub-two-second sync, no
+  private-alias leakage, public five-signaler suppression, distributed limits, moderation, and
+  deletion/export completeness. Complete the [moderation rehearsal](audience-moderation.md).
 - For an institution candidate, creator OIDC link/login/revoke and LTI instructor first-link,
   repeat launch, Deep Linking, idempotent response, state replay, and audit export pass against the
   named provider/LMS; retain platform/version and result evidence. Repository tests do not replace

@@ -11,6 +11,7 @@ import type {
 } from "@openround/db";
 import { cleanPlainText, hashToken, safeHashEqual } from "./security.js";
 import type { SessionService } from "./session-service.js";
+import type { InteractionService } from "./interaction-service.js";
 
 type QnaQuestionStatus = QnaQuestionRecord["status"];
 type QnaReplyStatus = QnaReplyRecord["status"];
@@ -80,7 +81,22 @@ export class QnaService {
   constructor(
     private readonly repository: Repository,
     private readonly sessions: SessionService,
+    private readonly interactions: InteractionService,
   ) {}
+
+  private async publishRealtime(
+    session: StoredSession,
+    type: `qna.${string}`,
+    payload: Record<string, unknown>,
+  ) {
+    await this.interactions.publishCompatibilityEvent(
+      session,
+      type,
+      payload,
+      `qna-compatibility:${randomUUID()}`,
+    );
+    await this.sessions.publishAuxiliary({ sessionId: session.id, type, payload });
+  }
 
   private consumeRateLimit(key: string, maximum: number) {
     const now = Date.now();
@@ -121,6 +137,19 @@ export class QnaService {
 
   private canModerate(actor: QnaActor): actor is StaffActor {
     return actor.kind === "staff" && (actor.rootHost || actor.credential?.role === "cohost");
+  }
+
+  private async ensureOpen(session: StoredSession) {
+    const [current, interactionSettings] = await Promise.all([
+      this.repository.getSessionById(session.id),
+      this.repository.getInteractionSettings(session.workspaceId, session.id),
+    ]);
+    if (!current || current.workspaceId !== session.workspaceId) {
+      throw new QnaError("NOT_FOUND", "Live round not found");
+    }
+    if (current.state.phase === "finished" || interactionSettings?.closedAt) {
+      throw new QnaError("QNA_DISABLED", "Q&A is closed because this live round has finished");
+    }
   }
 
   private async settingsFor(session: StoredSession): Promise<QnaSettingsRecord> {
@@ -254,6 +283,7 @@ export class QnaService {
     if (actor.kind !== "participant") {
       throw new QnaError("UNAUTHORIZED", "Only participants can submit audience questions");
     }
+    await this.ensureOpen(actor.session);
     const settings = await this.settingsFor(actor.session);
     if (!settings.enabled) throw new QnaError("QNA_DISABLED", "Q&A is disabled for this round");
     if (
@@ -279,16 +309,15 @@ export class QnaService {
       createdAt: now,
       updatedAt: now,
     });
-    await this.sessions.publishAuxiliary({
-      sessionId,
-      type: "qna.question.created",
-      payload: { questionId: created.id },
+    await this.publishRealtime(actor.session, "qna.question.created", {
+      questionId: created.id,
     });
     return this.questionView(created, actor, settings);
   }
 
   async createReply(sessionId: string, questionId: string, token: string, body: string) {
     const actor = await this.authenticate(sessionId, token);
+    await this.ensureOpen(actor.session);
     const settings = await this.settingsFor(actor.session);
     if (!settings.enabled) throw new QnaError("QNA_DISABLED", "Q&A is disabled for this round");
     const question = await this.repository.getQnaQuestion(actor.session.workspaceId, questionId);
@@ -357,10 +386,9 @@ export class QnaService {
         metadata: actor.credential ? { staffCredentialId: actor.credential.id } : {},
       });
     }
-    await this.sessions.publishAuxiliary({
-      sessionId,
-      type: "qna.reply.created",
-      payload: { questionId, replyId: reply.id },
+    await this.publishRealtime(actor.session, "qna.reply.created", {
+      questionId,
+      replyId: reply.id,
     });
     return this.replyView(reply, actor, settings);
   }
@@ -370,6 +398,7 @@ export class QnaService {
     if (actor.kind !== "participant") {
       throw new QnaError("UNAUTHORIZED", "Only participants can vote on questions");
     }
+    await this.ensureOpen(actor.session);
     const settings = await this.settingsFor(actor.session);
     if (!settings.enabled) throw new QnaError("QNA_DISABLED", "Q&A is disabled for this round");
     const question = await this.repository.getQnaQuestion(actor.session.workspaceId, questionId);
@@ -392,11 +421,7 @@ export class QnaService {
       actor.participant.id,
       voted,
     );
-    await this.sessions.publishAuxiliary({
-      sessionId,
-      type: "qna.vote.updated",
-      payload: { questionId, voteCount },
-    });
+    await this.publishRealtime(actor.session, "qna.vote.updated", { questionId, voteCount });
     return { questionId, voteCount, voted };
   }
 
@@ -410,6 +435,7 @@ export class QnaService {
     if (!this.canModerate(actor)) {
       throw new QnaError("UNAUTHORIZED", "Only a host or cohost can change Q&A settings");
     }
+    await this.ensureOpen(actor.session);
     const current = await this.settingsFor(actor.session);
     const saved = await this.repository.saveQnaSettings({
       ...current,
@@ -425,11 +451,7 @@ export class QnaService {
       requestId,
       metadata: actor.credential ? { staffCredentialId: actor.credential.id, update } : { update },
     });
-    await this.sessions.publishAuxiliary({
-      sessionId,
-      type: "qna.settings.updated",
-      payload: {},
-    });
+    await this.publishRealtime(actor.session, "qna.settings.updated", {});
     return saved;
   }
 
@@ -444,6 +466,7 @@ export class QnaService {
     if (!this.canModerate(actor)) {
       throw new QnaError("UNAUTHORIZED", "Only a host or cohost can moderate Q&A");
     }
+    await this.ensureOpen(actor.session);
     const current = await this.repository.getQnaQuestion(actor.session.workspaceId, questionId);
     if (!current || current.sessionId !== sessionId) {
       throw new QnaError("NOT_FOUND", "Q&A question not found");
@@ -473,11 +496,7 @@ export class QnaService {
         ...(actor.credential ? { staffCredentialId: actor.credential.id } : {}),
       },
     });
-    await this.sessions.publishAuxiliary({
-      sessionId,
-      type: "qna.question.updated",
-      payload: { questionId },
-    });
+    await this.publishRealtime(actor.session, "qna.question.updated", { questionId });
     if (!updated) throw new QnaError("NOT_FOUND", "Q&A question not found");
     return this.questionView(updated, actor, await this.settingsFor(actor.session));
   }
@@ -493,6 +512,7 @@ export class QnaService {
     if (!this.canModerate(actor)) {
       throw new QnaError("UNAUTHORIZED", "Only a host or cohost can moderate Q&A");
     }
+    await this.ensureOpen(actor.session);
     const current = await this.repository.getQnaReply(actor.session.workspaceId, replyId);
     if (!current || current.sessionId !== sessionId) {
       throw new QnaError("NOT_FOUND", "Q&A reply not found");
@@ -515,10 +535,9 @@ export class QnaService {
         ...(actor.credential ? { staffCredentialId: actor.credential.id } : {}),
       },
     });
-    await this.sessions.publishAuxiliary({
-      sessionId,
-      type: "qna.reply.updated",
-      payload: { questionId: updated.questionId, replyId },
+    await this.publishRealtime(actor.session, "qna.reply.updated", {
+      questionId: updated.questionId,
+      replyId,
     });
     return this.replyView(updated, actor, await this.settingsFor(actor.session));
   }

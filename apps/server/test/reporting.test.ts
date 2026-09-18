@@ -194,11 +194,43 @@ describe("report CSV", () => {
           },
         ],
         qna: { questions: 2, answered: 1, unresolved: 1 },
+        interactions: {
+          signalEvents: [
+            {
+              contextKey: `round:${sourceRoundId}`,
+              participantId: firstParticipantId,
+              signal: "unsure",
+              createdAt: new Date(1_500),
+            },
+            {
+              contextKey: `round:${sourceRoundId}`,
+              participantId: firstParticipantId,
+              signal: "got_it",
+              createdAt: new Date(2_500),
+            },
+            {
+              contextKey: `round:${sourceRoundId}`,
+              participantId: secondParticipantId,
+              signal: "need_example",
+              createdAt: new Date(2_600),
+            },
+            {
+              contextKey: `round:${sourceRoundId}`,
+              participantId: secondParticipantId,
+              signal: null,
+              createdAt: new Date(2_700),
+            },
+          ],
+          chatMessages: [],
+          reactions: [],
+          reports: 0,
+          moderationActions: 0,
+        },
       },
     });
 
     expect(generated).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       status: "ready",
       metrics: { participantCount: 2, completedCount: 2, answerCount: 3 },
       initialAccuracy: { correct: 1, responses: 2, percent: 50 },
@@ -223,6 +255,18 @@ describe("report CSV", () => {
         { conceptKey: "safe-work", initiallyIncorrect: 1, recovered: 1, unresolved: 0 },
       ],
       qna: { questions: 2, answered: 1, unresolved: 1 },
+      audiencePulse: {
+        uniqueParticipants: 2,
+        events: 4,
+        bySignal: { got_it: 1, unsure: 0, need_example: 0, too_fast: 0 },
+        contexts: [
+          {
+            contextKey: `round:${sourceRoundId}`,
+            uniqueParticipants: 2,
+            bySignal: { got_it: 1, unsure: 0, need_example: 0, too_fast: 0 },
+          },
+        ],
+      },
     });
     expect(generated.evidenceNote).toContain("not be interpreted as proof");
   });

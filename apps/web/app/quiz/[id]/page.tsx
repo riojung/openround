@@ -6,11 +6,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ChoiceDraft,
   Entitlements,
+  ExperiencePresetId,
   QuestionDraft,
   QuestionType,
   QuizDraft,
+  RoundCategory,
 } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
+import { ExperiencePicker } from "../../../components/experience-picker";
 import { apiFetch, humanError } from "../../../lib/api";
 import { clientUuid } from "../../../lib/uuid";
 
@@ -198,6 +201,7 @@ export default function QuizEditorPage() {
   const [selected, setSelected] = useState(0);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [mediaUploadsEnabled, setMediaUploadsEnabled] = useState(false);
+  const [roundExperiencesAvailable, setRoundExperiencesAvailable] = useState(false);
   const [mediaState, setMediaState] = useState<"idle" | "uploading" | "scanning">("idle");
   const [mediaPreviewUrl, setMediaPreviewUrl] = useState("");
   const [error, setError] = useState("");
@@ -236,7 +240,10 @@ export default function QuizEditorPage() {
     let active = true;
     Promise.all([
       apiFetch<{ quiz: QuizRecord }>(`/v1/quizzes/${id}`),
-      apiFetch<{ entitlements: Entitlements }>("/v1/auth/me"),
+      apiFetch<{
+        entitlements: Entitlements;
+        productFeatures: { roundExperiences: boolean };
+      }>("/v1/auth/me"),
       apiFetch<{ quizzes: QuizRecord[] }>("/v1/quizzes"),
     ])
       .then(([{ quiz: loadedQuiz }, account, library]) => {
@@ -244,6 +251,7 @@ export default function QuizEditorPage() {
         setQuiz(loadedQuiz);
         setDraft(loadedQuiz.draft);
         setEntitlements(account.entitlements);
+        setRoundExperiencesAvailable(account.productFeatures.roundExperiences);
         setPublishedQuizCount(
           library.quizzes.filter((candidate) => candidate.status === "published").length,
         );
@@ -628,6 +636,21 @@ export default function QuizEditorPage() {
                   value={draft.description}
                 />
               </div>
+              {roundExperiencesAvailable ? (
+                <ExperiencePicker
+                  category={draft.category ?? "general"}
+                  onCategoryChange={(category: RoundCategory) => setDraft({ ...draft, category })}
+                  onPresetChange={(preset: ExperiencePresetId) =>
+                    setDraft({ ...draft, experiencePreset: { id: preset, version: 1 } })
+                  }
+                  presetId={draft.experiencePreset?.id ?? "focus"}
+                />
+              ) : (
+                <p className="notice">
+                  Round Experiences are not enabled for this workspace. Existing presentation
+                  metadata is preserved and new sessions use Focus.
+                </p>
+              )}
             </section>
             <div className="editor-layout">
               <aside className="panel">

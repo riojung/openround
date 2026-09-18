@@ -62,6 +62,7 @@ The browser receives all public pages from Next.js. Fastify owns versioned REST 
 | `packages/contracts`   | Shared Zod schemas, public DTOs, realtime envelopes, commands, acknowledgements, and stable error codes                                                         |
 | `packages/game-engine` | Pure state transitions, scoring, deadlines, ranking, and role-filtered snapshot projection                                                                      |
 | `packages/insights`    | Pure deterministic diagnostic measurements and facilitator recommendation rules                                                                                 |
+| `packages/experience`  | Immutable preset registry, semantic-token validation, brand layering, and contrast checks                                                                       |
 | `packages/db`          | Repository interface, PostgreSQL implementation, in-memory development implementation, and migrations                                                           |
 | `infra`                | Caddy routing, PostgreSQL runtime role initialization, and Cloud Run/Fly deployment profiles                                                                    |
 | `tests`                | Browser, integration, smoke, multi-writer, restart/recovery, and load scenarios                                                                                 |
@@ -80,8 +81,10 @@ The application follows one domain model and one release train. Splitting web an
 - Stores host and participant resume credentials in tab-scoped `sessionStorage`.
 - Uses shared contracts for response and event shapes.
 - Renders the complete public question and labels on participant devices.
-- Keeps Q&A, intervention/recheck, follow-up, collaboration, portability, and secure embed flows
-  role-specific and accessible.
+- Keeps Audience Pulse, chat, Q&A, intervention/recheck, follow-up, collaboration, portability,
+  and secure embed flows role-specific and accessible.
+- Converts only validated experience tokens into CSS variables and applies device-local contrast,
+  motion, and mute preferences last.
 - Uses same-origin `/v1` and `/socket.io` routes by default, while allowing an explicit API origin
   at image build time for split hosted deployments.
 - Generates a per-request script nonce and enforced Content Security Policy, serves HSTS and other
@@ -96,7 +99,7 @@ The web process does not decide deadlines, answer acceptance, score, rank, or se
 - Validates environment, HTTP input, event input, and webhook input at boundaries.
 - Issues and verifies creator, host, and participant credentials.
 - Coordinates game mutations through `SessionService`.
-- Runs Q&A and follow-up services outside the canonical live-game snapshot.
+- Runs Audience Pulse, chat, Q&A, and follow-up services outside the canonical live-game snapshot.
 - Persists accepted answers and canonical state before acknowledgement.
 - Produces role-filtered snapshots and queues versioned reports from durable evidence.
 - Claims report and authoring jobs with database leases and retry/failure state.
@@ -117,14 +120,19 @@ than accumulating in the active state snapshot.
 
 PostgreSQL stores creator identity, workspaces, roles/invitations, magic links, creator sessions,
 checkpoint-set drafts, immutable versions, folders/tags, media metadata, live sessions,
-round/intervention evidence, accepted canonical responses and confidence, Q&A, staff credentials,
-versioned report jobs, self-paced follow-ups, authoring jobs, subscriptions, consent, institution
-policies, external identity links, LTI registrations/launches, and audit events.
+round/intervention evidence, accepted canonical responses and confidence, Audience Pulse, chat,
+Q&A, staff credentials, transactional audience outbox records, versioned report jobs, self-paced
+follow-ups, authoring jobs, subscriptions, consent, institution policies, external identity links,
+LTI registrations/launches, and audit events.
 
 Ordered transactional migration files are tracked in `_openround_migrations` with version, name,
 checksum, and application time. An advisory lock serializes migration execution; startup fails when
 an applied file's checksum changes. The baseline safely records a legacy P0 database before
 applying later migrations.
+
+When a live round finishes, the session update and interaction-write cutoff commit in the same
+database transaction. The report worker therefore reads a closed interaction set; late Pulse,
+chat, reaction, report, settings, and moderation mutations are rejected.
 
 Durable state owns correctness. A Redis loss can reduce replay efficiency or stop coordinated writes, but it must not erase an acknowledged answer.
 
@@ -269,7 +277,7 @@ responses, confidence, round kind, intervention links, and timing. `packages/ins
 deterministic measurements and recommendation explanations without network or model calls.
 
 Finishing a session inserts a versioned pending report. A database worker claims it with
-`FOR UPDATE SKIP LOCKED`, retries transient failure, and reconstructs report v2 from durable rows.
+`FOR UPDATE SKIP LOCKED`, retries transient failure, and reconstructs report v3 from durable rows.
 Linked recovery and revote improvement use separate evidence types. Older report schemas remain
 renderable; new report creation targets 60 seconds.
 
@@ -281,10 +289,40 @@ are workspace/session scoped. Unique votes, sanitization, independent limits, cu
 and realtime events support moderation. Cohost and presenter credentials are separately hashed,
 revocable, role-scoped records; the presenter never reuses the host token.
 
+### Round Experiences and Audience Pulse
+
+`packages/experience` is the only registry for the six versioned presets. Drafts and immutable
+exports carry category plus preset reference. Session creation resolves published preset, optional
+host override, eligible workspace branding, and sound preference into a validated theme snapshot
+stored in game state v4. The v3 upgrader supplies Focus for restored active sessions; future state
+versions fail closed. Reconnect and process recovery therefore cannot pick up later draft or
+branding changes.
+
+Audience interaction uses a sequence independent from the authoritative game sequence. Signal,
+chat, reaction, settings, and moderation mutations run in one PostgreSQL transaction that:
+
+1. Validates the session-scoped participant or staff credential and distributed limits.
+2. Updates durable interaction state.
+3. Allocates a monotonic `audience_seq` under the session interaction-settings lock.
+4. Inserts a uniquely identified outbox event.
+5. Commits before returning the acknowledgement.
+
+The outbox relay claims events with `FOR UPDATE SKIP LOCKED` and publishes through Socket.IO/Redis.
+Delivery is at least once; clients deduplicate by event ID and request `audience.sync.request` after
+a sequence gap. Synchronization returns current settings, role-filtered recent messages, aggregate
+signals, the requesting participant’s own signal, and moderation state. It never replays removed
+content.
+
+Private-alias safety is historical, not merely a current setting: each chat row stores the identity
+mode at creation. Moderator projection retains the session alias while all other roles permanently
+receive **Anonymous** for a message created privately. Individual Pulse projection is host/cohost
+only; public aggregate counts remain null below five unique signalers.
+
 ### Create and join a session
 
 1. The creator opens setup for a published quiz. The web UI seeds audience, scoring, result,
-   late-join, and nickname settings from the creator segment and current entitlements.
+   late-join, nickname, and experience settings from the creator segment, immutable version, and
+   current entitlements.
 2. After the creator confirms the settings, the browser requests a session. Merely opening setup
    does not reserve a code or issue a host credential.
 3. The server validates every setting and checks the hosted plan or community operator limit.
@@ -349,10 +387,10 @@ Intentional realtime-process shutdown avoids converting every attached guest int
 ### Report, follow-up, export, and deletion
 
 Finishing a session stamps a purge deadline from the then-active plan and queues report generation
-from durable participant, answer, intervention, and Q&A rows. Hosted Free retains the full session
-tree for 30 days; hosted Pro/Team retains it for 365 days; community operators configure their own
-duration. A later downgrade does not shorten an existing deadline. Versioned JSON and formula-safe
-UTF-8 CSV are server-enforced for the entitled edition.
+from durable participant, answer, intervention, Pulse, chat, moderation, and Q&A rows. Hosted Free
+retains the full session tree for 30 days; hosted Pro/Team retains it for 365 days; community
+operators configure their own duration. A later downgrade does not shorten an existing deadline.
+Versioned JSON and formula-safe UTF-8 CSV are server-enforced for the entitled edition.
 
 A Pro/community facilitator may select unresolved concepts and create one immutable self-paced
 follow-up. The service hashes generic, personal, accommodation, and resume tokens; server time owns
@@ -360,10 +398,11 @@ timed attempts while flex mode has no countdown. Answers remain idempotent and d
 rows reference the source session with cascading deletion and cannot outlive its retention window.
 
 Scheduled retention closes expired live/follow-up access, removes expired authoring jobs, then
-cascades deletion at the stored deadline. Explicit session deletion removes the same tree and
-invalidates active cache. Account export gathers collaboration, Q&A, recovery, follow-up, and
-authoring/institution data while excluding bearer hashes and LTI response JWTs; account deletion
-removes or anonymizes owned records and private objects according to the repository workflow. An
+cascades deletion at the stored deadline. Explicit session deletion removes the same tree,
+including interaction state and outbox rows, and invalidates active cache. Account export gathers
+collaboration, Pulse, chat, moderation, Q&A, recovery, follow-up, and authoring/institution data
+while excluding bearer hashes and LTI response JWTs; account deletion removes or anonymizes owned
+records and private objects according to the repository workflow. An
 approved institution owner can separately export up to 10,000 ordered audit events with explicit
 truncation and workspace home-region metadata.
 
@@ -374,12 +413,13 @@ cohosting, one workspace theme, 365-day reports, and 100 authoring jobs. Communi
 application paywalls while preserving operator-configured participant, retention, and provider
 ceilings.
 
-A workspace theme contains an organization name plus primary and accent hexadecimal colours. The
+A workspace brand contains an organization name plus primary and accent hexadecimal colours. The
 shared contract requires both colours to maintain at least 4.5:1 contrast with white text, and the
-server revalidates every update. Session creation copies the entitled theme into canonical game
-state. This makes branding stable across host, presenter, participant, reconnect, and process-loss
-paths even if the workspace theme changes later. CSS receives only schema-constrained colour
-values; arbitrary style text is never accepted.
+server revalidates every update. Session creation layers the entitled brand over the selected
+versioned preset and copies the resolved semantic tokens into canonical game state. This makes the
+experience stable across host, presenter, participant, reconnect, and process-loss paths even if
+the workspace brand changes later. CSS receives only schema-constrained values; arbitrary style
+text is never accepted.
 
 ## Game invariants
 
@@ -449,6 +489,13 @@ Principal server messages are `lobby.updated`, `question.open`, `question.locked
 `question.reveal`, `leaderboard.updated`, `session.snapshot`, and `game.finished`. Q&A uses
 `qna.question.*`, `qna.reply.*`, and `qna.vote.updated` notifications; durable REST responses remain
 the acknowledgement boundary.
+
+The separate sequenced audience stream emits `audience.settings.updated`, host-only
+`audience.signal.updated`, coalesced `audience.summary.updated`, `chat.message.*`,
+`chat.reaction.updated`, and `audience.moderation.updated`. During the Q&A compatibility release,
+durable Q&A changes also use the same cursor through `audience.event` while legacy direct `qna.*`
+notifications remain available. Its sync request and cursor are separate from game-state replay so
+interaction load cannot affect scoring correctness.
 
 Stable errors include `INVALID_CODE`, `SESSION_FULL`, `SESSION_LOCKED`, `NICKNAME_REJECTED`, `STALE_VERSION`, `ANSWER_LATE`, `ANSWER_INVALID`, `ENTITLEMENT_LIMIT`, `UNAUTHORIZED`, and `RATE_LIMITED`. See the [API and realtime reference](api.md) for endpoint, credential, and payload details.
 
@@ -560,10 +607,11 @@ The code includes per-session Redis leases, PostgreSQL compare-and-swap fencing,
 
 Structured logs redact authorization, cookies, tokens, nickname, and email fields. Fastify assigns or accepts a request ID and exposes request/trace IDs only to authorized origins. Process-local Prometheus metrics are served from `/metrics`; the included public Caddy route does not expose it. Optional OpenTelemetry instrumentation emits correlated HTTP, Fastify, and game-operation spans over OTLP/HTTP. Authoritative server events request an immediate, data-free browser acknowledgement; bounded event/role/outcome histograms measure receipt round trips and timeouts without exposing session or participant identifiers or trusting device clocks.
 
-Startup feature switches for signup, session creation, and media upload are hard ceilings. An
-`ADMIN_TOKEN`-protected API updates shared PostgreSQL runtime switches without a restart; every
-guarded request reads the shared state, and the update plus global audit record commit in one
-transaction. Runtime switches cannot enable missing media infrastructure or override a disabled
+Startup feature switches for signup, session creation, media upload, Round Experiences, Audience
+Pulse, and room chat are hard ceilings. An `ADMIN_TOKEN`-protected API updates shared PostgreSQL
+runtime switches without a restart; every guarded request reads the shared state, and the update
+plus global audit record commit in one transaction. A workspace UUID allowlist supports the
+design-partner stage. Runtime switches cannot enable missing infrastructure or override a disabled
 startup ceiling, and they do not interrupt active games. Retention runs on an interval in the
 server process. Production promotion also requires external uptime checks, centralized
 logs/metrics, alert routing, backup verification, and operator ownership; see the
@@ -572,19 +620,21 @@ logs/metrics, alert routing, backup verification, and operator ownership; see th
 
 ## Key decisions and tradeoffs
 
-| Decision                          | Benefit                                                                | Cost or constraint                                                                       |
-| --------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Modular monolith                  | One model, transaction boundary, and release train for a small team    | Components cannot be scaled or released as independent services without later extraction |
-| Pure game engine                  | Deterministic tests and no infrastructure coupling                     | Orchestration must translate engine events into persistence and role-filtered transport  |
-| PostgreSQL as source of truth     | Durable acknowledgements, reports, tenancy, and recovery in one system | Every accepted answer reaches durable storage before acknowledgement                     |
-| Redis for coordination, not truth | Fast leases, replay, codes, and fan-out without risking durable loss   | Production realtime requires Redis health and provider-specific failover testing         |
-| Immutable quiz versions           | Running sessions cannot change underneath participants                 | Creators must republish edits for future sessions                                        |
-| Session-scoped guests             | Low-friction joining and reduced child/privacy surface                 | No cross-session learner history or roster identity in P0                                |
-| Q&A outside game state            | Conversation traffic and moderation do not bloat live snapshots        | Q&A requires its own persistence, limits, retention, and realtime events                 |
-| Database-backed background jobs   | Reports and authoring survive process loss and retry safely            | Job latency and exhausted failures require operator monitoring                           |
-| Human-reviewed authoring AI       | Citations and draft-only output reduce ungrounded publishing risk      | Provider quality/cost still require evaluation; human verification remains mandatory     |
-| One regional home per workspace   | Clear residency and routing boundary                                   | Cross-region migration and global sessions are deferred                                  |
-| One launch realtime process       | Lower early operational risk                                           | Horizontal capacity waits on sticky-session and failure testing                          |
+| Decision                           | Benefit                                                                | Cost or constraint                                                                        |
+| ---------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Modular monolith                   | One model, transaction boundary, and release train for a small team    | Components cannot be scaled or released as independent services without later extraction  |
+| Pure game engine                   | Deterministic tests and no infrastructure coupling                     | Orchestration must translate engine events into persistence and role-filtered transport   |
+| PostgreSQL as source of truth      | Durable acknowledgements, reports, tenancy, and recovery in one system | Every accepted answer reaches durable storage before acknowledgement                      |
+| Redis for coordination, not truth  | Fast leases, replay, codes, and fan-out without risking durable loss   | Production realtime requires Redis health and provider-specific failover testing          |
+| Immutable quiz versions            | Running sessions cannot change underneath participants                 | Creators must republish edits for future sessions                                         |
+| Session-scoped guests              | Low-friction joining and reduced child/privacy surface                 | No cross-session learner history or roster identity in P0                                 |
+| Q&A outside game state             | Conversation traffic and moderation do not bloat live snapshots        | Q&A requires its own persistence, limits, retention, and realtime events                  |
+| Audience outbox outside game state | Durable chat/Pulse acknowledgements and cross-process fan-out          | At-least-once delivery requires event deduplication and separate audience synchronization |
+| Frozen semantic experience tokens  | Consistent accessible visuals across roles and process restoration     | Preset revisions require explicit versions; arbitrary theme code is unsupported           |
+| Database-backed background jobs    | Reports and authoring survive process loss and retry safely            | Job latency and exhausted failures require operator monitoring                            |
+| Human-reviewed authoring AI        | Citations and draft-only output reduce ungrounded publishing risk      | Provider quality/cost still require evaluation; human verification remains mandatory      |
+| One regional home per workspace    | Clear residency and routing boundary                                   | Cross-region migration and global sessions are deferred                                   |
+| One launch realtime process        | Lower early operational risk                                           | Horizontal capacity waits on sticky-session and failure testing                           |
 
 ## Implementation map
 
@@ -598,8 +648,11 @@ logs/metrics, alert routing, backup verification, and operator ownership; see th
 - Schema and RLS: [`packages/db/migrations/001_initial.sql`](../packages/db/migrations/001_initial.sql)
 - Ordered migration runner: [`packages/db/src/migrations.ts`](../packages/db/src/migrations.ts)
 - Deterministic insights: [`packages/insights/src/index.ts`](../packages/insights/src/index.ts)
+- Experience registry: [`packages/experience/src/index.ts`](../packages/experience/src/index.ts)
 - Report worker: [`apps/server/src/report-worker.ts`](../apps/server/src/report-worker.ts)
 - Q&A service: [`apps/server/src/qna-service.ts`](../apps/server/src/qna-service.ts)
+- Audience interaction service: [`apps/server/src/interaction-service.ts`](../apps/server/src/interaction-service.ts)
+- Audience outbox relay: [`apps/server/src/audience-outbox-worker.ts`](../apps/server/src/audience-outbox-worker.ts)
 - Follow-up service: [`apps/server/src/followup-service.ts`](../apps/server/src/followup-service.ts)
 - Portability and QTI: [`apps/server/src/portability.ts`](../apps/server/src/portability.ts),
   [`apps/server/src/qti.ts`](../apps/server/src/qti.ts)

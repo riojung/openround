@@ -25,6 +25,7 @@
     "@fastify/rate-limit": "11.2.0",
     "@openround/contracts": "workspace:*",
     "@openround/db": "workspace:*",
+    "@openround/experience": "workspace:*",
     "@openround/game-engine": "workspace:*",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/exporter-trace-otlp-http": "0.222.0",

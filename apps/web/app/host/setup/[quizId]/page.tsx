@@ -5,11 +5,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import type {
   Entitlements,
+  ExperiencePresetId,
   QuizDraft,
   SessionSettings,
   SessionSnapshot,
 } from "@openround/contracts";
 import { Brand } from "../../../../components/brand";
+import { ExperiencePicker } from "../../../../components/experience-picker";
 import { apiFetch, humanError } from "../../../../lib/api";
 
 interface Creator {
@@ -21,6 +23,16 @@ interface QuizRecord {
   title: string;
   draft: QuizDraft;
   currentVersionId: string | null;
+}
+
+interface QuizVersionRecord {
+  content: QuizDraft;
+}
+
+interface ProductFeatures {
+  roundExperiences: boolean;
+  audiencePulse: boolean;
+  roomChat: boolean;
 }
 
 function defaultsFor(creator: Creator, entitlements: Entitlements): SessionSettings {
@@ -40,24 +52,41 @@ export default function HostSetupPage() {
   const { quizId } = useParams<{ quizId: string }>();
   const router = useRouter();
   const [quiz, setQuiz] = useState<QuizRecord | null>(null);
+  const [publishedContent, setPublishedContent] = useState<QuizDraft | null>(null);
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [settings, setSettings] = useState<SessionSettings | null>(null);
+  const [experiencePreset, setExperiencePreset] = useState<ExperiencePresetId>("focus");
+  const [presenterSoundEnabled, setPresenterSoundEnabled] = useState(false);
+  const [roundExperiencesAvailable, setRoundExperiencesAvailable] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     Promise.all([
-      apiFetch<{ quiz: QuizRecord }>(`/v1/quizzes/${quizId}`),
-      apiFetch<{ creator: Creator; entitlements: Entitlements }>("/v1/auth/me"),
+      apiFetch<{ quiz: QuizRecord; currentVersion: QuizVersionRecord | null }>(
+        `/v1/quizzes/${quizId}`,
+      ),
+      apiFetch<{
+        creator: Creator;
+        entitlements: Entitlements;
+        productFeatures: ProductFeatures;
+      }>("/v1/auth/me"),
     ])
       .then(([quizResponse, account]) => {
-        if (!quizResponse.quiz.currentVersionId) {
+        if (!quizResponse.quiz.currentVersionId || !quizResponse.currentVersion) {
           setError("Publish this checkpoint set before creating a live round.");
           return;
         }
         setQuiz(quizResponse.quiz);
+        setPublishedContent(quizResponse.currentVersion.content);
         setEntitlements(account.entitlements);
         setSettings(defaultsFor(account.creator, account.entitlements));
+        setRoundExperiencesAvailable(account.productFeatures.roundExperiences);
+        setExperiencePreset(
+          account.productFeatures.roundExperiences
+            ? (quizResponse.currentVersion.content.experiencePreset?.id ?? "focus")
+            : "focus",
+        );
       })
       .catch((caught) => {
         if ((caught as { status?: number }).status === 401) router.replace("/signin");
@@ -67,7 +96,7 @@ export default function HostSetupPage() {
 
   async function createSession(event: FormEvent) {
     event.preventDefault();
-    if (!quiz || !settings || !entitlements || busy) return;
+    if (!quiz || !publishedContent || !settings || !entitlements || busy) return;
     setBusy(true);
     setError("");
     try {
@@ -78,7 +107,15 @@ export default function HostSetupPage() {
         snapshot: SessionSnapshot;
       }>("/v1/sessions", {
         method: "POST",
-        body: JSON.stringify({ quizId: quiz.id, settings }),
+        body: JSON.stringify({
+          quizId: quiz.id,
+          settings,
+          ...(roundExperiencesAvailable &&
+          experiencePreset !== (publishedContent.experiencePreset?.id ?? "focus")
+            ? { experiencePresetOverride: experiencePreset }
+            : {}),
+          presenterSoundEnabled: roundExperiencesAvailable && presenterSoundEnabled,
+        }),
       });
       sessionStorage.setItem(`openround:host:${session.sessionId}`, session.hostToken);
       sessionStorage.setItem(`openround:code:${session.sessionId}`, session.code);
@@ -159,7 +196,36 @@ export default function HostSetupPage() {
 
               <section className="panel">
                 <p className="eyebrow">Experience</p>
-                <h2 style={{ fontSize: "1.8rem" }}>Scoring and results</h2>
+                <h2 style={{ fontSize: "1.8rem" }}>Look, motion, and sound</h2>
+                {roundExperiencesAvailable ? (
+                  <>
+                    <ExperiencePicker
+                      category={publishedContent?.category ?? "general"}
+                      onPresetChange={setExperiencePreset}
+                      presetId={experiencePreset}
+                      showCategory={false}
+                    />
+                    <label className="checkbox-field">
+                      <input
+                        checked={presenterSoundEnabled}
+                        onChange={(event) => setPresenterSoundEnabled(event.target.checked)}
+                        type="checkbox"
+                      />
+                      Enable optional presenter sound cues
+                    </label>
+                    <small className="muted">
+                      Sound is off by default and never carries information that is not shown
+                      visually.
+                    </small>
+                  </>
+                ) : (
+                  <p className="notice">
+                    Round Experiences are not enabled for this workspace. This session will use the
+                    accessible Focus preset without sound.
+                  </p>
+                )}
+                <hr className="staff-divider" />
+                <h3>Scoring and results</h3>
                 <label className="field" htmlFor="scoring-mode">
                   <span>Scoring mode</span>
                   <select

@@ -134,6 +134,9 @@ describe("QTI 3 portability", () => {
     const imported = await importQtiPackage(exported.archive!.toString("base64"), "Imported QTI");
     expect(imported.validation.errors).toEqual([]);
     expect(imported.validation.importedCheckpoints).toBe(3);
+    expect(imported.validation.warnings).toContainEqual(
+      expect.objectContaining({ code: "PRESENTATION_DEFAULTED" }),
+    );
     expect(imported.draft).not.toBeNull();
     expect(imported.draft?.title).toBe("Imported QTI");
     expect(imported.draft?.questions.map((question) => question.type)).toEqual([

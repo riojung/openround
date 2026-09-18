@@ -13,7 +13,12 @@ export default defineConfig({
   target: "node22",
   sourcemap: true,
   clean: true,
-  noExternal: ["@openround/contracts", "@openround/db", "@openround/game-engine"],
+  noExternal: [
+    "@openround/contracts",
+    "@openround/db",
+    "@openround/experience",
+    "@openround/game-engine",
+  ],
   // The database package is bundled into the server, but node-postgres must stay
   // external because its CommonJS runtime performs legitimate dynamic requires.
   external: ["pg"],

@@ -4,11 +4,19 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EventEnvelope, SessionSnapshot } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
+import { AudiencePanel, type AudienceRealtimeUpdate } from "../../../components/audience-panel";
+import { ExperiencePreferences } from "../../../components/experience-preferences";
 import { Countdown } from "../../../components/countdown";
 import { JoinAccess } from "../../../components/join-access";
 import { QuestionMedia } from "../../../components/question-media";
-import { createRealtimeClient, withRealtimeReceipt } from "../../../lib/realtime";
-import { liveThemeStyle } from "../../../lib/theme";
+import {
+  audienceContextKey,
+  createAudienceRealtimeReceipt,
+  createRealtimeClient,
+  withRealtimeReceipt,
+} from "../../../lib/realtime";
+import { experienceThemeStyle } from "../../../lib/theme";
+import { playPresenterCue } from "../../../lib/sound";
 
 type Ack<T> = { data?: T; error?: { message: string } };
 
@@ -20,6 +28,9 @@ export default function PresenterPage() {
   const [error, setError] = useState("");
   const [mediaCredential, setMediaCredential] = useState("");
   const [embedded, setEmbedded] = useState(false);
+  const [audienceSyncRevision, setAudienceSyncRevision] = useState(0);
+  const [audienceRealtimeUpdate, setAudienceRealtimeUpdate] =
+    useState<AudienceRealtimeUpdate | null>(null);
 
   useEffect(() => {
     snapshotRef.current = snapshot;
@@ -54,10 +65,22 @@ export default function PresenterPage() {
             ? setSnapshot(response.data.snapshot)
             : setError(response.error?.message ?? "Could not synchronize"),
       );
-    const update = withRealtimeReceipt((envelope: EventEnvelope<{ snapshot: SessionSnapshot }>) =>
-      setSnapshot(envelope.payload.snapshot),
+    const update = withRealtimeReceipt((envelope: EventEnvelope<{ snapshot: SessionSnapshot }>) => {
+      playPresenterCue(envelope.payload.snapshot.experienceTheme, envelope.type);
+      if (
+        audienceContextKey(envelope.payload.snapshot) !== audienceContextKey(snapshotRef.current)
+      ) {
+        setAudienceSyncRevision((current) => current + 1);
+      }
+      setSnapshot(envelope.payload.snapshot);
+    });
+    const audienceUpdate = createAudienceRealtimeReceipt((gap, envelope) =>
+      setAudienceRealtimeUpdate({ gap, envelope }),
     );
-    socket.on("connect", sync);
+    socket.on("connect", () => {
+      setAudienceSyncRevision((current) => current + 1);
+      sync();
+    });
     for (const event of [
       "lobby.updated",
       "question.open",
@@ -71,6 +94,17 @@ export default function PresenterPage() {
       "session.snapshot",
     ])
       socket.on(event, update);
+    for (const event of [
+      "audience.settings.updated",
+      "audience.summary.updated",
+      "chat.message.created",
+      "chat.message.updated",
+      "chat.message.removed",
+      "chat.message.pinned",
+      "chat.reaction.updated",
+      "audience.event",
+    ])
+      socket.on(event, audienceUpdate);
     socket.connect();
     return () => {
       socket.removeAllListeners();
@@ -81,24 +115,39 @@ export default function PresenterPage() {
   return (
     <div
       className="live-shell"
-      data-branded={snapshot?.brandTheme ? "true" : undefined}
-      style={liveThemeStyle(snapshot?.brandTheme)}
+      data-corners={snapshot?.experienceTheme.tokens.corners}
+      data-motion={snapshot?.experienceTheme.motion}
+      data-pattern={snapshot?.experienceTheme.tokens.pattern}
+      data-typography={snapshot?.experienceTheme.tokens.typography}
+      style={experienceThemeStyle(snapshot?.experienceTheme)}
     >
       <header className="shell live-topbar">
         <Brand inverted name={snapshot?.brandTheme?.organizationName} />
-        {!embedded ? (
-          <button
-            className="button-quiet small-button"
-            onClick={() => window.close()}
-            type="button"
-          >
-            Close presenter
-          </button>
-        ) : (
-          <span className="status-pill">Read-only embed</span>
-        )}
+        <div className="button-row">
+          <ExperiencePreferences />
+          {!embedded ? (
+            <button
+              className="button-quiet small-button"
+              onClick={() => window.close()}
+              type="button"
+            >
+              Close presenter
+            </button>
+          ) : (
+            <span className="status-pill">Read-only embed</span>
+          )}
+        </div>
       </header>
-      <main className="shell live-stage" aria-live="polite">
+      <main className="shell live-stage">
+        <p aria-atomic="true" aria-live="polite" className="sr-only">
+          {snapshot?.phase === "question_open"
+            ? `Checkpoint open: ${snapshot.question?.prompt ?? "new checkpoint"}`
+            : snapshot?.phase === "finished"
+              ? "The live round is complete."
+              : snapshot
+                ? `Round status: ${snapshot.phase.replaceAll("_", " ")}`
+                : "Synchronizing presenter view."}
+        </p>
         {error ? (
           <section className="live-card">
             <p className="error">{error}</p>
@@ -207,6 +256,15 @@ export default function PresenterPage() {
               The facilitator now has the results for follow-up.
             </p>
           </section>
+        ) : null}
+        {snapshot && snapshot.phase !== "finished" && mediaCredential ? (
+          <AudiencePanel
+            realtimeUpdate={audienceRealtimeUpdate}
+            role="presenter"
+            sessionId={sessionId}
+            syncRevision={audienceSyncRevision}
+            token={mediaCredential}
+          />
         ) : null}
       </main>
     </div>

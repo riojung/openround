@@ -9,9 +9,11 @@ import {
   type QuestionDraft,
   type QuizDraft,
 } from "@openround/contracts";
+import { resolveExperienceTheme } from "@openround/experience";
 import { Brand } from "../../../../components/brand";
+import { ExperiencePreferences } from "../../../../components/experience-preferences";
 import { apiFetch, humanError } from "../../../../lib/api";
-import { liveThemeStyle } from "../../../../lib/theme";
+import { experienceThemeStyle } from "../../../../lib/theme";
 
 interface QuizRecord {
   id: string;
@@ -59,6 +61,13 @@ export default function QuizPreviewPage() {
   const [mediaSource, setMediaSource] = useState("");
   const [error, setError] = useState("");
   const question = quiz?.draft.questions[questionIndex];
+  const experienceTheme = quiz
+    ? resolveExperienceTheme({
+        category: quiz.draft.category ?? "general",
+        presetId: quiz.draft.experiencePreset?.id,
+        brandTheme,
+      })
+    : null;
 
   useEffect(() => {
     Promise.all([
@@ -109,12 +118,16 @@ export default function QuizPreviewPage() {
   return (
     <div
       className="live-shell"
-      data-branded={brandTheme ? "true" : undefined}
-      style={liveThemeStyle(brandTheme)}
+      data-corners={experienceTheme?.tokens.corners}
+      data-motion={experienceTheme?.motion}
+      data-pattern={experienceTheme?.tokens.pattern}
+      data-typography={experienceTheme?.tokens.typography}
+      style={experienceThemeStyle(experienceTheme)}
     >
       <header className="shell live-topbar">
         <Brand inverted name={brandTheme?.organizationName} />
         <div className="button-row">
+          <ExperiencePreferences />
           <Link className="button-quiet small-button" href={`/quiz/${id}`}>
             Back to editor
           </Link>

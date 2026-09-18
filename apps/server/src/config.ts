@@ -16,10 +16,34 @@ const optionalUrl = z.preprocess(
   z.string().url().optional(),
 );
 
+function isHttpOrHttpsUrl(value: string) {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+const optionalHttpUrl = optionalUrl.refine(
+  (value) => !value || isHttpOrHttpsUrl(value),
+  "Must use HTTP or HTTPS",
+);
+
 const optionalSecret = z.preprocess(
   (value) => (value === "" ? undefined : value),
   z.string().min(1).optional(),
 );
+
+const uuidAllowlist = z
+  .string()
+  .default("")
+  .transform((value) =>
+    value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  )
+  .pipe(z.array(z.string().uuid()).max(1_000));
 
 function isPrivateHttpUrl(value: string) {
   const url = new URL(value);
@@ -109,6 +133,10 @@ export const ConfigSchema = z
     FEATURE_SIGNUPS: defaultTrueBooleanString,
     FEATURE_SESSION_CREATION: defaultTrueBooleanString,
     FEATURE_MEDIA_UPLOADS: defaultTrueBooleanString,
+    FEATURE_ROUND_EXPERIENCES: defaultTrueBooleanString,
+    FEATURE_AUDIENCE_PULSE: defaultTrueBooleanString,
+    FEATURE_ROOM_CHAT: defaultTrueBooleanString,
+    THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST: uuidAllowlist,
     METRICS_ENABLED: defaultTrueBooleanString,
     METRICS_TOKEN: z.string().min(24).optional(),
     TRACING_ENABLED: booleanString,
@@ -117,6 +145,7 @@ export const ConfigSchema = z
     OTEL_SERVICE_VERSION: z.string().trim().min(1).max(80).default("0.1.0"),
     SMTP_URL: z.string().min(1).optional(),
     EMAIL_FROM: z.string().default("OpenRound <noreply@localhost>"),
+    DEVELOPMENT_EMAIL_INBOX_URL: optionalHttpUrl,
     AUTH_DEBUG_MAGIC_LINKS: booleanString,
     POLICY_VERSION: z.string().trim().min(1).max(80).default("2026-09-14-draft"),
     BILLING_MODE: z.enum(["disabled", "stripe"]).default("disabled"),

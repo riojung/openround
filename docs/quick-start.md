@@ -38,11 +38,16 @@ Open:
 2. Choose **Workplace learning** or **Education**. This sets the session defaults described in the [user guide](user-guide.md#segment-defaults).
 3. Enter any valid development email address.
 4. Accept the draft Terms and Privacy notice, then select **Send sign-in link**.
-5. Open Mailpit at <http://localhost:8025>, select the new OpenRound message, and open its sign-in
-   link.
+5. Select **Open local email inbox** in the confirmation, choose the newest OpenRound message, and
+   open its sign-in link. You can also open Mailpit directly at <http://localhost:8025>.
 
 Mailpit keeps local messages inside the development stack; it does not send external email. The
 Compose profile does not return sign-in bearer tokens in API responses by default.
+
+Sign-in cookies belong to the configured `OPENROUND_PUBLIC_URL`. If the browser is using a
+different origin—for example, `localhost` while the stack is configured for a LAN IP—the sign-in
+page identifies both addresses and links to the configured one. Continue using that configured
+address after opening the email link.
 
 For isolated, one-computer testing only, you can expose **Continue to dashboard** while also binding
 the product to loopback so another LAN client cannot request a token for an existing creator:
@@ -61,33 +66,49 @@ default by running the normal `docker compose up -d` command again.
 
 1. On **Your checkpoint sets**, enter a title and select **Create checkpoint set**.
 2. Add a single-select, true/false, multiple-select, numeric, rating, or poll checkpoint.
-3. Enter the prompt and complete the response-specific answer settings.
-4. For a diagnostic checkpoint, optionally collect confidence, add a concept key, and create a
+3. Choose a topic category and one of the six Round Experience presets. The category recommends a
+   preset but does not replace an explicit selection. Preview the host, presenter, and phone
+   treatment.
+4. Enter the prompt and complete the response-specific answer settings.
+5. For a diagnostic checkpoint, optionally collect confidence, add a concept key, and create a
    linked recheck.
-5. Set the timer, points, optional explanation, and private misconception feedback.
-6. Wait for the header to show **Saved**, select **Preview**, and step through the participant view.
-7. Return to the editor, select **Publish**, then return to **Dashboard**.
+6. Set the timer, points, optional explanation, and private misconception feedback.
+7. Wait for the header to show **Saved**, select **Preview**, and step through the participant view.
+8. Return to the editor, select **Publish**, then return to **Dashboard**.
 
 Publishing creates an immutable version for future sessions. You can keep editing the draft afterward; a running session continues to use the version it started with.
 
 ## 4. Host and join a round
 
 1. On the published checkpoint-set card, select **Host**.
-2. Review the audience, late-join, scoring, result, and nickname settings, then select **Create live
-   session**.
-3. Leave the host tab open. It contains the session-scoped host credential.
-4. In another browser or private window, open <http://localhost:8080/join>.
-5. Enter the seven-digit code shown by the host. Enter a nickname when custom nicknames are enabled; education sessions assign a friendly alias.
-6. Confirm the participant appears in the host lobby, then select **Start round**.
-7. Answer on the participant device. The participant should see **Answer received and saved** before reveal.
-8. As host, use **Lock answers**, inspect the deterministic insight card, record an intervention,
-   and select **Reveal answer**.
-9. Open the linked recheck or same-checkpoint revote before continuing. **Pause**, **Resume**,
-   **Show standings**, and **End session** appear only when valid for the current phase.
-10. Finish the last recovery branch and select **Open report**.
+2. Review the audience, late-join, scoring, result, nickname, and published experience settings.
+   Optionally choose a one-session preset override. Presenter sounds remain off unless explicitly
+   enabled.
+3. Select **Create live session**.
+4. Leave the host tab open. It contains the session-scoped host credential.
+5. In another browser or private window, open <http://localhost:8080/join>.
+6. Enter the seven-digit code shown by the host. Enter a nickname when custom nicknames are enabled; education sessions assign a friendly alias.
+7. Confirm the participant appears in the host lobby. In **Audience Pulse**, enable room chat for
+   this test; it is off by default. Choose whether participant aliases are public, set slow mode,
+   and choose the presenter feed mode.
+8. On the participant device, select **I’m unsure** or **Show an example**. Confirm that the host
+   sees the alias and signal while the participant view withholds room totals until five unique
+   people have signalled. Send a plain-text chat message and try a reaction or one-level reply.
+9. Select **Start round**. The lobby signal clears for the new checkpoint context.
+10. Answer on the participant device. The participant should see **Answer received and saved** before reveal.
+11. As host, use **Lock answers**, inspect the deterministic insight card, record an intervention,
+    and select **Reveal answer**.
+12. Open the linked recheck or same-checkpoint revote before continuing. **Pause**, **Resume**,
+    **Show standings**, and **End session** appear only when valid for the current phase.
+13. Finish the last recovery branch and select **Open report**.
 
 The report shows initial evidence, confidence, misconceptions, interventions, linked recovery,
-revote improvement, unresolved concepts, participant outcomes, Q&A, and versioned exports.
+revote improvement, unresolved concepts, participant outcomes, Q&A, aggregate pulse/chat evidence,
+and versioned exports. Authorized report users can open the separate interaction transcript.
+
+Each live surface also provides local high-contrast, reduced-motion, and mute controls. These
+preferences override the selected preset on that device and do not change the frozen session
+experience for anyone else.
 
 ## Join from phones, tablets, and other computers
 
@@ -233,6 +254,11 @@ For an operational pause without restarting containers, use the `ADMIN_TOKEN`-pr
 [observability runbook](runbooks/observability.md#kill-switches). Startup `FEATURE_*` settings stay
 as hard ceilings, so a runtime update cannot enable a capability disabled by deployment
 configuration.
+
+For a staged interaction rollout, set `FEATURE_ROUND_EXPERIENCES`,
+`FEATURE_AUDIENCE_PULSE`, and `FEATURE_ROOM_CHAT` independently. A comma-separated
+`THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST` restricts those capabilities to selected workspace UUIDs;
+leave it empty for normal Community operation.
 
 For a local operations dashboard and alert-rule evaluation, add `compose.observability.yaml` and
 the `observability` profile, then run `pnpm smoke:observability`. Prometheus binds to loopback port

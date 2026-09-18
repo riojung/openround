@@ -128,7 +128,7 @@ export function openRoundJson(draft: QuizDraft) {
   return JSON.stringify(
     OpenRoundCheckpointSetExportSchema.parse({
       format: "openround.checkpoint-set",
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       checkpointSet: draft,
     }),
@@ -245,7 +245,24 @@ function importJson(data: string, title?: string): CheckpointSetImportResult {
       ),
     };
   }
-  const draft = regenerateIds(portableDraft(parsed.data.checkpointSet, issues));
+  const checkpointSet =
+    parsed.data.version === 1
+      ? {
+          ...parsed.data.checkpointSet,
+          category: "general" as const,
+          experiencePreset: { id: "focus" as const, version: 1 as const },
+        }
+      : parsed.data.checkpointSet;
+  if (parsed.data.version === 1) {
+    issues.push(
+      issue(
+        "warning",
+        "PRESENTATION_DEFAULTED",
+        "This version 1 file had no experience preset; Focus was selected.",
+      ),
+    );
+  }
+  const draft = regenerateIds(portableDraft(checkpointSet, issues));
   if (title) draft.title = title;
   else if (!draft.title.trim()) {
     draft.title = "Imported checkpoint set";
@@ -263,7 +280,13 @@ function importJson(data: string, title?: string): CheckpointSetImportResult {
 }
 
 function importCsv(data: string, title?: string): CheckpointSetImportResult {
-  const issues: ImportIssue[] = [];
+  const issues: ImportIssue[] = [
+    issue(
+      "warning",
+      "PRESENTATION_DEFAULTED",
+      "CSV does not carry presentation metadata; General with the Focus preset was selected.",
+    ),
+  ];
   let rows: string[][];
   try {
     rows = parseCsv(data);
@@ -406,7 +429,13 @@ function importCsv(data: string, title?: string): CheckpointSetImportResult {
 }
 
 function importBulk(data: string, title?: string): CheckpointSetImportResult {
-  const issues: ImportIssue[] = [];
+  const issues: ImportIssue[] = [
+    issue(
+      "warning",
+      "PRESENTATION_DEFAULTED",
+      "Bulk paste does not carry presentation metadata; General with the Focus preset was selected.",
+    ),
+  ];
   const blocks = data
     .replace(/\r/g, "")
     .split(/\n\s*\n/)

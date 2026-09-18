@@ -8,6 +8,7 @@ import {
   HostCommandSchema,
   normalizeDecimalString,
   OperationalFeaturesUpdateSchema,
+  PublicFeaturesSchema,
   QuizContentSchema,
   QuizDraftSchema,
   QuestionSchema,
@@ -16,6 +17,40 @@ import {
 } from "../src/index.js";
 
 describe("public contracts", () => {
+  it("allows a development inbox hint without requiring it in hosted deployments", () => {
+    const base = {
+      publicWebUrl: "http://localhost:8080",
+      mediaUploads: true,
+      billing: "disabled" as const,
+      communityMode: true,
+      signups: true,
+      sessionCreation: true,
+      roundExperiences: true,
+      audiencePulse: true,
+      roomChat: true,
+    };
+
+    expect(PublicFeaturesSchema.parse(base).developmentEmailInboxUrl).toBeUndefined();
+    expect(
+      PublicFeaturesSchema.parse({
+        ...base,
+        developmentEmailInboxUrl: "http://localhost:8025",
+      }).developmentEmailInboxUrl,
+    ).toBe("http://localhost:8025");
+    expect(
+      PublicFeaturesSchema.safeParse({
+        ...base,
+        developmentEmailInboxUrl: "javascript:alert(1)",
+      }).success,
+    ).toBe(false);
+    expect(
+      PublicFeaturesSchema.safeParse({
+        ...base,
+        developmentEmailInboxUrl: "not a URL",
+      }).success,
+    ).toBe(false);
+  });
+
   it("represents finite Free limits and unlimited paid quiz publishing", () => {
     expect(
       EntitlementsSchema.parse({
@@ -124,6 +159,36 @@ describe("public contracts", () => {
     }
   });
 
+  it("preserves versioned experience metadata when content is published", () => {
+    const content = QuizContentSchema.parse({
+      title: "Technical checkpoint",
+      description: "",
+      category: "technical",
+      experiencePreset: { id: "blueprint", version: 1 },
+      questions: [
+        {
+          id: randomUUID(),
+          type: "true_false",
+          prompt: "The published version owns its experience preset.",
+          choices: [
+            { id: randomUUID(), label: "True", isCorrect: true },
+            { id: randomUUID(), label: "False", isCorrect: false },
+          ],
+          timeLimitSeconds: 20,
+          basePoints: 1_000,
+          explanation: "Presentation metadata is immutable with the content version.",
+          mediaId: null,
+          mediaAlt: null,
+        },
+      ],
+    });
+
+    expect(content).toMatchObject({
+      category: "technical",
+      experiencePreset: { id: "blueprint", version: 1 },
+    });
+  });
+
   it("keeps the public snapshot free of answer keys while a question is open", () => {
     const snapshot = SessionSnapshotSchema.parse({
       sessionId: randomUUID(),
@@ -155,6 +220,27 @@ describe("public contracts", () => {
         nicknamePolicy: "custom",
       },
       brandTheme: null,
+      experienceTheme: {
+        preset: { id: "focus", version: 1 },
+        name: "Focus",
+        category: "general",
+        motion: "calm",
+        soundCue: "none",
+        soundEnabled: false,
+        tokens: {
+          canvas: "#F7F4EC",
+          surface: "#FFFFFF",
+          surfaceStrong: "#DCEEEE",
+          text: "#0B2239",
+          mutedText: "#425B72",
+          primary: "#075E63",
+          accent: "#8A3D22",
+          choiceColors: ["#075E63", "#7B3657", "#6D4B0C", "#345594", "#553D8A", "#23613F"],
+          pattern: "dots",
+          typography: "humanist",
+          corners: "soft",
+        },
+      },
       pausedRemainingMs: null,
     });
 

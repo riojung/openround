@@ -1,12 +1,15 @@
 import type {
+  AudienceSignal,
   BrandTheme,
   AuthoringDraft,
   AuthoringSourceType,
+  ChatReaction,
   ConfidenceValue,
   FollowupTimeMode,
   IdentityRequirement,
   InstitutionCapabilities,
   InstitutionContractStatus,
+  InteractionSettings,
   QuizDraft,
   Report,
   ResponsePayload,
@@ -225,6 +228,18 @@ export interface SessionEvidence {
     answered: number;
     unresolved: number;
   };
+  interactions?: {
+    signalEvents: Array<{
+      contextKey: string;
+      participantId: string;
+      signal: AudienceSignal | null;
+      createdAt: Date;
+    }>;
+    chatMessages: ChatMessageRecord[];
+    reactions: ChatReactionRecord[];
+    reports: number;
+    moderationActions: number;
+  };
 }
 
 export interface ReportJob {
@@ -424,6 +439,133 @@ export interface QnaReplyRecord {
   updatedAt: Date;
 }
 
+export interface InteractionSettingsRecord extends InteractionSettings {
+  workspaceId: string;
+  sessionId: string;
+  audienceSeq: number;
+  closedAt: Date | null;
+  updatedAt: Date;
+}
+
+export interface ParticipantSignalRecord {
+  workspaceId: string;
+  sessionId: string;
+  contextKey: string;
+  participantId: string;
+  signal: AudienceSignal;
+  updatedAt: Date;
+}
+
+export interface ChatMessageRecord {
+  id: string;
+  workspaceId: string;
+  sessionId: string;
+  participantId: string | null;
+  actorId: string | null;
+  staffCredentialId: string | null;
+  replyToId: string | null;
+  body: string;
+  authorAlias: string;
+  identityModeAtCreation: InteractionSettings["chatIdentityMode"];
+  status: "published" | "removed";
+  pinned: boolean;
+  idempotencyKey: string;
+  audienceSeq: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ChatReactionRecord {
+  workspaceId: string;
+  sessionId: string;
+  messageId: string;
+  participantId: string;
+  reaction: ChatReaction;
+  updatedAt: Date;
+}
+
+export interface AudienceRestrictionRecord {
+  workspaceId: string;
+  sessionId: string;
+  participantId: string;
+  mutedUntil: Date | null;
+  bannedAt: Date | null;
+  actorId: string | null;
+  staffCredentialId: string | null;
+  updatedAt: Date;
+}
+
+export interface AudienceOutboxRecord {
+  eventId: string;
+  workspaceId: string;
+  sessionId: string;
+  audienceSeq: number;
+  type: string;
+  idempotencyKey: string;
+  payload: Record<string, unknown>;
+  attempts: number;
+  claimedAt: Date | null;
+  deliveredAt: Date | null;
+  createdAt: Date;
+}
+
+export interface AudienceEventInput {
+  eventId: string;
+  idempotencyKey: string;
+  type: string;
+  payload: Record<string, unknown>;
+}
+
+export interface AudienceMutation<T> {
+  record: T;
+  event: AudienceOutboxRecord;
+  duplicate: boolean;
+}
+
+export interface ChatReactionSummaryRecord {
+  messageId: string;
+  counts: Partial<Record<ChatReaction, number>>;
+  viewerReaction: ChatReaction | null;
+}
+
+export interface ChatMessageListOptions {
+  cursor?: { createdAt: Date; id: string };
+  limit?: number;
+  pinnedOnly?: boolean;
+}
+
+export interface ChatActivitySummaryRecord {
+  messagesLastMinute: number;
+  uniqueContributors: number;
+  removedMessages: number;
+  reportCount: number;
+}
+
+export interface ParticipantChatActivityRecord {
+  participantId: string;
+  messageCount: number;
+  latestMessageAt: Date | null;
+}
+
+export class AudienceStoreError extends Error {
+  constructor(
+    public readonly code:
+      | "CHAT_DISABLED"
+      | "CHAT_MUTED"
+      | "CHAT_RATE_LIMITED"
+      | "CHAT_CAPACITY_REACHED"
+      | "AUDIENCE_BANNED"
+      | "SIGNAL_RATE_LIMITED"
+      | "MESSAGE_REMOVED"
+      | "NOT_FOUND"
+      | "CONFLICT",
+    message: string,
+  ) {
+    super(message);
+    this.name = "AudienceStoreError";
+  }
+}
+
 export type MediaScanStatus = "pending" | "clean" | "rejected";
 
 export interface MediaAssetRecord {
@@ -456,11 +598,22 @@ export interface OperationalFeaturesRecord {
   signups: boolean;
   sessionCreation: boolean;
   mediaUploads: boolean;
+  roundExperiences: boolean;
+  audiencePulse: boolean;
+  roomChat: boolean;
   updatedAt: Date | null;
 }
 
 export type OperationalFeaturesUpdate = Partial<
-  Pick<OperationalFeaturesRecord, "signups" | "sessionCreation" | "mediaUploads">
+  Pick<
+    OperationalFeaturesRecord,
+    | "signups"
+    | "sessionCreation"
+    | "mediaUploads"
+    | "roundExperiences"
+    | "audiencePulse"
+    | "roomChat"
+  >
 >;
 
 export interface Repository {
@@ -646,6 +799,109 @@ export interface Repository {
     participantId: string,
     actorId: string | null,
   ): Promise<void>;
+  getInteractionSettings(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<InteractionSettingsRecord | null>;
+  appendAudienceEvent(
+    workspaceId: string,
+    sessionId: string,
+    event: AudienceEventInput,
+    createdAt: Date,
+  ): Promise<AudienceMutation<null>>;
+  saveInteractionSettings(
+    input: Omit<InteractionSettingsRecord, "audienceSeq" | "closedAt">,
+    event: AudienceEventInput,
+  ): Promise<AudienceMutation<InteractionSettingsRecord>>;
+  listParticipantSignals(
+    workspaceId: string,
+    sessionId: string,
+    contextKey: string,
+  ): Promise<ParticipantSignalRecord[]>;
+  countRecentSignalEvents(workspaceId: string, sessionId: string, since: Date): Promise<number>;
+  setParticipantSignal(
+    input: {
+      workspaceId: string;
+      sessionId: string;
+      contextKey: string;
+      participantId: string;
+      signal: AudienceSignal | null;
+      now: Date;
+    },
+    event: AudienceEventInput,
+  ): Promise<AudienceMutation<ParticipantSignalRecord | null>>;
+  getChatMessage(workspaceId: string, messageId: string): Promise<ChatMessageRecord | null>;
+  listChatMessages(
+    workspaceId: string,
+    sessionId: string,
+    options?: ChatMessageListOptions,
+  ): Promise<ChatMessageRecord[]>;
+  createChatMessage(
+    input: Omit<ChatMessageRecord, "audienceSeq">,
+    event: AudienceEventInput,
+  ): Promise<AudienceMutation<ChatMessageRecord>>;
+  updateChatMessage(
+    workspaceId: string,
+    sessionId: string,
+    messageId: string,
+    update: { status?: ChatMessageRecord["status"]; pinned?: boolean },
+    event: AudienceEventInput,
+    updatedAt: Date,
+  ): Promise<AudienceMutation<ChatMessageRecord>>;
+  listChatReactions(
+    workspaceId: string,
+    sessionId: string,
+    messageIds?: string[],
+  ): Promise<ChatReactionRecord[]>;
+  getChatActivitySummary(
+    workspaceId: string,
+    sessionId: string,
+    since: Date,
+  ): Promise<ChatActivitySummaryRecord>;
+  listParticipantChatActivity(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<ParticipantChatActivityRecord[]>;
+  setChatReaction(
+    input: {
+      workspaceId: string;
+      sessionId: string;
+      messageId: string;
+      participantId: string;
+      reaction: ChatReaction | null;
+      now: Date;
+    },
+    event: AudienceEventInput,
+  ): Promise<AudienceMutation<ChatReactionSummaryRecord>>;
+  reportChatMessage(
+    workspaceId: string,
+    sessionId: string,
+    messageId: string,
+    participantId: string,
+    now: Date,
+    event: AudienceEventInput,
+  ): Promise<AudienceMutation<number>>;
+  countChatReports(workspaceId: string, sessionId: string): Promise<number>;
+  getAudienceRestriction(
+    workspaceId: string,
+    sessionId: string,
+    participantId: string,
+  ): Promise<AudienceRestrictionRecord | null>;
+  listAudienceRestrictions(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<AudienceRestrictionRecord[]>;
+  saveAudienceRestriction(
+    input: AudienceRestrictionRecord,
+    event: AudienceEventInput,
+  ): Promise<AudienceMutation<AudienceRestrictionRecord>>;
+  claimAudienceOutbox(now: Date, staleBefore: Date): Promise<AudienceOutboxRecord | null>;
+  completeAudienceOutbox(eventId: string, deliveredAt: Date): Promise<boolean>;
+  getAudienceOutboxStatus(): Promise<{
+    pending: number;
+    oldestCreatedAt: Date | null;
+    chatEnabledSessions: number;
+  }>;
   getSessionEvidence(workspaceId: string, sessionId: string): Promise<SessionEvidence>;
   findAnswers(
     workspaceId: string,

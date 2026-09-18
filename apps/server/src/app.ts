@@ -9,6 +9,7 @@ import rawBody from "fastify-raw-body";
 import type Stripe from "stripe";
 import { MemoryRepository, PostgresRepository, type Repository } from "@openround/db";
 import { AuthService } from "./auth.js";
+import { AudienceOutboxWorker } from "./audience-outbox-worker.js";
 import {
   OpenAiCompatibleAuthoringAssistant,
   type AuthoringAssistant,
@@ -22,6 +23,7 @@ import { FollowupService } from "./followup-service.js";
 import { ClamAvScanner, type MalwareScanner } from "./malware-scanner.js";
 import { MetricsService } from "./metrics.js";
 import { LtiService, ltiJwtAdapterFromConfig, type LtiJwtAdapter } from "./lti-service.js";
+import { InteractionService } from "./interaction-service.js";
 import { GenericOidcProvider, OidcService, type OidcProvider } from "./oidc-service.js";
 import { originAllowed } from "./origin.js";
 import { QnaService } from "./qna-service.js";
@@ -59,6 +61,7 @@ export async function buildApp(
           "*.attemptToken",
           "*.genericToken",
           "*.nickname",
+          "*.body",
           "*.email",
         ],
         censor: "[REDACTED]",
@@ -120,7 +123,14 @@ export async function buildApp(
     origin: config.WEB_ORIGIN,
     credentials: true,
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["content-type", "authorization", "x-request-id", "traceparent", "tracestate"],
+    allowedHeaders: [
+      "content-type",
+      "authorization",
+      "x-request-id",
+      "x-idempotency-key",
+      "traceparent",
+      "tracestate",
+    ],
     exposedHeaders: ["x-request-id", "x-trace-id"],
   });
   await app.register(cookie);
@@ -181,7 +191,9 @@ export async function buildApp(
       : ltiJwtAdapterFromConfig(config);
   const lti = new LtiService(repository, config, ltiJwtAdapter);
   const sessions = new SessionService(repository, cache, config, metrics);
-  const qna = new QnaService(repository, sessions);
+  const interactions = new InteractionService(repository, sessions, config, metrics);
+  const qna = new QnaService(repository, sessions, interactions);
+  const audienceOutboxWorker = new AudienceOutboxWorker(repository, interactions, metrics);
   const followups = new FollowupService(repository);
   const authoringAssistant =
     overrides.authoringAssistant !== undefined
@@ -253,6 +265,7 @@ export async function buildApp(
     lti,
     sessions,
     qna,
+    interactions,
     followups,
     authoring,
     storage,
@@ -274,6 +287,8 @@ export async function buildApp(
     cache,
     sessions,
     qna,
+    interactions,
+    audienceOutboxWorker,
     followups,
     authoring,
     oidc,
