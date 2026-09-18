@@ -14,10 +14,19 @@ import { Brand } from "../../../components/brand";
 import { AudiencePanel, type AudienceRealtimeUpdate } from "../../../components/audience-panel";
 import { ExperiencePreferences } from "../../../components/experience-preferences";
 import { Countdown } from "../../../components/countdown";
+import {
+  HostCommandBar,
+  HostStage,
+  RecoveryCompass,
+} from "../../../components/host-command-center";
 import { JoinAccess } from "../../../components/join-access";
 import { QuestionMedia } from "../../../components/question-media";
 import { QnaPanel } from "../../../components/qna-panel";
 import { apiFetch, humanError } from "../../../lib/api";
+import {
+  createHostCredentialRecovery,
+  hostCredentialStorageKey,
+} from "../../../lib/host-credential-recovery";
 import {
   audienceContextKey,
   createAudienceRealtimeReceipt,
@@ -26,76 +35,65 @@ import {
 } from "../../../lib/realtime";
 import { experienceThemeStyle } from "../../../lib/theme";
 import { clientUuid } from "../../../lib/uuid";
+import { getHostPhaseView, type HostPhaseCommand } from "../../../lib/host-phase";
+import { getLegacyPhaseActions, getLegacyRecoveryActions } from "../../../lib/legacy-host-phase";
 
 type Ack<T> = { data?: T; error?: { code: string; message: string } };
 
 function hostCredential(sessionId: string) {
+  const storageKey = hostCredentialStorageKey(sessionId);
   const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   const cohostToken = fragment.get("cohost");
   if (cohostToken) {
-    sessionStorage.setItem(`openround:host:${sessionId}`, cohostToken);
+    sessionStorage.setItem(storageKey, cohostToken);
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     return cohostToken;
   }
-  return sessionStorage.getItem(`openround:host:${sessionId}`);
+  return sessionStorage.getItem(storageKey);
 }
 
-function actionsFor(
-  snapshot: SessionSnapshot,
-): Array<{ action: HostAction; label: string; className: string }> {
-  switch (snapshot.phase) {
-    case "lobby":
-      return [{ action: "start", label: "Start round", className: "button" }];
-    case "question_open":
-      return [
-        { action: "pause", label: "Pause", className: "button-quiet" },
-        { action: "lock", label: "Lock answers", className: "button" },
-      ];
-    case "paused":
-      return [
-        { action: "resume", label: "Resume", className: "button" },
-        { action: "lock", label: "Lock answers", className: "button-quiet" },
-      ];
-    case "question_locked":
-      return [{ action: "reveal", label: "Reveal answer", className: "button" }];
-    case "question_reveal":
-      return [
-        { action: "show_leaderboard", label: "Show standings", className: "button-quiet" },
-        {
-          action: "next",
-          label:
-            snapshot.roundKind !== "main"
-              ? "Continue after recheck"
-              : (snapshot.questionPosition ?? snapshot.questionIndex) === snapshot.questionCount - 1
-                ? "Finish round"
-                : "Next checkpoint",
-          className: "button",
-        },
-      ];
-    case "intervention":
-      return [
-        {
-          action: "intervention.finish",
-          label: "Finish intervention",
-          className: "button",
-        },
-      ];
-    case "leaderboard":
-      return [
-        {
-          action: "next",
-          label:
-            snapshot.roundKind !== "main"
-              ? "Continue after recheck"
-              : (snapshot.questionPosition ?? snapshot.questionIndex) === snapshot.questionCount - 1
-                ? "Finish round"
-                : "Next checkpoint",
-          className: "button",
-        },
-      ];
-    default:
-      return [];
+function ResponseDistributionView({
+  distribution,
+}: {
+  distribution: NonNullable<SessionSnapshot["responseDistribution"]>;
+}) {
+  if (distribution.kind === "numeric") {
+    const correctPercent = Math.round((distribution.correct / distribution.respondents) * 100);
+    return (
+      <section aria-label="Post-lock response distribution" className="distribution-card">
+        <strong>Post-lock distribution</strong>
+        <p>
+          {distribution.correct} correct · {distribution.incorrect} incorrect · {correctPercent}%
+          correct
+        </p>
+      </section>
+    );
   }
+
+  return (
+    <section aria-label="Post-lock response distribution" className="distribution-card">
+      <strong>Post-lock distribution</strong>
+      <p className="muted">
+        {distribution.respondents} respondents
+        {distribution.kind === "choice" && distribution.percentBasis === "respondents"
+          ? " · percentages are percent of respondents and may total over 100%"
+          : ""}
+      </p>
+      <ul className="distribution-list">
+        {distribution.buckets.map((bucket) => (
+          <li key={bucket.value}>
+            <span>{bucket.label}</span>
+            <span aria-hidden="true" className="distribution-track">
+              <span style={{ width: `${bucket.percent}%` }} />
+            </span>
+            <strong>
+              {bucket.count} · {bucket.percent}%
+            </strong>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 export default function HostPage() {
@@ -104,7 +102,9 @@ export default function HostPage() {
   const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
   const snapshotRef = useRef<SessionSnapshot | null>(null);
   const [connected, setConnected] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [commandPending, setCommandPending] = useState(false);
+  const [staffPending, setStaffPending] = useState(false);
+  const [presenterPending, setPresenterPending] = useState(false);
   const [error, setError] = useState("");
   const [reportId, setReportId] = useState("");
   const [mediaCredential, setMediaCredential] = useState("");
@@ -118,91 +118,181 @@ export default function HostPage() {
   const [embedLink, setEmbedLink] = useState("");
   const [embedCopyStatus, setEmbedCopyStatus] = useState("");
   const [staffManagementAvailable, setStaffManagementAvailable] = useState(false);
+  const [cohostingAvailable, setCohostingAvailable] = useState(false);
+  const [audienceOpen, setAudienceOpen] = useState(false);
+  const [audienceTab, setAudienceTab] = useState<"audience" | "qna">("audience");
+  const audienceButtonRef = useRef<HTMLButtonElement>(null);
+  const audienceDrawerRef = useRef<HTMLDivElement>(null);
+  const audienceCloseRef = useRef<HTMLButtonElement>(null);
+  const recoverHostCredentialRef = useRef<
+    ((error: NonNullable<Ack<unknown>["error"]>, rejectedToken: string) => Promise<boolean>) | null
+  >(null);
 
   useEffect(() => {
     snapshotRef.current = snapshot;
   }, [snapshot]);
 
   useEffect(() => {
-    const hostToken = hostCredential(sessionId);
-    if (!hostToken) {
-      setError(
-        "This tab does not have the host credential. Start the session from your dashboard.",
-      );
-      return;
-    }
-    setMediaCredential(hostToken);
-    const sync = () => {
-      socket.emit(
-        "sync.request",
-        { sessionId, role: "host", hostToken, lastSeq: snapshotRef.current?.seq ?? 0 },
-        (response: Ack<{ snapshot: SessionSnapshot }>) => {
-          if (response.error) setError(response.error.message);
-          if (response.data) setSnapshot(response.data.snapshot);
+    let disposed = false;
+    let activeHostToken = "";
+    let sync: () => void = () => undefined;
+    const recovery = createHostCredentialRecovery(sessionStorage, sessionId);
+
+    const missingCredentialMessage =
+      "This tab does not have a host credential. Sign in as a workspace owner or editor, or open the original host link.";
+
+    const requestControlPass = async () => {
+      const { token } = await apiFetch<{ token: string }>(
+        `/v1/sessions/${sessionId}/control-pass`,
+        {
+          method: "POST",
+          body: "{}",
         },
       );
+      if (disposed) return null;
+      recovery.save(token);
+      activeHostToken = token;
+      setMediaCredential(token);
+      return token;
     };
-    const update = withRealtimeReceipt(
-      (envelope: EventEnvelope<{ snapshot: SessionSnapshot; reportId?: string }>) => {
-        if (
-          audienceContextKey(envelope.payload.snapshot) !== audienceContextKey(snapshotRef.current)
-        ) {
-          setAudienceSyncRevision((current) => current + 1);
-        }
-        setSnapshot(envelope.payload.snapshot);
-        if (envelope.payload.reportId) setReportId(envelope.payload.reportId);
-        setBusy(false);
-      },
-    );
-    const qnaUpdate = withRealtimeReceipt(() => setQnaRevision((current) => current + 1));
-    const audienceUpdate = createAudienceRealtimeReceipt((gap, envelope) => {
-      setAudienceRealtimeUpdate({ gap, envelope });
-      if (envelope.type.startsWith("qna.")) setQnaRevision((current) => current + 1);
-    });
-    socket.on("connect", () => {
-      setConnected(true);
-      setError("");
-      setAudienceSyncRevision((current) => current + 1);
-      sync();
-    });
-    socket.on("disconnect", () => setConnected(false));
-    for (const event of [
-      "lobby.updated",
-      "question.open",
-      "question.locked",
-      "question.reveal",
-      "checkpoint.insight",
-      "intervention.updated",
-      "recheck.open",
-      "leaderboard.updated",
-      "game.finished",
-      "session.snapshot",
-    ])
-      socket.on(event, update);
-    for (const event of [
-      "qna.question.created",
-      "qna.question.updated",
-      "qna.reply.created",
-      "qna.reply.updated",
-      "qna.vote.updated",
-      "qna.settings.updated",
-    ])
-      socket.on(event, qnaUpdate);
-    for (const event of [
-      "audience.settings.updated",
-      "audience.signal.updated",
-      "audience.summary.updated",
-      "chat.message.created",
-      "chat.message.updated",
-      "chat.message.removed",
-      "chat.message.pinned",
-      "chat.reaction.updated",
-      "audience.moderation.updated",
-      "audience.event",
-    ])
-      socket.on(event, audienceUpdate);
-    socket.connect();
+
+    const setControlPassError = (caught: unknown) => {
+      if (disposed) return;
+      setError(
+        (caught as { status?: number }).status === 401
+          ? missingCredentialMessage
+          : humanError(caught),
+      );
+    };
+
+    const recoverHostCredential = async (
+      syncError: NonNullable<Ack<unknown>["error"]>,
+      rejectedToken: string,
+    ) => {
+      if (disposed || rejectedToken !== activeHostToken) return false;
+      if (!recovery.claim(syncError.code, rejectedToken)) {
+        setError(syncError.message);
+        return false;
+      }
+      try {
+        const token = await requestControlPass();
+        if (!token) return false;
+        sync();
+        return true;
+      } catch (caught) {
+        setControlPassError(caught);
+        return false;
+      }
+    };
+    recoverHostCredentialRef.current = recoverHostCredential;
+
+    const connect = (hostToken: string) => {
+      if (disposed) return;
+      activeHostToken = hostToken;
+      setMediaCredential(hostToken);
+      sync = () => {
+        const attemptedToken = activeHostToken;
+        socket.emit(
+          "sync.request",
+          {
+            sessionId,
+            role: "host",
+            hostToken: attemptedToken,
+            lastSeq: snapshotRef.current?.seq ?? 0,
+          },
+          (response: Ack<{ snapshot: SessionSnapshot }>) => {
+            if (disposed || attemptedToken !== activeHostToken) return;
+            if (response.error) {
+              void recoverHostCredential(response.error, attemptedToken);
+              return;
+            }
+            if (response.data) {
+              recovery.succeeded();
+              setError("");
+              setSnapshot(response.data.snapshot);
+            }
+          },
+        );
+      };
+      const update = withRealtimeReceipt(
+        (envelope: EventEnvelope<{ snapshot: SessionSnapshot; reportId?: string }>) => {
+          if (
+            audienceContextKey(envelope.payload.snapshot) !==
+            audienceContextKey(snapshotRef.current)
+          ) {
+            setAudienceSyncRevision((current) => current + 1);
+          }
+          setSnapshot(envelope.payload.snapshot);
+          if (envelope.payload.reportId) setReportId(envelope.payload.reportId);
+          setCommandPending(false);
+        },
+      );
+      const qnaUpdate = withRealtimeReceipt(() => setQnaRevision((current) => current + 1));
+      const audienceUpdate = createAudienceRealtimeReceipt((gap, envelope) => {
+        setAudienceRealtimeUpdate({ gap, envelope });
+        if (envelope.type.startsWith("qna.")) setQnaRevision((current) => current + 1);
+      });
+      socket.on("connect", () => {
+        setConnected(true);
+        setError("");
+        setAudienceSyncRevision((current) => current + 1);
+        sync();
+      });
+      socket.on("disconnect", () => setConnected(false));
+      for (const event of [
+        "lobby.updated",
+        "question.open",
+        "question.locked",
+        "question.reveal",
+        "checkpoint.insight",
+        "intervention.updated",
+        "recheck.open",
+        "leaderboard.updated",
+        "game.finished",
+        "session.snapshot",
+      ])
+        socket.on(event, update);
+      for (const event of [
+        "qna.question.created",
+        "qna.question.updated",
+        "qna.reply.created",
+        "qna.reply.updated",
+        "qna.vote.updated",
+        "qna.settings.updated",
+      ])
+        socket.on(event, qnaUpdate);
+      for (const event of [
+        "audience.settings.updated",
+        "audience.signal.updated",
+        "audience.summary.updated",
+        "chat.message.created",
+        "chat.message.updated",
+        "chat.message.removed",
+        "chat.message.pinned",
+        "chat.reaction.updated",
+        "audience.moderation.updated",
+        "audience.event",
+      ])
+        socket.on(event, audienceUpdate);
+      socket.connect();
+    };
+
+    const existingToken = hostCredential(sessionId);
+    if (existingToken) {
+      connect(existingToken);
+    } else {
+      void requestControlPass()
+        .then((token) => {
+          if (token) connect(token);
+        })
+        .catch(setControlPassError);
+    }
+
     return () => {
+      disposed = true;
+      if (recoverHostCredentialRef.current === recoverHostCredential) {
+        recoverHostCredentialRef.current = null;
+      }
       socket.removeAllListeners();
       socket.disconnect();
     };
@@ -225,6 +315,52 @@ export default function HostPage() {
   }, [loadStaff]);
 
   useEffect(() => {
+    apiFetch<{ entitlements: { cohosting?: boolean } }>("/v1/auth/me")
+      .then(({ entitlements }) => setCohostingAvailable(Boolean(entitlements.cohosting)))
+      .catch(() => setCohostingAvailable(false));
+  }, []);
+
+  useEffect(() => {
+    if (!audienceOpen) return;
+    const focusCloseControl = () => audienceCloseRef.current?.focus();
+    const focusFrame = window.requestAnimationFrame(focusCloseControl);
+    const focusFallback = window.setTimeout(focusCloseControl, 200);
+    const manageDrawerFocus = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setAudienceOpen(false);
+        window.requestAnimationFrame(() => audienceButtonRef.current?.focus());
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = [
+        ...(audienceDrawerRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]):not([tabindex="-1"]), a[href]:not([tabindex="-1"]), input:not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])',
+        ) ?? []),
+      ].filter((element) => element.offsetParent !== null);
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!first || !last) return;
+      if (!audienceDrawerRef.current?.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", manageDrawerFocus);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.clearTimeout(focusFallback);
+      window.removeEventListener("keydown", manageDrawerFocus);
+    };
+  }, [audienceOpen]);
+
+  useEffect(() => {
     if (snapshot?.phase !== "finished" || reportId) return;
     apiFetch<{ report: { id: string } }>(`/v1/sessions/${sessionId}/report`)
       .then(({ report }) => setReportId(report.id))
@@ -239,10 +375,10 @@ export default function HostPage() {
       recheckMode?: "linked" | "revote";
     } = {},
   ) {
-    if (!snapshot || busy) return;
+    if (!snapshot || commandPending) return;
     const hostToken = sessionStorage.getItem(`openround:host:${sessionId}`);
     if (!hostToken) return;
-    setBusy(true);
+    setCommandPending(true);
     setError("");
     socket.emit(
       "host.command",
@@ -255,8 +391,12 @@ export default function HostPage() {
         ...options,
       },
       (response: Ack<{ snapshot: SessionSnapshot }>) => {
-        setBusy(false);
+        setCommandPending(false);
         if (response.error) {
+          if (response.error.code === "UNAUTHORIZED" && recoverHostCredentialRef.current) {
+            void recoverHostCredentialRef.current(response.error, hostToken);
+            return;
+          }
           setError(response.error.message);
           socket.emit(
             "sync.request",
@@ -312,7 +452,7 @@ export default function HostPage() {
 
   async function presenter() {
     setError("");
-    setBusy(true);
+    setPresenterPending(true);
     try {
       await presenterAccess(false);
       window.open(
@@ -323,14 +463,14 @@ export default function HostPage() {
     } catch (caught) {
       setError(humanError(caught));
     } finally {
-      setBusy(false);
+      setPresenterPending(false);
     }
   }
 
   async function createEmbedLink() {
     setError("");
     setEmbedCopyStatus("");
-    setBusy(true);
+    setPresenterPending(true);
     try {
       const access = await presenterAccess(true);
       if (!access.embedPolicyKey) throw new Error("A secure embed policy could not be created.");
@@ -348,7 +488,7 @@ export default function HostPage() {
     } catch (caught) {
       setError(humanError(caught));
     } finally {
-      setBusy(false);
+      setPresenterPending(false);
     }
   }
 
@@ -364,7 +504,7 @@ export default function HostPage() {
 
   async function createCohost() {
     setError("");
-    setBusy(true);
+    setStaffPending(true);
     try {
       const created = await apiFetch<{ token: string; credential: SessionStaffCredential }>(
         `/v1/sessions/${sessionId}/staff`,
@@ -385,22 +525,34 @@ export default function HostPage() {
     } catch (caught) {
       setError(humanError(caught));
     } finally {
-      setBusy(false);
+      setStaffPending(false);
     }
   }
 
   async function revokeStaff(credentialId: string) {
     setError("");
-    setBusy(true);
+    setStaffPending(true);
     try {
       await apiFetch(`/v1/sessions/${sessionId}/staff/${credentialId}`, { method: "DELETE" });
       await loadStaff();
     } catch (caught) {
       setError(humanError(caught));
     } finally {
-      setBusy(false);
+      setStaffPending(false);
     }
   }
+
+  function runPhaseCommand(item: HostPhaseCommand) {
+    command(item.action, {
+      ...(item.interventionType ? { interventionType: item.interventionType } : {}),
+      ...(item.recheckMode ? { recheckMode: item.recheckMode } : {}),
+    });
+  }
+
+  const phaseView = snapshot ? getHostPhaseView(snapshot) : null;
+  const uxBeta = snapshot?.uxBeta === true;
+  const legacyPhaseActions = snapshot ? getLegacyPhaseActions(snapshot) : [];
+  const legacyRecoveryActions = snapshot ? getLegacyRecoveryActions(snapshot) : [];
 
   return (
     <div
@@ -409,9 +561,10 @@ export default function HostPage() {
       data-motion={snapshot?.experienceTheme.motion}
       data-pattern={snapshot?.experienceTheme.tokens.pattern}
       data-typography={snapshot?.experienceTheme.tokens.typography}
+      data-ux-beta={uxBeta}
       style={experienceThemeStyle(snapshot?.experienceTheme)}
     >
-      <header className="shell live-topbar">
+      <header className="shell live-topbar" inert={audienceOpen}>
         <Brand inverted name={snapshot?.brandTheme?.organizationName} />
         <div className="button-row">
           <ExperiencePreferences />
@@ -421,7 +574,7 @@ export default function HostPage() {
           </span>
           <button
             className="button-quiet small-button"
-            disabled={busy}
+            disabled={presenterPending}
             onClick={() => void presenter()}
             type="button"
           >
@@ -429,7 +582,15 @@ export default function HostPage() {
           </button>
         </div>
       </header>
-      <main className="shell" style={{ padding: "26px 0 70px" }}>
+      <main
+        className={uxBeta ? "shell host-command-center" : "shell"}
+        id="main"
+        inert={audienceOpen}
+        style={uxBeta ? undefined : { padding: "26px 0 70px" }}
+      >
+        <p aria-atomic="true" aria-live="polite" className="sr-only">
+          {phaseView ? `Host phase: ${phaseView.phaseLabel}.` : "Connecting host controls."}
+        </p>
         {error ? (
           <p className="error" role="alert">
             {error}
@@ -441,369 +602,513 @@ export default function HostPage() {
             <Link href="/dashboard">Return to dashboard</Link>
           </section>
         ) : (
-          <div className="host-grid">
-            <section className="live-card" aria-live="polite">
-              {snapshot.phase === "lobby" ? (
-                <>
-                  <p className="eyebrow">Round code</p>
-                  <h1 className="live-lobby-heading">Join this round</h1>
-                  <div
-                    className="session-code"
-                    aria-label={`Round code ${snapshot.code.split("").join(" ")}`}
-                  >
-                    {snapshot.code}
-                  </div>
-                  <p className="lead">Share the code or QR. Start when the room is ready.</p>
-                  <ul className="roster" aria-label="Participant roster">
-                    {snapshot.participants.map((participant) => (
-                      <li key={participant.id}>
-                        <span>
-                          {participant.nickname}
-                          {participant.connected ? "" : " · offline"}
-                        </span>
-                        <button
-                          aria-label={`Remove ${participant.nickname}`}
-                          className="roster-kick"
-                          disabled={busy}
-                          onClick={() => command("kick", { participantId: participant.id })}
-                          type="button"
-                        >
-                          Remove
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : null}
-              {snapshot.question && snapshot.phase !== "finished" ? (
-                <>
-                  <div className="page-heading" style={{ alignItems: "center", marginBottom: 18 }}>
-                    <span className="status-pill">{snapshot.phase.replaceAll("_", " ")}</span>
-                    {snapshot.phase === "question_open" ? (
-                      <Countdown deadline={snapshot.deadline} />
-                    ) : null}
-                  </div>
-                  <h1 style={{ fontSize: "clamp(2rem, 6vw, 4rem)" }}>{snapshot.question.prompt}</h1>
-                  <QuestionMedia
-                    altText={snapshot.question.mediaAlt}
-                    credential={mediaCredential}
-                    mediaId={snapshot.question.mediaId}
-                    sessionId={sessionId}
-                  />
-                  {snapshot.question.choices.length > 0 ? (
-                    <div className="answer-grid">
-                      {snapshot.question.choices.map((choice, index) => (
-                        <div
-                          className="answer-button"
-                          data-correct={
-                            snapshot.correctResponse?.kind === "choice" &&
-                            snapshot.correctResponse.choiceIds.includes(choice.id)
-                              ? true
-                              : undefined
-                          }
-                          key={choice.id}
-                        >
-                          <span aria-hidden="true">{String.fromCharCode(65 + index)}.</span>{" "}
-                          {choice.label}
-                        </div>
-                      ))}
-                    </div>
-                  ) : snapshot.question.type === "numeric" ? (
-                    <p className="notice">
-                      Participants enter a numeric response
-                      {snapshot.question.unit ? ` in ${snapshot.question.unit}` : ""}.
-                      {snapshot.correctResponse?.kind === "numeric"
-                        ? ` Accepted value: ${snapshot.correctResponse.value}.`
-                        : ""}
-                    </p>
-                  ) : snapshot.question.rating ? (
-                    <p className="notice">
-                      Rating {snapshot.question.rating.min}–{snapshot.question.rating.max}:{" "}
-                      {snapshot.question.rating.minLabel} to {snapshot.question.rating.maxLabel}.
-                    </p>
-                  ) : null}
-                  {snapshot.explanation ? <p className="notice">{snapshot.explanation}</p> : null}
-                </>
-              ) : null}
-              {snapshot.phase === "finished" ? (
-                <>
-                  <p className="eyebrow">Round complete</p>
-                  <h1 style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}>Results are ready.</h1>
-                  <p className="lead">
-                    {snapshot.participants.length} participants completed this live round.
-                  </p>
-                  {reportId ? (
-                    <Link className="button" href={`/report/${reportId}`}>
-                      Open report
-                    </Link>
-                  ) : (
-                    <p className="notice">Finalizing the report…</p>
-                  )}
-                </>
-              ) : null}
-            </section>
-            <aside className="panel">
-              <h2 style={{ fontSize: "1.35rem" }}>Host controls</h2>
-              {snapshot.phase === "lobby" ? <JoinAccess code={snapshot.code} editable /> : null}
-              <div
-                className="metric-grid"
-                style={{ gridTemplateColumns: "1fr 1fr", marginBottom: 18 }}
-              >
-                <div className="metric">
+          <>
+            {uxBeta ? (
+              <section aria-label="Room readiness" className="room-readiness">
+                <span>
+                  <strong>{connected ? "Connected" : "Reconnecting"}</strong>
+                  <small>connection</small>
+                </span>
+                <span>
+                  <strong>{snapshot.code}</strong>
+                  <small>round code</small>
+                </span>
+                <span>
                   <strong>{snapshot.participants.length}</strong>
-                  <span>joined</span>
-                </div>
-                <div className="metric">
+                  <small>joined</small>
+                </span>
+                <span>
                   <strong>{snapshot.answerCount}</strong>
-                  <span>answered</span>
-                </div>
-              </div>
-              {snapshot.insight ? (
-                <div className="notice" aria-live="polite" style={{ marginBottom: 18 }}>
-                  <p className="eyebrow">Facilitator guidance</p>
-                  <strong>{snapshot.insight.recommendation.title}</strong>
-                  <p>{snapshot.insight.recommendation.reason}</p>
-                  <small>
-                    Based on {snapshot.insight.sampleSize} responses ·{" "}
-                    {snapshot.insight.participationPercent}% participation
-                    {snapshot.insight.correctnessPercent === null
-                      ? " · unscored"
-                      : ` · ${snapshot.insight.correctnessPercent}% correct`}
-                    . This is a deterministic suggestion; use your judgment.
-                  </small>
-                </div>
-              ) : null}
-              {snapshot.phase === "question_locked" && snapshot.roundKind === "main" ? (
-                <div className="host-controls" style={{ marginBottom: 18 }}>
-                  <strong>Recover understanding</strong>
-                  <button
-                    className="button-quiet"
-                    disabled={busy}
-                    onClick={() =>
-                      command("intervention.start", { interventionType: "peer_discussion" })
-                    }
-                    type="button"
-                  >
-                    Start peer discussion
-                  </button>
-                  <button
-                    className="button-quiet"
-                    disabled={busy}
-                    onClick={() => command("recheck.open", { recheckMode: "revote" })}
-                    type="button"
-                  >
-                    Reopen as revote
-                  </button>
-                  {snapshot.question?.linkedRecheckAvailable ? (
-                    <button
-                      className="button-quiet"
-                      disabled={busy}
-                      onClick={() => command("recheck.open", { recheckMode: "linked" })}
-                      type="button"
-                    >
-                      Open linked recheck
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-              {snapshot.phase === "question_reveal" && snapshot.roundKind === "main" ? (
-                <div className="host-controls" style={{ marginBottom: 18 }}>
-                  <strong>Intervene and verify</strong>
-                  <button
-                    className="button-quiet"
-                    disabled={busy}
-                    onClick={() => command("intervention.start", { interventionType: "explain" })}
-                    type="button"
-                  >
-                    Record explanation
-                  </button>
-                  <button
-                    className="button-quiet"
-                    disabled={busy}
-                    onClick={() => command("intervention.start", { interventionType: "example" })}
-                    type="button"
-                  >
-                    Work an example
-                  </button>
-                  <button
-                    className="button-quiet"
-                    disabled={busy}
-                    onClick={() => command("recheck.open", { recheckMode: "revote" })}
-                    type="button"
-                  >
-                    Recheck by revote
-                  </button>
-                  {snapshot.question?.linkedRecheckAvailable ? (
-                    <button
-                      className="button"
-                      disabled={busy}
-                      onClick={() => command("recheck.open", { recheckMode: "linked" })}
-                      type="button"
-                    >
-                      Open linked recheck
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-              {snapshot.phase === "intervention" && snapshot.intervention ? (
-                <p className="notice">
-                  Active intervention: {snapshot.intervention.type.replaceAll("_", " ")}. Finish it
-                  before revealing or rechecking.
-                </p>
-              ) : null}
-              <div className="host-controls">
-                {actionsFor(snapshot).map((item) => (
-                  <button
-                    className={item.className}
-                    disabled={
-                      busy || (item.action === "start" && snapshot.participants.length === 0)
-                    }
-                    key={item.action}
-                    onClick={() => command(item.action)}
-                    type="button"
-                  >
-                    {item.label}
-                  </button>
-                ))}
+                  <small>answered</small>
+                </span>
+                <span>
+                  <strong>
+                    {snapshot.deadline
+                      ? new Date(snapshot.deadline).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })
+                      : "None"}
+                  </strong>
+                  <small>deadline</small>
+                </span>
+                <span>
+                  <strong>
+                    {snapshot.questionPosition === null || snapshot.questionPosition === undefined
+                      ? "Lobby"
+                      : `${snapshot.questionPosition + 1}/${snapshot.questionCount}`}
+                  </strong>
+                  <small>progress</small>
+                </span>
+                <span>
+                  <strong>{phaseView?.phaseLabel ?? snapshot.phase.replaceAll("_", " ")}</strong>
+                  <small>phase</small>
+                </span>
+              </section>
+            ) : null}
+            <div className="host-grid" data-phase={snapshot.phase} data-testid="host-session">
+              <HostStage enhanced={uxBeta}>
                 {snapshot.phase === "lobby" ? (
-                  <button
-                    className="button-quiet"
-                    disabled={busy}
-                    onClick={() => command(snapshot.lobbyLocked ? "unlock_lobby" : "lock_lobby")}
-                    type="button"
-                  >
-                    {snapshot.lobbyLocked ? "Unlock lobby" : "Lock lobby"}
-                  </button>
-                ) : null}
-                {snapshot.phase !== "lobby" && snapshot.phase !== "finished" ? (
-                  <button
-                    className="button-danger"
-                    disabled={busy}
-                    onClick={() => window.confirm("End this session now?") && command("end")}
-                    type="button"
-                  >
-                    End session
-                  </button>
-                ) : null}
-              </div>
-              {snapshot.settings.resultVisibility === "leaderboard" &&
-              snapshot.phase !== "lobby" ? (
-                <ol style={{ paddingLeft: 24, lineHeight: 1.8 }}>
-                  {snapshot.participants.slice(0, 5).map((participant) => (
-                    <li key={participant.id}>
-                      <strong>{participant.nickname}</strong> · {participant.score}
-                    </li>
-                  ))}
-                </ol>
-              ) : null}
-              {staffManagementAvailable ? (
-                <details className="staff-management">
-                  <summary>Round staff</summary>
-                  <p className="muted">
-                    Cohosts can run this round. Presenter credentials remain read-only. Links expire
-                    automatically and can be revoked here.
-                  </p>
-                  <label className="field" htmlFor="cohost-label">
-                    <span>Co-host label</span>
-                    <input
-                      className="input"
-                      id="cohost-label"
-                      maxLength={80}
-                      onChange={(event) => setCohostLabel(event.target.value)}
-                      placeholder="Teaching assistant"
-                      value={cohostLabel}
-                    />
-                  </label>
-                  <button
-                    className="button-quiet small-button"
-                    disabled={busy}
-                    onClick={() => void createCohost()}
-                    type="button"
-                  >
-                    Create cohost link
-                  </button>
-                  {cohostLink ? (
-                    <div className="notice staff-share-link" role="status">
-                      <strong>Share this link once</strong>
-                      <a href={cohostLink}>{cohostLink}</a>
+                  <>
+                    <p className="eyebrow">Round code</p>
+                    <h1 className="live-lobby-heading">Join this round</h1>
+                    <div
+                      className="session-code"
+                      aria-label={`Round code ${snapshot.code.split("").join(" ")}`}
+                    >
+                      {snapshot.code}
                     </div>
-                  ) : null}
-                  <hr className="staff-divider" />
-                  <h3>Presenter embed</h3>
-                  <p className="muted">
-                    Creates a read-only presenter link restricted to the workspace&apos;s configured
-                    HTTPS origins. The credential is carried in the URL fragment and removed after
-                    opening.
-                  </p>
-                  <button
-                    className="button-quiet small-button"
-                    disabled={busy}
-                    onClick={() => void createEmbedLink()}
-                    type="button"
-                  >
-                    Create secure embed link
-                  </button>
-                  {embedLink ? (
-                    <div className="notice staff-share-link" role="status">
-                      <strong>Embed this read-only presenter URL</strong>
-                      <a href={embedLink}>{embedLink}</a>
-                      <button
-                        className="button-quiet small-button"
-                        onClick={() => void copyEmbedLink()}
-                        type="button"
-                      >
-                        Copy embed link
-                      </button>
-                      {embedCopyStatus ? <span>{embedCopyStatus}</span> : null}
-                    </div>
-                  ) : null}
-                  {staffCredentials.length > 0 ? (
-                    <ul className="staff-list">
-                      {staffCredentials.map((credential) => (
-                        <li key={credential.id}>
+                    <p className="lead">Share the code or QR. Start when the room is ready.</p>
+                    <ul className="roster" aria-label="Participant roster">
+                      {snapshot.participants.map((participant) => (
+                        <li key={participant.id}>
                           <span>
-                            <strong>{credential.label || credential.role}</strong> ·{" "}
-                            {credential.role}
-                            {credential.revokedAt ? " · revoked" : ""}
+                            {participant.nickname}
+                            {participant.connected ? "" : " · offline"}
                           </span>
-                          {!credential.revokedAt ? (
-                            <button
-                              className="button-danger small-button"
-                              disabled={busy}
-                              onClick={() => void revokeStaff(credential.id)}
-                              type="button"
-                            >
-                              Revoke
-                            </button>
-                          ) : null}
+                          <button
+                            aria-label={`Remove ${participant.nickname}`}
+                            className="roster-kick"
+                            disabled={commandPending}
+                            onClick={() => command("kick", { participantId: participant.id })}
+                            type="button"
+                          >
+                            Remove
+                          </button>
                         </li>
                       ))}
                     </ul>
-                  ) : null}
-                </details>
-              ) : null}
-            </aside>
-          </div>
+                  </>
+                ) : null}
+                {snapshot.question && snapshot.phase !== "finished" ? (
+                  <>
+                    <div
+                      className="page-heading"
+                      style={{ alignItems: "center", marginBottom: 18 }}
+                    >
+                      <span className="status-pill">{snapshot.phase.replaceAll("_", " ")}</span>
+                      {snapshot.phase === "question_open" ? (
+                        <Countdown deadline={snapshot.deadline} />
+                      ) : null}
+                    </div>
+                    <h1 style={{ fontSize: "clamp(2rem, 6vw, 4rem)" }}>
+                      {snapshot.question.prompt}
+                    </h1>
+                    <QuestionMedia
+                      altText={snapshot.question.mediaAlt}
+                      credential={mediaCredential}
+                      mediaId={snapshot.question.mediaId}
+                      sessionId={sessionId}
+                    />
+                    {snapshot.question.choices.length > 0 ? (
+                      <div className="answer-grid">
+                        {snapshot.question.choices.map((choice, index) => (
+                          <div
+                            className="answer-button"
+                            data-correct={
+                              snapshot.correctResponse?.kind === "choice" &&
+                              snapshot.correctResponse.choiceIds.includes(choice.id)
+                                ? true
+                                : undefined
+                            }
+                            key={choice.id}
+                          >
+                            <span aria-hidden="true">{String.fromCharCode(65 + index)}.</span>{" "}
+                            {choice.label}
+                          </div>
+                        ))}
+                      </div>
+                    ) : snapshot.question.type === "numeric" ? (
+                      <p className="notice">
+                        Participants enter a numeric response
+                        {snapshot.question.unit ? ` in ${snapshot.question.unit}` : ""}.
+                        {snapshot.correctResponse?.kind === "numeric"
+                          ? ` Accepted value: ${snapshot.correctResponse.value}.`
+                          : ""}
+                      </p>
+                    ) : snapshot.question.rating ? (
+                      <p className="notice">
+                        Rating {snapshot.question.rating.min}–{snapshot.question.rating.max}:{" "}
+                        {snapshot.question.rating.minLabel} to {snapshot.question.rating.maxLabel}.
+                      </p>
+                    ) : null}
+                    {snapshot.explanation ? <p className="notice">{snapshot.explanation}</p> : null}
+                  </>
+                ) : null}
+                {snapshot.phase === "finished" ? (
+                  <>
+                    <p className="eyebrow">Round complete</p>
+                    <h1 style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}>Results are ready.</h1>
+                    <p className="lead">
+                      {snapshot.participants.length} participants completed this live round.
+                    </p>
+                    {reportId ? (
+                      <Link className="button" href={`/report/${reportId}`}>
+                        Open report
+                      </Link>
+                    ) : (
+                      <p className="notice">Finalizing the report…</p>
+                    )}
+                  </>
+                ) : null}
+              </HostStage>
+              <RecoveryCompass phaseView={phaseView!} showSteps={uxBeta} snapshot={snapshot}>
+                {snapshot.phase === "lobby" ? <JoinAccess code={snapshot.code} editable /> : null}
+                {uxBeta && snapshot.responseDistribution ? (
+                  <ResponseDistributionView distribution={snapshot.responseDistribution} />
+                ) : null}
+                {!uxBeta && legacyRecoveryActions.length > 0 ? (
+                  <div className="host-controls" style={{ marginBottom: 18 }}>
+                    <strong>
+                      {snapshot.phase === "question_locked"
+                        ? "Recover understanding"
+                        : "Intervene and verify"}
+                    </strong>
+                    {legacyRecoveryActions.map((item) => (
+                      <button
+                        className={item.className}
+                        disabled={commandPending}
+                        key={`${item.action}:${item.interventionType ?? item.recheckMode ?? ""}`}
+                        onClick={() => runPhaseCommand(item)}
+                        type="button"
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {snapshot.phase === "intervention" && snapshot.intervention ? (
+                  <p className="notice">
+                    Active intervention: {snapshot.intervention.type.replaceAll("_", " ")}. Finish
+                    it before revealing or rechecking.
+                  </p>
+                ) : null}
+                {!uxBeta ? (
+                  <div className="host-controls">
+                    {legacyPhaseActions.map((item) => (
+                      <button
+                        className={item.className}
+                        disabled={
+                          commandPending ||
+                          (item.action === "start" && snapshot.participants.length === 0)
+                        }
+                        key={item.action}
+                        onClick={() => runPhaseCommand(item)}
+                        type="button"
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                    {snapshot.phase === "lobby" ? (
+                      <button
+                        className="button-quiet"
+                        disabled={commandPending}
+                        onClick={() =>
+                          command(snapshot.lobbyLocked ? "unlock_lobby" : "lock_lobby")
+                        }
+                        type="button"
+                      >
+                        {snapshot.lobbyLocked ? "Unlock lobby" : "Lock lobby"}
+                      </button>
+                    ) : null}
+                    {snapshot.phase !== "lobby" && snapshot.phase !== "finished" ? (
+                      <button
+                        className="button-danger"
+                        disabled={commandPending}
+                        onClick={() => window.confirm("End this session now?") && command("end")}
+                        type="button"
+                      >
+                        End session
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {snapshot.settings.resultVisibility === "leaderboard" &&
+                snapshot.phase !== "lobby" ? (
+                  <ol style={{ paddingLeft: 24, lineHeight: 1.8 }}>
+                    {snapshot.participants.slice(0, 5).map((participant) => (
+                      <li key={participant.id}>
+                        <strong>{participant.nickname}</strong> · {participant.score}
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
+                {staffManagementAvailable ? (
+                  <details className="staff-management">
+                    <summary>Round staff</summary>
+                    <p className="muted">
+                      Cohosts can run this round. Presenter credentials remain read-only. Links
+                      expire automatically and can be revoked here.
+                    </p>
+                    {cohostingAvailable ? (
+                      <>
+                        <label className="field" htmlFor="cohost-label">
+                          <span>Co-host label</span>
+                          <input
+                            className="input"
+                            id="cohost-label"
+                            maxLength={80}
+                            onChange={(event) => setCohostLabel(event.target.value)}
+                            placeholder="Teaching assistant"
+                            value={cohostLabel}
+                          />
+                        </label>
+                        <button
+                          className="button-quiet small-button"
+                          disabled={staffPending}
+                          onClick={() => void createCohost()}
+                          type="button"
+                        >
+                          Create cohost link
+                        </button>
+                        {cohostLink ? (
+                          <div className="notice staff-share-link" role="status">
+                            <strong>Share this link once</strong>
+                            <a href={cohostLink}>{cohostLink}</a>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <p className="notice">
+                        Shareable cohost links are available on Pro, Team, and Community plans.{" "}
+                        <Link href="/pricing">Compare plans</Link>.
+                      </p>
+                    )}
+                    <hr className="staff-divider" />
+                    <h3>Presenter embed</h3>
+                    <p className="muted">
+                      Creates a read-only presenter link restricted to the workspace&apos;s
+                      configured HTTPS origins. The credential is carried in the URL fragment and
+                      removed after opening.
+                    </p>
+                    <button
+                      className="button-quiet small-button"
+                      disabled={presenterPending}
+                      onClick={() => void createEmbedLink()}
+                      type="button"
+                    >
+                      Create secure embed link
+                    </button>
+                    {embedLink ? (
+                      <div className="notice staff-share-link" role="status">
+                        <strong>Embed this read-only presenter URL</strong>
+                        <a href={embedLink}>{embedLink}</a>
+                        <button
+                          className="button-quiet small-button"
+                          onClick={() => void copyEmbedLink()}
+                          type="button"
+                        >
+                          Copy embed link
+                        </button>
+                        {embedCopyStatus ? <span>{embedCopyStatus}</span> : null}
+                      </div>
+                    ) : null}
+                    {staffCredentials.length > 0 ? (
+                      <ul className="staff-list">
+                        {staffCredentials.map((credential) => (
+                          <li key={credential.id}>
+                            <span>
+                              <strong>{credential.label || credential.role}</strong> ·{" "}
+                              {credential.role}
+                              {credential.revokedAt ? " · revoked" : ""}
+                            </span>
+                            {!credential.revokedAt ? (
+                              <button
+                                className="button-danger small-button"
+                                disabled={staffPending}
+                                onClick={() => void revokeStaff(credential.id)}
+                                type="button"
+                              >
+                                Revoke
+                              </button>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </details>
+                ) : null}
+              </RecoveryCompass>
+            </div>
+            {!uxBeta && mediaCredential ? (
+              <>
+                {snapshot.phase !== "finished" ? (
+                  <AudiencePanel
+                    onKick={(participantId) => command("kick", { participantId })}
+                    realtimeUpdate={audienceRealtimeUpdate}
+                    role="moderator"
+                    sessionId={sessionId}
+                    syncRevision={audienceSyncRevision}
+                    token={mediaCredential}
+                  />
+                ) : null}
+                <QnaPanel
+                  revision={qnaRevision}
+                  role="moderator"
+                  sessionId={sessionId}
+                  token={mediaCredential}
+                />
+              </>
+            ) : null}
+            {uxBeta && phaseView ? (
+              <HostCommandBar
+                busy={commandPending}
+                fallback={
+                  reportId ? (
+                    <Link className="button" href={`/report/${reportId}`}>
+                      Open report
+                    </Link>
+                  ) : null
+                }
+                leading={
+                  <>
+                    <button
+                      aria-controls="host-audience-drawer"
+                      aria-expanded={audienceOpen}
+                      className="button-quiet"
+                      onClick={() => setAudienceOpen((open) => !open)}
+                      ref={audienceButtonRef}
+                      type="button"
+                    >
+                      Audience
+                    </button>
+                    {snapshot.phase === "lobby" ? (
+                      <button
+                        className="button-quiet"
+                        disabled={commandPending}
+                        onClick={() =>
+                          command(snapshot.lobbyLocked ? "unlock_lobby" : "lock_lobby")
+                        }
+                        type="button"
+                      >
+                        {snapshot.lobbyLocked ? "Unlock lobby" : "Lock lobby"}
+                      </button>
+                    ) : null}
+                  </>
+                }
+                onCommand={runPhaseCommand}
+                phaseView={phaseView}
+                primaryDisabled={
+                  phaseView.primary?.action === "start" && snapshot.participants.length === 0
+                }
+                trailing={
+                  snapshot.phase !== "lobby" && snapshot.phase !== "finished" ? (
+                    <button
+                      className="button-danger"
+                      disabled={commandPending}
+                      onClick={() => window.confirm("End this session now?") && command("end")}
+                      type="button"
+                    >
+                      End
+                    </button>
+                  ) : null
+                }
+              />
+            ) : null}
+          </>
         )}
-        {snapshot && snapshot.phase !== "finished" && mediaCredential ? (
-          <AudiencePanel
-            onKick={(participantId) => command("kick", { participantId })}
-            realtimeUpdate={audienceRealtimeUpdate}
-            role="moderator"
-            sessionId={sessionId}
-            syncRevision={audienceSyncRevision}
-            token={mediaCredential}
-          />
-        ) : null}
-        {snapshot && mediaCredential ? (
-          <QnaPanel
-            revision={qnaRevision}
-            role="moderator"
-            sessionId={sessionId}
-            token={mediaCredential}
-          />
-        ) : null}
       </main>
+      {snapshot && mediaCredential && uxBeta ? (
+        <div
+          aria-hidden={!audienceOpen}
+          aria-labelledby="audience-drawer-title"
+          aria-modal="true"
+          className="audience-drawer"
+          data-open={audienceOpen || undefined}
+          data-testid="audience-drawer"
+          id="host-audience-drawer"
+          inert={!audienceOpen}
+          ref={audienceDrawerRef}
+          role="dialog"
+        >
+          <div className="audience-drawer-heading">
+            <div>
+              <p className="eyebrow">Audience</p>
+              <h2 id="audience-drawer-title">Participants and conversation</h2>
+            </div>
+            <button
+              aria-label="Close audience tools"
+              className="button-quiet small-button"
+              onClick={() => {
+                setAudienceOpen(false);
+                window.requestAnimationFrame(() => audienceButtonRef.current?.focus());
+              }}
+              ref={audienceCloseRef}
+              type="button"
+            >
+              Close
+            </button>
+          </div>
+          <div
+            aria-label="Audience views"
+            className="audience-tabs"
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+              event.preventDefault();
+              const next = audienceTab === "audience" ? "qna" : "audience";
+              setAudienceTab(next);
+              document.getElementById(`audience-tab-${next}`)?.focus();
+            }}
+            role="tablist"
+          >
+            <button
+              aria-controls="host-audience-panel"
+              aria-selected={audienceTab === "audience"}
+              id="audience-tab-audience"
+              onClick={() => setAudienceTab("audience")}
+              role="tab"
+              tabIndex={audienceTab === "audience" ? 0 : -1}
+              type="button"
+            >
+              Participants, Pulse &amp; Chat
+            </button>
+            <button
+              aria-controls="host-qna-panel"
+              aria-selected={audienceTab === "qna"}
+              id="audience-tab-qna"
+              onClick={() => setAudienceTab("qna")}
+              role="tab"
+              tabIndex={audienceTab === "qna" ? 0 : -1}
+              type="button"
+            >
+              Q&amp;A
+            </button>
+          </div>
+          <div
+            aria-labelledby="audience-tab-audience"
+            hidden={audienceTab !== "audience"}
+            id="host-audience-panel"
+            role="tabpanel"
+          >
+            {snapshot.phase !== "finished" ? (
+              <AudiencePanel
+                onKick={(participantId) => command("kick", { participantId })}
+                realtimeUpdate={audienceRealtimeUpdate}
+                role="moderator"
+                sessionId={sessionId}
+                syncRevision={audienceSyncRevision}
+                token={mediaCredential}
+              />
+            ) : (
+              <p className="muted">Audience controls close when the round finishes.</p>
+            )}
+          </div>
+          <div
+            aria-labelledby="audience-tab-qna"
+            hidden={audienceTab !== "qna"}
+            id="host-qna-panel"
+            role="tabpanel"
+          >
+            <QnaPanel
+              revision={qnaRevision}
+              role="moderator"
+              sessionId={sessionId}
+              token={mediaCredential}
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

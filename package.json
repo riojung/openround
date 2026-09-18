@@ -39,6 +39,7 @@
     "test:collector-config": "node scripts/check-collector-config.mjs",
     "test:multi-writer": "pnpm --filter @openround/server test:multi-writer",
     "test:e2e": "playwright test",
+    "test:e2e:beta": "playwright test --config=playwright.beta.config.ts",
     "test:e2e:compose": "playwright test --config=playwright.compose.config.ts",
     "test:coverage": "turbo run test:coverage",
     "typecheck": "turbo run typecheck",

@@ -345,6 +345,177 @@ describe("game engine", () => {
     expect(JSON.stringify(snapshot.question)).not.toContain("sourceCitations");
   });
 
+  it("only exposes aggregate distributions to staff after lock with at least five responses", () => {
+    const answered = (count: number) => {
+      const { state, correctId, wrongId } = fixture();
+      const participantIds = Array.from({ length: count }, () => randomUUID());
+      const joined = participantIds.reduce(
+        (current, id, index) =>
+          addParticipant(current, {
+            ...participant(id),
+            nickname: `Learner ${index + 1}`,
+          }).state,
+        state,
+      );
+      const started = applyHostCommand(joined, {
+        action: "start",
+        commandId: randomUUID(),
+        expectedVersion: joined.version,
+        nowMs: 1_000,
+        newRoundId: randomUUID,
+      });
+      const withAnswers = participantIds.reduce(
+        (current, participantId, index) =>
+          acceptAnswer(current, {
+            answerId: randomUUID(),
+            participantId,
+            roundId: current.roundId!,
+            choiceId: index < 3 ? correctId : wrongId,
+            idempotencyKey: randomUUID(),
+            nowMs: 2_000 + index,
+          }).state,
+        started.state,
+      );
+      return { state: withAnswers, participantIds };
+    };
+
+    const five = answered(5);
+    expect(snapshotForRole(five.state, { role: "host" }).responseDistribution).toBeUndefined();
+    const locked = applyHostCommand(five.state, {
+      action: "lock",
+      commandId: randomUUID(),
+      expectedVersion: five.state.version,
+      nowMs: 3_000,
+      newRoundId: randomUUID,
+    });
+    expect(snapshotForRole(locked.state, { role: "host" }).responseDistribution).toMatchObject({
+      kind: "choice",
+      respondents: 5,
+      totalSelections: 5,
+      percentBasis: "responses",
+      buckets: [
+        { label: "Four", count: 3, percent: 60 },
+        { label: "Five", count: 2, percent: 40 },
+      ],
+    });
+    expect(
+      snapshotForRole(locked.state, {
+        role: "participant",
+        participantId: five.participantIds[0],
+      }).responseDistribution,
+    ).toBeUndefined();
+
+    const four = answered(4);
+    const fourLocked = applyHostCommand(four.state, {
+      action: "lock",
+      commandId: randomUUID(),
+      expectedVersion: four.state.version,
+      nowMs: 3_000,
+      newRoundId: randomUUID,
+    });
+    expect(
+      snapshotForRole(fourLocked.state, { role: "presenter" }).responseDistribution,
+    ).toBeUndefined();
+  });
+
+  it("labels multi-select percentages by respondent and limits numeric evidence to totals", () => {
+    const answerQuestion = (
+      question: QuizDraft["questions"][number],
+      responseAt: (index: number) => Parameters<typeof acceptAnswer>[1]["response"],
+    ) => {
+      const participantIds = Array.from({ length: 5 }, () => randomUUID());
+      const joined = participantIds.reduce(
+        (current, id, index) =>
+          addParticipant(current, { ...participant(id), nickname: `Learner ${index + 1}` }).state,
+        stateForQuestions([question]),
+      );
+      const started = applyHostCommand(joined, {
+        action: "start",
+        commandId: randomUUID(),
+        expectedVersion: joined.version,
+        nowMs: 1_000,
+        newRoundId: randomUUID,
+      });
+      const answered = participantIds.reduce(
+        (current, participantId, index) =>
+          acceptAnswer(current, {
+            answerId: randomUUID(),
+            participantId,
+            roundId: current.roundId!,
+            response: responseAt(index),
+            idempotencyKey: randomUUID(),
+            nowMs: 2_000 + index,
+          }).state,
+        started.state,
+      );
+      return applyHostCommand(answered, {
+        action: "lock",
+        commandId: randomUUID(),
+        expectedVersion: answered.version,
+        nowMs: 3_000,
+        newRoundId: randomUUID,
+      }).state;
+    };
+
+    const first = randomUUID();
+    const second = randomUUID();
+    const multiSelect = answerQuestion(
+      {
+        id: randomUUID(),
+        type: "multi_select",
+        prompt: "Select both safe actions",
+        choices: [
+          { id: first, label: "Pause", isCorrect: true },
+          { id: second, label: "Escalate", isCorrect: true },
+          { id: randomUUID(), label: "Ignore", isCorrect: false },
+        ],
+        timeLimitSeconds: 10,
+        basePoints: 1_000,
+        explanation: "Pause and escalate.",
+        mediaId: null,
+        mediaAlt: null,
+      },
+      (index) => ({ kind: "choice", choiceIds: index < 3 ? [first, second] : [first] }),
+    );
+    expect(snapshotForRole(multiSelect, { role: "host" }).responseDistribution).toMatchObject({
+      kind: "choice",
+      respondents: 5,
+      totalSelections: 8,
+      percentBasis: "respondents",
+      buckets: [
+        { label: "Pause", count: 5, percent: 100 },
+        { label: "Escalate", count: 3, percent: 60 },
+        { label: "Ignore", count: 0, percent: 0 },
+      ],
+    });
+
+    const numeric = answerQuestion(
+      {
+        id: randomUUID(),
+        type: "numeric",
+        prompt: "What is six times seven?",
+        correctValue: "42",
+        tolerance: "0",
+        unit: null,
+        timeLimitSeconds: 10,
+        basePoints: 1_000,
+        explanation: "Six groups of seven total 42.",
+        mediaId: null,
+        mediaAlt: null,
+      },
+      (index) => ({ kind: "numeric", value: index < 3 ? "42" : "41" }),
+    );
+    expect(snapshotForRole(numeric, { role: "host" }).responseDistribution).toEqual({
+      kind: "numeric",
+      respondents: 5,
+      correct: 3,
+      incorrect: 2,
+    });
+    expect(
+      JSON.stringify(snapshotForRole(numeric, { role: "host" }).responseDistribution),
+    ).not.toContain("41");
+  });
+
   it("locks and unlocks the lobby and removes a kicked participant", () => {
     const { state } = fixture();
     const participantId = randomUUID();

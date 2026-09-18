@@ -13,7 +13,11 @@ import {
   createGameState,
 } from "@openround/game-engine";
 import { PostgresRepository } from "../src/postgres.js";
-import { SessionCodeConflictError, SessionVersionConflictError } from "../src/types.js";
+import {
+  SessionCodeConflictError,
+  SessionNotActiveError,
+  SessionVersionConflictError,
+} from "../src/types.js";
 
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
 const runtimeUrl = process.env.TEST_DATABASE_URL;
@@ -61,6 +65,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 11, name: "audience_interactions" },
       { version: 12, name: "interaction_feature_flags" },
       { version: 13, name: "close_finished_interactions" },
+      { version: 14, name: "ux_beta_foundation" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -70,7 +75,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("13");
+    expect(bootstrapped.rows[0]?.count).toBe("14");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -114,6 +119,120 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     expect(result).not.toBeNull();
     return result!;
   }
+
+  it("paginates reports without losing PostgreSQL microsecond precision", async () => {
+    const owner = await creator("report-cursor");
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 24 * 60 * 60_000);
+    const content = {
+      title: "Cursor precision",
+      description: "",
+      questions: [],
+    } satisfies QuizDraft;
+    const quizId = randomUUID();
+    await repository.createQuiz({
+      id: quizId,
+      workspaceId: owner.workspaceId,
+      title: content.title,
+      description: content.description,
+      status: "draft",
+      draft: content,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const version = await repository.publishQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      quizId,
+      version: 1,
+      content,
+      contentHash: randomUUID(),
+      publishedAt: now,
+    });
+    const reportIds: string[] = [];
+    for (let index = 0; index < 2; index += 1) {
+      const sessionId = randomUUID();
+      await repository.createSession({
+        id: sessionId,
+        workspaceId: owner.workspaceId,
+        quizVersionId: version.id,
+        hostId: owner.userId,
+        hostTokenHash: randomUUID(),
+        state: createGameState({
+          sessionId,
+          code: randomInt(1_000_000, 10_000_000).toString(),
+          quiz: content,
+          settings: {
+            audienceLimit: 20,
+            scoringMode: "accuracy",
+            resultVisibility: "private",
+            allowLateJoin: true,
+            nicknamePolicy: "friendly_only",
+          },
+        }),
+        expiresAt,
+        retentionExpiresAt: expiresAt,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const reportId = randomUUID();
+      reportIds.push(reportId);
+      await repository.saveReport(owner.workspaceId, {
+        id: reportId,
+        sessionId,
+        status: "ready",
+        generatedAt: now.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+        metrics: {
+          participantCount: 0,
+          completedCount: 0,
+          answerCount: 0,
+          accuracyPercent: 0,
+        },
+        questions: [],
+        participants: [],
+      });
+    }
+
+    const client = await runtimePool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+      await client.query(
+        `UPDATE reports
+         SET created_at = CASE id
+           WHEN $1::uuid THEN '2026-09-18T12:00:00.000900Z'::timestamptz
+           WHEN $2::uuid THEN '2026-09-18T12:00:00.000100Z'::timestamptz
+         END
+         WHERE id = ANY($3::uuid[])`,
+        [reportIds[0], reportIds[1], reportIds],
+      );
+      await client.query("COMMIT");
+    } finally {
+      client.release();
+    }
+
+    const firstPage = await repository.listReportHistory(owner.workspaceId, {
+      limit: 1,
+      now,
+    });
+    expect(firstPage).toMatchObject({
+      hasMore: true,
+      items: [{ id: reportIds[0], cursorCreatedAt: "2026-09-18T12:00:00.000900Z" }],
+    });
+    const firstItem = firstPage.items[0]!;
+    const secondPage = await repository.listReportHistory(owner.workspaceId, {
+      limit: 1,
+      cursor: {
+        createdAt: firstItem.createdAt,
+        cursorCreatedAt: firstItem.cursorCreatedAt,
+        id: firstItem.id,
+      },
+      now,
+    });
+    expect(secondPage.items.map(({ id }) => id)).toEqual([reportIds[1]]);
+  });
 
   it("shows only the active workspace and rejects cross-tenant writes", async () => {
     await repository.updateOperationalFeatures(
@@ -510,6 +629,22 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       interventions: [],
       qna: { questions: 0, answered: 0, unresolved: 0 },
     });
+    persistedSession.state = { ...persistedSession.state, answers: {} };
+    await repository.saveSession(persistedSession, persistedSession.state.version);
+    expect(
+      await repository.listSessionHistory(first.workspaceId, {
+        limit: 25,
+        now: new Date(),
+      }),
+    ).toMatchObject({
+      items: [expect.objectContaining({ id: sessionId, answerCount: 2 })],
+    });
+    expect(
+      await repository.listSessionHistory(second.workspaceId, {
+        limit: 25,
+        now: new Date(),
+      }),
+    ).toMatchObject({ items: [] });
 
     const staffTokenHash = `staff-${randomUUID()}`;
     const staffCredential = await repository.createSessionStaffCredential({
@@ -529,6 +664,75 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       role: "cohost",
     });
     expect(await repository.listSessionStaff(second.workspaceId, sessionId)).toEqual([]);
+
+    const firstResumeTokenHash = `creator-resume-${randomUUID()}`;
+    const firstResumeReplacement = await repository.replaceCreatorResumeCredential({
+      id: randomUUID(),
+      workspaceId: first.workspaceId,
+      sessionId,
+      role: "cohost",
+      purpose: "creator_resume",
+      label: "Creator resume",
+      tokenHash: firstResumeTokenHash,
+      embedPolicyKeyHash: null,
+      embedAllowedOrigins: [],
+      createdBy: first.userId,
+      expiresAt: new Date(now.getTime() + 4 * 60 * 60_000),
+      revokedAt: null,
+      createdAt: now,
+    });
+    const firstResume = firstResumeReplacement.credential;
+    expect(firstResumeReplacement.revokedCredentialIds).toEqual([]);
+    const secondResumeTokenHash = `creator-resume-${randomUUID()}`;
+    const secondResumeReplacement = await repository.replaceCreatorResumeCredential({
+      ...firstResume,
+      id: randomUUID(),
+      tokenHash: secondResumeTokenHash,
+      createdAt: new Date(now.getTime() + 1),
+    });
+    const secondResume = secondResumeReplacement.credential;
+    expect(secondResumeReplacement.revokedCredentialIds).toEqual([firstResume.id]);
+    expect(await repository.getSessionStaffByToken(firstResumeTokenHash, now)).toBeNull();
+    expect(await repository.getSessionStaffByToken(secondResumeTokenHash, now)).toMatchObject({
+      id: secondResume.id,
+      purpose: "creator_resume",
+    });
+    expect(
+      (await repository.listSessionStaff(first.workspaceId, sessionId)).filter(
+        (credential) => credential.purpose === "creator_resume" && !credential.revokedAt,
+      ),
+    ).toHaveLength(1);
+    const expiryClient = await runtimePool.connect();
+    try {
+      await expiryClient.query("BEGIN");
+      await expiryClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        first.workspaceId,
+      ]);
+      await expiryClient.query(
+        "UPDATE game_sessions SET expires_at = clock_timestamp() - interval '1 second' WHERE id = $1",
+        [sessionId],
+      );
+      await expiryClient.query("COMMIT");
+      await expect(
+        repository.replaceCreatorResumeCredential({
+          ...secondResume,
+          id: randomUUID(),
+          tokenHash: `creator-resume-${randomUUID()}`,
+          createdAt: new Date(),
+        }),
+      ).rejects.toBeInstanceOf(SessionNotActiveError);
+    } finally {
+      await expiryClient.query("BEGIN");
+      await expiryClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        first.workspaceId,
+      ]);
+      await expiryClient.query("UPDATE game_sessions SET expires_at = $2 WHERE id = $1", [
+        sessionId,
+        persistedSession.expiresAt,
+      ]);
+      await expiryClient.query("COMMIT");
+      expiryClient.release();
+    }
 
     expect(
       await repository.saveQnaSettings({
@@ -846,7 +1050,13 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         new Date(interactionNow.getTime() + 12),
       ),
     ).toMatchObject({ duplicate: true, event: { audienceSeq: 9 } });
-    expect(await repository.revokeSessionStaff(first.workspaceId, staffCredential.id)).toBe(true);
+    expect(
+      await repository.revokeSessionStaff(first.workspaceId, randomUUID(), staffCredential.id),
+    ).toBe(false);
+    expect(await repository.getSessionStaffByToken(staffTokenHash, now)).not.toBeNull();
+    expect(
+      await repository.revokeSessionStaff(first.workspaceId, sessionId, staffCredential.id),
+    ).toBe(true);
     expect(await repository.getSessionStaffByToken(staffTokenHash, now)).toBeNull();
 
     const staleSession = structuredClone(persistedSession);
@@ -898,6 +1108,27 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     expect((await repository.getSessionById(sessionId))?.state.phase).toBe("question_locked");
     expect(await repository.getReportBySession(first.workspaceId, sessionId)).toBeNull();
 
+    const pendingReport: Report = { ...report, status: "pending", generatedAt: null };
+    await repository.saveReport(first.workspaceId, pendingReport);
+    const reportJob = await repository.claimReportJob(
+      new Date(Date.now() + 1_000),
+      new Date(Date.now() + 61_000),
+    );
+    expect(reportJob).toMatchObject({ reportId: report.id, workspaceId: first.workspaceId });
+    await repository.retryReportJob(reportJob!, "terminal report failure", now, true);
+    expect(await repository.getReport(first.workspaceId, report.id)).toMatchObject({
+      status: "failed",
+      generatedAt: null,
+    });
+    expect(
+      await repository.listReportHistory(first.workspaceId, { limit: 10, status: "failed", now }),
+    ).toMatchObject({
+      items: [expect.objectContaining({ id: report.id, status: "failed", generatedAt: null })],
+    });
+    expect(
+      await repository.listReportHistory(first.workspaceId, { limit: 10, status: "pending", now }),
+    ).toMatchObject({ items: [] });
+
     persistedSession.state = revealed.state;
     await repository.saveSession(persistedSession, locked.state.version, report);
     expect((await repository.getSessionById(sessionId))?.state.phase).toBe("question_reveal");
@@ -943,6 +1174,11 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
           createdAt: now,
         },
       ],
+    );
+    expect(await repository.listReportHistory(first.workspaceId, { limit: 10, now })).toMatchObject(
+      {
+        items: [expect.objectContaining({ followupId, followupStatus: "open" })],
+      },
     );
     expect(await repository.getFollowup(second.workspaceId, followupId)).toBeNull();
     expect(await repository.getFollowupByReport(first.workspaceId, report.id)).toMatchObject({
@@ -1036,6 +1272,26 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     ).rejects.toBeInstanceOf(SessionVersionConflictError);
     expect(await repository.getParticipants(sessionId)).toHaveLength(2);
 
+    const productEventId = randomUUID();
+    const productEventExpiry = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
+    await repository.recordProductEvents([
+      {
+        id: productEventId,
+        workspaceId: first.workspaceId,
+        name: "rehearsal_completed",
+        occurredAt: now.toISOString(),
+        dimensions: {
+          scenario: "split_room",
+          segment: "education",
+          betaVersion: "p0-2026",
+          durationBucket: "1_to_5m",
+        },
+        expiresAt: productEventExpiry,
+        createdAt: now,
+      },
+    ]);
+    expect(await repository.purgeProductEvents(new Date(productEventExpiry.getTime() - 1))).toBe(0);
+
     const client = await runtimePool.connect();
     try {
       expect(
@@ -1062,6 +1318,10 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         (await client.query("SELECT count(*)::integer AS count FROM audience_outbox")).rows[0]
           ?.count,
       ).toBe(0);
+      expect(
+        (await client.query("SELECT count(*)::integer AS count FROM product_events")).rows[0]
+          ?.count,
+      ).toBe(0);
       await client.query("BEGIN");
       await client.query("SELECT set_config('app.workspace_id', $1, true)", [first.workspaceId]);
       expect(
@@ -1080,6 +1340,10 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         (await client.query("SELECT count(*)::integer AS count FROM audience_outbox")).rows[0]
           ?.count,
       ).toBe(9);
+      expect(
+        (await client.query("SELECT array_agg(id ORDER BY id) AS ids FROM product_events")).rows[0]
+          ?.ids,
+      ).toEqual([productEventId]);
       await expect(
         client.query(
           `INSERT INTO quizzes (id, workspace_id, title, description, status, draft)
@@ -1105,6 +1369,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     } finally {
       client.release();
     }
+    expect(await repository.purgeProductEvents(productEventExpiry)).toBe(1);
 
     const finishedState = applyHostCommand(persistedSession.state, {
       commandId: randomUUID(),
@@ -1164,6 +1429,40 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       }),
     ).toBe(true);
     expect(await repository.getPlan(first.workspaceId)).toBe("pro");
+  });
+
+  it("cascades product events when an owner account deletes its workspace", async () => {
+    const owner = await creator("delete-product-events");
+    const now = new Date();
+    await repository.recordProductEvents([
+      {
+        id: randomUUID(),
+        workspaceId: owner.workspaceId,
+        name: "creation_completed",
+        occurredAt: now.toISOString(),
+        dimensions: { creationPath: "blank" },
+        expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+        createdAt: now,
+      },
+    ]);
+    const productEventCount = async () => {
+      const client = await runtimePool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+        const result = await client.query<{ count: number }>(
+          "SELECT count(*)::integer AS count FROM product_events",
+        );
+        await client.query("COMMIT");
+        return result.rows[0]?.count;
+      } finally {
+        client.release();
+      }
+    };
+
+    expect(await productEventCount()).toBe(1);
+    await repository.deleteAccount(owner.userId);
+    expect(await productEventCount()).toBe(0);
   });
 
   it("isolates authoring sources and claims each background job once", async () => {

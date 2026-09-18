@@ -31,6 +31,7 @@ export class RetentionService {
     const purgedSessions = purgedSessionIds.length;
     const auditCutoff = new Date(now.getTime() - this.auditRetentionDays * 24 * 60 * 60 * 1_000);
     const purgedAuditEvents = await this.repository.purgeAuditEvents(auditCutoff);
+    await this.repository.purgeProductEvents(now);
     const cutoff = new Date(now.getTime() - this.quarantineRetentionHours * 60 * 60 * 1_000);
     const staleMedia = await this.repository.listStaleMedia(cutoff, 100);
     if (!this.storage.configured) {

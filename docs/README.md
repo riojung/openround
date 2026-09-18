@@ -5,15 +5,16 @@ education and workplace learning. Use this index to choose the shortest path for
 
 ## Start here
 
-| I want to…                                                | Read                                                                    |
-| --------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Run OpenRound locally and complete a first round          | [Quick start](quick-start.md)                                           |
-| Create, host, join, recover, and review understanding     | [User guide](user-guide.md)                                             |
-| Understand product behavior and interaction choices       | [Product and experience design](design.md)                              |
-| Review the competitive position and post-P0 roadmap       | [Competitive strategy and roadmap](competitive-strategy-and-roadmap.md) |
-| Understand services, state, storage, and trust boundaries | [Architecture and protocol](architecture.md)                            |
-| Integrate with REST or realtime interfaces                | [API and realtime reference](api.md)                                    |
-| Configure a gated institution pilot                       | [Institution integration guide](institution-integrations.md)            |
+| I want to…                                                | Read                                                                       |
+| --------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Run OpenRound locally and complete a first round          | [Quick start](quick-start.md)                                              |
+| Create, host, join, recover, and review understanding     | [User guide](user-guide.md)                                                |
+| Understand product behavior and interaction choices       | [Product and experience design](design.md)                                 |
+| Review the 2026 Kahoot-alternatives UX benchmark and plan | [Kahoot-alternatives UX gap plan](kahoot-alternatives-2026-ux-gap-plan.md) |
+| Review the competitive position and post-P0 roadmap       | [Competitive strategy and roadmap](competitive-strategy-and-roadmap.md)    |
+| Understand services, state, storage, and trust boundaries | [Architecture and protocol](architecture.md)                               |
+| Integrate with REST or realtime interfaces                | [API and realtime reference](api.md)                                       |
+| Configure a gated institution pilot                       | [Institution integration guide](institution-integrations.md)               |
 
 ## Build and operate
 

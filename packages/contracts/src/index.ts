@@ -84,6 +84,8 @@ export const PublicFeaturesSchema = z.object({
   roundExperiences: z.boolean(),
   audiencePulse: z.boolean(),
   roomChat: z.boolean(),
+  uxBeta: z.boolean().default(false),
+  recoveryRehearsal: z.boolean().default(false),
 });
 export type PublicFeatures = z.infer<typeof PublicFeaturesSchema>;
 
@@ -121,6 +123,7 @@ export const EntitlementsSchema = z.object({
   csvExport: z.boolean(),
   brandTheme: z.boolean(),
   followups: z.boolean(),
+  cohosting: z.boolean().default(false),
   authoringJobsPerMonth: z.number().int().nonnegative().nullable(),
 });
 export type Entitlements = z.infer<typeof EntitlementsSchema>;
@@ -787,8 +790,42 @@ export function canonicalizeResponse(response: ResponsePayload): ResponsePayload
   return response;
 }
 
+const ResponseDistributionBucketSchema = z.object({
+  value: z.string().min(1).max(500),
+  label: z.string().min(1).max(500),
+  count: z.number().int().nonnegative(),
+  percent: z.number().min(0).max(100),
+});
+
+/**
+ * Aggregate response evidence that is safe to expose to authenticated session staff only.
+ * It is omitted before lock/reveal and whenever fewer than five people responded.
+ */
+export const ResponseDistributionSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("choice"),
+    respondents: z.number().int().min(5),
+    totalSelections: z.number().int().nonnegative(),
+    percentBasis: z.enum(["responses", "respondents"]),
+    buckets: z.array(ResponseDistributionBucketSchema).max(6),
+  }),
+  z.object({
+    kind: z.literal("rating"),
+    respondents: z.number().int().min(5),
+    buckets: z.array(ResponseDistributionBucketSchema).max(10),
+  }),
+  z.object({
+    kind: z.literal("numeric"),
+    respondents: z.number().int().min(5),
+    correct: z.number().int().nonnegative(),
+    incorrect: z.number().int().nonnegative(),
+  }),
+]);
+export type ResponseDistribution = z.infer<typeof ResponseDistributionSchema>;
+
 export const SessionSnapshotSchema = z.object({
   mode: z.literal("live").default("live"),
+  uxBeta: z.boolean().optional(),
   stateSchemaVersion: z.number().int().positive().default(1),
   sessionId: z.string().uuid(),
   code: z.string().regex(/^\d{7}$/),
@@ -821,6 +858,7 @@ export const SessionSnapshotSchema = z.object({
   feedback: z.string().nullable().optional(),
   intervention: InterventionStateSchema.nullable().default(null),
   insight: CheckpointInsightSchema.optional(),
+  responseDistribution: ResponseDistributionSchema.optional(),
 });
 export type SessionSnapshot = z.infer<typeof SessionSnapshotSchema>;
 
@@ -858,6 +896,8 @@ export type JoinResponse = z.infer<typeof JoinResponseSchema>;
 
 export const SessionStaffRoleSchema = z.enum(["cohost", "presenter"]);
 export type SessionStaffRole = z.infer<typeof SessionStaffRoleSchema>;
+export const SessionStaffPurposeSchema = z.enum(["collaboration", "creator_resume"]);
+export type SessionStaffPurpose = z.infer<typeof SessionStaffPurposeSchema>;
 
 export const CreateSessionStaffCredentialSchema = z.object({
   role: SessionStaffRoleSchema,
@@ -874,6 +914,7 @@ export const SessionStaffCredentialSchema = z.object({
   id: z.string().uuid(),
   sessionId: z.string().uuid(),
   role: SessionStaffRoleSchema,
+  purpose: SessionStaffPurposeSchema.default("collaboration"),
   label: z.string(),
   expiresAt: z.string().datetime(),
   revokedAt: z.string().datetime().nullable(),
@@ -887,6 +928,18 @@ export const CreateSessionStaffCredentialResponseSchema = z.object({
   embedPolicyKey: z.string().min(20).optional(),
   embedAllowedOrigins: z.array(z.string().url()).max(10).optional(),
 });
+export type CreateSessionStaffCredentialResponse = z.infer<
+  typeof CreateSessionStaffCredentialResponseSchema
+>;
+
+export const CreatorControlPassResponseSchema = z.object({
+  credential: SessionStaffCredentialSchema.extend({
+    role: z.literal("cohost"),
+    purpose: z.literal("creator_resume"),
+  }),
+  token: z.string().min(20),
+});
+export type CreatorControlPassResponse = z.infer<typeof CreatorControlPassResponseSchema>;
 
 const HttpsOriginSchema = z
   .string()
@@ -1521,11 +1574,162 @@ export const MediaAccessSchema = z.object({
 export type MediaAccess = z.infer<typeof MediaAccessSchema>;
 
 export const CreateQuizSchema = z.object({
-  title: z.string().trim().min(1, "Enter a checkpoint set title").max(160),
+  title: z.string().trim().min(1, "Enter a Round title").max(160),
   description: z.string().trim().max(1_000).default(""),
 });
 
 export const UpdateQuizSchema = QuizDraftSchema;
+
+export const StarterIdSchema = z.enum([
+  "exit-ticket",
+  "misconception-check",
+  "technical-concept-check",
+  "compliance-scenario",
+  "new-hire-knowledge-check",
+  "icebreaker-poll",
+]);
+export type StarterId = z.infer<typeof StarterIdSchema>;
+
+export const StarterSummarySchema = z.object({
+  id: StarterIdSchema,
+  title: z.string().min(1).max(160),
+  description: z.string().min(1).max(500),
+  segment: z.enum(["all", "education", "workplace"]),
+  category: RoundCategorySchema,
+  experiencePreset: ExperiencePresetRefSchema,
+  questionCount: z.number().int().positive(),
+  responseTypes: z.array(QuestionTypeSchema).min(1),
+  version: z.literal(1),
+});
+export type StarterSummary = z.infer<typeof StarterSummarySchema>;
+
+export const StartersResponseSchema = z.object({
+  starters: z.array(StarterSummarySchema),
+});
+export type StartersResponse = z.infer<typeof StartersResponseSchema>;
+
+export const SessionHistoryStatusSchema = z.enum(["active", "finished", "expired"]);
+export type SessionHistoryStatus = z.infer<typeof SessionHistoryStatusSchema>;
+export const SessionSummarySchema = z.object({
+  id: z.string().uuid(),
+  quizId: z.string().uuid(),
+  title: z.string().min(1).max(160),
+  status: SessionHistoryStatusSchema,
+  phase: SessionPhaseSchema,
+  code: z.string().regex(/^\d{7}$/),
+  participantCount: z.number().int().nonnegative(),
+  answerCount: z.number().int().nonnegative(),
+  questionCount: z.number().int().nonnegative(),
+  questionPosition: z.number().int().positive().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+  reportId: z.string().uuid().nullable(),
+});
+export type SessionSummary = z.infer<typeof SessionSummarySchema>;
+
+const RecoverySummarySchema = z.object({
+  recovered: z.number().int().nonnegative(),
+  eligible: z.number().int().nonnegative(),
+  percent: z.number().min(0).max(100).nullable(),
+});
+
+export const FollowupHistoryStatusSchema = z.enum(["scheduled", "open", "closed", "expired"]);
+export type FollowupHistoryStatus = z.infer<typeof FollowupHistoryStatusSchema>;
+
+export const ReportSummarySchema = z.object({
+  id: z.string().uuid(),
+  sessionId: z.string().uuid(),
+  quizId: z.string().uuid(),
+  title: z.string().min(1).max(160),
+  status: z.enum(["pending", "ready", "failed"]),
+  participantCount: z.number().int().nonnegative(),
+  initialAccuracyPercent: z.number().min(0).max(100),
+  recovery: RecoverySummarySchema,
+  unresolvedConceptCount: z.number().int().nonnegative(),
+  interventionCount: z.number().int().nonnegative(),
+  followupId: z.string().uuid().nullable(),
+  followupStatus: FollowupHistoryStatusSchema.nullable(),
+  generatedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+});
+export type ReportSummary = z.infer<typeof ReportSummarySchema>;
+
+export const FollowupSummarySchema = z.object({
+  id: z.string().uuid(),
+  sourceSessionId: z.string().uuid(),
+  sourceReportId: z.string().uuid(),
+  title: z.string().min(1).max(160),
+  status: FollowupHistoryStatusSchema,
+  conceptKeys: z.array(ConceptKeySchema),
+  checkpointCount: z.number().int().positive(),
+  attemptCount: z.number().int().nonnegative(),
+  completedAttemptCount: z.number().int().nonnegative(),
+  opensAt: z.string().datetime(),
+  closesAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+  createdAt: z.string().datetime(),
+});
+export type FollowupSummary = z.infer<typeof FollowupSummarySchema>;
+
+export const SessionSummaryPageSchema = z.object({
+  items: z.array(SessionSummarySchema),
+  nextCursor: z.string().nullable(),
+});
+export type SessionSummaryPage = z.infer<typeof SessionSummaryPageSchema>;
+export const ReportSummaryPageSchema = z.object({
+  items: z.array(ReportSummarySchema),
+  nextCursor: z.string().nullable(),
+});
+export type ReportSummaryPage = z.infer<typeof ReportSummaryPageSchema>;
+export const FollowupSummaryPageSchema = z.object({
+  items: z.array(FollowupSummarySchema),
+  nextCursor: z.string().nullable(),
+});
+export type FollowupSummaryPage = z.infer<typeof FollowupSummaryPageSchema>;
+
+export const ReportContextSchema = z.object({
+  quizId: z.string().uuid(),
+  quizTitle: z.string().min(1).max(160),
+  sessionCreatedAt: z.string().datetime(),
+  sessionUpdatedAt: z.string().datetime(),
+});
+export type ReportContext = z.infer<typeof ReportContextSchema>;
+
+export const ProductEventNameSchema = z.enum([
+  "creation_started",
+  "creation_completed",
+  "setup_recipe_selected",
+  "rehearsal_started",
+  "rehearsal_completed",
+]);
+export type ProductEventName = z.infer<typeof ProductEventNameSchema>;
+export const ProductEventSchema = z
+  .object({
+    name: ProductEventNameSchema,
+    occurredAt: z.string().datetime(),
+    dimensions: z
+      .object({
+        creationPath: z.enum(["starter", "source", "import", "blank"]).optional(),
+        recipe: z.enum(["recovery", "friendly_competition", "open_discussion"]).optional(),
+        scenario: z.enum(["low_participation", "split_room", "confident_misconception"]).optional(),
+        segment: z.enum(["education", "workplace"]).optional(),
+        betaVersion: z.literal("p0-2026").optional(),
+        durationBucket: z.enum(["under_1m", "1_to_5m", "5_to_15m", "over_15m"]).optional(),
+      })
+      .strict()
+      .default({}),
+  })
+  .strict();
+export type ProductEvent = z.infer<typeof ProductEventSchema>;
+
+export const ProductEventBatchSchema = z
+  .object({
+    events: z.array(ProductEventSchema).min(1).max(20),
+  })
+  .strict();
+export type ProductEventBatch = z.infer<typeof ProductEventBatchSchema>;
 
 export const CreateSessionSchema = z.object({
   quizId: z.string().uuid(),

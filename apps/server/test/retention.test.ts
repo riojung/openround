@@ -190,4 +190,34 @@ describe("retention service", () => {
     expect(repository.audits).toHaveLength(1);
     expect(repository.audits[0]!.action).toBe("checkpoint.published");
   });
+
+  it("purges privacy-safe product events at their 30-day expiry", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date("2026-09-18T12:00:00.000Z");
+    await repository.recordProductEvents([
+      {
+        id: randomUUID(),
+        workspaceId: randomUUID(),
+        name: "rehearsal_completed",
+        occurredAt: new Date(now.getTime() - 30 * 24 * 60 * 60_000).toISOString(),
+        dimensions: {
+          scenario: "split_room",
+          segment: "education",
+          betaVersion: "p0-2026",
+          durationBucket: "1_to_5m",
+        },
+        expiresAt: now,
+        createdAt: new Date(now.getTime() - 30 * 24 * 60 * 60_000),
+      },
+    ]);
+    const retention = new RetentionService(
+      repository,
+      { configured: true, deleteAsset: async () => undefined },
+      24,
+    );
+
+    await retention.run(now);
+
+    expect(repository.productEvents).toHaveLength(0);
+  });
 });

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { AuthoringJob, AuthoringSourceType } from "@openround/contracts";
 import { apiFetch, humanError } from "../lib/api";
+import { recordCreationEvent } from "./workspace/product-events";
 
 interface AuthoringStatus {
   enabled: boolean;
@@ -15,6 +16,9 @@ interface AuthoringStatus {
 
 interface AuthoringAssistantProps {
   canEdit: boolean;
+  plain?: boolean;
+  trackCreation?: boolean;
+  terminology?: "legacy" | "round";
 }
 
 const sourceTypes: Record<
@@ -58,7 +62,12 @@ function statusLabel(status: AuthoringJob["status"]) {
   return "Needs attention";
 }
 
-export function AuthoringAssistant({ canEdit }: AuthoringAssistantProps) {
+export function AuthoringAssistant({
+  canEdit,
+  plain = false,
+  trackCreation = false,
+  terminology = "legacy",
+}: AuthoringAssistantProps) {
   const router = useRouter();
   const [status, setStatus] = useState<AuthoringStatus | null>(null);
   const [jobs, setJobs] = useState<AuthoringJob[]>([]);
@@ -103,6 +112,7 @@ export function AuthoringAssistant({ canEdit }: AuthoringAssistantProps) {
     event.preventDefault();
     setBusy(true);
     setError("");
+    if (trackCreation) recordCreationEvent("creation_started", "source");
     try {
       let body: Record<string, unknown>;
       if (sourceMode === "pasted_text") {
@@ -143,6 +153,7 @@ export function AuthoringAssistant({ canEdit }: AuthoringAssistantProps) {
         `/v1/authoring/jobs/${job.id}/apply`,
         { method: "POST", body: "{}" },
       );
+      if (trackCreation) recordCreationEvent("creation_completed", "source");
       router.push(`/quiz/${result.quiz.id}`);
     } catch (caught) {
       setError(humanError(caught));
@@ -157,12 +168,14 @@ export function AuthoringAssistant({ canEdit }: AuthoringAssistantProps) {
     : "Loading authoring availability…";
 
   return (
-    <details className="panel authoring-assistant">
-      <summary>Draft checkpoints from a trusted source</summary>
+    <details className={plain ? "authoring-assistant" : "panel authoring-assistant"}>
+      <summary>
+        Draft {terminology === "round" ? "questions" : "checkpoints"} from a trusted source
+      </summary>
       <p className="muted">
-        OpenRound can propose a main checkpoint and linked recheck from pasted text or a private
-        PDF, Word, or PowerPoint file. Every proposal includes source citations and remains an
-        unpublished draft until you review it.
+        OpenRound can propose a main {terminology === "round" ? "question" : "checkpoint"} and
+        linked recheck from pasted text or a private PDF, Word, or PowerPoint file. Every proposal
+        includes source citations and remains an unpublished draft until you review it.
       </p>
       <p className="notice" aria-live="polite">
         {allowance}
@@ -277,7 +290,12 @@ export function AuthoringAssistant({ canEdit }: AuthoringAssistantProps) {
                     <section key={question.id}>
                       <p>
                         <strong>
-                          {question.delivery === "recheck" ? "Linked recheck" : "Main checkpoint"}:
+                          {question.delivery === "recheck"
+                            ? "Linked recheck"
+                            : terminology === "round"
+                              ? "Main question"
+                              : "Main checkpoint"}
+                          :
                         </strong>{" "}
                         {question.prompt}
                       </p>

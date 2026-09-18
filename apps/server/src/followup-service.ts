@@ -133,7 +133,7 @@ export class FollowupService {
   async create(creator: CreatorContext, reportId: string, input: CreateFollowup, now = new Date()) {
     const report = await this.repository.getReport(creator.workspaceId, reportId);
     if (!report) throw new FollowupError("NOT_FOUND", "Report not found");
-    if (report.status !== "ready" || report.schemaVersion !== 2) {
+    if (report.status !== "ready" || (report.schemaVersion !== 2 && report.schemaVersion !== 3)) {
       throw new FollowupError("CONFLICT", "A ready evidence report is required for follow-up");
     }
     const allowedConcepts = new Set(

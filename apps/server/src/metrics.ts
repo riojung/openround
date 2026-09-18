@@ -213,6 +213,21 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private readonly productEvents = new Counter({
+    name: "openround_product_events_total",
+    help: "Privacy-safe beta product events by bounded dimensions",
+    labelNames: [
+      "name",
+      "creation_path",
+      "recipe",
+      "scenario",
+      "segment",
+      "beta_version",
+      "duration_bucket",
+    ] as const,
+    registers: [this.registry],
+  });
+
   private readonly audienceEvents = new Counter({
     name: "openround_audience_events_total",
     help: "Durable audience interaction events by bounded event type and outcome",
@@ -273,6 +288,28 @@ export class MetricsService {
 
   bindPostgres(pool: DatabasePoolMetrics) {
     this.pool = pool;
+  }
+
+  recordProductEvent(event: {
+    name: string;
+    dimensions: {
+      creationPath?: string;
+      recipe?: string;
+      scenario?: string;
+      segment?: string;
+      betaVersion?: string;
+      durationBucket?: string;
+    };
+  }) {
+    this.productEvents.inc({
+      name: event.name,
+      creation_path: event.dimensions.creationPath ?? "none",
+      recipe: event.dimensions.recipe ?? "none",
+      scenario: event.dimensions.scenario ?? "none",
+      segment: event.dimensions.segment ?? "none",
+      beta_version: event.dimensions.betaVersion ?? "none",
+      duration_bucket: event.dimensions.durationBucket ?? "none",
+    });
   }
 
   recordAudienceEvent(type: string, outcome: "published" | "duplicate" | "retry", lag: number) {

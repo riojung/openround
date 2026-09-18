@@ -1,0 +1,24 @@
+{
+  "name": "@openround/rehearsal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openround/contracts": "workspace:*",
+    "@openround/game-engine": "workspace:*",
+    "@openround/insights": "workspace:*"
+  }
+}

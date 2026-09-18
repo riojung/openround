@@ -10,6 +10,7 @@ import type {
   InstitutionCapabilities,
   InstitutionContractStatus,
   InteractionSettings,
+  ProductEvent,
   QuizDraft,
   Report,
   ResponsePayload,
@@ -358,6 +359,13 @@ export class SessionCodeConflictError extends Error {
   }
 }
 
+export class SessionNotActiveError extends Error {
+  constructor(public readonly sessionId: string) {
+    super(`Session ${sessionId} is not active`);
+    this.name = "SessionNotActiveError";
+  }
+}
+
 export class FollowupVersionConflictError extends Error {
   constructor(
     public readonly attemptId: string,
@@ -389,6 +397,7 @@ export interface SessionStaffCredentialRecord {
   workspaceId: string;
   sessionId: string;
   role: "cohost" | "presenter";
+  purpose: "collaboration" | "creator_resume";
   label: string;
   tokenHash: string;
   embedPolicyKeyHash?: string | null;
@@ -396,6 +405,87 @@ export interface SessionStaffCredentialRecord {
   createdBy: string;
   expiresAt: Date;
   revokedAt: Date | null;
+  createdAt: Date;
+}
+
+export type SessionStaffCredentialInput = Omit<SessionStaffCredentialRecord, "purpose"> & {
+  purpose?: SessionStaffCredentialRecord["purpose"];
+};
+
+export interface SessionStaffCredentialReplacement {
+  credential: SessionStaffCredentialRecord;
+  revokedCredentialIds: string[];
+}
+
+export interface HistoryCursor {
+  createdAt: Date;
+  /** Exact database timestamp used for keyset comparisons when Date precision is insufficient. */
+  cursorCreatedAt?: string;
+  id: string;
+}
+
+export interface SessionHistoryRecord {
+  id: string;
+  quizId: string;
+  title: string;
+  status: "active" | "finished" | "expired";
+  phase: GameState["phase"];
+  code: string;
+  participantCount: number;
+  answerCount: number;
+  questionCount: number;
+  questionPosition: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+  expiresAt: Date;
+  reportId: string | null;
+}
+
+export interface ReportHistoryRecord {
+  id: string;
+  sessionId: string;
+  quizId: string;
+  title: string;
+  status: Report["status"];
+  participantCount: number;
+  initialAccuracyPercent: number;
+  recovery: { recovered: number; eligible: number; percent: number | null };
+  unresolvedConceptCount: number;
+  interventionCount: number;
+  followupId: string | null;
+  followupStatus: FollowupHistoryRecord["status"] | null;
+  generatedAt: Date | null;
+  createdAt: Date;
+  /** Exact database timestamp used to create the next opaque keyset cursor. */
+  cursorCreatedAt?: string;
+  expiresAt: Date;
+}
+
+export interface FollowupHistoryRecord {
+  id: string;
+  sourceSessionId: string;
+  sourceReportId: string;
+  title: string;
+  status: "scheduled" | "open" | "closed" | "expired";
+  conceptKeys: string[];
+  checkpointCount: number;
+  attemptCount: number;
+  completedAttemptCount: number;
+  opensAt: Date;
+  closesAt: Date;
+  expiresAt: Date;
+  createdAt: Date;
+}
+
+export interface HistoryPage<T> {
+  items: T[];
+  hasMore: boolean;
+}
+
+export interface ProductEventRecord extends ProductEvent {
+  id: string;
+  workspaceId: string;
+  expiresAt: Date;
   createdAt: Date;
 }
 
@@ -743,6 +833,18 @@ export interface Repository {
   getSessionById(sessionId: string): Promise<StoredSession | null>;
   getSessionByCode(code: string): Promise<StoredSession | null>;
   listSessionIds(workspaceId: string): Promise<string[]>;
+  listSessionHistory(
+    workspaceId: string,
+    options: {
+      cursor?: HistoryCursor;
+      limit: number;
+      status?: SessionHistoryRecord["status"];
+      quizId?: string;
+      from?: Date;
+      to?: Date;
+      now: Date;
+    },
+  ): Promise<HistoryPage<SessionHistoryRecord>>;
   saveSession(input: StoredSession, expectedVersion: number, report?: Report): Promise<void>;
   deleteSession(workspaceId: string, sessionId: string): Promise<boolean>;
   createParticipant(input: ParticipantRecord): Promise<void>;
@@ -754,14 +856,21 @@ export interface Repository {
   getParticipantByToken(tokenHash: string): Promise<ParticipantRecord | null>;
   getParticipants(sessionId: string): Promise<ParticipantRecord[]>;
   createSessionStaffCredential(
-    input: SessionStaffCredentialRecord,
+    input: SessionStaffCredentialInput,
   ): Promise<SessionStaffCredentialRecord>;
+  replaceCreatorResumeCredential(
+    input: SessionStaffCredentialRecord,
+  ): Promise<SessionStaffCredentialReplacement>;
   getSessionStaffByToken(
     tokenHash: string,
     now: Date,
   ): Promise<SessionStaffCredentialRecord | null>;
   listSessionStaff(workspaceId: string, sessionId: string): Promise<SessionStaffCredentialRecord[]>;
-  revokeSessionStaff(workspaceId: string, credentialId: string): Promise<boolean>;
+  revokeSessionStaff(
+    workspaceId: string,
+    sessionId: string,
+    credentialId: string,
+  ): Promise<boolean>;
   getWorkspaceSegment(workspaceId: string): Promise<Segment>;
   getQnaSettings(workspaceId: string, sessionId: string): Promise<QnaSettingsRecord | null>;
   saveQnaSettings(input: QnaSettingsRecord): Promise<QnaSettingsRecord>;
@@ -939,9 +1048,32 @@ export interface Repository {
   retryReportJob(job: ReportJob, error: string, availableAt: Date, failed: boolean): Promise<void>;
   getReport(workspaceId: string, reportId: string): Promise<Report | null>;
   getReportBySession(workspaceId: string, sessionId: string): Promise<Report | null>;
+  listReportHistory(
+    workspaceId: string,
+    options: {
+      cursor?: HistoryCursor;
+      limit: number;
+      status?: Report["status"];
+      quizId?: string;
+      from?: Date;
+      to?: Date;
+      now: Date;
+    },
+  ): Promise<HistoryPage<ReportHistoryRecord>>;
   createFollowup(input: FollowupRecord, access: FollowupAccessRecord[]): Promise<void>;
   getFollowup(workspaceId: string, followupId: string): Promise<FollowupRecord | null>;
   getFollowupByReport(workspaceId: string, reportId: string): Promise<FollowupRecord | null>;
+  listFollowupHistory(
+    workspaceId: string,
+    options: {
+      cursor?: HistoryCursor;
+      limit: number;
+      status?: FollowupHistoryRecord["status"];
+      from?: Date;
+      to?: Date;
+      now: Date;
+    },
+  ): Promise<HistoryPage<FollowupHistoryRecord>>;
   getFollowupByGenericToken(
     followupId: string,
     tokenHash: string,
@@ -1018,6 +1150,8 @@ export interface Repository {
     limit: number,
   ): Promise<AuditEventRecord[]>;
   purgeAuditEvents(cutoff: Date): Promise<number>;
+  recordProductEvents(events: ProductEventRecord[]): Promise<void>;
+  purgeProductEvents(now: Date): Promise<number>;
   exportAccount(userId: string): Promise<Record<string, unknown>>;
   deleteAccount(userId: string): Promise<void>;
   expireLiveSessions(now: Date): Promise<string[]>;

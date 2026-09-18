@@ -8,7 +8,9 @@ coverage/
 dist/
 node_modules/
 playwright-report/
+playwright-report-beta/
 test-results/
+test-results-beta/
 *.tsbuildinfo
 *.log
 data/

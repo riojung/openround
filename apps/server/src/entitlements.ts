@@ -20,6 +20,7 @@ export function entitlementsFor(
       csvExport: true,
       brandTheme: true,
       followups: true,
+      cohosting: true,
       authoringJobsPerMonth: null,
     };
   }
@@ -33,6 +34,7 @@ export function entitlementsFor(
       csvExport: false,
       brandTheme: false,
       followups: false,
+      cohosting: false,
       authoringJobsPerMonth: 3,
     };
   }
@@ -48,6 +50,7 @@ export function entitlementsFor(
     csvExport: true,
     brandTheme: true,
     followups: true,
+    cohosting: true,
     authoringJobsPerMonth: plan === "pro" ? 100 : null,
   };
 }

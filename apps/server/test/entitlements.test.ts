@@ -17,6 +17,7 @@ describe("plan entitlements", () => {
       csvExport: false,
       brandTheme: false,
       followups: false,
+      cohosting: false,
       authoringJobsPerMonth: 3,
     });
     expect(entitlementsFor("pro", config)).toEqual({
@@ -27,6 +28,7 @@ describe("plan entitlements", () => {
       csvExport: true,
       brandTheme: true,
       followups: true,
+      cohosting: true,
       authoringJobsPerMonth: 100,
     });
   });
@@ -48,6 +50,7 @@ describe("plan entitlements", () => {
       csvExport: true,
       brandTheme: true,
       followups: true,
+      cohosting: true,
       authoringJobsPerMonth: null,
     });
     expect(retentionExpiry(new Date("2026-01-01T00:00:00.000Z"), entitlements).toISOString()).toBe(

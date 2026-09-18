@@ -20,6 +20,8 @@ This engineering inventory is not a legal opinion. Confirm purposes, legal basis
 | External creator identity   | Explicit institution sign-in/linking |                            Account or membership life | Workspace home region; identity provider processes its own authentication   | Creator unlink, membership removal, or account deletion |
 | LTI registration/launch     | Instructor launch and Deep Linking   |           Registration life; launches are short-lived | Workspace home region; registered LMS receives the signed response          | Operator disable, launch expiry, or workspace deletion  |
 | Opaque token hashes         | Resume and authorization             |                        Live use 24 h; purge with data | Session home region                                                         | Session purge                                           |
+| Creator-resume token hash   | Secure recovery of an active room    |             At most 4 h and never past session expiry | Session home region                                                         | Replacement, explicit revocation, or session purge      |
+| Bounded beta product events | Measure creation/rehearsal adoption  |                                               30 days | Workspace home region                                                       | Scheduled retention purge or workspace deletion         |
 | Security metadata           | Abuse prevention and incident review |                                        30 days target | Primary region                                                              | Scheduled purge                                         |
 | Audit records               | Sensitive-operation accountability   |              365 days by default, operator-configured | Workspace home region                                                       | Scheduled purge plus workspace deletion                 |
 | Stripe identifiers/status   | Entitlement reconciliation           |                            Contract/legal requirement | Provider plus application region                                            | Provider and application workflow                       |
@@ -48,6 +50,26 @@ Live session access and report retention are separate clocks. Host and participa
 stop working when the 24-hour live window ends; the session tree remains inaccessible to guests
 but available to its creator until the stored plan-based purge deadline or an earlier explicit
 deletion.
+
+Creator control passes are stored as one-way hashes with a `creator_resume` purpose. The bearer is
+returned once with a no-store response, belongs only in browser session storage, and is never
+placed in a URL by the product. Only one unrevoked pass exists per creator/session; replacement
+revokes the prior credential. Issuance and explicit revocation are audited, tenant-scoped, and
+rate-limited. Shareable collaboration cohosts are a separate entitlement and credential purpose.
+
+Beta product events contain an event name, occurrence/expiry timestamps, workspace boundary, and
+only these bounded categorical dimensions: creation path, setup recipe, rehearsal scenario,
+workspace segment, beta version, and duration bucket. The server supplies the segment and beta
+version. The event table has no actor ID or product-object ID and cannot store content, answers,
+aliases, source text, or free-form metadata. Raw rows are purged at 30 days by the scheduled
+retention worker. The Prometheus counter uses the same bounded label vocabulary and follows the
+operator's separately configured metrics retention.
+
+Live response distributions are derived projections rather than separately persisted answer
+copies. They are absent before lock/reveal, when fewer than five people answered, and from every
+participant snapshot. Choice/rating evidence contains only aggregate buckets; multi-select
+percentages use respondents as the denominator; numeric evidence contains only correct and
+incorrect totals.
 
 Never collect participant birth date, phone, precise location, advertising ID, biometric
 information, social graph, or marketing consent in the guest experience. Never place participant,

@@ -2,19 +2,27 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
-import type {
-  Entitlements,
-  ExperiencePresetId,
-  QuizDraft,
-  SessionSettings,
-  SessionSnapshot,
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import {
+  ExperiencePresetIdSchema,
+  SessionSettingsSchema,
+  type Entitlements,
+  type ExperiencePresetId,
+  type QuizDraft,
+  type SessionSettings,
+  type SessionSnapshot,
 } from "@openround/contracts";
 import { Brand } from "../../../../components/brand";
 import { ExperiencePicker } from "../../../../components/experience-picker";
 import { apiFetch, humanError } from "../../../../lib/api";
+import {
+  resolveSetupRecipe,
+  setupRecipeStorageKey,
+  type SetupRecipe,
+} from "../../../../lib/setup-recipes";
 
 interface Creator {
+  workspaceId: string;
   segment: "education" | "workplace";
 }
 
@@ -33,6 +41,7 @@ interface ProductFeatures {
   roundExperiences: boolean;
   audiencePulse: boolean;
   roomChat: boolean;
+  uxBeta: boolean;
 }
 
 function defaultsFor(creator: Creator, entitlements: Entitlements): SessionSettings {
@@ -48,6 +57,19 @@ function defaultsFor(creator: Creator, entitlements: Entitlements): SessionSetti
   };
 }
 
+function SetupReview({ uxBeta, children }: { uxBeta: boolean; children: ReactNode }) {
+  if (!uxBeta) return <>{children}</>;
+  return (
+    <details className="panel setup-review">
+      <summary>Review settings</summary>
+      <p className="muted">
+        The recipe is ready to use. Open this section only when you need an override.
+      </p>
+      {children}
+    </details>
+  );
+}
+
 export default function HostSetupPage() {
   const { quizId } = useParams<{ quizId: string }>();
   const router = useRouter();
@@ -58,6 +80,9 @@ export default function HostSetupPage() {
   const [experiencePreset, setExperiencePreset] = useState<ExperiencePresetId>("focus");
   const [presenterSoundEnabled, setPresenterSoundEnabled] = useState(false);
   const [roundExperiencesAvailable, setRoundExperiencesAvailable] = useState(false);
+  const [uxBeta, setUxBeta] = useState(false);
+  const [creator, setCreator] = useState<Creator | null>(null);
+  const [recipe, setRecipe] = useState<SetupRecipe | "custom">("recovery");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -74,25 +99,127 @@ export default function HostSetupPage() {
     ])
       .then(([quizResponse, account]) => {
         if (!quizResponse.quiz.currentVersionId || !quizResponse.currentVersion) {
-          setError("Publish this checkpoint set before creating a live round.");
+          setError(
+            account.productFeatures.uxBeta
+              ? "Publish this Round before creating a live session."
+              : "Publish this checkpoint set before creating a live round.",
+          );
           return;
         }
         setQuiz(quizResponse.quiz);
         setPublishedContent(quizResponse.currentVersion.content);
         setEntitlements(account.entitlements);
-        setSettings(defaultsFor(account.creator, account.entitlements));
+        setCreator(account.creator);
         setRoundExperiencesAvailable(account.productFeatures.roundExperiences);
-        setExperiencePreset(
-          account.productFeatures.roundExperiences
-            ? (quizResponse.currentVersion.content.experiencePreset?.id ?? "focus")
-            : "focus",
-        );
+        setUxBeta(account.productFeatures.uxBeta);
+        const defaults = defaultsFor(account.creator, account.entitlements);
+        if (!account.productFeatures.uxBeta) {
+          setSettings(defaults);
+          setExperiencePreset(
+            account.productFeatures.roundExperiences
+              ? (quizResponse.currentVersion.content.experiencePreset?.id ?? "focus")
+              : "focus",
+          );
+          setPresenterSoundEnabled(false);
+          return;
+        }
+        let restored = false;
+        try {
+          const saved = JSON.parse(
+            localStorage.getItem(setupRecipeStorageKey(account.creator.workspaceId)) ?? "null",
+          ) as {
+            recipe?: SetupRecipe | "custom";
+            settings?: SessionSettings;
+            experiencePreset?: ExperiencePresetId;
+            presenterSoundEnabled?: boolean;
+          } | null;
+          const parsedSettings = SessionSettingsSchema.safeParse(saved?.settings);
+          const parsedPreset = ExperiencePresetIdSchema.safeParse(saved?.experiencePreset);
+          const parsedRecipe = ["recovery", "competition", "discussion", "custom"].includes(
+            saved?.recipe ?? "",
+          )
+            ? saved!.recipe!
+            : "custom";
+          if (parsedSettings.success) {
+            setSettings({
+              ...parsedSettings.data,
+              audienceLimit: Math.min(
+                Math.max(1, parsedSettings.data.audienceLimit),
+                account.entitlements.maxParticipants,
+              ),
+            });
+            setRecipe(parsedRecipe);
+            setExperiencePreset(
+              account.productFeatures.roundExperiences
+                ? parsedPreset.success
+                  ? parsedPreset.data
+                  : "focus"
+                : "focus",
+            );
+            setPresenterSoundEnabled(
+              account.productFeatures.roundExperiences && Boolean(saved?.presenterSoundEnabled),
+            );
+            restored = true;
+          }
+        } catch {
+          localStorage.removeItem(setupRecipeStorageKey(account.creator.workspaceId));
+        }
+        if (!restored) {
+          const resolved = resolveSetupRecipe("recovery", defaults, {
+            segment: account.creator.segment,
+            maxParticipants: account.entitlements.maxParticipants,
+            roundExperiencesAvailable: account.productFeatures.roundExperiences,
+          });
+          setSettings(resolved.settings);
+          setExperiencePreset(resolved.experiencePreset);
+          setPresenterSoundEnabled(resolved.presenterSoundEnabled);
+        }
       })
       .catch((caught) => {
         if ((caught as { status?: number }).status === 401) router.replace("/signin");
         else setError(humanError(caught));
       });
   }, [quizId, router]);
+
+  useEffect(() => {
+    if (!creator || !settings || !uxBeta) return;
+    localStorage.setItem(
+      setupRecipeStorageKey(creator.workspaceId),
+      JSON.stringify({ recipe, settings, experiencePreset, presenterSoundEnabled }),
+    );
+  }, [creator, experiencePreset, presenterSoundEnabled, recipe, settings, uxBeta]);
+
+  function applyRecipe(nextRecipe: SetupRecipe) {
+    if (!settings || !creator || !entitlements) return;
+    const resolved = resolveSetupRecipe(nextRecipe, settings, {
+      segment: creator.segment,
+      maxParticipants: entitlements.maxParticipants,
+      roundExperiencesAvailable,
+    });
+    setRecipe(nextRecipe);
+    setSettings(resolved.settings);
+    setExperiencePreset(resolved.experiencePreset);
+    setPresenterSoundEnabled(resolved.presenterSoundEnabled);
+    void apiFetch<{ accepted: number }>("/v1/product-events", {
+      method: "POST",
+      body: JSON.stringify({
+        events: [
+          {
+            name: "setup_recipe_selected",
+            occurredAt: new Date().toISOString(),
+            dimensions: {
+              recipe:
+                nextRecipe === "competition"
+                  ? "friendly_competition"
+                  : nextRecipe === "discussion"
+                    ? "open_discussion"
+                    : "recovery",
+            },
+          },
+        ],
+      }),
+    }).catch(() => undefined);
+  }
 
   async function createSession(event: FormEvent) {
     event.preventDefault();
@@ -128,12 +255,12 @@ export default function HostSetupPage() {
 
   return (
     <>
-      <header className="shell topbar">
+      <header className="shell topbar" data-ux-beta={uxBeta || undefined}>
         <Brand />
         <div className="button-row">
           {quiz ? (
             <Link className="button-quiet small-button" href={`/quiz/${quiz.id}/preview`}>
-              Preview checkpoint set
+              {uxBeta ? "Preview Round" : "Preview checkpoint set"}
             </Link>
           ) : null}
           <Link className="button-quiet small-button" href="/dashboard">
@@ -160,129 +287,184 @@ export default function HostSetupPage() {
           ) : null
         ) : (
           <form onSubmit={createSession}>
-            <div className="settings-grid">
-              <section className="panel">
-                <p className="eyebrow">Room</p>
-                <h2 style={{ fontSize: "1.8rem" }}>Audience and joining</h2>
-                <label className="field" htmlFor="audience-limit">
-                  <span>Maximum participants</span>
-                  <input
-                    className="input"
-                    id="audience-limit"
-                    max={entitlements.maxParticipants}
-                    min={1}
-                    onChange={(event) =>
-                      setSettings({ ...settings, audienceLimit: Number(event.target.value) })
-                    }
-                    required
-                    type="number"
-                    value={settings.audienceLimit}
-                  />
-                  <small className="muted">
-                    Your current plan supports up to {entitlements.maxParticipants}.
-                  </small>
-                </label>
-                <label className="checkbox-field">
-                  <input
-                    checked={settings.allowLateJoin}
-                    onChange={(event) =>
-                      setSettings({ ...settings, allowLateJoin: event.target.checked })
-                    }
-                    type="checkbox"
-                  />
-                  Allow participants to join after the first checkpoint starts
-                </label>
+            {uxBeta ? (
+              <section className="panel setup-recipes" data-testid="session-setup">
+                <p className="eyebrow">Start with a recipe</p>
+                <h2 style={{ fontSize: "1.8rem" }}>Choose the facilitation style</h2>
+                <div className="recipe-grid">
+                  <button
+                    aria-pressed={recipe === "recovery"}
+                    className="recipe-card"
+                    data-recipe="recovery"
+                    onClick={() => applyRecipe("recovery")}
+                    type="button"
+                  >
+                    <strong>Recovery</strong>
+                    <span>Private, accuracy-first, with calm visual defaults.</span>
+                  </button>
+                  <button
+                    aria-pressed={recipe === "competition"}
+                    className="recipe-card"
+                    data-recipe="competition"
+                    onClick={() => applyRecipe("competition")}
+                    type="button"
+                  >
+                    <strong>Friendly competition</strong>
+                    <span>Speed scoring and visible standings; sound stays optional.</span>
+                  </button>
+                  <button
+                    aria-pressed={recipe === "discussion"}
+                    className="recipe-card"
+                    data-recipe="discussion"
+                    onClick={() => applyRecipe("discussion")}
+                    type="button"
+                  >
+                    <strong>Open discussion</strong>
+                    <span>
+                      Private results with Pulse and Q&amp;A available; chat starts closed.
+                    </span>
+                  </button>
+                </div>
               </section>
-
-              <section className="panel">
-                <p className="eyebrow">Experience</p>
-                <h2 style={{ fontSize: "1.8rem" }}>Look, motion, and sound</h2>
-                {roundExperiencesAvailable ? (
-                  <>
-                    <ExperiencePicker
-                      category={publishedContent?.category ?? "general"}
-                      onPresetChange={setExperiencePreset}
-                      presetId={experiencePreset}
-                      showCategory={false}
+            ) : null}
+            <SetupReview uxBeta={uxBeta}>
+              <div className="settings-grid">
+                <section className="panel">
+                  <p className="eyebrow">Room</p>
+                  <h2 style={{ fontSize: "1.8rem" }}>Audience and joining</h2>
+                  <label className="field" htmlFor="audience-limit">
+                    <span>Maximum participants</span>
+                    <input
+                      className="input"
+                      id="audience-limit"
+                      max={entitlements.maxParticipants}
+                      min={1}
+                      onChange={(event) => {
+                        setRecipe("custom");
+                        setSettings({ ...settings, audienceLimit: Number(event.target.value) });
+                      }}
+                      required
+                      type="number"
+                      value={settings.audienceLimit}
                     />
-                    <label className="checkbox-field">
-                      <input
-                        checked={presenterSoundEnabled}
-                        onChange={(event) => setPresenterSoundEnabled(event.target.checked)}
-                        type="checkbox"
-                      />
-                      Enable optional presenter sound cues
-                    </label>
                     <small className="muted">
-                      Sound is off by default and never carries information that is not shown
-                      visually.
+                      Your current plan supports up to {entitlements.maxParticipants}.
                     </small>
-                  </>
-                ) : (
-                  <p className="notice">
-                    Round Experiences are not enabled for this workspace. This session will use the
-                    accessible Focus preset without sound.
-                  </p>
-                )}
-                <hr className="staff-divider" />
-                <h3>Scoring and results</h3>
-                <label className="field" htmlFor="scoring-mode">
-                  <span>Scoring mode</span>
-                  <select
-                    className="select"
-                    id="scoring-mode"
-                    onChange={(event) =>
-                      setSettings({
-                        ...settings,
-                        scoringMode: event.target.value as SessionSettings["scoringMode"],
-                      })
-                    }
-                    value={settings.scoringMode}
-                  >
-                    <option value="accuracy">Accuracy — full points for a correct answer</option>
-                    <option value="speed">
-                      Competitive — correct and faster answers score more
-                    </option>
-                  </select>
-                </label>
-                <label className="field" htmlFor="result-visibility">
-                  <span>Results during the round</span>
-                  <select
-                    className="select"
-                    id="result-visibility"
-                    onChange={(event) =>
-                      setSettings({
-                        ...settings,
-                        resultVisibility: event.target.value as SessionSettings["resultVisibility"],
-                      })
-                    }
-                    value={settings.resultVisibility}
-                  >
-                    <option value="private">
-                      Private — each participant sees only their result
-                    </option>
-                    <option value="leaderboard">Leaderboard — standings may be shown</option>
-                  </select>
-                </label>
-                <label className="field" htmlFor="nickname-policy">
-                  <span>Participant names</span>
-                  <select
-                    className="select"
-                    id="nickname-policy"
-                    onChange={(event) =>
-                      setSettings({
-                        ...settings,
-                        nicknamePolicy: event.target.value as SessionSettings["nicknamePolicy"],
-                      })
-                    }
-                    value={settings.nicknamePolicy}
-                  >
-                    <option value="friendly_only">Assign privacy-friendly aliases</option>
-                    <option value="custom">Allow participant-entered nicknames</option>
-                  </select>
-                </label>
-              </section>
-            </div>
+                  </label>
+                  <label className="checkbox-field">
+                    <input
+                      checked={settings.allowLateJoin}
+                      onChange={(event) => {
+                        setRecipe("custom");
+                        setSettings({ ...settings, allowLateJoin: event.target.checked });
+                      }}
+                      type="checkbox"
+                    />
+                    Allow participants to join after the first {uxBeta ? "question" : "checkpoint"}{" "}
+                    starts
+                  </label>
+                </section>
+
+                <section className="panel">
+                  <p className="eyebrow">Experience</p>
+                  <h2 style={{ fontSize: "1.8rem" }}>Look, motion, and sound</h2>
+                  {roundExperiencesAvailable ? (
+                    <>
+                      <ExperiencePicker
+                        category={publishedContent?.category ?? "general"}
+                        onPresetChange={(preset) => {
+                          setRecipe("custom");
+                          setExperiencePreset(preset);
+                        }}
+                        presetId={experiencePreset}
+                        showCategory={false}
+                      />
+                      <label className="checkbox-field">
+                        <input
+                          checked={presenterSoundEnabled}
+                          onChange={(event) => {
+                            setRecipe("custom");
+                            setPresenterSoundEnabled(event.target.checked);
+                          }}
+                          type="checkbox"
+                        />
+                        Enable optional presenter sound cues
+                      </label>
+                      <small className="muted">
+                        Sound is off by default and never carries information that is not shown
+                        visually.
+                      </small>
+                    </>
+                  ) : (
+                    <p className="notice">
+                      Round Experiences are not enabled for this workspace. This session will use
+                      the accessible Focus preset without sound.
+                    </p>
+                  )}
+                  <hr className="staff-divider" />
+                  <h3>Scoring and results</h3>
+                  <label className="field" htmlFor="scoring-mode">
+                    <span>Scoring mode</span>
+                    <select
+                      className="select"
+                      id="scoring-mode"
+                      onChange={(event) => {
+                        setRecipe("custom");
+                        setSettings({
+                          ...settings,
+                          scoringMode: event.target.value as SessionSettings["scoringMode"],
+                        });
+                      }}
+                      value={settings.scoringMode}
+                    >
+                      <option value="accuracy">Accuracy — full points for a correct answer</option>
+                      <option value="speed">
+                        Competitive — correct and faster answers score more
+                      </option>
+                    </select>
+                  </label>
+                  <label className="field" htmlFor="result-visibility">
+                    <span>Results during the round</span>
+                    <select
+                      className="select"
+                      id="result-visibility"
+                      onChange={(event) => {
+                        setRecipe("custom");
+                        setSettings({
+                          ...settings,
+                          resultVisibility: event.target
+                            .value as SessionSettings["resultVisibility"],
+                        });
+                      }}
+                      value={settings.resultVisibility}
+                    >
+                      <option value="private">
+                        Private — each participant sees only their result
+                      </option>
+                      <option value="leaderboard">Leaderboard — standings may be shown</option>
+                    </select>
+                  </label>
+                  <label className="field" htmlFor="nickname-policy">
+                    <span>Participant names</span>
+                    <select
+                      className="select"
+                      id="nickname-policy"
+                      onChange={(event) => {
+                        setRecipe("custom");
+                        setSettings({
+                          ...settings,
+                          nicknamePolicy: event.target.value as SessionSettings["nicknamePolicy"],
+                        });
+                      }}
+                      value={settings.nicknamePolicy}
+                    >
+                      <option value="friendly_only">Assign privacy-friendly aliases</option>
+                      <option value="custom">Allow participant-entered nicknames</option>
+                    </select>
+                  </label>
+                </section>
+              </div>
+            </SetupReview>
             <section className="panel" style={{ marginTop: 24 }}>
               <h2 style={{ fontSize: "1.6rem" }}>Ready to create the lobby?</h2>
               <p className="muted">

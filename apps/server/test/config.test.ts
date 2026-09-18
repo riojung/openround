@@ -42,6 +42,24 @@ describe("production configuration", () => {
     ).toThrow();
   });
 
+  it("keeps deterministic workspace seeding limited to the test environment", () => {
+    const workspaceId = "00000000-0000-4000-8000-00000000b001";
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        TEST_INITIAL_WORKSPACE_ID: workspaceId,
+      }),
+    ).toThrow(/allowed only when NODE_ENV=test/);
+
+    expect(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        TEST_INITIAL_WORKSPACE_ID: workspaceId,
+      }).TEST_INITIAL_WORKSPACE_ID,
+    ).toBe(workspaceId);
+  });
+
   it("bounds operator-configured audit retention", () => {
     expect(ConfigSchema.parse({ ...productionConfig, AUDIT_RETENTION_DAYS: "730" })).toMatchObject({
       AUDIT_RETENTION_DAYS: 730,

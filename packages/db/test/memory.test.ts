@@ -1,8 +1,236 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { MemoryRepository, PublishedQuizLimitError } from "../src/index.js";
+import type { Report } from "@openround/contracts";
+import { createGameState } from "@openround/game-engine";
+import { MemoryRepository, PublishedQuizLimitError, SessionNotActiveError } from "../src/index.js";
 
 describe("memory repository", () => {
+  it("retains only allowlisted product event fields until their expiry", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date("2026-09-18T12:00:00.000Z");
+    await repository.recordProductEvents([
+      {
+        id: randomUUID(),
+        workspaceId: randomUUID(),
+        name: "rehearsal_completed",
+        occurredAt: now.toISOString(),
+        dimensions: {
+          scenario: "split_room",
+          segment: "education",
+          betaVersion: "p0-2026",
+          durationBucket: "1_to_5m",
+        },
+        createdAt: now,
+        expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+      },
+    ]);
+    expect(
+      await repository.purgeProductEvents(new Date(now.getTime() + 29 * 24 * 60 * 60_000)),
+    ).toBe(0);
+    expect(repository.productEvents).toHaveLength(1);
+    expect(
+      await repository.purgeProductEvents(new Date(now.getTime() + 30 * 24 * 60 * 60_000)),
+    ).toBe(1);
+    expect(repository.productEvents).toHaveLength(0);
+  });
+
+  it("deletes product events with an owner workspace while preserving other workspaces", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date("2026-09-18T12:00:00.000Z");
+    const createOwner = async (label: string) => {
+      const tokenHash = `${label}-${randomUUID()}`;
+      await repository.createMagicToken({
+        id: randomUUID(),
+        email: `${label}@example.com`,
+        segment: "workplace",
+        tokenHash,
+        policyVersion: "test-v1",
+        expiresAt: new Date(now.getTime() + 60_000),
+        consumedAt: null,
+      });
+      return (await repository.consumeMagicToken(tokenHash, now))!;
+    };
+    const deletedOwner = await createOwner("deleted-product-events");
+    const retainedOwner = await createOwner("retained-product-events");
+    const event = (workspaceId: string) => ({
+      id: randomUUID(),
+      workspaceId,
+      name: "creation_completed" as const,
+      occurredAt: now.toISOString(),
+      dimensions: { creationPath: "blank" as const },
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+    });
+    await repository.recordProductEvents([event(deletedOwner.workspaceId)]);
+    await repository.recordProductEvents([event(retainedOwner.workspaceId)]);
+
+    await repository.deleteAccount(deletedOwner.userId);
+
+    expect(repository.productEvents).toEqual([
+      expect.objectContaining({ workspaceId: retainedOwner.workspaceId }),
+    ]);
+  });
+
+  it("exposes failed report jobs consistently in detail and filtered history", async () => {
+    const repository = new MemoryRepository();
+    const workspaceId = randomUUID();
+    const quizId = randomUUID();
+    const now = new Date("2026-09-18T12:00:00.000Z");
+    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
+    const content = { title: "Failed report fixture", description: "", questions: [] };
+    await repository.createQuiz({
+      id: quizId,
+      workspaceId,
+      title: content.title,
+      description: content.description,
+      status: "draft",
+      draft: content,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const version = await repository.publishQuiz(
+      {
+        id: randomUUID(),
+        workspaceId,
+        quizId,
+        version: 1,
+        content,
+        contentHash: randomUUID(),
+        publishedAt: now,
+      },
+      null,
+    );
+    const sessionId = randomUUID();
+    await repository.createSession({
+      id: sessionId,
+      workspaceId,
+      quizVersionId: version.id,
+      hostId: randomUUID(),
+      hostTokenHash: randomUUID(),
+      state: createGameState({
+        sessionId,
+        code: "1234567",
+        quiz: content,
+        settings: {
+          audienceLimit: 20,
+          scoringMode: "accuracy",
+          resultVisibility: "private",
+          allowLateJoin: true,
+          nicknamePolicy: "friendly_only",
+        },
+      }),
+      expiresAt,
+      retentionExpiresAt: expiresAt,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const report: Report = {
+      id: randomUUID(),
+      sessionId,
+      status: "pending",
+      generatedAt: null,
+      expiresAt: expiresAt.toISOString(),
+      metrics: { participantCount: 0, completedCount: 0, answerCount: 0, accuracyPercent: 0 },
+      questions: [],
+      participants: [],
+    };
+    await repository.saveReport(workspaceId, report);
+    const job = await repository.claimReportJob(now, new Date(now.getTime() + 60_000));
+    expect(job).not.toBeNull();
+    await repository.retryReportJob(job!, "terminal failure", now, true);
+
+    expect(await repository.getReport(workspaceId, report.id)).toMatchObject({
+      status: "failed",
+      generatedAt: null,
+    });
+    expect(
+      await repository.listReportHistory(workspaceId, { limit: 10, status: "failed", now }),
+    ).toMatchObject({
+      items: [expect.objectContaining({ id: report.id, status: "failed", generatedAt: null })],
+    });
+    expect(
+      await repository.listReportHistory(workspaceId, { limit: 10, status: "pending", now }),
+    ).toMatchObject({ items: [] });
+
+    const firstResume = await repository.replaceCreatorResumeCredential({
+      id: randomUUID(),
+      workspaceId,
+      sessionId,
+      role: "cohost",
+      purpose: "creator_resume",
+      label: "Creator resume",
+      tokenHash: randomUUID(),
+      embedPolicyKeyHash: null,
+      embedAllowedOrigins: [],
+      createdBy: randomUUID(),
+      expiresAt,
+      revokedAt: null,
+      createdAt: now,
+    });
+    expect(firstResume.revokedCredentialIds).toEqual([]);
+    const secondResume = await repository.replaceCreatorResumeCredential({
+      ...firstResume.credential,
+      id: randomUUID(),
+      tokenHash: randomUUID(),
+      createdAt: new Date(now.getTime() + 1),
+    });
+    expect(secondResume.revokedCredentialIds).toEqual([firstResume.credential.id]);
+    expect(secondResume.credential.revokedAt).toBeNull();
+    const storedSession = repository.sessions.get(sessionId)!;
+    const activeExpiry = storedSession.expiresAt;
+    storedSession.expiresAt = new Date(0);
+    await expect(
+      repository.replaceCreatorResumeCredential({
+        ...secondResume.credential,
+        id: randomUUID(),
+        tokenHash: randomUUID(),
+        createdAt: new Date(now.getTime() + 2),
+      }),
+    ).rejects.toBeInstanceOf(SessionNotActiveError);
+    storedSession.expiresAt = activeExpiry;
+
+    const followupId = randomUUID();
+    const opensAt = new Date(now.getTime() + 60 * 60_000);
+    const closesAt = new Date(now.getTime() + 2 * 60 * 60_000);
+    const followupExpiresAt = new Date(now.getTime() + 3 * 60 * 60_000);
+    await repository.createFollowup(
+      {
+        id: followupId,
+        workspaceId,
+        sourceSessionId: sessionId,
+        sourceReportId: report.id,
+        title: "Lifecycle follow-up",
+        content,
+        conceptKeys: [],
+        timeMode: "flex",
+        genericTokenHash: randomUUID(),
+        opensAt,
+        closesAt,
+        expiresAt: followupExpiresAt,
+        closedAt: null,
+        createdBy: null,
+        createdAt: now,
+      },
+      [],
+    );
+    const reportStatusAt = async (at: Date) =>
+      (await repository.listReportHistory(workspaceId, { limit: 10, now: at })).items[0];
+    await expect(reportStatusAt(now)).resolves.toMatchObject({
+      followupId,
+      followupStatus: "scheduled",
+    });
+    await expect(reportStatusAt(new Date(opensAt.getTime() + 1))).resolves.toMatchObject({
+      followupStatus: "open",
+    });
+    await expect(reportStatusAt(new Date(closesAt.getTime() + 1))).resolves.toMatchObject({
+      followupStatus: "closed",
+    });
+    await expect(reportStatusAt(followupExpiresAt)).resolves.toMatchObject({
+      followupStatus: "expired",
+    });
+  });
+
   it("persists partial operational feature updates with an audit record", async () => {
     const repository = new MemoryRepository();
 

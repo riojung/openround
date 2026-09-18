@@ -8,6 +8,7 @@ import { Brand } from "../../../components/brand";
 import { Countdown } from "../../../components/countdown";
 import { QuestionMedia } from "../../../components/question-media";
 import { API_URL, ApiClientError, humanError } from "../../../lib/api";
+import { followupStatusAnnouncement } from "../../../lib/followup-announcement";
 import { shouldReplaceSavedAttempt } from "../../../lib/followup-resume";
 import { clientUuid } from "../../../lib/uuid";
 
@@ -207,7 +208,10 @@ export default function FollowupPage() {
           </span>
         ) : null}
       </header>
-      <main className="shell live-stage" aria-live="polite">
+      <main className="shell live-stage">
+        <p aria-atomic="true" aria-live="polite" className="sr-only">
+          {followupStatusAnnouncement(snapshot)}
+        </p>
         {error ? (
           <section className="live-card">
             <p className="error" role="alert">

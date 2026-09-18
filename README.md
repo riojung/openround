@@ -51,15 +51,16 @@ Legal text, trademark clearance, external penetration testing, school agreements
 
 ## Documentation
 
-| Guide                                                                        | Use it for                                                       |
-| ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| [Quick start](docs/quick-start.md)                                           | Start the complete local stack and run a first quiz              |
-| [User guide](docs/user-guide.md)                                             | Create, publish, host, join, report, export, and delete          |
-| [Product and experience design](docs/design.md)                              | Product goals, role journeys, states, content, and accessibility |
-| [Competitive strategy and roadmap](docs/competitive-strategy-and-roadmap.md) | Market comparison, differentiation, and post-P0 phases           |
-| [Architecture and protocol](docs/architecture.md)                            | Components, data flows, correctness, security, and scale gates   |
-| [Institution integrations](docs/institution-integrations.md)                 | Configure and validate creator OIDC, LTI, audit, and pilot gates |
-| [Documentation index](docs/README.md)                                        | API, status, privacy, release, and operations references         |
+| Guide                                                                                | Use it for                                                        |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| [Quick start](docs/quick-start.md)                                                   | Start the complete local stack and run a first quiz               |
+| [User guide](docs/user-guide.md)                                                     | Create, publish, host, join, report, export, and delete           |
+| [Product and experience design](docs/design.md)                                      | Product goals, role journeys, states, content, and accessibility  |
+| [2026 Kahoot-alternatives UX gap plan](docs/kahoot-alternatives-2026-ux-gap-plan.md) | Current benchmark, UX gaps, strategy, and implementation sequence |
+| [Competitive strategy and roadmap](docs/competitive-strategy-and-roadmap.md)         | Market comparison, differentiation, and post-P0 phases            |
+| [Architecture and protocol](docs/architecture.md)                                    | Components, data flows, correctness, security, and scale gates    |
+| [Institution integrations](docs/institution-integrations.md)                         | Configure and validate creator OIDC, LTI, audit, and pilot gates  |
+| [Documentation index](docs/README.md)                                                | API, status, privacy, release, and operations references          |
 
 ## Quick start with Docker
 

@@ -8,10 +8,12 @@ import {
   HostCommandSchema,
   normalizeDecimalString,
   OperationalFeaturesUpdateSchema,
+  ProductEventBatchSchema,
   PublicFeaturesSchema,
   QuizContentSchema,
   QuizDraftSchema,
   QuestionSchema,
+  ResponseDistributionSchema,
   SessionSnapshotSchema,
   SyncRequestSchema,
 } from "../src/index.js";
@@ -76,6 +78,59 @@ describe("public contracts", () => {
         authoringJobsPerMonth: 100,
       }).maxPublishedQuizzes,
     ).toBeNull();
+  });
+
+  it("keeps beta telemetry dimensions bounded and distribution samples staff-safe", () => {
+    expect(
+      ProductEventBatchSchema.safeParse({
+        events: [
+          {
+            name: "creation_started",
+            occurredAt: new Date().toISOString(),
+            dimensions: { creationPath: "starter", objectId: randomUUID() },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      ProductEventBatchSchema.safeParse({
+        events: [
+          {
+            name: "creation_started",
+            occurredAt: new Date().toISOString(),
+            dimensions: { creationPath: "starter" },
+            actorId: randomUUID(),
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      ProductEventBatchSchema.safeParse({
+        events: Array.from({ length: 21 }, () => ({
+          name: "rehearsal_completed",
+          occurredAt: new Date().toISOString(),
+          dimensions: { scenario: "split_room", durationBucket: "1_to_5m" },
+        })),
+      }).success,
+    ).toBe(false);
+
+    expect(
+      ResponseDistributionSchema.safeParse({
+        kind: "choice",
+        respondents: 4,
+        totalSelections: 4,
+        percentBasis: "responses",
+        buckets: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      ResponseDistributionSchema.parse({
+        kind: "numeric",
+        respondents: 5,
+        correct: 3,
+        incorrect: 2,
+      }),
+    ).toEqual({ kind: "numeric", respondents: 5, correct: 3, incorrect: 2 });
   });
 
   it("requires brand colours to remain readable with white live-view text", () => {
