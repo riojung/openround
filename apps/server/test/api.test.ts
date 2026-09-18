@@ -380,6 +380,188 @@ describe("creator to report journey", () => {
     expect(joined.statusCode).toBe(201);
     const participant = joined.json<{ participantToken: string; snapshot: SessionSnapshot }>();
     expect(participant.snapshot.participants[0]?.nickname).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
+    expect(participant.snapshot.experienceTheme).toMatchObject({
+      preset: { id: "focus", version: 1 },
+      category: "general",
+    });
+
+    const presets = await app.inject({ method: "GET", url: "/v1/experience-presets" });
+    expect(presets.statusCode).toBe(200);
+    expect(presets.json<{ presets: unknown[] }>().presets).toHaveLength(6);
+    const defaultInteractions = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.sessionId}/interactions/settings`,
+      headers: { authorization: `Bearer ${session.hostToken}` },
+    });
+    expect(defaultInteractions.json()).toMatchObject({
+      signalsEnabled: true,
+      chatEnabled: false,
+      slowModeSeconds: 5,
+    });
+    const blockedChat = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/chat/messages`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+      payload: { body: "Can anyone see this?", idempotencyKey: randomUUID() },
+    });
+    expect(blockedChat.statusCode).toBe(409);
+    expect(blockedChat.json()).toMatchObject({ error: { code: "CHAT_DISABLED" } });
+    const interactionUpdateKey = randomUUID();
+    const enabledInteractions = await app.inject({
+      method: "PATCH",
+      url: `/v1/sessions/${session.sessionId}/interactions/settings`,
+      headers: {
+        authorization: `Bearer ${session.hostToken}`,
+        "x-idempotency-key": interactionUpdateKey,
+      },
+      payload: { chatEnabled: true, chatIdentityMode: "alias_private" },
+    });
+    expect(enabledInteractions.statusCode).toBe(200);
+    expect(enabledInteractions.json()).toMatchObject({
+      chatEnabled: true,
+      chatIdentityMode: "alias_private",
+    });
+    const pulse = await app.inject({
+      method: "PUT",
+      url: `/v1/sessions/${session.sessionId}/signals/current`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+      payload: { signal: "need_example", idempotencyKey: randomUUID() },
+    });
+    expect(pulse.statusCode).toBe(200);
+    expect(pulse.json()).toMatchObject({ contextKey: "lobby", signal: "need_example" });
+    const chatKey = randomUUID();
+    const chatResponse = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/chat/messages`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+      payload: { body: "<b>I need</b> a worked example", idempotencyKey: chatKey },
+    });
+    expect(chatResponse.statusCode).toBe(201);
+    const chatMessage = chatResponse.json<{ id: string }>();
+    expect(chatResponse.json()).toMatchObject({
+      body: "I need a worked example",
+      author: { displayName: "You", mine: true },
+    });
+    const hostChat = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.sessionId}/chat/messages`,
+      headers: { authorization: `Bearer ${session.hostToken}` },
+    });
+    expect(hostChat.json()).toMatchObject({
+      messages: [
+        {
+          id: chatMessage.id,
+          author: { displayName: participant.snapshot.participants[0]!.nickname },
+        },
+      ],
+    });
+    const publicChatSettings = await app.inject({
+      method: "PATCH",
+      url: `/v1/sessions/${session.sessionId}/interactions/settings`,
+      headers: {
+        authorization: `Bearer ${session.hostToken}`,
+        "x-idempotency-key": randomUUID(),
+      },
+      payload: { chatIdentityMode: "alias_public", presenterFeedMode: "live" },
+    });
+    expect(publicChatSettings.statusCode).toBe(200);
+    const audiencePresenter = (
+      await app.inject({
+        method: "POST",
+        url: `/v1/sessions/${session.sessionId}/staff`,
+        headers: { cookie },
+        payload: { role: "presenter", label: "Audience display" },
+      })
+    ).json<{ token: string }>();
+    const presenterChat = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.sessionId}/chat/messages`,
+      headers: { authorization: `Bearer ${audiencePresenter.token}` },
+    });
+    expect(presenterChat.json()).toMatchObject({
+      messages: [{ id: chatMessage.id, author: { displayName: "Anonymous" } }],
+    });
+    const selfReport = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/chat/messages/${chatMessage.id}/report`,
+      headers: {
+        authorization: `Bearer ${participant.participantToken}`,
+        "x-idempotency-key": randomUUID(),
+      },
+    });
+    expect(selfReport.statusCode).toBe(409);
+    const reaction = await app.inject({
+      method: "PUT",
+      url: `/v1/sessions/${session.sessionId}/chat/messages/${chatMessage.id}/reaction`,
+      headers: {
+        authorization: `Bearer ${participant.participantToken}`,
+        "x-idempotency-key": randomUUID(),
+      },
+      payload: { reaction: "insight" },
+    });
+    expect(reaction.statusCode).toBe(200);
+    expect(reaction.json()).toMatchObject({ viewerReaction: "insight" });
+    const hostPulse = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.sessionId}/interactions/summary`,
+      headers: { authorization: `Bearer ${session.hostToken}` },
+    });
+    expect(hostPulse.json()).toMatchObject({
+      uniqueSignalers: 1,
+      signalsLastMinute: 1,
+      signalCounts: { need_example: 1 },
+      participants: [
+        {
+          nickname: participant.snapshot.participants[0]!.nickname,
+          currentSignal: "need_example",
+          chatMessageCount: 1,
+        },
+      ],
+    });
+    const participantPulse = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.sessionId}/interactions/summary`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+    });
+    expect(participantPulse.json()).toMatchObject({
+      signalCounts: null,
+      mySignal: "need_example",
+    });
+    const interactionParticipantId = participant.snapshot.participants[0]!.id;
+    const bannedAudience = await app.inject({
+      method: "PATCH",
+      url: `/v1/sessions/${session.sessionId}/interactions/participants/${interactionParticipantId}`,
+      headers: {
+        authorization: `Bearer ${session.hostToken}`,
+        "x-idempotency-key": randomUUID(),
+      },
+      payload: { action: "ban" },
+    });
+    expect(bannedAudience.json()).toMatchObject({ banned: true });
+    expect(
+      await repository.isQnaBanned(
+        creator.creator.workspaceId,
+        session.sessionId,
+        interactionParticipantId,
+      ),
+    ).toBe(true);
+    const restoredAudience = await app.inject({
+      method: "PATCH",
+      url: `/v1/sessions/${session.sessionId}/interactions/participants/${interactionParticipantId}`,
+      headers: {
+        authorization: `Bearer ${session.hostToken}`,
+        "x-idempotency-key": randomUUID(),
+      },
+      payload: { action: "unban" },
+    });
+    expect(restoredAudience.json()).toMatchObject({ banned: false });
+    expect(
+      await repository.isQnaBanned(
+        creator.creator.workspaceId,
+        session.sessionId,
+        interactionParticipantId,
+      ),
+    ).toBe(false);
 
     const submittedQuestion = await app.inject({
       method: "POST",
@@ -393,6 +575,11 @@ describe("creator to report journey", () => {
       body: "Could you explain why Edmonton is correct?",
       status: "pending",
     });
+    expect(
+      [...repository.audienceOutbox.values()].some(
+        (event) => event.sessionId === session.sessionId && event.type === "qna.question.created",
+      ),
+    ).toBe(true);
     const participantQuestions = await app.inject({
       method: "GET",
       url: `/v1/sessions/${session.sessionId}/qna/questions`,
@@ -482,6 +669,15 @@ describe("creator to report journey", () => {
     const open = started.json<{ snapshot: SessionSnapshot }>().snapshot;
     expect(open.phase).toBe("question_open");
     expect(JSON.stringify(open.question)).not.toContain("isCorrect");
+    const resetPulse = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.sessionId}/interactions/summary`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+    });
+    expect(resetPulse.json()).toMatchObject({
+      contextKey: `round:${open.roundId}`,
+      mySignal: null,
+    });
 
     const idempotencyKey = randomUUID();
     const attempts = await Promise.all([
@@ -550,6 +746,25 @@ describe("creator to report journey", () => {
       action: "next",
     });
     expect(finished.phase).toBe("finished");
+    const latePulse = await app.inject({
+      method: "PUT",
+      url: `/v1/sessions/${session.sessionId}/signals/current`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+      payload: { signal: "got_it", idempotencyKey: randomUUID() },
+    });
+    expect(latePulse.statusCode).toBe(409);
+    expect(latePulse.json()).toMatchObject({ error: { code: "INTERACTIONS_DISABLED" } });
+    const lateChat = await app.inject({
+      method: "POST",
+      url: `/v1/sessions/${session.sessionId}/chat/messages`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+      payload: { body: "This must not enter the report", idempotencyKey: randomUUID() },
+    });
+    expect(lateChat.statusCode).toBe(409);
+    expect(lateChat.json()).toMatchObject({ error: { code: "INTERACTIONS_DISABLED" } });
+    expect(
+      await repository.getInteractionSettings(creator.creator.workspaceId, session.sessionId),
+    ).toMatchObject({ chatEnabled: false, signalsEnabled: false, closedAt: expect.any(Date) });
     const delayedRetry = await app.inject({
       method: "POST",
       url: `/v1/sessions/${session.sessionId}/answers`,
@@ -595,7 +810,7 @@ describe("creator to report journey", () => {
     const pendingReport = storedSession
       ? await repository.getReportBySession(storedSession.workspaceId, session.sessionId)
       : null;
-    expect(pendingReport).toMatchObject({ status: "pending", schemaVersion: 2 });
+    expect(pendingReport).toMatchObject({ status: "pending", schemaVersion: 3 });
     const pendingCsv = await app.inject({
       method: "GET",
       url: `/v1/reports/${pendingReport!.id}.csv`,
@@ -612,9 +827,11 @@ describe("creator to report journey", () => {
       accuracyPercent: 100,
     });
     expect(report).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       status: "ready",
       initialAccuracy: { correct: 1, responses: 1, percent: 100 },
+      audiencePulse: { uniqueParticipants: 1, events: 1 },
+      conversation: { messages: 1, uniqueContributors: 1, reactions: 1 },
     });
     const generatedAt = new Date((report as Report).generatedAt!).getTime();
     const expiresAt = new Date((report as Report).expiresAt).getTime();
@@ -647,7 +864,7 @@ describe("creator to report journey", () => {
     expect(proCsv.statusCode).toBe(200);
     expect(proCsv.headers["content-type"]).toContain("text/csv");
     expect(proCsv.body).toContain("participant_id,nickname,score");
-    expect(proCsv.body).toContain("report_schema_version,2");
+    expect(proCsv.body).toContain("report_schema_version,3");
     const proJson = await app.inject({
       method: "GET",
       url: `/v1/reports/${(report as Report).id}.json`,
@@ -655,7 +872,15 @@ describe("creator to report journey", () => {
     });
     expect(proJson.statusCode).toBe(200);
     expect(proJson.headers["content-type"]).toContain("application/json");
-    expect(proJson.json()).toMatchObject({ schemaVersion: 2, status: "ready" });
+    expect(proJson.json()).toMatchObject({ schemaVersion: 3, status: "ready" });
+    const interactionCsv = await app.inject({
+      method: "GET",
+      url: `/v1/reports/${(report as Report).id}/interactions.csv`,
+      headers: { cookie },
+    });
+    expect(interactionCsv.statusCode).toBe(200);
+    expect(interactionCsv.body).toContain("signal");
+    expect(interactionCsv.body).toContain("I need a worked example");
     const brandedSession = await app.inject({
       method: "POST",
       url: "/v1/sessions",
@@ -709,6 +934,7 @@ describe("creator to report journey", () => {
       primaryColor: "#0B2239",
       accentColor: "#087375",
     });
+    await built.audienceOutboxWorker.runUntilIdle();
     const metrics = await app.inject({ method: "GET", url: "/metrics" });
     expect(metrics.statusCode).toBe(200);
     expect(metrics.body).toContain("openround_join_acknowledgement_duration_seconds");
@@ -717,6 +943,28 @@ describe("creator to report journey", () => {
     expect(metrics.body).toContain('openround_answers_total{outcome="accepted"} 1');
     expect(metrics.body).toContain("openround_session_mutation_lease_wait_seconds");
     expect(metrics.body).toContain("openround_session_version_conflicts_total");
+    expect(metrics.body).toContain("openround_audience_events_total");
+    expect(metrics.body).toContain("openround_audience_outbox_backlog 0");
+    expect(metrics.body).toContain("openround_audience_sync_total");
+    expect(metrics.body).toContain("openround_chat_enabled_sessions");
+
+    const accountExport = await repository.exportAccount(
+      [...repository.users.values()].find(
+        (candidate) => candidate.email === "facilitator@example.com",
+      )!.userId,
+    );
+    expect(accountExport).toMatchObject({
+      interactionSettings: expect.arrayContaining([
+        expect.objectContaining({ sessionId: session.sessionId }),
+      ]),
+      signalEvents: expect.arrayContaining([
+        expect.objectContaining({ sessionId: session.sessionId }),
+      ]),
+      chatMessages: expect.arrayContaining([expect.objectContaining({ id: chatMessage.id })]),
+      chatReactions: expect.arrayContaining([
+        expect.objectContaining({ messageId: chatMessage.id }),
+      ]),
+    });
 
     const deleted = await app.inject({
       method: "DELETE",
@@ -724,6 +972,17 @@ describe("creator to report journey", () => {
       headers: { cookie },
     });
     expect(deleted.statusCode).toBe(204);
+    expect(
+      await repository.getInteractionSettings(creator.creator.workspaceId, session.sessionId),
+    ).toBeNull();
+    expect(
+      [...repository.chatMessages.values()].filter(
+        (message) => message.sessionId === session.sessionId,
+      ),
+    ).toEqual([]);
+    expect(
+      repository.signalEvents.filter((event) => event.sessionId === session.sessionId),
+    ).toEqual([]);
     await expect(
       built.sessions.snapshot({
         sessionId: session.sessionId,
@@ -1172,6 +1431,9 @@ describe("creator to report journey", () => {
         FEATURE_SIGNUPS: "false",
         FEATURE_SESSION_CREATION: "false",
         FEATURE_MEDIA_UPLOADS: "false",
+        FEATURE_ROUND_EXPERIENCES: "false",
+        FEATURE_AUDIENCE_PULSE: "false",
+        FEATURE_ROOM_CHAT: "false",
         LOG_LEVEL: "silent",
       }),
       { repository: new MemoryRepository(), cache: new MemorySessionCache() },
@@ -1184,7 +1446,13 @@ describe("creator to report journey", () => {
       signups: false,
       sessionCreation: false,
       mediaUploads: false,
+      roundExperiences: false,
+      audiencePulse: false,
+      roomChat: false,
     });
+    expect((await app.inject({ method: "GET", url: "/v1/experience-presets" })).statusCode).toBe(
+      503,
+    );
     const signup = await app.inject({
       method: "POST",
       url: "/v1/auth/magic-link",
@@ -1196,6 +1464,35 @@ describe("creator to report journey", () => {
     });
     expect(signup.statusCode).toBe(503);
     expect(signup.json()).toMatchObject({ error: { code: "DEPENDENCY_UNAVAILABLE" } });
+  });
+
+  it("applies the design-partner workspace rollout allowlist", async () => {
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST: "11111111-1111-4111-8111-111111111111",
+        LOG_LEVEL: "silent",
+      }),
+      { repository: new MemoryRepository(), cache: new MemorySessionCache() },
+    );
+    app = built.app;
+
+    const { cookie } = await signIn(app, "rollout-unlisted@example.com");
+    const account = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: { cookie },
+    });
+    expect(account.json()).toMatchObject({
+      productFeatures: {
+        roundExperiences: false,
+        audiencePulse: false,
+        roomChat: false,
+      },
+    });
   });
 
   it("applies audited operational kill switches without a restart", async () => {
@@ -1239,13 +1536,34 @@ describe("creator to report journey", () => {
       method: "PATCH",
       url: "/v1/admin/features",
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { signups: false, sessionCreation: false, mediaUploads: false },
+      payload: {
+        signups: false,
+        sessionCreation: false,
+        mediaUploads: false,
+        roundExperiences: false,
+        audiencePulse: false,
+        roomChat: false,
+      },
     });
     expect(paused.statusCode).toBe(200);
     expect(paused.json()).toMatchObject({
       configured: { signups: true, sessionCreation: true, mediaUploads: false },
-      runtime: { signups: false, sessionCreation: false, mediaUploads: false },
-      effective: { signups: false, sessionCreation: false, mediaUploads: false },
+      runtime: {
+        signups: false,
+        sessionCreation: false,
+        mediaUploads: false,
+        roundExperiences: false,
+        audiencePulse: false,
+        roomChat: false,
+      },
+      effective: {
+        signups: false,
+        sessionCreation: false,
+        mediaUploads: false,
+        roundExperiences: false,
+        audiencePulse: false,
+        roomChat: false,
+      },
     });
     expect(repository.audits.at(-1)).toMatchObject({
       action: "operations.features.update",
@@ -1257,6 +1575,9 @@ describe("creator to report journey", () => {
       signups: false,
       sessionCreation: false,
       mediaUploads: false,
+      roundExperiences: false,
+      audiencePulse: false,
+      roomChat: false,
     });
     expect(
       (

@@ -378,7 +378,7 @@ describe("session service ordering", () => {
     expect(await repository.getReportBySession(stored.workspaceId, stored.id)).toMatchObject({
       sessionId: stored.id,
       status: "pending",
-      schemaVersion: 2,
+      schemaVersion: 3,
     });
     service.close();
   });

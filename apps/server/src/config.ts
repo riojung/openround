@@ -21,6 +21,17 @@ const optionalSecret = z.preprocess(
   z.string().min(1).optional(),
 );
 
+const uuidAllowlist = z
+  .string()
+  .default("")
+  .transform((value) =>
+    value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  )
+  .pipe(z.array(z.string().uuid()).max(1_000));
+
 function isPrivateHttpUrl(value: string) {
   const url = new URL(value);
   if (url.protocol !== "http:") return false;
@@ -109,6 +120,10 @@ export const ConfigSchema = z
     FEATURE_SIGNUPS: defaultTrueBooleanString,
     FEATURE_SESSION_CREATION: defaultTrueBooleanString,
     FEATURE_MEDIA_UPLOADS: defaultTrueBooleanString,
+    FEATURE_ROUND_EXPERIENCES: defaultTrueBooleanString,
+    FEATURE_AUDIENCE_PULSE: defaultTrueBooleanString,
+    FEATURE_ROOM_CHAT: defaultTrueBooleanString,
+    THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST: uuidAllowlist,
     METRICS_ENABLED: defaultTrueBooleanString,
     METRICS_TOKEN: z.string().min(24).optional(),
     TRACING_ENABLED: booleanString,

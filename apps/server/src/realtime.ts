@@ -6,6 +6,7 @@ import { Server } from "socket.io";
 import { ZodError } from "zod";
 import {
   AnswerSubmitSchema,
+  AudienceSyncRequestSchema,
   HostCommandSchema,
   JoinRequestSchema,
   SyncRequestSchema,
@@ -16,8 +17,14 @@ import type { AppConfig } from "./config.js";
 import type { MetricsService } from "./metrics.js";
 import { originAllowed } from "./origin.js";
 import type { SessionService } from "./session-service.js";
+import type {
+  AudienceRealtimeViewer,
+  InteractionService,
+  PreparedAudienceChatEvent,
+} from "./interaction-service.js";
 
 const CLIENT_EVENT_RECEIPT_TIMEOUT_MS = 5_000;
+const AUDIENCE_SUMMARY_MIN_INTERVAL_MS = 250;
 
 type RealtimeRole = "host" | "presenter" | "participant";
 
@@ -91,6 +98,7 @@ export async function attachRealtime(
   sessions: SessionService,
   config: AppConfig,
   metrics: MetricsService,
+  interactions?: InteractionService,
 ) {
   let closing = false;
   const adapterRedis = config.REDIS_URL
@@ -127,6 +135,131 @@ export async function attachRealtime(
       );
     },
   });
+  const pendingAudienceSummaries = new Map<
+    string,
+    {
+      event: Parameters<SessionService["publishAudience"]>[0];
+      includeModerators: boolean;
+      eventIds: Set<string>;
+      timer: NodeJS.Timeout;
+    }
+  >();
+  const lastAudienceSummaryAt = new Map<string, number>();
+  const audienceSummaryExpiryTimers = new Map<string, NodeJS.Timeout>();
+  const isModeratorSocket = (socket: Awaited<ReturnType<Server["fetchSockets"]>>[number]) =>
+    (socket.data.role as RealtimeRole | undefined) === "host" &&
+    ((socket.data.staffCredentialRole as string | undefined) === "host" ||
+      (socket.data.staffCredentialRole as string | undefined) === "cohost");
+  const revalidateAudienceSocket = async (
+    socket: Awaited<ReturnType<Server["fetchSockets"]>>[number],
+    sessionId: string,
+  ) => {
+    const role = socket.data.role as RealtimeRole | undefined;
+    if (!role) return null;
+    if (role === "participant") return role;
+    const staffExpiresAtMs = socket.data.staffExpiresAtMs as number | undefined;
+    if (staffExpiresAtMs !== undefined && staffExpiresAtMs <= Date.now()) {
+      socket.disconnect(true);
+      return null;
+    }
+    const staffTokenHash = socket.data.staffTokenHash as string | undefined;
+    if (staffTokenHash) {
+      try {
+        await sessions.revalidateRealtimeStaff(sessionId, staffTokenHash, role);
+      } catch {
+        socket.disconnect(true);
+        return null;
+      }
+    }
+    return role;
+  };
+  const viewerForSocket = (
+    socket: Awaited<ReturnType<Server["fetchSockets"]>>[number],
+  ): AudienceRealtimeViewer => ({
+    moderator: isModeratorSocket(socket),
+    ...(socket.data.participantId ? { participantId: socket.data.participantId as string } : {}),
+    ...(socket.data.staffCredentialId
+      ? { staffCredentialId: socket.data.staffCredentialId as string }
+      : {}),
+    presenter: (socket.data.role as RealtimeRole | undefined) === "presenter",
+    rootHost: (socket.data.staffCredentialRole as string | undefined) === "host",
+  });
+  const emitAudienceSummary = async (
+    event: Parameters<SessionService["publishAudience"]>[0],
+    includeModerators: boolean,
+  ) => {
+    const emittedAt = Date.now();
+    lastAudienceSummaryAt.set(event.sessionId, emittedAt);
+    const priorExpiry = audienceSummaryExpiryTimers.get(event.sessionId);
+    if (priorExpiry) clearTimeout(priorExpiry);
+    const expiry = setTimeout(() => {
+      if (lastAudienceSummaryAt.get(event.sessionId) === emittedAt) {
+        lastAudienceSummaryAt.delete(event.sessionId);
+      }
+      audienceSummaryExpiryTimers.delete(event.sessionId);
+    }, 60_000);
+    expiry.unref();
+    audienceSummaryExpiryTimers.set(event.sessionId, expiry);
+    const [sockets, summaries] = await Promise.all([
+      io.in(`session:${event.sessionId}`).fetchSockets(),
+      interactions?.realtimeSummaries(event.sessionId),
+    ]);
+    const summaryEventId = randomUUID();
+    for (const socket of sockets) {
+      const role = await revalidateAudienceSocket(socket, event.sessionId);
+      if (!role || (!includeModerators && isModeratorSocket(socket))) continue;
+      const envelope = {
+        eventId: summaryEventId,
+        sessionId: event.sessionId,
+        audienceSeq: event.audienceSeq,
+        schemaVersion: 1 as const,
+        serverTime: new Date().toISOString(),
+        type: "audience.summary.updated",
+        payload: summaries
+          ? {
+              summary: isModeratorSocket(socket)
+                ? summaries.moderatorSummary
+                : summaries.publicSummary,
+            }
+          : {},
+      };
+      emitTrackedEvent(socket, "audience.summary.updated", envelope, role, metrics);
+    }
+  };
+  const scheduleAudienceSummary = async (
+    event: Parameters<SessionService["publishAudience"]>[0],
+    includeModerators: boolean,
+  ) => {
+    const pending = pendingAudienceSummaries.get(event.sessionId);
+    if (pending) {
+      pending.event = event;
+      pending.includeModerators ||= includeModerators;
+      pending.eventIds.add(event.eventId);
+      return false;
+    }
+    const elapsed = Date.now() - (lastAudienceSummaryAt.get(event.sessionId) ?? 0);
+    if (elapsed >= AUDIENCE_SUMMARY_MIN_INTERVAL_MS) {
+      await emitAudienceSummary(event, includeModerators);
+      return true;
+    }
+    const timer = setTimeout(() => {
+      const latest = pendingAudienceSummaries.get(event.sessionId);
+      pendingAudienceSummaries.delete(event.sessionId);
+      if (latest) {
+        void emitAudienceSummary(latest.event, latest.includeModerators)
+          .then(() => interactions?.completeOutboxEvents(latest.eventIds))
+          .catch(() => undefined);
+      }
+    }, AUDIENCE_SUMMARY_MIN_INTERVAL_MS - elapsed);
+    timer.unref();
+    pendingAudienceSummaries.set(event.sessionId, {
+      event,
+      includeModerators,
+      eventIds: new Set([event.eventId]),
+      timer,
+    });
+    return false;
+  };
 
   sessions.subscribe(async ({ state, events, reportId }) => {
     const startedAt = performance.now();
@@ -201,6 +334,53 @@ export async function attachRealtime(
     }
   });
 
+  sessions.subscribeAudience?.(async (event) => {
+    const sockets = await io.in(`session:${event.sessionId}`).fetchSockets();
+    const privateAudienceEvent =
+      event.type === "audience.signal.updated" || event.type === "audience.moderation.updated";
+    const aggregateSummaryEvent = event.type === "audience.summary.updated";
+    const chatEvent = event.type.startsWith("chat.");
+    const messageId = typeof event.payload.messageId === "string" ? event.payload.messageId : null;
+    const preparedChat: PreparedAudienceChatEvent | null =
+      chatEvent && messageId && interactions
+        ? await interactions.prepareRealtimeChat(event.sessionId, messageId)
+        : null;
+    const settings =
+      event.type === "audience.settings.updated" && interactions
+        ? await interactions.realtimeSettings(event.sessionId)
+        : null;
+    for (const socket of sockets) {
+      const role = await revalidateAudienceSocket(socket, event.sessionId);
+      if (!role) continue;
+      const moderator = isModeratorSocket(socket);
+      if (aggregateSummaryEvent || (privateAudienceEvent && !moderator)) continue;
+      const payload = preparedChat
+        ? interactions!.projectRealtimeChat(preparedChat, viewerForSocket(socket))
+        : settings
+          ? { settings }
+          : event.payload;
+      const envelope = {
+        eventId: event.eventId,
+        sessionId: event.sessionId,
+        audienceSeq: event.audienceSeq,
+        schemaVersion: 1 as const,
+        serverTime: event.createdAt.toISOString(),
+        type: event.type,
+        payload,
+      };
+      const realtimeEventName = event.type.startsWith("qna.") ? "audience.event" : event.type;
+      emitTrackedEvent(socket, realtimeEventName, envelope, role, metrics);
+    }
+    const summaryAffectingEvent =
+      privateAudienceEvent ||
+      aggregateSummaryEvent ||
+      event.type === "chat.message.created" ||
+      event.type === "chat.message.updated" ||
+      event.type === "chat.message.removed";
+    if (summaryAffectingEvent) return scheduleAudienceSummary(event, true);
+    return true;
+  });
+
   io.on("connection", (socket) => {
     metrics.socketConnected();
     const rateLimits: Record<string, { startedAt: number; count: number }> = {};
@@ -257,6 +437,7 @@ export async function attachRealtime(
         socket.data.participantId = undefined;
         socket.data.participantToken = undefined;
         socket.data.staffCredentialId = staff.credentialId ?? undefined;
+        socket.data.staffCredentialRole = staff.credentialRole;
         socket.data.staffExpiresAtMs = staff.expiresAtMs ?? undefined;
         socket.data.staffTokenHash = staff.tokenHash;
         await socket.join(`session:${input.sessionId}`);
@@ -283,9 +464,32 @@ export async function attachRealtime(
         socket.data.participantToken = input.participantToken;
         socket.data.participantId = synchronized.snapshot.myParticipantId ?? undefined;
         socket.data.staffCredentialId = staff?.credentialId ?? undefined;
+        socket.data.staffCredentialRole = staff?.credentialRole;
         socket.data.staffExpiresAtMs = staff?.expiresAtMs ?? undefined;
         socket.data.staffTokenHash = staff?.tokenHash ?? undefined;
         await socket.join(`session:${input.sessionId}`);
+        acknowledge({ data: synchronized });
+      } catch (error) {
+        acknowledge(socketError(error));
+      }
+    });
+
+    socket.on("audience.sync.request", async (raw, acknowledge) => {
+      if (typeof acknowledge !== "function") return;
+      if (!interactions) {
+        acknowledge({
+          error: { code: "DEPENDENCY_UNAVAILABLE", message: "Audience sync is unavailable" },
+        });
+        return;
+      }
+      if (!consumeRateLimit(rateLimits, "audience.sync.request", 20)) {
+        acknowledge({ error: { code: "RATE_LIMITED", message: "Too many sync requests" } });
+        return;
+      }
+      try {
+        const input = AudienceSyncRequestSchema.parse(raw);
+        const token = input.participantToken ?? input.hostToken!;
+        const synchronized = await interactions.sync(input.sessionId, token, input.limit);
         acknowledge({ data: synchronized });
       } catch (error) {
         acknowledge(socketError(error));
@@ -303,6 +507,11 @@ export async function attachRealtime(
     io,
     async close() {
       closing = true;
+      for (const { timer } of pendingAudienceSummaries.values()) clearTimeout(timer);
+      pendingAudienceSummaries.clear();
+      for (const timer of audienceSummaryExpiryTimers.values()) clearTimeout(timer);
+      audienceSummaryExpiryTimers.clear();
+      lastAudienceSummaryAt.clear();
       await new Promise<void>((resolve) => io.close(() => resolve()));
       if (adapterRedis && adapterRedis.status !== "end") await adapterRedis.quit();
     },

@@ -124,6 +124,36 @@ describe("public contracts", () => {
     }
   });
 
+  it("preserves versioned experience metadata when content is published", () => {
+    const content = QuizContentSchema.parse({
+      title: "Technical checkpoint",
+      description: "",
+      category: "technical",
+      experiencePreset: { id: "blueprint", version: 1 },
+      questions: [
+        {
+          id: randomUUID(),
+          type: "true_false",
+          prompt: "The published version owns its experience preset.",
+          choices: [
+            { id: randomUUID(), label: "True", isCorrect: true },
+            { id: randomUUID(), label: "False", isCorrect: false },
+          ],
+          timeLimitSeconds: 20,
+          basePoints: 1_000,
+          explanation: "Presentation metadata is immutable with the content version.",
+          mediaId: null,
+          mediaAlt: null,
+        },
+      ],
+    });
+
+    expect(content).toMatchObject({
+      category: "technical",
+      experiencePreset: { id: "blueprint", version: 1 },
+    });
+  });
+
   it("keeps the public snapshot free of answer keys while a question is open", () => {
     const snapshot = SessionSnapshotSchema.parse({
       sessionId: randomUUID(),
@@ -155,6 +185,27 @@ describe("public contracts", () => {
         nicknamePolicy: "custom",
       },
       brandTheme: null,
+      experienceTheme: {
+        preset: { id: "focus", version: 1 },
+        name: "Focus",
+        category: "general",
+        motion: "calm",
+        soundCue: "none",
+        soundEnabled: false,
+        tokens: {
+          canvas: "#F7F4EC",
+          surface: "#FFFFFF",
+          surfaceStrong: "#DCEEEE",
+          text: "#0B2239",
+          mutedText: "#425B72",
+          primary: "#075E63",
+          accent: "#8A3D22",
+          choiceColors: ["#075E63", "#7B3657", "#6D4B0C", "#345594", "#553D8A", "#23613F"],
+          pattern: "dots",
+          typography: "humanist",
+          corners: "soft",
+        },
+      },
       pausedRemainingMs: null,
     });
 

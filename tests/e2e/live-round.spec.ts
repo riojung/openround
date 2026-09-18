@@ -21,6 +21,10 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await creator
     .getByRole("textbox", { name: "Checkpoint prompt", exact: true })
     .fill("Edmonton is the capital of Alberta.");
+  await creator.getByLabel("Round category").selectOption("education");
+  await creator.getByRole("button", { name: "Use recommended Campus" }).click();
+  await expect(creator.getByLabel("Experience preset")).toHaveValue("campus");
+  await expect(creator.getByLabel("Campus experience preview")).toBeVisible();
   await expect(creator.getByRole("status")).toContainText("Saved", { timeout: 10_000 });
   await creator.getByRole("button", { name: "Preview" }).click();
   await expect(creator).toHaveURL(/\/quiz\/[^/]+\/preview/);
@@ -39,6 +43,9 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   const publishResponse = await publishResponsePromise;
   expect(publishResponse.status()).toBe(200);
   await expect(creator.getByText("published", { exact: true })).toBeVisible();
+  await creator.getByLabel("Experience preset").selectOption("spark");
+  await expect(creator.getByRole("status")).toContainText("Saving");
+  await expect(creator.getByRole("status")).toContainText("Saved", { timeout: 10_000 });
   await creator.getByRole("link", { name: "Dashboard" }).click();
   await expect(creator.getByText(/1 of 5 published checkpoint-set slots used/)).toBeVisible({
     timeout: 10_000,
@@ -50,8 +57,11 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await expect(creator.getByLabel("Scoring mode")).toHaveValue("accuracy");
   await expect(creator.getByLabel("Results during the round")).toHaveValue("private");
   await expect(creator.getByLabel("Participant names")).toHaveValue("friendly_only");
+  await expect(creator.getByLabel("Experience preset")).toHaveValue("campus");
+  await creator.getByLabel("Experience preset").selectOption("blueprint");
   await creator.getByRole("button", { name: "Create live session" }).click();
   await expect(creator).toHaveURL(/\/host\/(?!setup\/)[^/]+$/);
+  await expect(creator.locator(".live-shell")).toHaveAttribute("data-pattern", "grid");
   expect((await new AxeBuilder({ page: creator }).analyze()).violations).toEqual([]);
   const code = (await creator.locator(".session-code").textContent())!.trim();
   const expectedJoinUrl = `${new URL(creator.url()).origin}/join?code=${code}`;
@@ -96,7 +106,40 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await participant.getByLabel("Nickname").fill("Learner");
   await participant.getByRole("button", { name: "Join round" }).click();
   await expect(participant).toHaveURL(/\/play\//);
+  await expect(participant.locator(".live-shell")).toHaveAttribute("data-pattern", "grid");
   await expect(creator.getByText(/Bright|Calm|Curious|Kind|Quick|Sunny/)).toBeVisible();
+
+  await participant.getByRole("button", { name: "Show an example" }).click();
+  await expect(creator.locator(".participant-pulse-table tbody tr").first()).toContainText(
+    "need example",
+  );
+  await expect(participant.getByText(/room sees totals only/i)).toBeVisible();
+
+  await creator.getByLabel("Room chat").click();
+  await expect(creator.getByLabel("Room chat")).toBeChecked();
+  await participant.getByLabel("Chat message").fill("Could we see a practical example?");
+  await participant.getByRole("button", { name: "Send" }).click();
+  const hostChatMessage = creator.locator(".chat-message", {
+    hasText: "Could we see a practical example?",
+  });
+  await expect(hostChatMessage).toBeVisible();
+  await hostChatMessage.getByRole("button", { name: "Pin" }).click();
+  const participantChatMessage = participant.locator(".chat-message", {
+    hasText: "Could we see a practical example?",
+  });
+  await expect(participantChatMessage.getByText("Pinned")).toBeVisible();
+  await participantChatMessage.getByRole("button", { name: "Like: 0" }).click();
+  await expect(hostChatMessage.locator(".reaction-count")).toContainText("1");
+
+  const pulsePresenterPagePromise = creatorContext.waitForEvent("page");
+  await creator.getByRole("button", { name: "Presenter view" }).click();
+  const pulsePresenter = await pulsePresenterPagePromise;
+  await expect(pulsePresenter.locator(".live-shell")).toHaveAttribute("data-pattern", "grid");
+  await expect(pulsePresenter.getByText("Could we see a practical example?")).toBeVisible();
+  await Promise.all([
+    pulsePresenter.waitForEvent("close"),
+    pulsePresenter.getByRole("button", { name: "Close presenter" }).click({ noWaitAfter: true }),
+  ]);
 
   await participant.getByLabel("Ask the facilitator").fill("Why is Edmonton the capital?");
   await participant.getByRole("button", { name: "Ask question" }).click();

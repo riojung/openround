@@ -19,6 +19,27 @@ describe("production configuration", () => {
     expect(config.FEATURE_SIGNUPS).toBe(false);
     expect(config.COOKIE_SECURE).toBe("true");
     expect(config.AUDIT_RETENTION_DAYS).toBe(365);
+    expect(config.FEATURE_ROUND_EXPERIENCES).toBe(true);
+    expect(config.FEATURE_AUDIENCE_PULSE).toBe(true);
+    expect(config.FEATURE_ROOM_CHAT).toBe(true);
+    expect(config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST).toEqual([]);
+  });
+
+  it("parses a bounded workspace rollout allowlist", () => {
+    const first = "11111111-1111-4111-8111-111111111111";
+    const second = "22222222-2222-4222-8222-222222222222";
+    expect(
+      ConfigSchema.parse({
+        ...productionConfig,
+        THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST: `${first}, ${second}`,
+      }).THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST,
+    ).toEqual([first, second]);
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST: "not-a-workspace-id",
+      }),
+    ).toThrow();
   });
 
   it("bounds operator-configured audit retention", () => {

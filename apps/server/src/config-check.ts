@@ -24,7 +24,11 @@ const summary = {
     signups: config.FEATURE_SIGNUPS,
     sessionCreation: config.FEATURE_SESSION_CREATION,
     mediaUploads: config.FEATURE_MEDIA_UPLOADS,
+    roundExperiences: config.FEATURE_ROUND_EXPERIENCES,
+    audiencePulse: config.FEATURE_AUDIENCE_PULSE,
+    roomChat: config.FEATURE_ROOM_CHAT,
   },
+  themedInteractionsWorkspaceAllowlistSize: config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST.length,
 };
 
 process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);

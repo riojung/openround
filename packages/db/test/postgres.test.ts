@@ -58,6 +58,9 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 8, name: "authoring_apply_idempotency" },
       { version: 9, name: "institution_identity_foundation" },
       { version: 10, name: "lti_launch_and_deep_linking" },
+      { version: 11, name: "audience_interactions" },
+      { version: 12, name: "interaction_feature_flags" },
+      { version: 13, name: "close_finished_interactions" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -67,7 +70,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("10");
+    expect(bootstrapped.rows[0]?.count).toBe("13");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -114,22 +117,51 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
 
   it("shows only the active workspace and rejects cross-tenant writes", async () => {
     await repository.updateOperationalFeatures(
-      { signups: true, sessionCreation: true, mediaUploads: true },
+      {
+        signups: true,
+        sessionCreation: true,
+        mediaUploads: true,
+        roundExperiences: true,
+        audiencePulse: true,
+        roomChat: true,
+      },
       `features-reset-${randomUUID()}`,
     );
     expect(
       await repository.updateOperationalFeatures(
-        { signups: false, mediaUploads: false },
+        {
+          signups: false,
+          mediaUploads: false,
+          roundExperiences: false,
+          audiencePulse: false,
+          roomChat: false,
+        },
         `features-test-${randomUUID()}`,
       ),
-    ).toMatchObject({ signups: false, sessionCreation: true, mediaUploads: false });
+    ).toMatchObject({
+      signups: false,
+      sessionCreation: true,
+      mediaUploads: false,
+      roundExperiences: false,
+      audiencePulse: false,
+      roomChat: false,
+    });
     expect(await repository.getOperationalFeatures()).toMatchObject({
       signups: false,
       sessionCreation: true,
       mediaUploads: false,
+      roundExperiences: false,
+      audiencePulse: false,
+      roomChat: false,
     });
     await repository.updateOperationalFeatures(
-      { signups: true, mediaUploads: true },
+      {
+        signups: true,
+        mediaUploads: true,
+        roundExperiences: true,
+        audiencePulse: true,
+        roomChat: true,
+      },
       `features-restore-${randomUUID()}`,
     );
 
@@ -566,6 +598,254 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       qna: { questions: 1, answered: 1, unresolved: 0 },
     });
     expect(await repository.getQnaQuestion(second.workspaceId, qnaQuestion.id)).toBeNull();
+
+    const interactionNow = new Date(now.getTime() + 1_000);
+    const settingsEvent = {
+      eventId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      type: "audience.settings.updated",
+      payload: { chatEnabled: true },
+    };
+    const interactionSettings = {
+      workspaceId: first.workspaceId,
+      sessionId,
+      signalsEnabled: true,
+      chatEnabled: true,
+      chatIdentityMode: "alias_private" as const,
+      slowModeSeconds: 0 as const,
+      presenterFeedMode: "pinned" as const,
+      updatedAt: interactionNow,
+    };
+    const savedSettings = await repository.saveInteractionSettings(
+      interactionSettings,
+      settingsEvent,
+    );
+    expect(savedSettings).toMatchObject({
+      duplicate: false,
+      record: { chatEnabled: true, audienceSeq: 1 },
+      event: { audienceSeq: 1 },
+    });
+    expect(
+      await repository.saveInteractionSettings(interactionSettings, settingsEvent),
+    ).toMatchObject({ duplicate: true, event: { audienceSeq: 1 } });
+    expect(await repository.getInteractionSettings(second.workspaceId, sessionId)).toBeNull();
+
+    const signalMutation = await repository.setParticipantSignal(
+      {
+        workspaceId: first.workspaceId,
+        sessionId,
+        contextKey: `round:${gameState.roundId}`,
+        participantId: firstParticipantId,
+        signal: "need_example",
+        now: new Date(interactionNow.getTime() + 1),
+      },
+      {
+        eventId: randomUUID(),
+        idempotencyKey: randomUUID(),
+        type: "audience.signal.updated",
+        payload: {},
+      },
+    );
+    expect(signalMutation).toMatchObject({
+      record: { signal: "need_example" },
+      event: { audienceSeq: 2 },
+    });
+
+    const messageId = randomUUID();
+    const chatIdempotencyKey = randomUUID();
+    const chatMutation = await repository.createChatMessage(
+      {
+        id: messageId,
+        workspaceId: first.workspaceId,
+        sessionId,
+        participantId: firstParticipantId,
+        actorId: null,
+        staffCredentialId: null,
+        replyToId: null,
+        body: "Could we see another example?",
+        authorAlias: "First learner",
+        identityModeAtCreation: "alias_public",
+        status: "published",
+        pinned: false,
+        idempotencyKey: chatIdempotencyKey,
+        createdAt: new Date(interactionNow.getTime() + 2),
+        updatedAt: new Date(interactionNow.getTime() + 2),
+      },
+      {
+        eventId: randomUUID(),
+        idempotencyKey: chatIdempotencyKey,
+        type: "chat.message.created",
+        payload: {},
+      },
+    );
+    expect(chatMutation).toMatchObject({
+      record: { identityModeAtCreation: "alias_private" },
+      event: { audienceSeq: 3 },
+    });
+    expect(
+      await repository.setChatReaction(
+        {
+          workspaceId: first.workspaceId,
+          sessionId,
+          messageId,
+          participantId: secondParticipantId,
+          reaction: "insight",
+          now: new Date(interactionNow.getTime() + 3),
+        },
+        {
+          eventId: randomUUID(),
+          idempotencyKey: randomUUID(),
+          type: "chat.reaction.updated",
+          payload: {},
+        },
+      ),
+    ).toMatchObject({ record: { counts: { insight: 1 } }, event: { audienceSeq: 4 } });
+    expect(
+      await repository.reportChatMessage(
+        first.workspaceId,
+        sessionId,
+        messageId,
+        secondParticipantId,
+        new Date(interactionNow.getTime() + 4),
+        {
+          eventId: randomUUID(),
+          idempotencyKey: randomUUID(),
+          type: "chat.message.reported",
+          payload: {},
+        },
+      ),
+    ).toMatchObject({ record: 1, event: { audienceSeq: 5 } });
+    expect(
+      await repository.updateChatMessage(
+        first.workspaceId,
+        sessionId,
+        messageId,
+        { pinned: true },
+        {
+          eventId: randomUUID(),
+          idempotencyKey: randomUUID(),
+          type: "chat.message.pinned",
+          payload: {},
+        },
+        new Date(interactionNow.getTime() + 5),
+      ),
+    ).toMatchObject({ record: { pinned: true }, event: { audienceSeq: 6 } });
+
+    const restrictedParticipant = {
+      workspaceId: first.workspaceId,
+      sessionId,
+      participantId: firstParticipantId,
+      mutedUntil: null,
+      bannedAt: new Date(interactionNow.getTime() + 6),
+      actorId: first.userId,
+      staffCredentialId: null,
+      updatedAt: new Date(interactionNow.getTime() + 6),
+    };
+    await repository.saveAudienceRestriction(restrictedParticipant, {
+      eventId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      type: "audience.moderation.updated",
+      payload: {},
+    });
+    expect(await repository.isQnaBanned(first.workspaceId, sessionId, firstParticipantId)).toBe(
+      true,
+    );
+    await repository.saveAudienceRestriction(
+      {
+        ...restrictedParticipant,
+        bannedAt: null,
+        updatedAt: new Date(interactionNow.getTime() + 7),
+      },
+      {
+        eventId: randomUUID(),
+        idempotencyKey: randomUUID(),
+        type: "audience.moderation.updated",
+        payload: {},
+      },
+    );
+    expect(await repository.isQnaBanned(first.workspaceId, sessionId, firstParticipantId)).toBe(
+      false,
+    );
+    expect(
+      await repository.listChatMessages(first.workspaceId, sessionId, {
+        limit: 1,
+        pinnedOnly: true,
+      }),
+    ).toEqual([expect.objectContaining({ id: messageId, pinned: true })]);
+    expect(await repository.listChatReactions(first.workspaceId, sessionId, [messageId])).toEqual([
+      expect.objectContaining({ messageId, reaction: "insight" }),
+    ]);
+    expect(
+      await repository.getChatActivitySummary(
+        first.workspaceId,
+        sessionId,
+        new Date(interactionNow.getTime() - 1),
+      ),
+    ).toMatchObject({
+      messagesLastMinute: 1,
+      uniqueContributors: 1,
+      removedMessages: 0,
+      reportCount: 1,
+    });
+    expect(await repository.listParticipantChatActivity(first.workspaceId, sessionId)).toEqual([
+      expect.objectContaining({ participantId: firstParticipantId, messageCount: 1 }),
+    ]);
+    expect(await repository.listAudienceRestrictions(first.workspaceId, sessionId)).toEqual([
+      expect.objectContaining({ participantId: firstParticipantId, bannedAt: null }),
+    ]);
+    expect(await repository.getSessionEvidence(first.workspaceId, sessionId)).toMatchObject({
+      interactions: {
+        signalEvents: [expect.objectContaining({ signal: "need_example" })],
+        chatMessages: [expect.objectContaining({ id: messageId, pinned: true })],
+        reactions: [expect.objectContaining({ reaction: "insight" })],
+        reports: 1,
+        moderationActions: 2,
+      },
+    });
+    expect(await repository.getAudienceOutboxStatus()).toMatchObject({
+      pending: 8,
+      chatEnabledSessions: 1,
+    });
+    const claimedAudienceEvent = await repository.claimAudienceOutbox(
+      new Date(interactionNow.getTime() + 8),
+      new Date(0),
+    );
+    expect(claimedAudienceEvent).toMatchObject({ attempts: 1 });
+    expect(
+      await repository.completeAudienceOutbox(
+        claimedAudienceEvent!.eventId,
+        new Date(interactionNow.getTime() + 9),
+      ),
+    ).toBe(true);
+    expect(
+      await repository.completeAudienceOutbox(
+        claimedAudienceEvent!.eventId,
+        new Date(interactionNow.getTime() + 10),
+      ),
+    ).toBe(false);
+    expect(await repository.getAudienceOutboxStatus()).toMatchObject({ pending: 7 });
+    const qnaAudienceEvent = {
+      eventId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      type: "qna.question.created",
+      payload: { questionId: qnaQuestion.id },
+    };
+    expect(
+      await repository.appendAudienceEvent(
+        first.workspaceId,
+        sessionId,
+        qnaAudienceEvent,
+        new Date(interactionNow.getTime() + 11),
+      ),
+    ).toMatchObject({ duplicate: false, event: { audienceSeq: 9 } });
+    expect(
+      await repository.appendAudienceEvent(
+        first.workspaceId,
+        sessionId,
+        qnaAudienceEvent,
+        new Date(interactionNow.getTime() + 12),
+      ),
+    ).toMatchObject({ duplicate: true, event: { audienceSeq: 9 } });
     expect(await repository.revokeSessionStaff(first.workspaceId, staffCredential.id)).toBe(true);
     expect(await repository.getSessionStaffByToken(staffTokenHash, now)).toBeNull();
 
@@ -775,6 +1055,13 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       expect(
         (await client.query("SELECT count(*)::integer AS count FROM qna_questions")).rows[0]?.count,
       ).toBe(0);
+      expect(
+        (await client.query("SELECT count(*)::integer AS count FROM chat_messages")).rows[0]?.count,
+      ).toBe(0);
+      expect(
+        (await client.query("SELECT count(*)::integer AS count FROM audience_outbox")).rows[0]
+          ?.count,
+      ).toBe(0);
       await client.query("BEGIN");
       await client.query("SELECT set_config('app.workspace_id', $1, true)", [first.workspaceId]);
       expect(
@@ -786,6 +1073,13 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       expect(
         (await client.query("SELECT count(*)::integer AS count FROM followups")).rows[0]?.count,
       ).toBe(1);
+      expect(
+        (await client.query("SELECT count(*)::integer AS count FROM chat_messages")).rows[0]?.count,
+      ).toBe(1);
+      expect(
+        (await client.query("SELECT count(*)::integer AS count FROM audience_outbox")).rows[0]
+          ?.count,
+      ).toBe(9);
       await expect(
         client.query(
           `INSERT INTO quizzes (id, workspace_id, title, description, status, draft)
@@ -811,6 +1105,40 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     } finally {
       client.release();
     }
+
+    const finishedState = applyHostCommand(persistedSession.state, {
+      commandId: randomUUID(),
+      expectedVersion: persistedSession.state.version,
+      action: "next",
+      nowMs: Date.now(),
+      newRoundId: randomUUID,
+    }).state;
+    const beforeFinishVersion = persistedSession.state.version;
+    persistedSession.state = finishedState;
+    await repository.saveSession(persistedSession, beforeFinishVersion);
+    expect(await repository.getInteractionSettings(first.workspaceId, sessionId)).toMatchObject({
+      signalsEnabled: false,
+      chatEnabled: false,
+      closedAt: expect.any(Date),
+    });
+    await expect(
+      repository.setParticipantSignal(
+        {
+          workspaceId: first.workspaceId,
+          sessionId,
+          contextKey: `round:${finishedState.roundId}`,
+          participantId: firstParticipantId,
+          signal: "got_it",
+          now: new Date(),
+        },
+        {
+          eventId: randomUUID(),
+          idempotencyKey: randomUUID(),
+          type: "audience.signal.updated",
+          payload: {},
+        },
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
 
     const billingCreatedAt = new Date("2026-09-14T12:00:00.000Z");
     const billingEvent = {
@@ -881,6 +1209,8 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       checkpointSet: {
         title: "Generated review draft",
         description: "",
+        category: "general",
+        experiencePreset: { id: "focus", version: 1 },
         questions: [
           {
             id: checkpointId,

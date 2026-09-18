@@ -15,8 +15,23 @@ export function safeHashEqual(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+function isInvisibleControl(character: string): boolean {
+  const codePoint = character.codePointAt(0) ?? 0;
+  return (
+    (codePoint <= 0x1f && codePoint !== 0x09 && codePoint !== 0x0a && codePoint !== 0x0d) ||
+    (codePoint >= 0x7f && codePoint <= 0x9f) ||
+    (codePoint >= 0x200b && codePoint <= 0x200f) ||
+    (codePoint >= 0x202a && codePoint <= 0x202e) ||
+    (codePoint >= 0x2060 && codePoint <= 0x206f) ||
+    codePoint === 0xfeff
+  );
+}
+
 export function cleanPlainText(value: string, maxLength: number): string {
   return sanitizeHtml(value, { allowedTags: [], allowedAttributes: {} })
+    .split("")
+    .filter((character) => !isInvisibleControl(character))
+    .join("")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, maxLength);

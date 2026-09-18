@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
-import type { Entitlements, Followup, Report, ReportV2 } from "@openround/contracts";
+import type { Entitlements, Followup, Report, ReportV2, ReportV3 } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
 import { API_URL, apiFetch, humanError } from "../../../lib/api";
 
-function EvidenceSections({ report }: { report: ReportV2 }) {
+function EvidenceSections({ report }: { report: ReportV2 | ReportV3 }) {
   const recovered = report.recovery.reduce((total, item) => total + item.recovered, 0);
   const recoveryDenominator = report.recovery.reduce(
     (total, item) => total + item.initiallyIncorrectWithBoth,
@@ -161,6 +161,102 @@ function EvidenceSections({ report }: { report: ReportV2 }) {
   );
 }
 
+function InteractionEvidenceSections({
+  report,
+  transcriptExport,
+}: {
+  report: ReportV3;
+  transcriptExport: boolean;
+}) {
+  return (
+    <section className="panel" style={{ marginBottom: 26 }}>
+      <div className="page-heading" style={{ marginBottom: 18 }}>
+        <div>
+          <p className="eyebrow">Audience interaction</p>
+          <h2 style={{ fontSize: "1.7rem" }}>Pulse and conversation evidence</h2>
+        </div>
+        <span className="status-pill">
+          {report.experience.preset.id} · {report.experience.category.replaceAll("_", " ")}
+        </span>
+      </div>
+      <div className="metric-grid" style={{ marginBottom: 18 }}>
+        <div className="metric">
+          <strong>{report.audiencePulse.uniqueParticipants}</strong>
+          <span>people signaled</span>
+        </div>
+        <div className="metric">
+          <strong>{report.audiencePulse.events}</strong>
+          <span>pulse changes</span>
+        </div>
+        <div className="metric">
+          <strong>{report.conversation.messages}</strong>
+          <span>chat messages</span>
+        </div>
+        <div className="metric">
+          <strong>{report.conversation.uniqueContributors}</strong>
+          <span>chat contributors</span>
+        </div>
+      </div>
+      <p className="muted">
+        {report.conversation.reactions} reactions · {report.conversation.reports} reports ·{" "}
+        {report.conversation.removed} removals · peak {report.conversation.peakMessagesPerMinute}{" "}
+        messages per minute
+      </p>
+      {report.audiencePulse.contexts.length ? (
+        <div className="table-wrap" tabIndex={0}>
+          <table>
+            <thead>
+              <tr>
+                <th>Pulse context</th>
+                <th>People</th>
+                <th>Got it</th>
+                <th>Unsure</th>
+                <th>Need example</th>
+                <th>Too fast</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.audiencePulse.contexts.map((context) => (
+                <tr key={context.contextKey}>
+                  <td>
+                    {context.contextKey.startsWith("intervention:")
+                      ? "Intervention"
+                      : context.contextKey === "lobby"
+                        ? "Lobby"
+                        : "Checkpoint / recheck"}
+                  </td>
+                  <td>{context.uniqueParticipants}</td>
+                  <td>{context.bySignal.got_it}</td>
+                  <td>{context.bySignal.unsure}</td>
+                  <td>{context.bySignal.need_example}</td>
+                  <td>{context.bySignal.too_fast}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {report.conversation.transcriptAvailable ? (
+        <div className="button-row">
+          <a className="button-quiet" href={`${API_URL}/v1/reports/${report.id}/interactions`}>
+            Open authorized transcript
+          </a>
+          {transcriptExport ? (
+            <a
+              className="button-quiet"
+              href={`${API_URL}/v1/reports/${report.id}/interactions.csv`}
+            >
+              Download interaction CSV
+            </a>
+          ) : null}
+        </div>
+      ) : (
+        <p className="muted">No retained room conversation was collected.</p>
+      )}
+    </section>
+  );
+}
+
 interface FollowupAccessView {
   id: string;
   kind: "personal" | "accommodation";
@@ -193,7 +289,7 @@ function FollowupBuilder({
   entitlement,
   initialFollowup,
 }: {
-  report: ReportV2;
+  report: ReportV2 | ReportV3;
   entitlement: boolean;
   initialFollowup: Followup | null;
 }) {
@@ -585,7 +681,7 @@ export default function ReportPage() {
     };
   }, [id, router]);
 
-  const evidence = report?.schemaVersion === 2 ? report : null;
+  const evidence = report?.schemaVersion === 2 || report?.schemaVersion === 3 ? report : null;
 
   async function deleteSession() {
     if (!report || !window.confirm("Delete this session, its answers, and this report?")) return;
@@ -678,6 +774,12 @@ export default function ReportPage() {
               </div>
             </section>
             {evidence ? <EvidenceSections report={evidence} /> : null}
+            {report.schemaVersion === 3 ? (
+              <InteractionEvidenceSections
+                report={report}
+                transcriptExport={Boolean(entitlements?.csvExport)}
+              />
+            ) : null}
             {evidence && entitlements ? (
               <FollowupBuilder
                 entitlement={entitlements.followups}

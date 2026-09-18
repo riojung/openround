@@ -25,6 +25,7 @@ education and workplace learning. Use this index to choose the shortest path for
 - [Canadian staging readiness](runbooks/staging-readiness.md),
   [repository governance](runbooks/repository-governance.md),
   [backup and restore](runbooks/backup-restore.md), [upgrade](runbooks/upgrade.md),
+  [audience interaction moderation](runbooks/audience-moderation.md),
   [incident response](runbooks/incident-response.md), and
   [observability](runbooks/observability.md) cover release and routine operations.
 - [Free-pilot Cloud Run guidance](../infra/cloudrun/README.md) and the

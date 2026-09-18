@@ -37,6 +37,16 @@ credential used for migrations.
    `METRICS_ENABLED=true`. Configure and test SMTP before changing `FEATURE_SIGNUPS=true`.
 8. Keep one realtime process until sticky routing, two-writer process loss, target-region load,
    managed Redis failover, and database restore exercises pass.
+9. Before enabling Audience Pulse or chat, confirm migration `011_audience_interactions.sql` is in
+   the ledger, the audience outbox relay is running, outbox backlog/lag and audience sync fallback
+   metrics are scraped, and the [moderation rehearsal](../../docs/runbooks/audience-moderation.md)
+   passes. Promote presets, Pulse, and chat with independent workspace/global feature flags; a
+   successful answer-load test alone is not interaction-capacity evidence.
+   `THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST` accepts comma-separated workspace UUIDs for partner
+   rollout. Keep the relevant `FEATURE_ROUND_EXPERIENCES`, `FEATURE_AUDIENCE_PULSE`, or
+   `FEATURE_ROOM_CHAT` startup ceiling disabled until that capability's gate passes; the audited
+   `/v1/admin/features` controls can pause each capability without a restart but cannot override a
+   disabled startup ceiling.
 
 The example `fly.dev` domains match the checked-in app names. Replace them if those names are not
 available or custom domains are used. Never enable `ALLOW_INSECURE_LOCAL_HTTP` in this profile.

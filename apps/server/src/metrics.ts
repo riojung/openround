@@ -14,6 +14,16 @@ const realtimeEventTypes = new Set([
   "leaderboard.updated",
   "game.finished",
   "session.snapshot",
+  "audience.settings.updated",
+  "audience.signal.updated",
+  "audience.summary.updated",
+  "audience.moderation.updated",
+  "audience.event",
+  "chat.message.created",
+  "chat.message.updated",
+  "chat.message.removed",
+  "chat.message.pinned",
+  "chat.reaction.updated",
 ]);
 
 export class MetricsService {
@@ -203,6 +213,53 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private readonly audienceEvents = new Counter({
+    name: "openround_audience_events_total",
+    help: "Durable audience interaction events by bounded event type and outcome",
+    labelNames: ["type", "outcome"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly audienceOutboxLag = new Histogram({
+    name: "openround_audience_outbox_publish_lag_seconds",
+    help: "Time from audience interaction commit to realtime publication",
+    labelNames: ["outcome"] as const,
+    buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 15, 30],
+    registers: [this.registry],
+  });
+
+  private readonly audienceOutboxBacklog = new Gauge({
+    name: "openround_audience_outbox_backlog",
+    help: "Committed audience interaction events awaiting realtime publication",
+    registers: [this.registry],
+  });
+
+  private readonly audienceOutboxOldest = new Gauge({
+    name: "openround_audience_outbox_oldest_seconds",
+    help: "Age of the oldest committed audience event awaiting publication",
+    registers: [this.registry],
+  });
+
+  private readonly chatEnabledSessions = new Gauge({
+    name: "openround_chat_enabled_sessions",
+    help: "Active durable sessions with room chat enabled",
+    registers: [this.registry],
+  });
+
+  private readonly audienceSyncs = new Counter({
+    name: "openround_audience_sync_total",
+    help: "Audience state synchronizations by outcome",
+    labelNames: ["outcome"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly audienceRejects = new Counter({
+    name: "openround_audience_rejections_total",
+    help: "Audience interaction mutations rejected by bounded policy reason",
+    labelNames: ["reason"] as const,
+    registers: [this.registry],
+  });
+
   private readonly databaseConnections = new Gauge({
     name: "openround_database_connections",
     help: "PostgreSQL pool connections by state",
@@ -216,6 +273,53 @@ export class MetricsService {
 
   bindPostgres(pool: DatabasePoolMetrics) {
     this.pool = pool;
+  }
+
+  recordAudienceEvent(type: string, outcome: "published" | "duplicate" | "retry", lag: number) {
+    const boundedType = [
+      "audience.settings.updated",
+      "audience.signal.updated",
+      "audience.summary.updated",
+      "audience.moderation.updated",
+      "chat.message.created",
+      "chat.message.updated",
+      "chat.message.removed",
+      "chat.message.pinned",
+      "chat.reaction.updated",
+      "qna.question.created",
+      "qna.question.updated",
+      "qna.reply.created",
+      "qna.reply.updated",
+      "qna.vote.updated",
+      "qna.settings.updated",
+    ].includes(type)
+      ? type
+      : "other";
+    this.audienceEvents.inc({ type: boundedType, outcome });
+    this.audienceOutboxLag.observe({ outcome }, Math.max(0, lag));
+  }
+
+  setAudienceOutboxStatus(pending: number, oldestAgeSeconds: number, chatEnabledSessions: number) {
+    this.audienceOutboxBacklog.set(Math.max(0, pending));
+    this.audienceOutboxOldest.set(Math.max(0, oldestAgeSeconds));
+    this.chatEnabledSessions.set(Math.max(0, chatEnabledSessions));
+  }
+
+  recordAudienceSync(outcome: "success" | "error") {
+    this.audienceSyncs.inc({ outcome });
+  }
+
+  recordAudienceRejection(reason: string) {
+    const boundedReason = [
+      "AUDIENCE_BANNED",
+      "CHAT_CAPACITY_REACHED",
+      "CHAT_MUTED",
+      "CHAT_RATE_LIMITED",
+      "SIGNAL_RATE_LIMITED",
+    ].includes(reason)
+      ? reason
+      : "other";
+    this.audienceRejects.inc({ reason: boundedReason });
   }
 
   observeHttp(method: string, route: string, statusCode: number, seconds: number) {

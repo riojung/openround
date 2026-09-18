@@ -226,4 +226,56 @@ describe("memory repository", () => {
     expect((await repository.getQuiz(workspaceId, first.id))?.status).toBe("archived");
     expect((await repository.getQuiz(workspaceId, third.id))?.status).toBe("draft");
   });
+
+  it("paginates chat rows and limits reaction reads to the requested page", async () => {
+    const repository = new MemoryRepository();
+    const workspaceId = randomUUID();
+    const sessionId = randomUUID();
+    const participantId = randomUUID();
+    const timestamps = [3, 2, 1].map((offset) => new Date(`2026-09-15T12:00:0${offset}.000Z`));
+    const messages = timestamps.map((createdAt) => ({
+      id: randomUUID(),
+      workspaceId,
+      sessionId,
+      participantId,
+      actorId: null,
+      staffCredentialId: null,
+      replyToId: null,
+      body: createdAt.toISOString(),
+      authorAlias: "Learner",
+      identityModeAtCreation: "alias_public" as const,
+      status: "published" as const,
+      pinned: false,
+      idempotencyKey: randomUUID(),
+      audienceSeq: 1,
+      createdAt,
+      updatedAt: createdAt,
+    }));
+    for (const message of messages) repository.chatMessages.set(message.id, message);
+    repository.chatReactions.set(`${messages[0]!.id}:${participantId}`, {
+      workspaceId,
+      sessionId,
+      messageId: messages[0]!.id,
+      participantId,
+      reaction: "insight",
+      updatedAt: timestamps[0]!,
+    });
+
+    const firstPage = await repository.listChatMessages(workspaceId, sessionId, { limit: 2 });
+    const secondPage = await repository.listChatMessages(workspaceId, sessionId, {
+      cursor: { createdAt: firstPage[1]!.createdAt, id: firstPage[1]!.id },
+      limit: 2,
+    });
+    const reactions = await repository.listChatReactions(
+      workspaceId,
+      sessionId,
+      firstPage.map((message) => message.id),
+    );
+
+    expect(firstPage.map((message) => message.id)).toEqual([messages[0]!.id, messages[1]!.id]);
+    expect(secondPage.map((message) => message.id)).toEqual([messages[2]!.id]);
+    expect(reactions).toEqual([
+      expect.objectContaining({ messageId: messages[0]!.id, reaction: "insight" }),
+    ]);
+  });
 });

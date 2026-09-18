@@ -136,6 +136,13 @@ The following startup settings are hard capability ceilings:
 - `FEATURE_SIGNUPS=false` pauses new magic-link requests.
 - `FEATURE_SESSION_CREATION=false` pauses creation of new live sessions.
 - `FEATURE_MEDIA_UPLOADS=false` pauses new quarantine uploads.
+- `FEATURE_ROUND_EXPERIENCES=false` freezes newly created sessions to Focus.
+- `FEATURE_AUDIENCE_PULSE=false` disables new Pulse signals and masks retained live signal data.
+- `FEATURE_ROOM_CHAT=false` disables new chat activity and masks live chat history.
+
+`THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST` optionally narrows all three new capabilities to a
+comma-separated set of workspace UUIDs during partner rollout. An empty value allows every
+workspace, subject to the global startup and runtime switches.
 
 An administrator can pause or resume any capability at runtime without a process restart:
 
@@ -152,7 +159,8 @@ are stored in PostgreSQL, take effect on every API/realtime process on its next 
 and commit atomically with a global audit event. Verify the public effective result through
 `GET /v1/features`.
 
-Pausing these switches does not terminate existing creator sessions or active live games, and
-pausing uploads does not prevent already-quarantined files from completing scanning. Record the
-reason, owner, and restoration criteria in the incident timeline. Do not use a kill switch as a
-substitute for revoking exposed credentials or isolating a compromised dependency.
+Pausing these switches does not terminate existing creator sessions or active live games. Pausing
+uploads does not prevent already-quarantined files from completing scanning, and pausing
+interactions does not delete retained evidence. Record the reason, owner, and restoration criteria
+in the incident timeline. Do not use a kill switch as a substitute for revoking exposed
+credentials or isolating a compromised dependency.

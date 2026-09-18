@@ -105,6 +105,9 @@ describe("checkpoint-set portability", () => {
     const imported = importCheckpointSet("csv", csv, "Imported safety set");
 
     expect(imported.validation.errors).toEqual([]);
+    expect(imported.validation.warnings).toContainEqual(
+      expect.objectContaining({ code: "PRESENTATION_DEFAULTED" }),
+    );
     expect(imported.draft).toMatchObject({ title: "Imported safety set" });
     expect(imported.draft!.questions.map((question) => question.type)).toEqual([
       "single_select",

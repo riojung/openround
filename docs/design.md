@@ -66,6 +66,23 @@ flowchart LR
 The host, presenter, participant, report, and embed views are separate surfaces. They share the
 same authoritative round but expose only the information and controls appropriate to their role.
 
+## Round Experiences
+
+Round Experiences provide six accessible, versioned presets: Focus, Campus, Studio, Blueprint,
+Signal, and Spark. A checkpoint-set category recommends one preset, but explicit creator choice
+wins. The published version stores that choice. Session setup may override it once, and session
+creation freezes the resolved semantic theme for reconnect and process restoration.
+
+Presets own semantic colour tokens, six checked answer colours, bundled/system typography,
+original CSS/SVG patterns, component treatment, motion profile, and optional original sound-cue
+identity. Existing workspace branding layers organization name and constrained accent surfaces on
+top. A participant’s local high-contrast, reduced-motion, and mute settings layer last. Clients
+receive validated tokens and never arbitrary CSS, fonts, uploaded backgrounds, or uploaded sound.
+
+Preset changes are intentionally non-behavioural. They cannot change scoring, timers, checkpoint
+order, visibility, or control placement. Audio is opt-in, begins muted on each device, and always
+duplicates a visual event.
+
 ## Authoring design
 
 ### Checkpoint model
@@ -151,9 +168,24 @@ Always show numerator, denominator, evidence type, and small-sample warning.
 
 ## Audience voice and moderation
 
-Q&A lives beside the game engine so high-volume conversation does not inflate the canonical round
-snapshot. It supports questions, votes, replies, cursor pagination, moderation, and realtime
-updates.
+Audience Pulse, chat, and Q&A live beside the game engine so high-volume interaction does not
+inflate or corrupt the authoritative round snapshot.
+
+Pulse offers **Got it**, **I’m unsure**, **Show an example**, and **Too fast**. Signals are
+contextual and replaceable, not scores. Host/cohost views may connect a signal to the session alias
+for facilitation; public/presenter views receive aggregates only after five unique signalers. The
+open-checkpoint dashboard never reveals individual response content, correctness, confidence, or
+score. Pulse is displayed separately from deterministic Recovery Loop recommendations until pilot
+evidence justifies any rule change.
+
+Room chat is a chronological, plain-text conversation with one-level replies and four reactions.
+It is off by default and has independent slow mode, hard distributed limits, moderation, and
+presenter feed controls. A message stores its identity mode at creation: private-alias content can
+never become publicly attributed after a setting change. Removed content is omitted from normal
+views and remains available only to an explicitly authorized audit view until retention expires.
+
+Q&A remains the structured question workflow. It supports questions, votes, replies, cursor
+pagination, moderation, and realtime updates.
 
 - Education defaults: anonymous public display, private moderator alias, premoderation, replies
   off.

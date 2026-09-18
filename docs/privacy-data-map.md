@@ -11,6 +11,9 @@ This engineering inventory is not a legal opinion. Confirm purposes, legal basis
 | Participant nickname        | Room identification                  |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
 | Answers, scores, timestamps | Correctness, recovery, reports       |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
 | Confidence/interventions    | Recovery diagnosis and evidence      |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
+| Pulse signals/events        | In-room pacing/help context          |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
+| Chat/reactions/reports      | Room conversation and safety         |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge, moderation, or early deletion            |
+| Mutes/bans/moderation       | Audience safety and accountability   |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
 | Q&A, replies, votes         | Audience voice and moderation        |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge, moderation, or early deletion            |
 | Follow-up attempts/answers  | Accountless unresolved-concept work  |                       Source-session retention window | Session home region                                                         | Source session purge, revocation, or early deletion     |
 | Authoring source/job        | Create cited review-only drafts      | 30/365 days; source cleared after terminal processing | Workspace home region; configured provider receives bounded source sections | Job retention or account deletion                       |
@@ -32,6 +35,15 @@ the workspace's private objects and then cascades durable product records; it st
 the account record if object storage or cache cleanup fails. Host and participant token hashes are
 not included in export.
 
+The standard report contains aggregate Pulse and conversation measurements, not raw chat or a
+participant-to-signal mapping. Authorized report users may open a separate interaction transcript;
+removed message bodies require an explicit owner/editor audit view. A private-alias chat row stores
+that mode at creation and can never become publicly attributed after a settings change. Hosts and
+cohosts can see the session alias attached to a current signal for live facilitation. Presenter and
+participant views receive signal totals only after five unique signalers and never receive the
+mapping. Logs and metric labels must not contain message bodies, aliases, or signal-to-participant
+mappings.
+
 Live session access and report retention are separate clocks. Host and participant credentials
 stop working when the 24-hour live window ends; the session tree remains inaccessible to guests
 but available to its creator until the stored plan-based purge deadline or an earlier explicit
@@ -39,8 +51,9 @@ deletion.
 
 Never collect participant birth date, phone, precise location, advertising ID, biometric
 information, social graph, or marketing consent in the guest experience. Never place participant,
-session, report, or Q&A data in authoring prompts. Normal logs must redact email, nickname, tokens,
-answer content, cookies, and billing payloads.
+session, report, Pulse, chat, or Q&A data in authoring prompts. Normal logs must redact email,
+nickname, chat body, participant-linked signal, tokens, answer content, cookies, and billing
+payloads.
 
 Federated identity records store provider, issuer, subject, optional verified email hint, link
 time, and last-use time. Ordinary identity APIs omit the subject. OIDC state and LTI state are

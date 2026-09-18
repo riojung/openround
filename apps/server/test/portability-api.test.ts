@@ -124,7 +124,7 @@ describe("checkpoint-set portability API", () => {
     expect(jsonExport.headers["content-disposition"]).toContain(`${quizId}.json`);
     expect(jsonExport.json()).toMatchObject({
       format: "openround.checkpoint-set",
-      version: 1,
+      version: 2,
       checkpointSet: { title: "Portable safety set" },
     });
 

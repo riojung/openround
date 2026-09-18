@@ -17,8 +17,16 @@ The repository contains a runnable differentiated product slice:
   selection, friendly aliases, capacity enforcement, lobby, presenter view, and reconnect credentials
 - Server-authoritative Recovery Loop with interventions, linked rechecks/revotes, deterministic
   explained insights, durable canonical responses/confidence, pause/resume, scoring, and reconnect
+- Six accessible versioned Round Experience presets with creator preview, one-session host
+  override, frozen semantic tokens, workspace-brand layering, and device-local contrast, motion,
+  mute, and original sound-cue preferences
+- Audience Pulse with private host/cohost participant signals, five-person public aggregation,
+  live activity statistics, and a separately sequenced reconnect path; host-enabled room chat with
+  one-level replies, reactions, pinning, immutable private aliases, distributed limits, reporting,
+  mute/ban/kick controls, and a transactional outbox
 - Versioned asynchronous evidence reports, moderated realtime Q&A, collaboration roles, scoped
-  cohost/presenter credentials, and secure presenter embed
+  cohost/presenter credentials, secure presenter embed, aggregate interaction evidence, and an
+  authorized interaction transcript
 - Accountless self-paced follow-up with generic/personal links, time-flex mode, and private 1.5×/2×
   accommodation passes
 - Disabled-by-default source-grounded authoring from pasted text or private PDF/DOCX/PPTX, with
@@ -32,7 +40,7 @@ The repository contains a runnable differentiated product slice:
 - Internal Prometheus metrics including browser event-receipt latency/timeouts, a provisioned
   Grafana dashboard, 14 semantically tested alert rules, tested Alertmanager severity routing, a
   validated OpenTelemetry collector profile, request/trace correlation, optional OTLP tracing,
-  and audited database-backed signup/session/media kill switches
+  and audited database-backed signup/session/media/experience/Pulse/chat kill switches
 - Dependency-aware readiness checks, fail-fast non-secret deployment preflight, per-request nonce
   Content Security Policy, HSTS, CodeQL/dependency review workflows, and a protected manual
   Canadian-staging correctness/load/billing evidence workflow
@@ -76,10 +84,12 @@ Open:
 - Product: <http://localhost:8080>
 - Captured development email: <http://localhost:8025>
 
-Sign in with any development email, open its message in Mailpit, create a quiz, preview it in the
-participant layout, and publish it. Select **Host**, review the per-session settings, then create
-the lobby. Any number of participant devices up to the configured limit share the session's
-seven-digit code. Host and presenter views also provide a prefilled direct link and QR code.
+Sign in with any development email, open its message in Mailpit, create a checkpoint set, choose a
+Round Experience, preview it in the participant layout, and publish it. Select **Host**, review the
+per-session experience and interaction settings, then create the lobby. Any number of participant
+devices up to the configured limit share the session's seven-digit code. Host and presenter views
+also provide a prefilled direct link and QR code. Room chat starts disabled; enable it deliberately
+from the host Audience Pulse panel when needed.
 
 For phones or other computers, open the product through the host computer's LAN address instead
 of `localhost`, or enter that address under **Change join address** in the host screen. See

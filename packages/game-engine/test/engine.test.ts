@@ -856,7 +856,11 @@ describe("game engine", () => {
     };
 
     const upgraded = upgradeGameState(legacy as unknown as typeof state);
-    expect(upgraded.stateSchemaVersion).toBe(3);
+    expect(upgraded.stateSchemaVersion).toBe(4);
+    expect(upgraded.experienceTheme).toMatchObject({
+      preset: { id: "focus", version: 1 },
+      category: "general",
+    });
     expect(upgraded.answers[answerId]).toMatchObject({
       choiceId: correctId,
       response: { kind: "choice", choiceIds: [correctId] },

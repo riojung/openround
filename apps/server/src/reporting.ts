@@ -3,7 +3,7 @@ import {
   questionDelivery,
   questionPurpose,
   type Report,
-  type ReportV2,
+  type ReportV3,
 } from "@openround/contracts";
 import type { SessionEvidence } from "@openround/db";
 import type { GameState } from "@openround/game-engine";
@@ -27,6 +27,13 @@ function stateEvidence(state: GameState): SessionEvidence {
     rounds: Object.entries(state.rounds).map(([id, round]) => ({ id, ...round })),
     interventions: Object.values(state.interventions),
     qna: { questions: 0, answered: 0, unresolved: 0 },
+    interactions: {
+      signalEvents: [],
+      chatMessages: [],
+      reactions: [],
+      reports: 0,
+      moderationActions: 0,
+    },
   };
 }
 
@@ -63,17 +70,37 @@ function emptyReportFields(state: GameState) {
     qna: { questions: 0, answered: 0, unresolved: 0 },
     participantFeedback: [],
     evidenceNote,
+    experience: {
+      category: state.experienceTheme.category,
+      preset: state.experienceTheme.preset,
+    },
+    audiencePulse: {
+      uniqueParticipants: 0,
+      events: 0,
+      bySignal: { got_it: 0, unsure: 0, need_example: 0, too_fast: 0 },
+      contexts: [],
+    },
+    conversation: {
+      messages: 0,
+      uniqueContributors: 0,
+      reactions: 0,
+      reports: 0,
+      removed: 0,
+      moderationActions: 0,
+      peakMessagesPerMinute: 0,
+      transcriptAvailable: false,
+    },
   } satisfies Omit<
-    ReportV2,
+    ReportV3,
     "id" | "sessionId" | "schemaVersion" | "status" | "generatedAt" | "expiresAt"
   >;
 }
 
-export function createPendingReport(state: GameState, expiresAt: Date): ReportV2 {
+export function createPendingReport(state: GameState, expiresAt: Date): ReportV3 {
   return {
     id: randomUUID(),
     sessionId: state.sessionId,
-    schemaVersion: 2,
+    schemaVersion: 3,
     status: "pending",
     generatedAt: null,
     expiresAt: expiresAt.toISOString(),
@@ -85,8 +112,15 @@ export function generateReport(
   state: GameState,
   expiresAt: Date,
   options: { id?: string; evidence?: SessionEvidence; generatedAt?: Date } = {},
-): ReportV2 {
+): ReportV3 {
   const evidence = options.evidence ?? stateEvidence(state);
+  const interactions = evidence.interactions ?? {
+    signalEvents: [],
+    chatMessages: [],
+    reactions: [],
+    reports: 0,
+    moderationActions: 0,
+  };
   const participants = Object.values(state.participants).filter(
     (participant) => !participant.kicked,
   );
@@ -262,10 +296,50 @@ export function generateReport(
       .filter((round) => round.interventionId && round.kind !== "main")
       .map((round) => [round.interventionId!, round.id]),
   );
+  const signalCounts = { got_it: 0, unsure: 0, need_example: 0, too_fast: 0 };
+  const signalParticipants = new Set(interactions.signalEvents.map((event) => event.participantId));
+  const signalContexts = new Map<
+    string,
+    {
+      participants: Set<string>;
+      counts: typeof signalCounts;
+    }
+  >();
+  const latestSignalByContextParticipant = new Map<
+    string,
+    (typeof interactions.signalEvents)[number]
+  >();
+  for (const signalEvent of interactions.signalEvents) {
+    latestSignalByContextParticipant.set(
+      `${signalEvent.contextKey}:${signalEvent.participantId}`,
+      signalEvent,
+    );
+  }
+  for (const signalEvent of latestSignalByContextParticipant.values()) {
+    const context = signalContexts.get(signalEvent.contextKey) ?? {
+      participants: new Set<string>(),
+      counts: { got_it: 0, unsure: 0, need_example: 0, too_fast: 0 },
+    };
+    context.participants.add(signalEvent.participantId);
+    signalContexts.set(signalEvent.contextKey, context);
+    if (!signalEvent.signal) continue;
+    signalCounts[signalEvent.signal] += 1;
+    context.counts[signalEvent.signal] += 1;
+  }
+  const contributorIds = new Set(
+    interactions.chatMessages.map(
+      (message) => message.participantId ?? message.actorId ?? message.staffCredentialId!,
+    ),
+  );
+  const messagesPerMinute = new Map<string, number>();
+  for (const message of interactions.chatMessages) {
+    const minute = message.createdAt.toISOString().slice(0, 16);
+    messagesPerMinute.set(minute, (messagesPerMinute.get(minute) ?? 0) + 1);
+  }
   return {
     id: options.id ?? randomUUID(),
     sessionId: state.sessionId,
-    schemaVersion: 2,
+    schemaVersion: 3,
     status: "ready",
     generatedAt: (options.generatedAt ?? new Date()).toISOString(),
     expiresAt: expiresAt.toISOString(),
@@ -322,6 +396,30 @@ export function generateReport(
     qna: evidence.qna,
     participantFeedback,
     evidenceNote,
+    experience: {
+      category: state.experienceTheme.category,
+      preset: state.experienceTheme.preset,
+    },
+    audiencePulse: {
+      uniqueParticipants: signalParticipants.size,
+      events: interactions.signalEvents.length,
+      bySignal: signalCounts,
+      contexts: [...signalContexts.entries()].map(([contextKey, context]) => ({
+        contextKey,
+        uniqueParticipants: context.participants.size,
+        bySignal: context.counts,
+      })),
+    },
+    conversation: {
+      messages: interactions.chatMessages.length,
+      uniqueContributors: contributorIds.size,
+      reactions: interactions.reactions.length,
+      reports: interactions.reports,
+      removed: interactions.chatMessages.filter((message) => message.status === "removed").length,
+      moderationActions: interactions.moderationActions,
+      peakMessagesPerMinute: Math.max(0, ...messagesPerMinute.values()),
+      transcriptAvailable: interactions.chatMessages.length > 0,
+    },
   };
 }
 
@@ -342,7 +440,7 @@ export function reportCsv(report: Report): string {
       participant.answerCount,
     ]),
   ];
-  if (report.schemaVersion === 2) {
+  if (report.schemaVersion === 2 || report.schemaVersion === 3) {
     rows.push(
       [],
       ["report_schema_version", report.schemaVersion],
@@ -378,6 +476,36 @@ export function reportCsv(report: Report): string {
       ]),
       [],
       ["evidence_note", report.evidenceNote],
+    );
+  }
+  if (report.schemaVersion === 3) {
+    rows.push(
+      [],
+      ["experience_category", report.experience.category],
+      ["experience_preset", report.experience.preset.id],
+      ["signal_events", report.audiencePulse.events],
+      ["unique_signal_participants", report.audiencePulse.uniqueParticipants],
+      ["signal_got_it", report.audiencePulse.bySignal.got_it],
+      ["signal_unsure", report.audiencePulse.bySignal.unsure],
+      ["signal_need_example", report.audiencePulse.bySignal.need_example],
+      ["signal_too_fast", report.audiencePulse.bySignal.too_fast],
+      ["chat_messages", report.conversation.messages],
+      ["chat_contributors", report.conversation.uniqueContributors],
+      ["chat_reactions", report.conversation.reactions],
+      ["chat_reports", report.conversation.reports],
+      ["chat_removals", report.conversation.removed],
+      ["chat_moderation_actions", report.conversation.moderationActions],
+      ["chat_peak_messages_per_minute", report.conversation.peakMessagesPerMinute],
+      [],
+      ["pulse_context", "unique_participants", "got_it", "unsure", "need_example", "too_fast"],
+      ...report.audiencePulse.contexts.map((context) => [
+        context.contextKey,
+        context.uniqueParticipants,
+        context.bySignal.got_it,
+        context.bySignal.unsure,
+        context.bySignal.need_example,
+        context.bySignal.too_fast,
+      ]),
     );
   }
   return `\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}\r\n`;

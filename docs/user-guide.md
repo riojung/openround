@@ -94,11 +94,36 @@ types and omitted media are reported.
 Export a checkpoint set as OpenRound JSON, formula-safe UTF-8 CSV, or QTI ZIP. Hosted portability
 exports require Pro; community deployments do not impose an application paywall.
 
+### Choose a Round Experience
+
+Every checkpoint set has one category and a versioned experience preset. The category recommends
+a visual treatment; choosing a category never silently changes a preset you selected yourself.
+
+| Category          | Recommended preset | Intended character                      |
+| ----------------- | ------------------ | --------------------------------------- |
+| General           | Focus              | Warm, calm, and neutral                 |
+| Education         | Campus             | Friendly academic pattern               |
+| Business          | Studio             | Professional slate and teal             |
+| Technical         | Blueprint          | Structured grid and cyan accents        |
+| Safety/compliance | Signal             | High contrast and restrained motion     |
+| Icebreaker        | Spark              | Bright cards and optional lively motion |
+
+The preset changes only presentation: semantic colours, accessible answer colours, bundled/system
+typography, original patterns, card treatment, motion profile, and optional sound cues. It never
+changes scoring, timing, order, visibility rules, or control placement. Publish after choosing a
+preset so the immutable version records it. At session setup, the host can preview and override
+the preset for that one round. Session creation freezes the resolved experience.
+
+On a live device, **High contrast**, **Reduce motion**, and **Mute** are local preferences. They
+always override the room presentation without changing another person’s screen. Sound starts
+muted and duplicates visual status rather than carrying unique information.
+
 ## Host a live round
 
 Select **Host** on a published set. Review audience, scoring, result visibility, late joining,
-nickname policy, and Q&A settings before creating the room. OpenRound then issues a seven-digit
-code, direct link, downloadable QR, and one-time host credential.
+nickname policy, Round Experience, presenter sound, and Q&A settings before creating the room.
+OpenRound then issues a seven-digit code, direct link, downloadable QR, and one-time host
+credential.
 
 Keep the host tab open. Host, cohost, and presenter credentials are separate and stored only in
 the tab that received them. From the host screen you can issue revocable cohost or presenter
@@ -132,6 +157,37 @@ Pause and resume preserve server time. Reconnect restores the exact lobby, check
 intervention, or recheck state. Open checkpoint payloads never expose answer keys, explanations,
 misconception labels, private citations, or response distributions.
 
+## Audience Pulse and room chat
+
+Audience Pulse provides four structured, non-judgmental signals throughout the Recovery Loop:
+**Got it**, **I’m unsure**, **Show an example**, and **Too fast**. A participant has one current
+signal per lobby, checkpoint, recheck, revote, or intervention context and may change or clear it.
+The next context starts with no signal.
+
+Hosts and cohosts see each session alias, current signal, connection/answer state, last activity,
+chat count, and moderation state. Presenter and participant screens receive aggregate counts only,
+and those counts remain hidden until at least five unique participants signal in the context. An
+open checkpoint never exposes an individual answer, correctness, confidence, or score effect in
+the activity dashboard. Pulse remains separate from Recovery Loop recommendations in this
+release—it is facilitator context, not an automated judgment.
+
+Room chat is separate from Q&A and starts disabled for every session. A host can:
+
+- Enable or close chat, choose public or room-anonymous participant aliases, and set 0/5/15/30
+  second slow mode.
+- Select an off, pinned-only, or live presenter feed. Pinned-only is the default.
+- Pin or remove a message and mute a participant for 5, 15, or 60 minutes.
+- Ban audience interaction, restore access, or kick the participant from the round.
+
+Chat supports plain text up to 500 characters, one-level replies, and like/love/insight/laugh
+reactions. It does not render links, attachments, Markdown, or private messages. A message created
+in private-alias mode remains **Anonymous** to the room even if the host later switches to public
+aliases; moderators retain the session alias for safety. Participants can report another person’s
+message. Slow mode and distributed hard limits remain server-enforced across processes.
+
+The participant interface explains: “The facilitator can see your session alias and signal; the
+room sees totals only.”
+
 ## Audience Q&A
 
 When Q&A is enabled, participants can submit questions and vote once per question. Depending on
@@ -163,9 +219,10 @@ new guest.
 ## Reports and recovery evidence
 
 Reports are generated asynchronously from durable answers and should be ready within 60 seconds.
-They include initial accuracy, confidence-versus-correctness, misconception distribution,
+Report v3 includes initial accuracy, confidence-versus-correctness, misconception distribution,
 interventions, linked-recheck recovery, separately labelled revote improvement, unresolved
-concepts, participation, response time, Q&A, and participant-private feedback.
+concepts, participation, response time, the frozen experience, aggregate Pulse distributions,
+conversation/moderation counts, Q&A, and participant-private feedback.
 
 Linked recovery always displays its numerator, denominator, evidence type, and a small-sample
 warning. It means initially incorrect participants who answered both checks and later answered the
@@ -174,6 +231,11 @@ linked recheck correctly. It is session evidence, not proof of long-term learnin
 Download versioned JSON or formula-safe UTF-8 CSV where the edition permits it. Use **Delete
 session and report** to permanently remove the session tree. Hosted Free defaults to 30-day report
 retention, Hosted Pro to 365 days, and community operators configure their own default.
+
+The standard report stays aggregate-first and does not embed raw chat or participant-level signal
+history. An authorized owner, editor, or viewer can open the interaction transcript; only an
+owner/editor audit view can reveal a removed body. Transcript CSV follows the existing export
+entitlement and escapes spreadsheet formula prefixes.
 
 ## Create an accountless follow-up
 
@@ -193,10 +255,10 @@ follow-up deletion/retention cascades with its source session.
 ## Account and data controls
 
 Open **Account** to manage members, workspace selection, branding, secure embed origins, billing,
-data export, and deletion. Workspace themes require readable colours and are copied into each new
-round. Account export includes owned collaboration, Q&A, recovery, follow-up, and authoring data
-without bearer-token hashes. Permanent deletion requires typing `DELETE` and removes private
-objects before durable workspace records.
+data export, and deletion. Workspace branding requires readable colours and is layered only onto
+safe Round Experience surfaces. Account export includes owned collaboration, Q&A, Pulse, chat,
+moderation, recovery, follow-up, and authoring data without bearer-token hashes. Permanent
+deletion requires typing `DELETE` and removes private objects before durable workspace records.
 
 ### Institution-enabled workspaces
 
@@ -241,6 +303,9 @@ text and set the corresponding policy version.
 | **Time expired before the server received that answer** | The authoritative deadline passed before receipt.                                    |
 | **This tab does not have the host credential**          | Return to the original host tab or issue a new scoped staff credential.              |
 | **Reconnecting…**                                       | Leave the tab open; the client requests an authoritative snapshot.                   |
+| **Room chat is closed**                                 | The host must enable chat for this session; Pulse may still be available.            |
+| **You are sending messages too quickly**                | Wait for the displayed slow-mode/rate-limit interval, then retry once.               |
+| Pulse totals are hidden                                 | Fewer than five unique participants have signalled in the current context.           |
 | Report says **Finalizing…**                             | Wait up to 60 seconds, then ask the operator to inspect report jobs.                 |
 | Authoring says **disabled**                             | The operator has not configured an approved provider; no source is sent.             |
 | An authoring proposal **needs attention**               | Review its extraction/provider message and submit a corrected source or retry later. |

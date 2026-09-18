@@ -10,7 +10,12 @@ import {
 import { ConfigSchema } from "../src/config.js";
 import { MetricsService } from "../src/metrics.js";
 import { attachRealtime, snapshotSelector } from "../src/realtime.js";
-import { SessionError, type SessionService } from "../src/session-service.js";
+import type { InteractionService } from "../src/interaction-service.js";
+import {
+  SessionError,
+  type SessionAudienceEvent,
+  type SessionService,
+} from "../src/session-service.js";
 import type { SessionAuxiliaryEvent } from "../src/session-service.js";
 
 describe("realtime authorization", () => {
@@ -267,5 +272,185 @@ describe("realtime authorization", () => {
     await disconnected;
 
     expect(client.connected).toBe(false);
+  });
+
+  it("revalidates staff credentials before sending private audience events", async () => {
+    const sessionId = crypto.randomUUID();
+    const credentialId = crypto.randomUUID();
+    let audienceListener:
+      ((event: SessionAudienceEvent) => boolean | void | Promise<boolean | void>) | undefined;
+    const snapshot = {
+      mode: "live" as const,
+      stateSchemaVersion: 4,
+      sessionId,
+      code: "1234567",
+      version: 0,
+      seq: 0,
+      phase: "lobby" as const,
+      roundId: null,
+      roundKind: "main" as const,
+      sourceRoundId: null,
+      questionIndex: null,
+      questionPosition: null,
+      questionCount: 1,
+      question: null,
+      deadline: null,
+      participants: [],
+      answerCount: 0,
+      lobbyLocked: false,
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy" as const,
+        resultVisibility: "private" as const,
+        allowLateJoin: true,
+        nicknamePolicy: "custom" as const,
+      },
+      brandTheme: null,
+      pausedRemainingMs: null,
+      intervention: null,
+    };
+    const sessions = {
+      subscribe: vi.fn(() => vi.fn()),
+      subscribeAuxiliary: vi.fn(() => vi.fn()),
+      subscribeAudience: vi.fn(
+        (listener: (event: SessionAudienceEvent) => boolean | void | Promise<boolean | void>) => {
+          audienceListener = listener;
+          return vi.fn();
+        },
+      ),
+      sync: vi.fn().mockResolvedValue({ snapshot, replay: [], replayComplete: true }),
+      realtimeStaffIdentity: vi.fn().mockResolvedValue({
+        credentialId,
+        credentialRole: "cohost",
+        expiresAtMs: Date.now() + 60_000,
+        tokenHash: "revoked-staff-token-hash",
+      }),
+      revalidateRealtimeStaff: vi
+        .fn()
+        .mockRejectedValue(new SessionError("UNAUTHORIZED", "Credential revoked")),
+    } as unknown as SessionService;
+    const interactions = {
+      realtimeSummaries: vi.fn().mockResolvedValue({
+        publicSummary: {},
+        moderatorSummary: {},
+      }),
+    } as unknown as InteractionService;
+    httpServer = createServer();
+    await new Promise<void>((resolve) => httpServer!.listen(0, "127.0.0.1", resolve));
+    const address = httpServer.address();
+    if (!address || typeof address === "string") throw new Error("Test server did not bind a port");
+    const origin = `http://127.0.0.1:${address.port}`;
+    realtime = await attachRealtime(
+      httpServer,
+      sessions,
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        WEB_ORIGIN: origin,
+        PUBLIC_API_URL: origin,
+        LOG_LEVEL: "silent",
+      }),
+      new MetricsService(),
+      interactions,
+    );
+    client = createClient(origin, {
+      transports: ["websocket"],
+      reconnection: false,
+      extraHeaders: { origin },
+    });
+    await new Promise<void>((resolve, reject) => {
+      client!.once("connect", resolve);
+      client!.once("connect_error", reject);
+    });
+    await new Promise<void>((resolve) => {
+      client!.emit(
+        "sync.request",
+        {
+          sessionId,
+          role: "host",
+          hostToken: "cohost-token-long-enough",
+          lastSeq: 0,
+        },
+        () => resolve(),
+      );
+    });
+    const disconnected = new Promise<void>((resolve) =>
+      client!.once("disconnect", () => resolve()),
+    );
+
+    await audienceListener?.({
+      eventId: crypto.randomUUID(),
+      sessionId,
+      audienceSeq: 1,
+      type: "audience.signal.updated",
+      payload: {
+        participantId: crypto.randomUUID(),
+        contextKey: "lobby",
+        signal: "unsure",
+      },
+      createdAt: new Date(),
+    });
+    await disconnected;
+
+    expect(sessions.revalidateRealtimeStaff).toHaveBeenCalledWith(
+      sessionId,
+      "revoked-staff-token-hash",
+      "host",
+    );
+    expect(client.connected).toBe(false);
+  });
+
+  it("keeps coalesced audience events pending until the delayed summary is emitted", async () => {
+    const sessionId = crypto.randomUUID();
+    let audienceListener:
+      ((event: SessionAudienceEvent) => boolean | void | Promise<boolean | void>) | undefined;
+    const sessions = {
+      subscribe: vi.fn(() => vi.fn()),
+      subscribeAuxiliary: vi.fn(() => vi.fn()),
+      subscribeAudience: vi.fn(
+        (listener: (event: SessionAudienceEvent) => boolean | void | Promise<boolean | void>) => {
+          audienceListener = listener;
+          return vi.fn();
+        },
+      ),
+    } as unknown as SessionService;
+    const completeOutboxEvents = vi.fn().mockResolvedValue(undefined);
+    const interactions = {
+      realtimeSummaries: vi.fn().mockResolvedValue({
+        publicSummary: {},
+        moderatorSummary: {},
+      }),
+      completeOutboxEvents,
+    } as unknown as InteractionService;
+    httpServer = createServer();
+    realtime = await attachRealtime(
+      httpServer,
+      sessions,
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      new MetricsService(),
+      interactions,
+    );
+    const event = (audienceSeq: number): SessionAudienceEvent => ({
+      eventId: crypto.randomUUID(),
+      sessionId,
+      audienceSeq,
+      type: "audience.summary.updated",
+      payload: {},
+      createdAt: new Date(),
+    });
+
+    expect(await audienceListener?.(event(1))).toBe(true);
+    const deferred = event(2);
+    expect(await audienceListener?.(deferred)).toBe(false);
+    expect(completeOutboxEvents).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(completeOutboxEvents).toHaveBeenCalledWith(new Set([deferred.eventId]));
+    });
   });
 });

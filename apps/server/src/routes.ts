@@ -10,6 +10,7 @@ import {
   CheckpointSetImportRequestSchema,
   CreateFolderSchema,
   CreateAuthoringJobSchema,
+  CreateChatMessageSchema,
   CreateFollowupSchema,
   CreateAccommodationPassSchema,
   CreateWorkspaceInvitationSchema,
@@ -35,12 +36,17 @@ import {
   MediaUploadRequestSchema,
   ModerateQnaQuestionSchema,
   ModerateQnaReplySchema,
+  ModerateAudienceParticipantSchema,
+  ModerateChatMessageSchema,
   OperationalFeaturesUpdateSchema,
   OperationalFeaturesViewSchema,
   OrganizeQuizSchema,
   PublicFeaturesSchema,
   QuizContentSchema,
   QnaSettingsSchema,
+  SetAudienceSignalSchema,
+  SetChatReactionSchema,
+  UpdateInteractionSettingsSchema,
   UpdateQnaSettingsSchema,
   UpdateFolderSchema,
   UpdateQuizSchema,
@@ -59,6 +65,7 @@ import {
   type CreatorContext,
   type Repository,
 } from "@openround/db";
+import { experiencePresets } from "@openround/experience";
 import type { AppConfig } from "./config.js";
 import type { AuthService } from "./auth.js";
 import { cleanPlainText, hashToken } from "./security.js";
@@ -78,6 +85,7 @@ import { FollowupError, type FollowupService } from "./followup-service.js";
 import { AuthoringError, type AuthoringService } from "./authoring-service.js";
 import { OidcError, type OidcService } from "./oidc-service.js";
 import { LtiError, type LtiService } from "./lti-service.js";
+import { InteractionError, type InteractionService } from "./interaction-service.js";
 
 const IdParamsSchema = z.object({ id: z.string().uuid() });
 const SessionMediaParamsSchema = z.object({ id: z.string().uuid(), mediaId: z.string().uuid() });
@@ -92,6 +100,14 @@ const QnaQuestionParamsSchema = z.object({
 const QnaReplyParamsSchema = z.object({
   id: z.string().uuid(),
   replyId: z.string().uuid(),
+});
+const ChatMessageParamsSchema = z.object({
+  id: z.string().uuid(),
+  messageId: z.string().uuid(),
+});
+const AudienceParticipantParamsSchema = z.object({
+  id: z.string().uuid(),
+  participantId: z.string().uuid(),
 });
 const WorkspaceParamsSchema = z.object({ id: z.string().uuid() });
 const WorkspaceInvitationParamsSchema = z.object({ invitationId: z.string().uuid() });
@@ -120,7 +136,46 @@ const QnaListQuerySchema = z.object({
   cursor: z.string().min(1).max(1_000).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
 });
+const ChatListQuerySchema = z.object({
+  cursor: z.string().min(1).max(1_000).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(30),
+});
 const QuizListQuerySchema = z.object({ archived: z.enum(["true", "false"]).optional() });
+const InteractionTranscriptQuerySchema = z.object({
+  audit: z.enum(["true", "false"]).default("false"),
+});
+
+function transcriptCsvCell(value: unknown) {
+  const raw = value === null || value === undefined ? "" : String(value);
+  const safe = /^(?:\s*[=+@-]|[\t\r\n])/.test(raw) ? `'${raw}` : raw;
+  return /[",\n\r]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
+}
+
+function transcriptCsv(transcript: {
+  signals: Array<Record<string, unknown>>;
+  messages: Array<Record<string, unknown>>;
+}) {
+  const rows: unknown[][] = [
+    ["record_type", "created_at", "context_or_message_id", "alias", "value", "status"],
+    ...transcript.signals.map((signal) => [
+      "signal",
+      signal.createdAt,
+      signal.contextKey,
+      signal.alias,
+      signal.signal,
+      "",
+    ]),
+    ...transcript.messages.map((message) => [
+      "chat",
+      message.createdAt,
+      message.id,
+      message.alias,
+      message.body,
+      message.status,
+    ]),
+  ];
+  return `\uFEFF${rows.map((row) => row.map(transcriptCsvCell).join(",")).join("\r\n")}\r\n`;
+}
 
 function apiError(
   reply: FastifyReply,
@@ -154,6 +209,24 @@ function qnaStatus(code: QnaError["code"]) {
   if (code === "NOT_FOUND") return 404;
   if (code === "QNA_RATE_LIMITED") return 429;
   return 409;
+}
+
+function interactionStatus(code: InteractionError["code"]) {
+  if (code === "UNAUTHORIZED") return 401;
+  if (code === "NOT_FOUND") return 404;
+  if (code.endsWith("RATE_LIMITED")) return 429;
+  if (code === "CHAT_MUTED" || code === "AUDIENCE_BANNED") return 403;
+  if (code === "CHAT_CAPACITY_REACHED") return 409;
+  return 409;
+}
+
+function requestIdempotencyKey(request: FastifyRequest) {
+  const raw = request.headers["x-idempotency-key"];
+  return z
+    .string()
+    .min(8)
+    .max(160)
+    .parse(Array.isArray(raw) ? raw[0] : raw);
 }
 
 function followupStatus(code: FollowupError["code"]) {
@@ -198,6 +271,7 @@ export async function registerRoutes(
     lti: LtiService;
     sessions: SessionService;
     qna: QnaService;
+    interactions: InteractionService;
     followups: FollowupService;
     authoring: AuthoringService;
     storage: StorageService;
@@ -215,6 +289,7 @@ export async function registerRoutes(
     lti,
     sessions,
     qna,
+    interactions,
     followups,
     authoring,
     storage,
@@ -233,6 +308,9 @@ export async function registerRoutes(
       signups: config.FEATURE_SIGNUPS,
       sessionCreation: config.FEATURE_SESSION_CREATION,
       mediaUploads: storage.mediaUploadsEnabled,
+      roundExperiences: config.FEATURE_ROUND_EXPERIENCES,
+      audiencePulse: config.FEATURE_AUDIENCE_PULSE,
+      roomChat: config.FEATURE_ROOM_CHAT,
     };
     return OperationalFeaturesViewSchema.parse({
       configured,
@@ -240,14 +318,30 @@ export async function registerRoutes(
         signups: runtime.signups,
         sessionCreation: runtime.sessionCreation,
         mediaUploads: runtime.mediaUploads,
+        roundExperiences: runtime.roundExperiences,
+        audiencePulse: runtime.audiencePulse,
+        roomChat: runtime.roomChat,
         updatedAt: runtime.updatedAt?.toISOString() ?? null,
       },
       effective: {
         signups: configured.signups && runtime.signups,
         sessionCreation: configured.sessionCreation && runtime.sessionCreation,
         mediaUploads: configured.mediaUploads && runtime.mediaUploads,
+        roundExperiences: configured.roundExperiences && runtime.roundExperiences,
+        audiencePulse: configured.audiencePulse && runtime.audiencePulse,
+        roomChat: configured.roomChat && runtime.roomChat,
       },
     });
+  };
+  const workspaceProductFeatures = async (workspaceId: string) => {
+    const { effective } = await operationalFeatures();
+    const allowlist = config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST;
+    const workspaceAllowed = allowlist.length === 0 || allowlist.includes(workspaceId);
+    return {
+      roundExperiences: workspaceAllowed && effective.roundExperiences,
+      audiencePulse: workspaceAllowed && effective.audiencePulse,
+      roomChat: workspaceAllowed && effective.roomChat,
+    };
   };
   const requireWorkspaceRole = (
     creator: CreatorContext,
@@ -265,6 +359,68 @@ export async function registerRoutes(
           requestId,
         );
 
+  const interactionTranscript = async (
+    creator: CreatorContext,
+    reportId: string,
+    includeRemovedBodies: boolean,
+  ) => {
+    const report = await repository.getReport(creator.workspaceId, reportId);
+    if (!report) return null;
+    const [session, evidence] = await Promise.all([
+      repository.getSessionById(report.sessionId),
+      repository.getSessionEvidence(creator.workspaceId, report.sessionId),
+    ]);
+    if (!session) return null;
+    const participantAliases = new Map(
+      Object.values(session.state.participants).map((participant) => [
+        participant.id,
+        participant.nickname,
+      ]),
+    );
+    const interactionEvidence = evidence.interactions ?? {
+      signalEvents: [],
+      chatMessages: [],
+      reactions: [],
+      reports: 0,
+      moderationActions: 0,
+    };
+    return {
+      reportId,
+      sessionId: report.sessionId,
+      experience: session.state.experienceTheme,
+      signals: interactionEvidence.signalEvents.map((event) => ({
+        contextKey: event.contextKey,
+        participantId: event.participantId,
+        alias: participantAliases.get(event.participantId) ?? "Participant",
+        signal: event.signal,
+        createdAt: event.createdAt.toISOString(),
+      })),
+      messages: interactionEvidence.chatMessages.map((message) => ({
+        id: message.id,
+        replyToMessageId: message.replyToId,
+        participantId: message.participantId,
+        alias:
+          message.participantId &&
+          message.identityModeAtCreation === "alias_private" &&
+          creator.role === "viewer"
+            ? "Anonymous"
+            : message.authorAlias,
+        identityModeAtCreation: message.identityModeAtCreation,
+        body: message.status === "removed" && !includeRemovedBodies ? null : message.body,
+        status: message.status,
+        pinned: message.pinned,
+        reactions: interactionEvidence.reactions.filter(
+          (reaction) => reaction.messageId === message.id,
+        ).length,
+        createdAt: message.createdAt.toISOString(),
+      })),
+      counts: {
+        reports: interactionEvidence.reports,
+        moderationActions: interactionEvidence.moderationActions,
+      },
+    };
+  };
+
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ZodError) {
       return apiError(
@@ -280,6 +436,9 @@ export async function registerRoutes(
     }
     if (error instanceof QnaError) {
       return apiError(reply, qnaStatus(error.code), error.code, error.message, request.id);
+    }
+    if (error instanceof InteractionError) {
+      return apiError(reply, interactionStatus(error.code), error.code, error.message, request.id);
     }
     if (error instanceof FollowupError) {
       return apiError(reply, followupStatus(error.code), error.code, error.message, request.id);
@@ -350,7 +509,23 @@ export async function registerRoutes(
       communityMode: config.COMMUNITY_MODE,
       signups: effective.signups,
       sessionCreation: effective.sessionCreation,
+      roundExperiences: effective.roundExperiences,
+      audiencePulse: effective.audiencePulse,
+      roomChat: effective.roomChat,
     });
+  });
+
+  app.get("/v1/experience-presets", async (request, reply) => {
+    if (!(await operationalFeatures()).effective.roundExperiences) {
+      return apiError(
+        reply,
+        503,
+        "DEPENDENCY_UNAVAILABLE",
+        "Round Experiences are temporarily unavailable",
+        request.id,
+      );
+    }
+    return { presets: experiencePresets };
   });
 
   app.post("/v1/auth/magic-link", async (request, reply) => {
@@ -406,6 +581,7 @@ export async function registerRoutes(
     return {
       creator,
       entitlements,
+      productFeatures: await workspaceProductFeatures(creator.workspaceId),
       brandTheme: entitlements.brandTheme
         ? await repository.getBrandTheme(creator.workspaceId)
         : null,
@@ -1190,7 +1366,11 @@ export async function registerRoutes(
     if (!creator) return;
     const { id } = IdParamsSchema.parse(request.params);
     const quiz = await repository.getQuiz(creator.workspaceId, id);
-    return quiz ? { quiz } : apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
+    if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
+    const currentVersion = quiz.currentVersionId
+      ? await repository.getQuizVersion(creator.workspaceId, quiz.currentVersionId)
+      : null;
+    return { quiz, currentVersion };
   });
 
   app.get("/v1/quizzes/:id/export.json", async (request, reply) => {
@@ -1416,7 +1596,13 @@ export async function registerRoutes(
       );
     }
     const input = CreateSessionSchema.parse(request.body);
-    const session = await sessions.createSession(creator, input.quizId, input.settings);
+    const { roundExperiences: experiencesAvailable } = await workspaceProductFeatures(
+      creator.workspaceId,
+    );
+    const session = await sessions.createSession(creator, input.quizId, input.settings, {
+      experiencePresetOverride: experiencesAvailable ? input.experiencePresetOverride : "focus",
+      presenterSoundEnabled: experiencesAvailable && input.presenterSoundEnabled,
+    });
     return reply.code(201).send(session);
   });
 
@@ -1605,6 +1791,120 @@ export async function registerRoutes(
     return qna.moderateReply(id, replyId, token, input.status, request.id);
   });
 
+  app.get("/v1/sessions/:id/interactions/settings", async (request) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return interactions.getSettings(id, token);
+  });
+
+  app.patch("/v1/sessions/:id/interactions/settings", async (request) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = UpdateInteractionSettingsSchema.parse(request.body);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return interactions.updateSettings(
+      id,
+      token,
+      input,
+      requestIdempotencyKey(request),
+      request.id,
+    );
+  });
+
+  app.get("/v1/sessions/:id/interactions/summary", async (request) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return interactions.summary(id, token);
+  });
+
+  app.get("/v1/sessions/:id/interactions/sync", async (request) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    const query = ChatListQuerySchema.pick({ limit: true }).parse(request.query);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return interactions.sync(id, token, query.limit);
+  });
+
+  app.put(
+    "/v1/sessions/:id/signals/current",
+    { config: { rateLimit: { max: 40, timeWindow: "1 minute" } } },
+    async (request) => {
+      const { id } = IdParamsSchema.parse(request.params);
+      const input = SetAudienceSignalSchema.parse(request.body);
+      const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+      return interactions.setSignal(id, token, input.signal, input.idempotencyKey);
+    },
+  );
+
+  app.get("/v1/sessions/:id/chat/messages", async (request) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    const query = ChatListQuerySchema.parse(request.query);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return interactions.listChat(id, token, query);
+  });
+
+  app.post(
+    "/v1/sessions/:id/chat/messages",
+    { config: { rateLimit: { max: 40, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const { id } = IdParamsSchema.parse(request.params);
+      const input = CreateChatMessageSchema.parse(request.body);
+      const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+      return reply.code(201).send(await interactions.createChatMessage(id, token, input));
+    },
+  );
+
+  app.patch("/v1/sessions/:id/chat/messages/:messageId", async (request) => {
+    const { id, messageId } = ChatMessageParamsSchema.parse(request.params);
+    const input = ModerateChatMessageSchema.parse(request.body);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return interactions.moderateMessage(
+      id,
+      messageId,
+      token,
+      input,
+      requestIdempotencyKey(request),
+      request.id,
+    );
+  });
+
+  app.put("/v1/sessions/:id/chat/messages/:messageId/reaction", async (request) => {
+    const { id, messageId } = ChatMessageParamsSchema.parse(request.params);
+    const input = SetChatReactionSchema.parse(request.body);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return interactions.setReaction(
+      id,
+      messageId,
+      token,
+      input.reaction,
+      requestIdempotencyKey(request),
+    );
+  });
+
+  app.delete("/v1/sessions/:id/chat/messages/:messageId/reaction", async (request) => {
+    const { id, messageId } = ChatMessageParamsSchema.parse(request.params);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return interactions.setReaction(id, messageId, token, null, requestIdempotencyKey(request));
+  });
+
+  app.post("/v1/sessions/:id/chat/messages/:messageId/report", async (request) => {
+    const { id, messageId } = ChatMessageParamsSchema.parse(request.params);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return interactions.reportMessage(id, messageId, token, requestIdempotencyKey(request));
+  });
+
+  app.patch("/v1/sessions/:id/interactions/participants/:participantId", async (request) => {
+    const { id, participantId } = AudienceParticipantParamsSchema.parse(request.params);
+    const input = ModerateAudienceParticipantSchema.parse(request.body);
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    return interactions.moderateParticipant(
+      id,
+      participantId,
+      token,
+      input,
+      requestIdempotencyKey(request),
+      request.id,
+    );
+  });
+
   app.delete("/v1/sessions/:id", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
@@ -1645,6 +1945,53 @@ export async function registerRoutes(
           followup: await followups.getForReport(creator.workspaceId, id),
         }
       : apiError(reply, 404, "NOT_FOUND", "Report not found", request.id);
+  });
+
+  app.get("/v1/reports/:id/interactions", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const query = InteractionTranscriptQuerySchema.parse(request.query);
+    if (
+      query.audit === "true" &&
+      requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true
+    ) {
+      return;
+    }
+    const transcript = await interactionTranscript(creator, id, query.audit === "true");
+    return transcript
+      ? { transcript }
+      : apiError(reply, 404, "NOT_FOUND", "Interaction transcript not found", request.id);
+  });
+
+  app.get("/v1/reports/:id/interactions.csv", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const query = InteractionTranscriptQuerySchema.parse(request.query);
+    if (!entitlementsFor(creator.plan, config).csvExport) {
+      return apiError(
+        reply,
+        402,
+        "ENTITLEMENT_LIMIT",
+        "Interaction transcript export is available on the Pro plan",
+        request.id,
+      );
+    }
+    if (
+      query.audit === "true" &&
+      requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true
+    ) {
+      return;
+    }
+    const transcript = await interactionTranscript(creator, id, query.audit === "true");
+    if (!transcript) {
+      return apiError(reply, 404, "NOT_FOUND", "Interaction transcript not found", request.id);
+    }
+    return reply
+      .header("content-type", "text/csv; charset=utf-8")
+      .header("content-disposition", `attachment; filename="openround-interactions-${id}.csv"`)
+      .send(transcriptCsv(transcript));
   });
 
   app.get("/v1/reports/:id.csv", async (request, reply) => {
