@@ -16,9 +16,20 @@ export function Countdown({ deadline }: { deadline: string | null }) {
   }, [deadline]);
 
   const seconds = Math.ceil(remaining / 1_000);
+  const announcement =
+    seconds === 10 || seconds === 5
+      ? `${seconds} seconds remaining`
+      : seconds === 0 && deadline
+        ? "Time is up"
+        : "";
   return (
-    <span className="countdown" role="timer" aria-live={seconds <= 5 ? "assertive" : "off"}>
-      {deadline ? `${seconds}s` : "Paused"}
-    </span>
+    <>
+      <span aria-live="off" className="countdown" role="timer">
+        {deadline ? `${seconds}s` : "Paused"}
+      </span>
+      <span aria-atomic="true" aria-live="polite" className="sr-only">
+        {announcement}
+      </span>
+    </>
   );
 }

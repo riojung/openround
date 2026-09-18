@@ -4,6 +4,7 @@ import {
   FollowupVersionConflictError,
   PublishedQuizLimitError,
   SessionCodeConflictError,
+  SessionNotActiveError,
   SessionVersionConflictError,
 } from "./types.js";
 import type {
@@ -26,7 +27,9 @@ import type {
   FollowupAnswerRecord,
   FollowupAttemptRecord,
   FollowupRecord,
+  FollowupHistoryRecord,
   FederatedAuthTransactionRecord,
+  HistoryCursor,
   ExternalIdentityRecord,
   InstitutionPolicyRecord,
   InteractionSettingsRecord,
@@ -41,20 +44,29 @@ import type {
   ParticipantRecord,
   ParticipantSignalRecord,
   Plan,
+  ProductEventRecord,
   QnaQuestionRecord,
   QnaReplyRecord,
   QnaSettingsRecord,
   QuizRecord,
   QuizVersionRecord,
   ReportJob,
+  ReportHistoryRecord,
   Repository,
   SessionStaffCredentialRecord,
+  SessionStaffCredentialInput,
+  SessionHistoryRecord,
   StoredSession,
   WorkspaceInvitationRecord,
   WorkspaceMemberRecord,
   WorkspaceSummaryRecord,
 } from "./types.js";
-import type { BrandTheme, QuizDraft, Report } from "@openround/contracts";
+import {
+  questionDelivery,
+  type BrandTheme,
+  type QuizDraft,
+  type Report,
+} from "@openround/contracts";
 
 interface UserRecord extends CreatorContext {
   deletedAt: Date | null;
@@ -77,6 +89,7 @@ interface MemoryWorkspace {
 }
 
 export class MemoryRepository implements Repository {
+  private nextInitialWorkspaceId: string | undefined;
   readonly magicTokens = new Map<string, MagicTokenRecord>();
   readonly creatorSessions = new Map<
     string,
@@ -125,6 +138,7 @@ export class MemoryRepository implements Repository {
   readonly mediaAssets = new Map<string, MediaAssetRecord>();
   readonly answers = new Map<string, EngineAnswer>();
   readonly reports = new Map<string, Report>();
+  readonly reportCreatedAt = new Map<string, Date>();
   readonly followups = new Map<string, FollowupRecord>();
   readonly followupAccess = new Map<string, FollowupAccessRecord>();
   readonly followupAttempts = new Map<string, FollowupAttemptRecord>();
@@ -144,6 +158,7 @@ export class MemoryRepository implements Repository {
   readonly billingEvents = new Set<string>();
   readonly billingEventCreatedAt = new Map<string, Date>();
   readonly audits: AuditEventRecord[] = [];
+  readonly productEvents: ProductEventRecord[] = [];
   readonly consents: ConsentRecord[] = [];
   readonly operationalFeatures: OperationalFeaturesRecord = {
     signups: true,
@@ -154,6 +169,10 @@ export class MemoryRepository implements Repository {
     roomChat: true,
     updatedAt: null,
   };
+
+  constructor(options: { initialWorkspaceId?: string } = {}) {
+    this.nextInitialWorkspaceId = options.initialWorkspaceId;
+  }
 
   async initialize() {}
   async close() {}
@@ -190,9 +209,14 @@ export class MemoryRepository implements Repository {
     let user = [...this.users.values()].find((candidate) => candidate.email === token.email);
     if (!user) {
       const userId = crypto.randomUUID();
+      const workspaceId =
+        this.nextInitialWorkspaceId && !this.workspaces.has(this.nextInitialWorkspaceId)
+          ? this.nextInitialWorkspaceId
+          : crypto.randomUUID();
+      this.nextInitialWorkspaceId = undefined;
       user = {
         userId,
-        workspaceId: crypto.randomUUID(),
+        workspaceId,
         email: token.email,
         segment: token.segment,
         role: "owner",
@@ -953,6 +977,92 @@ export class MemoryRepository implements Repository {
       .sort();
   }
 
+  async listSessionHistory(
+    workspaceId: string,
+    options: {
+      cursor?: HistoryCursor;
+      limit: number;
+      status?: SessionHistoryRecord["status"];
+      quizId?: string;
+      from?: Date;
+      to?: Date;
+      now: Date;
+    },
+  ) {
+    const records = [...this.sessions.values()]
+      .filter((session) => session.workspaceId === workspaceId)
+      .flatMap((session): SessionHistoryRecord[] => {
+        const version = this.versions.get(session.quizVersionId);
+        if (!version) return [];
+        const quiz = this.quizzes.get(version.quizId);
+        if (!quiz) return [];
+        const status: SessionHistoryRecord["status"] =
+          session.state.phase === "finished"
+            ? "finished"
+            : session.expiresAt <= options.now
+              ? "expired"
+              : "active";
+        const questionIndex =
+          session.state.questionIndex === null
+            ? null
+            : session.state.roundKind === "main"
+              ? session.state.questionIndex
+              : session.state.sourceRoundId
+                ? (session.state.rounds[session.state.sourceRoundId]?.position ??
+                  session.state.questionIndex)
+                : session.state.questionIndex;
+        return [
+          {
+            id: session.id,
+            quizId: version.quizId,
+            title: session.state.quiz.title,
+            status,
+            phase: session.state.phase,
+            code: session.state.code,
+            participantCount: Object.values(session.state.participants).filter(
+              (participant) => !participant.kicked,
+            ).length,
+            answerCount: [...this.answers.keys()].filter((key) => key.startsWith(`${session.id}:`))
+              .length,
+            questionCount: session.state.quiz.questions.filter(
+              (question) => questionDelivery(question) === "main",
+            ).length,
+            questionPosition:
+              questionIndex === null
+                ? null
+                : session.state.quiz.questions
+                    .slice(0, questionIndex + 1)
+                    .filter((question) => questionDelivery(question) === "main").length,
+            createdAt: new Date(session.createdAt),
+            updatedAt: new Date(session.updatedAt),
+            expiresAt: new Date(session.expiresAt),
+            reportId:
+              [...this.reports.values()].find((report) => report.sessionId === session.id)?.id ??
+              null,
+          },
+        ];
+      })
+      .filter((item) => !options.status || item.status === options.status)
+      .filter((item) => !options.quizId || item.quizId === options.quizId)
+      .filter((item) => !options.from || item.createdAt >= options.from)
+      .filter((item) => !options.to || item.createdAt <= options.to)
+      .filter(
+        (item) =>
+          !options.cursor ||
+          item.createdAt < options.cursor.createdAt ||
+          (item.createdAt.getTime() === options.cursor.createdAt.getTime() &&
+            item.id < options.cursor.id),
+      )
+      .sort(
+        (left, right) =>
+          right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id),
+      );
+    return {
+      items: structuredClone(records.slice(0, options.limit)),
+      hasMore: records.length > options.limit,
+    };
+  }
+
   async saveSession(input: StoredSession, expectedVersion: number, report?: Report) {
     const current = this.sessions.get(input.id);
     if (!current || current.state.version !== expectedVersion) {
@@ -975,11 +1085,14 @@ export class MemoryRepository implements Repository {
       const prior = [...this.reports.entries()].find(
         ([, candidate]) => candidate.sessionId === storedReport.sessionId,
       );
+      const createdAt = prior ? (this.reportCreatedAt.get(prior[0]) ?? new Date()) : new Date();
       if (prior) {
         this.reports.delete(prior[0]);
         this.reportJobs.delete(prior[0]);
+        this.reportCreatedAt.delete(prior[0]);
       }
       this.reports.set(storedReport.id, storedReport);
+      this.reportCreatedAt.set(storedReport.id, createdAt);
       if (storedReport.status === "pending") {
         this.reportJobs.set(storedReport.id, {
           workspaceId: input.workspaceId,
@@ -1056,6 +1169,7 @@ export class MemoryRepository implements Repository {
       if (report.sessionId === sessionId) {
         this.reports.delete(id);
         this.reportJobs.delete(id);
+        this.reportCreatedAt.delete(id);
       }
     }
   }
@@ -1123,14 +1237,48 @@ export class MemoryRepository implements Repository {
       .map((participant) => structuredClone(participant));
   }
 
-  async createSessionStaffCredential(input: SessionStaffCredentialRecord) {
+  async createSessionStaffCredential(input: SessionStaffCredentialInput) {
     const normalized = {
       ...input,
+      purpose: input.purpose ?? "collaboration",
       embedPolicyKeyHash: input.embedPolicyKeyHash ?? null,
       embedAllowedOrigins: input.embedAllowedOrigins ?? [],
     };
     this.sessionStaff.set(input.tokenHash, structuredClone(normalized));
     return structuredClone(normalized);
+  }
+
+  async replaceCreatorResumeCredential(input: SessionStaffCredentialRecord) {
+    if (input.purpose !== "creator_resume" || input.role !== "cohost") {
+      throw new Error("A creator resume credential must be a cohost credential");
+    }
+    const session = this.sessions.get(input.sessionId);
+    const checkedAt = new Date();
+    if (
+      !session ||
+      session.workspaceId !== input.workspaceId ||
+      session.state.phase === "finished" ||
+      session.expiresAt <= checkedAt
+    ) {
+      throw new SessionNotActiveError(input.sessionId);
+    }
+    const revokedCredentialIds: string[] = [];
+    for (const credential of this.sessionStaff.values()) {
+      if (
+        credential.workspaceId === input.workspaceId &&
+        credential.sessionId === input.sessionId &&
+        credential.createdBy === input.createdBy &&
+        credential.purpose === "creator_resume" &&
+        !credential.revokedAt
+      ) {
+        credential.revokedAt = new Date(input.createdAt);
+        revokedCredentialIds.push(credential.id);
+      }
+    }
+    return {
+      credential: await this.createSessionStaffCredential(input),
+      revokedCredentialIds,
+    };
   }
 
   async getSessionStaffByToken(tokenHash: string, now: Date) {
@@ -1150,9 +1298,12 @@ export class MemoryRepository implements Repository {
       .map((credential) => structuredClone(credential));
   }
 
-  async revokeSessionStaff(workspaceId: string, credentialId: string) {
+  async revokeSessionStaff(workspaceId: string, sessionId: string, credentialId: string) {
     const credential = [...this.sessionStaff.values()].find(
-      (candidate) => candidate.workspaceId === workspaceId && candidate.id === credentialId,
+      (candidate) =>
+        candidate.workspaceId === workspaceId &&
+        candidate.sessionId === sessionId &&
+        candidate.id === credentialId,
     );
     if (!credential || credential.revokedAt) return false;
     credential.revokedAt = new Date();
@@ -2054,7 +2205,17 @@ export class MemoryRepository implements Repository {
   }
 
   async saveReport(_workspaceId: string, report: Report) {
+    const prior = [...this.reports.entries()].find(
+      ([id, candidate]) => id !== report.id && candidate.sessionId === report.sessionId,
+    );
+    const createdAt = prior ? (this.reportCreatedAt.get(prior[0]) ?? new Date()) : new Date();
+    if (prior) {
+      this.reports.delete(prior[0]);
+      this.reportJobs.delete(prior[0]);
+      this.reportCreatedAt.delete(prior[0]);
+    }
     this.reports.set(report.id, structuredClone(report));
+    if (!this.reportCreatedAt.has(report.id)) this.reportCreatedAt.set(report.id, createdAt);
     if (report.status === "pending") {
       this.reportJobs.set(report.id, {
         workspaceId: _workspaceId,
@@ -2090,6 +2251,7 @@ export class MemoryRepository implements Repository {
       throw new Error("Completed report does not match the claimed job");
     }
     this.reports.set(report.id, structuredClone(report));
+    if (!this.reportCreatedAt.has(report.id)) this.reportCreatedAt.set(report.id, new Date());
     this.reportJobs.delete(report.id);
   }
 
@@ -2118,6 +2280,95 @@ export class MemoryRepository implements Repository {
       (candidate) => candidate.sessionId === sessionId,
     );
     return report ? structuredClone(report) : null;
+  }
+
+  async listReportHistory(
+    workspaceId: string,
+    options: {
+      cursor?: HistoryCursor;
+      limit: number;
+      status?: Report["status"];
+      quizId?: string;
+      from?: Date;
+      to?: Date;
+      now: Date;
+    },
+  ) {
+    const records = [...this.reports.values()]
+      .flatMap((report): ReportHistoryRecord[] => {
+        const session = this.sessions.get(report.sessionId);
+        if (!session || session.workspaceId !== workspaceId) return [];
+        const version = this.versions.get(session.quizVersionId);
+        if (!version) return [];
+        const quiz = this.quizzes.get(version.quizId);
+        if (!quiz) return [];
+        const recovery = "recovery" in report ? report.recovery : [];
+        const recovered = recovery.reduce((sum, item) => sum + item.recovered, 0);
+        const eligible = recovery.reduce((sum, item) => sum + item.initiallyIncorrectWithBoth, 0);
+        const followup = [...this.followups.values()].find(
+          (candidate) => candidate.sourceReportId === report.id,
+        );
+        const followupStatus: ReportHistoryRecord["followupStatus"] = !followup
+          ? null
+          : followup.expiresAt <= options.now
+            ? "expired"
+            : followup.closedAt || followup.closesAt <= options.now
+              ? "closed"
+              : followup.opensAt > options.now
+                ? "scheduled"
+                : "open";
+        return [
+          {
+            id: report.id,
+            sessionId: report.sessionId,
+            quizId: version.quizId,
+            title: session.state.quiz.title,
+            status: report.status,
+            participantCount: report.metrics.participantCount,
+            initialAccuracyPercent:
+              "initialAccuracy" in report
+                ? report.initialAccuracy.percent
+                : report.metrics.accuracyPercent,
+            recovery: {
+              recovered,
+              eligible,
+              percent:
+                eligible > 0
+                  ? Math.min(100, Math.round((recovered / eligible) * 10_000) / 100)
+                  : null,
+            },
+            unresolvedConceptCount:
+              "unresolvedConcepts" in report
+                ? report.unresolvedConcepts.filter((concept) => concept.unresolved > 0).length
+                : 0,
+            interventionCount: "interventions" in report ? report.interventions.length : 0,
+            followupId: followup?.id ?? null,
+            followupStatus,
+            generatedAt: report.generatedAt ? new Date(report.generatedAt) : null,
+            createdAt: new Date(this.reportCreatedAt.get(report.id) ?? session.updatedAt),
+            expiresAt: new Date(report.expiresAt),
+          },
+        ];
+      })
+      .filter((item) => !options.status || item.status === options.status)
+      .filter((item) => !options.quizId || item.quizId === options.quizId)
+      .filter((item) => !options.from || item.createdAt.getTime() >= options.from.getTime())
+      .filter((item) => !options.to || item.createdAt.getTime() <= options.to.getTime())
+      .filter(
+        (item) =>
+          !options.cursor ||
+          item.createdAt.getTime() < options.cursor.createdAt.getTime() ||
+          (item.createdAt.getTime() === options.cursor.createdAt.getTime() &&
+            item.id < options.cursor.id),
+      )
+      .sort(
+        (left, right) =>
+          right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id),
+      );
+    return {
+      items: structuredClone(records.slice(0, options.limit)),
+      hasMore: records.length > options.limit,
+    };
   }
 
   async createFollowup(input: FollowupRecord, access: FollowupAccessRecord[]) {
@@ -2152,6 +2403,68 @@ export class MemoryRepository implements Repository {
       (candidate) => candidate.workspaceId === workspaceId && candidate.sourceReportId === reportId,
     );
     return followup ? structuredClone(followup) : null;
+  }
+
+  async listFollowupHistory(
+    workspaceId: string,
+    options: {
+      cursor?: HistoryCursor;
+      limit: number;
+      status?: FollowupHistoryRecord["status"];
+      from?: Date;
+      to?: Date;
+      now: Date;
+    },
+  ) {
+    const records = [...this.followups.values()]
+      .filter((followup) => followup.workspaceId === workspaceId)
+      .map((followup): FollowupHistoryRecord => {
+        const attempts = [...this.followupAttempts.values()].filter(
+          (attempt) => attempt.followupId === followup.id,
+        );
+        const status: FollowupHistoryRecord["status"] =
+          followup.expiresAt <= options.now
+            ? "expired"
+            : followup.closedAt || followup.closesAt <= options.now
+              ? "closed"
+              : followup.opensAt > options.now
+                ? "scheduled"
+                : "open";
+        return {
+          id: followup.id,
+          sourceSessionId: followup.sourceSessionId,
+          sourceReportId: followup.sourceReportId,
+          title: followup.title,
+          status,
+          conceptKeys: [...followup.conceptKeys],
+          checkpointCount: followup.content.questions.length,
+          attemptCount: attempts.length,
+          completedAttemptCount: attempts.filter((attempt) => attempt.status === "completed")
+            .length,
+          opensAt: new Date(followup.opensAt),
+          closesAt: new Date(followup.closesAt),
+          expiresAt: new Date(followup.expiresAt),
+          createdAt: new Date(followup.createdAt),
+        };
+      })
+      .filter((item) => !options.status || item.status === options.status)
+      .filter((item) => !options.from || item.createdAt.getTime() >= options.from.getTime())
+      .filter((item) => !options.to || item.createdAt.getTime() <= options.to.getTime())
+      .filter(
+        (item) =>
+          !options.cursor ||
+          item.createdAt.getTime() < options.cursor.createdAt.getTime() ||
+          (item.createdAt.getTime() === options.cursor.createdAt.getTime() &&
+            item.id < options.cursor.id),
+      )
+      .sort(
+        (left, right) =>
+          right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id),
+      );
+    return {
+      items: structuredClone(records.slice(0, options.limit)),
+      hasMore: records.length > options.limit,
+    };
   }
 
   async getFollowupByGenericToken(followupId: string, tokenHash: string, now: Date) {
@@ -2456,6 +2769,30 @@ export class MemoryRepository implements Repository {
     return purged;
   }
 
+  async recordProductEvents(events: ProductEventRecord[]) {
+    const workspaceId = events[0]?.workspaceId;
+    if (events.some((event) => event.workspaceId !== workspaceId)) {
+      throw new Error("Product event batches cannot span workspaces");
+    }
+    const ids = new Set(this.productEvents.map((event) => event.id));
+    for (const event of events) {
+      if (ids.has(event.id)) throw new Error("Product event already exists");
+      ids.add(event.id);
+    }
+    this.productEvents.push(...structuredClone(events));
+  }
+
+  async purgeProductEvents(now: Date) {
+    let purged = 0;
+    for (let index = this.productEvents.length - 1; index >= 0; index -= 1) {
+      if (this.productEvents[index]!.expiresAt <= now) {
+        this.productEvents.splice(index, 1);
+        purged += 1;
+      }
+    }
+    return purged;
+  }
+
   async exportAccount(userId: string) {
     const user = this.users.get(userId);
     if (!user || user.deletedAt) return {};
@@ -2628,6 +2965,11 @@ export class MemoryRepository implements Repository {
     }
     for (const [id, job] of this.authoringJobs) {
       if (ownedWorkspaceIds.has(job.workspaceId)) this.authoringJobs.delete(id);
+    }
+    for (let index = this.productEvents.length - 1; index >= 0; index -= 1) {
+      if (ownedWorkspaceIds.has(this.productEvents[index]!.workspaceId)) {
+        this.productEvents.splice(index, 1);
+      }
     }
     for (const workspaceId of ownedWorkspaceIds) {
       this.institutionPolicies.delete(workspaceId);

@@ -6,6 +6,25 @@ does not turn calendar, demand, legal, research, provider, certification, or pro
 gates into software claims. `OpenRound` is a working identity pending independent name and
 trademark review.
 
+## 2026 P0 UX beta backend foundation
+
+The current branch contains the additive backend/contracts/storage foundation for the allowlisted
+UX beta. Both beta flags default off; repository presence is not a launch claim. The global
+`FEATURE_UX_BETA` ceiling and explicit `UX_BETA_WORKSPACE_ALLOWLIST` membership resolve per
+workspace; an empty allowlist fails closed. Session snapshots carry that result to unauthenticated
+participant surfaces. Recovery Rehearsal additionally has its own
+`FEATURE_RECOVERY_REHEARSAL` kill switch.
+
+| Area             | Repository status                                                                                                                                                                            | Still required before beta exit                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Creation         | Six immutable, versioned first-party starters; owner/editor instantiation creates ordinary drafts with fresh Round/question/choice IDs and valid linked rechecks                             | Timed unassisted creation trials, starter-content review, and source/import journey evidence               |
+| History          | Tenant-scoped cursor pages for Sessions, Results, and Practice Follow-ups; opaque validated cursors; durable answer counts; report context; summary-only DTOs                                | Production-copy index/latency evidence, responsive/accessibility verification, and result-discovery trials |
+| Secure recovery  | Four-hour-or-session-expiry creator control passes; one active pass per creator/session; atomic replacement, audit, revocation, rate limit, tenant/session scope, and no-store response      | Multi-browser/browser-close rehearsal, penetration review, and production revocation monitoring            |
+| Entitlements     | `cohosting` is false on Hosted Free and true on Pro, Team, and Community; only shareable cohost creation is gated, while presenter and creator-resume credentials remain core                | Billing-plan acceptance tests against production configuration and packaging validation                    |
+| Evidence privacy | Additive post-lock staff distributions with a five-response minimum; participant suppression; respondent-based multi-select percentages; numeric totals only                                 | Independent privacy/accessibility review and observed small-sample comprehension                           |
+| Telemetry        | Batches of at most 20 schema-allowlisted events, bounded categorical dimensions, no actor/object/content fields, 30-day raw retention, retention-worker purge, and bounded Prometheus labels | Approved notice/legal basis, hosted metrics retention configuration, and allowlisted pilot monitoring      |
+| Compatibility    | Migration 014 is additive; persisted `quiz`/checkpoint contracts and existing routes remain; ready Report V2 and V3 can create follow-ups                                                    | Production backup/migration/forward-repair rehearsal and clean-host PostgreSQL verification                |
+
 ## Themed Experiences and Audience Interaction
 
 The current branch contains the complete single-process product slice and durable schema for Round
@@ -81,8 +100,16 @@ contrast, heading, and narrow-screen report-table defects. The pull request and 
 must still pass independently. Repository and local-network correctness are not substitutes for
 the external phase evidence above.
 
-- `pnpm check`: formatting, lint, strict type checks, 155 passing unit/integration tests, and
-  production builds for all seven workspace packages on the current branch. Four PostgreSQL tests
+On 2026-09-18, the P0 beta changes passed 15 contract tests, 17 game-engine tests, 10 Recovery
+Rehearsal tests, 75 web tests, and 107 server tests (with one environment-dependent server test
+skipped). The complete database suite then
+passed all 14 tests against a fresh disposable PostgreSQL 17 instance, including migration 014,
+tenant isolation, durable history counts, and session-scoped credential revocation. Strict type
+checks, lint, and database/server production builds also passed. Clean-host CI remains authoritative
+before promotion.
+
+- `pnpm check`: formatting, lint, strict type checks, 243 passing unit/integration tests, and
+  production builds for all eight workspace packages on the current branch. Five PostgreSQL tests
   and one multi-writer test are intentionally environment-gated in this default command.
 - PostgreSQL integration: one production-like test covering forced RLS, unscoped and
   cross-workspace denial, media isolation/deletion, enriched account export, atomic billing event

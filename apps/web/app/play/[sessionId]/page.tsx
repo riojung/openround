@@ -24,6 +24,11 @@ import {
 } from "../../../lib/realtime";
 import { experienceThemeStyle } from "../../../lib/theme";
 import { clientUuid } from "../../../lib/uuid";
+import {
+  participantResponseControlsDisabled,
+  participantResponseView,
+  type LocalResponseReceipt,
+} from "../../../lib/participant-response";
 
 type Ack<T> = { data?: T; error?: { code: string; message: string } };
 
@@ -36,6 +41,7 @@ export default function PlayerPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [acknowledged, setAcknowledged] = useState<AnswerAck | null>(null);
+  const [localReceipt, setLocalReceipt] = useState<LocalResponseReceipt | null>(null);
   const [mediaCredential, setMediaCredential] = useState("");
   const [selectedChoiceIds, setSelectedChoiceIds] = useState<string[]>([]);
   const [numericValue, setNumericValue] = useState("");
@@ -45,13 +51,16 @@ export default function PlayerPage() {
   const [audienceSyncRevision, setAudienceSyncRevision] = useState(0);
   const [audienceRealtimeUpdate, setAudienceRealtimeUpdate] =
     useState<AudienceRealtimeUpdate | null>(null);
+  const confidenceRef = useRef<HTMLFieldSetElement>(null);
 
   function resetResponse() {
     setAcknowledged(null);
+    setLocalReceipt(null);
     setSelectedChoiceIds([]);
     setNumericValue("");
     setRatingValue(null);
     setConfidence(null);
+    setError("");
   }
 
   useEffect(() => {
@@ -76,7 +85,10 @@ export default function PlayerPage() {
         },
         (response: Ack<{ snapshot: SessionSnapshot }>) => {
           if (response.error) setError(response.error.message);
-          if (response.data) setSnapshot(response.data.snapshot);
+          if (response.data) {
+            if (response.data.snapshot.roundId !== snapshotRef.current?.roundId) resetResponse();
+            setSnapshot(response.data.snapshot);
+          }
         },
       );
     };
@@ -142,13 +154,17 @@ export default function PlayerPage() {
   }, [sessionId, socket]);
 
   function submitResponse(response: ResponsePayload, selectedConfidence = confidence) {
-    if (!snapshot?.roundId || acknowledged || submitting) return;
+    if (!snapshot?.roundId || acknowledged?.accepted || snapshot.myResponse || submitting) return;
     if (snapshot.question?.confidence === "required" && selectedConfidence === null) {
       setError("Choose how sure you are before submitting your response.");
+      confidenceRef.current?.focus();
       return;
     }
     const participantToken = sessionStorage.getItem(`openround:participant:${sessionId}`);
     if (!participantToken) return;
+    setError("");
+    setAcknowledged(null);
+    setLocalReceipt({ response, confidence: selectedConfidence ?? null });
     setSubmitting(true);
     const idempotencyKey = `${sessionId}:${snapshot.roundId}:${clientUuid()}`;
     socket.emit(
@@ -163,15 +179,24 @@ export default function PlayerPage() {
       },
       (response: Ack<AnswerAck>) => {
         setSubmitting(false);
-        if (response.error) setError(response.error.message);
-        else if (response.data) {
+        if (response.error) {
+          setLocalReceipt(null);
+          setError(response.error.message);
+        } else if (response.data) {
           setAcknowledged(response.data);
-          if (!response.data.accepted)
+          if (response.data.accepted) {
+            setError("");
+          } else {
+            setLocalReceipt(null);
             setError(
               response.data.code === "ANSWER_LATE"
                 ? "Time expired before the server received that answer."
                 : "That answer was not accepted.",
             );
+          }
+        } else {
+          setLocalReceipt(null);
+          setError("The server did not confirm that response. Try submitting again.");
         }
       },
     );
@@ -179,21 +204,31 @@ export default function PlayerPage() {
 
   function chooseChoice(choiceId: string) {
     const question = snapshot?.question;
-    if (!question || snapshot.phase !== "question_open" || acknowledged || submitting) return;
+    if (
+      !question ||
+      snapshot.phase !== "question_open" ||
+      acknowledged?.accepted ||
+      snapshot.myResponse ||
+      submitting
+    )
+      return;
     if (question.type === "multi_select") {
       setSelectedChoiceIds((current) =>
         current.includes(choiceId)
           ? current.filter((selected) => selected !== choiceId)
           : [...current, choiceId],
       );
+      setError("");
       return;
     }
     setSelectedChoiceIds([choiceId]);
-    if (question.confidence === "off") {
-      submitResponse({
-        kind: question.type === "poll" ? "poll" : "choice",
-        choiceIds: [choiceId],
-      });
+    setError("");
+    if (snapshot.uxBeta !== true && question.confidence === "off") {
+      submitResponse(
+        question.type === "poll"
+          ? { kind: "poll", choiceIds: [choiceId] }
+          : { kind: "choice", choiceIds: [choiceId] },
+      );
     }
   }
 
@@ -237,11 +272,32 @@ export default function PlayerPage() {
     snapshot?.phase === "leaderboard" ||
     snapshot?.phase === "finished" ||
     (snapshot?.phase === "intervention" && snapshot.correctResponse !== undefined);
-  const savedChoiceIds =
-    snapshot?.myResponse?.kind === "choice" || snapshot?.myResponse?.kind === "poll"
-      ? snapshot.myResponse.choiceIds
-      : [];
-  const displayedChoiceIds = savedChoiceIds.length > 0 ? savedChoiceIds : selectedChoiceIds;
+  const durableResponse = participantResponseView(
+    snapshot?.myResponse,
+    snapshot?.myConfidence,
+    acknowledged,
+    localReceipt,
+  );
+  const displayedChoiceIds = durableResponse.choiceIds.length
+    ? durableResponse.choiceIds
+    : selectedChoiceIds;
+  const responseSaved = durableResponse.saved;
+  const displayedNumericValue = durableResponse.saved ? durableResponse.numericValue : numericValue;
+  const displayedRatingValue = durableResponse.saved ? durableResponse.ratingValue : ratingValue;
+  const displayedConfidence = durableResponse.confidence ?? confidence;
+  const responseControlsDisabled = participantResponseControlsDisabled({
+    questionOpen: snapshot?.phase === "question_open",
+    saved: responseSaved,
+    submitting,
+  });
+  const uxBeta = snapshot?.uxBeta === true;
+  const legacyNeedsSubmit = Boolean(
+    snapshot?.question &&
+    (snapshot.question.type === "multi_select" ||
+      snapshot.question.type === "numeric" ||
+      snapshot.question.type === "rating" ||
+      snapshot.question.confidence !== "off"),
+  );
 
   return (
     <div
@@ -250,13 +306,19 @@ export default function PlayerPage() {
       data-motion={snapshot?.experienceTheme.motion}
       data-pattern={snapshot?.experienceTheme.tokens.pattern}
       data-typography={snapshot?.experienceTheme.tokens.typography}
+      data-ux-beta={uxBeta}
       style={experienceThemeStyle(snapshot?.experienceTheme)}
     >
       <header className="shell live-topbar">
         <Brand inverted name={snapshot?.brandTheme?.organizationName} />
         <div className="button-row">
           <ExperiencePreferences />
-          <span className="connection" data-connected={connected} role="status">
+          <span
+            aria-label="Connection status"
+            className="connection"
+            data-connected={connected}
+            role="status"
+          >
             <span className="connection-dot" aria-hidden="true" />
             {connected ? "Connected" : "Reconnecting…"}
           </span>
@@ -265,7 +327,7 @@ export default function PlayerPage() {
       <main className="shell live-stage">
         <p aria-atomic="true" aria-live="polite" className="sr-only">
           {snapshot?.phase === "question_open"
-            ? `Checkpoint open: ${snapshot.question?.prompt ?? "new checkpoint"}`
+            ? `${uxBeta ? "Question" : "Checkpoint"} open: ${snapshot.question?.prompt ?? (uxBeta ? "new question" : "new checkpoint")}`
             : snapshot?.phase === "finished"
               ? "The live round is complete."
               : snapshot
@@ -301,10 +363,10 @@ export default function PlayerPage() {
           </section>
         ) : null}
         {snapshot?.question && snapshot.phase !== "finished" ? (
-          <section className="live-card">
+          <section className="live-card" data-testid="participant-task">
             <div className="page-heading" style={{ alignItems: "center", marginBottom: 20 }}>
               <span className="status-pill">
-                {snapshot.roundKind === "main" ? "Checkpoint" : "Recheck"}{" "}
+                {snapshot.roundKind === "main" ? (uxBeta ? "Question" : "Checkpoint") : "Recheck"}{" "}
                 {(snapshot.questionPosition ?? snapshot.questionIndex ?? 0) + 1} of{" "}
                 {snapshot.questionCount}
               </span>
@@ -320,7 +382,9 @@ export default function PlayerPage() {
               sessionId={sessionId}
             />
             {snapshot.phase === "paused" ? (
-              <p className="notice">The facilitator paused this checkpoint.</p>
+              <p className="notice">
+                The facilitator paused this {uxBeta ? "question" : "checkpoint"}.
+              </p>
             ) : null}
             {snapshot.phase === "intervention" ? (
               <p className="notice">
@@ -346,9 +410,7 @@ export default function PlayerPage() {
                       data-correct={correct || undefined}
                       data-incorrect={incorrect || undefined}
                       data-selected={selected || undefined}
-                      disabled={
-                        snapshot.phase !== "question_open" || Boolean(acknowledged) || submitting
-                      }
+                      disabled={responseControlsDisabled}
                       key={choice.id}
                       onClick={() => chooseChoice(choice.id)}
                       type="button"
@@ -366,10 +428,13 @@ export default function PlayerPage() {
                 <span>Numeric response {snapshot.question.unit ?? ""}</span>
                 <input
                   className="input"
-                  disabled={snapshot.phase !== "question_open" || Boolean(acknowledged)}
+                  disabled={responseControlsDisabled}
                   inputMode="decimal"
-                  onChange={(event) => setNumericValue(event.target.value)}
-                  value={numericValue}
+                  onChange={(event) => {
+                    setNumericValue(event.target.value);
+                    setError("");
+                  }}
+                  value={displayedNumericValue}
                 />
               </label>
             ) : snapshot.question.rating ? (
@@ -383,12 +448,15 @@ export default function PlayerPage() {
                     (_, index) => snapshot.question!.rating!.min + index,
                   ).map((value) => (
                     <button
-                      aria-pressed={ratingValue === value}
+                      aria-pressed={displayedRatingValue === value}
                       className="answer-button"
-                      data-selected={ratingValue === value || undefined}
-                      disabled={snapshot.phase !== "question_open" || Boolean(acknowledged)}
+                      data-selected={displayedRatingValue === value || undefined}
+                      disabled={responseControlsDisabled}
                       key={value}
-                      onClick={() => setRatingValue(value)}
+                      onClick={() => {
+                        setRatingValue(value);
+                        setError("");
+                      }}
                       type="button"
                     >
                       {value}
@@ -403,8 +471,10 @@ export default function PlayerPage() {
             {snapshot.question.confidence !== "off" ? (
               <fieldset
                 className="field"
-                disabled={snapshot.phase !== "question_open" || Boolean(acknowledged)}
+                disabled={responseControlsDisabled}
+                ref={confidenceRef}
                 style={{ border: 0, padding: 0 }}
+                tabIndex={-1}
               >
                 <legend className="field-label">
                   How sure are you?{snapshot.question.confidence === "required" ? " Required" : ""}
@@ -416,11 +486,14 @@ export default function PlayerPage() {
                     [3, "Very sure"],
                   ].map(([value, label]) => (
                     <button
-                      aria-pressed={confidence === value}
+                      aria-pressed={displayedConfidence === value}
                       className="button-quiet"
-                      data-selected={confidence === value || undefined}
+                      data-selected={displayedConfidence === value || undefined}
                       key={value}
-                      onClick={() => setConfidence(value as ConfidenceValue)}
+                      onClick={() => {
+                        setConfidence(value as ConfidenceValue);
+                        setError("");
+                      }}
                       type="button"
                     >
                       {label}
@@ -430,22 +503,35 @@ export default function PlayerPage() {
               </fieldset>
             ) : null}
             {snapshot.phase === "question_open" &&
-            !acknowledged &&
-            (snapshot.question.type === "multi_select" ||
-              snapshot.question.type === "numeric" ||
-              snapshot.question.type === "rating" ||
-              snapshot.question.confidence !== "off") ? (
-              <button
-                className="button"
-                disabled={submitting}
-                onClick={submitSelectedResponse}
-                type="button"
-              >
-                {submitting ? "Saving…" : "Submit response"}
-              </button>
+            !responseSaved &&
+            (uxBeta || legacyNeedsSubmit) ? (
+              uxBeta ? (
+                <div className="participant-submit-bar" data-testid="response-status">
+                  <p className="muted">
+                    Review your response before submitting. It cannot be changed.
+                  </p>
+                  <button
+                    className="button"
+                    disabled={submitting}
+                    onClick={submitSelectedResponse}
+                    type="button"
+                  >
+                    {submitting ? "Saving…" : "Submit response"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="button"
+                  disabled={submitting}
+                  onClick={submitSelectedResponse}
+                  type="button"
+                >
+                  {submitting ? "Saving…" : "Submit response"}
+                </button>
+              )
             ) : null}
-            {acknowledged?.accepted && !revealed ? (
-              <p className="success" role="status">
+            {responseSaved && !revealed ? (
+              <p aria-label="Response save status" className="success" role="status">
                 Answer received and saved.
               </p>
             ) : null}
@@ -457,7 +543,7 @@ export default function PlayerPage() {
                     : snapshot.myCorrect === true
                       ? "Correct"
                       : snapshot.myCorrect === false
-                        ? "Review this checkpoint"
+                        ? `Review this ${uxBeta ? "question" : "checkpoint"}`
                         : "Answer revealed"}
                 </strong>
                 {snapshot.explanation ? <div>{snapshot.explanation}</div> : null}
@@ -473,22 +559,51 @@ export default function PlayerPage() {
             <p className="lead">Your final score is {myRow?.score ?? 0}.</p>
           </section>
         ) : null}
-        {snapshot && snapshot.phase !== "finished" && mediaCredential ? (
-          <AudiencePanel
-            realtimeUpdate={audienceRealtimeUpdate}
-            role="participant"
-            sessionId={sessionId}
-            syncRevision={audienceSyncRevision}
-            token={mediaCredential}
-          />
+        {snapshot && mediaCredential && uxBeta ? (
+          <details
+            className="audience-tray"
+            data-testid="audience-tray"
+            key={snapshot.roundId ?? snapshot.phase}
+          >
+            <summary>Open Pulse, Q&amp;A, and chat</summary>
+            <p className="muted">
+              These optional tools never affect whether your response is saved.
+            </p>
+            {snapshot.phase !== "finished" ? (
+              <AudiencePanel
+                realtimeUpdate={audienceRealtimeUpdate}
+                role="participant"
+                sessionId={sessionId}
+                syncRevision={audienceSyncRevision}
+                token={mediaCredential}
+              />
+            ) : null}
+            <QnaPanel
+              revision={qnaRevision}
+              role="participant"
+              sessionId={sessionId}
+              token={mediaCredential}
+            />
+          </details>
         ) : null}
-        {snapshot && mediaCredential ? (
-          <QnaPanel
-            revision={qnaRevision}
-            role="participant"
-            sessionId={sessionId}
-            token={mediaCredential}
-          />
+        {snapshot && mediaCredential && !uxBeta ? (
+          <>
+            {snapshot.phase !== "finished" ? (
+              <AudiencePanel
+                realtimeUpdate={audienceRealtimeUpdate}
+                role="participant"
+                sessionId={sessionId}
+                syncRevision={audienceSyncRevision}
+                token={mediaCredential}
+              />
+            ) : null}
+            <QnaPanel
+              revision={qnaRevision}
+              role="participant"
+              sessionId={sessionId}
+              token={mediaCredential}
+            />
+          </>
         ) : null}
       </main>
     </div>

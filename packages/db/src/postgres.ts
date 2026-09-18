@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { upgradeGameState, type EngineAnswer, type GameState } from "@openround/game-engine";
 import {
+  ReportSchema,
   ResponsePayloadSchema,
+  questionDelivery,
   type BrandTheme,
   type QuizDraft,
   type Report,
@@ -14,6 +16,7 @@ import {
   FollowupVersionConflictError,
   PublishedQuizLimitError,
   SessionCodeConflictError,
+  SessionNotActiveError,
   SessionVersionConflictError,
 } from "./types.js";
 import { runMigrations } from "./migrations.js";
@@ -37,7 +40,9 @@ import type {
   FollowupAnswerRecord,
   FollowupAttemptRecord,
   FollowupRecord,
+  FollowupHistoryRecord,
   FederatedAuthTransactionRecord,
+  HistoryCursor,
   ExternalIdentityRecord,
   InstitutionPolicyRecord,
   InteractionSettingsRecord,
@@ -52,15 +57,19 @@ import type {
   ParticipantRecord,
   ParticipantSignalRecord,
   Plan,
+  ProductEventRecord,
   QnaQuestionRecord,
   QnaReplyRecord,
   QnaSettingsRecord,
   QuizRecord,
   QuizVersionRecord,
   ReportJob,
+  ReportHistoryRecord,
   Repository,
   Segment,
   SessionStaffCredentialRecord,
+  SessionStaffCredentialInput,
+  SessionHistoryRecord,
   StoredSession,
   WorkspaceInvitationRecord,
   WorkspaceMemberRecord,
@@ -321,6 +330,7 @@ function mapSessionStaff(row: QueryResultRow): SessionStaffCredentialRecord {
     workspaceId: String(row.workspace_id),
     sessionId: String(row.session_id),
     role: row.role,
+    purpose: row.purpose ?? "collaboration",
     label: String(row.label),
     tokenHash: String(row.token_hash),
     embedPolicyKeyHash: row.embed_policy_key_hash ? String(row.embed_policy_key_hash) : null,
@@ -331,6 +341,103 @@ function mapSessionStaff(row: QueryResultRow): SessionStaffCredentialRecord {
     expiresAt: date(row.expires_at),
     revokedAt: row.revoked_at ? date(row.revoked_at) : null,
     createdAt: date(row.created_at),
+  };
+}
+
+function sessionHistoryStatus(
+  state: GameState,
+  expiresAt: Date,
+  now: Date,
+): SessionHistoryRecord["status"] {
+  if (state.phase === "finished") return "finished";
+  return expiresAt <= now ? "expired" : "active";
+}
+
+function sessionQuestionPosition(state: GameState) {
+  if (state.questionIndex === null) return null;
+  const index =
+    state.roundKind === "main"
+      ? state.questionIndex
+      : state.sourceRoundId
+        ? (state.rounds[state.sourceRoundId]?.position ?? state.questionIndex)
+        : state.questionIndex;
+  return state.quiz.questions
+    .slice(0, index + 1)
+    .filter((question) => questionDelivery(question) === "main").length;
+}
+
+function mapStoredReport(row: QueryResultRow): Report {
+  return ReportSchema.parse({
+    ...(row.metrics as Report),
+    status: row.status,
+    generatedAt: row.generated_at ? date(row.generated_at).toISOString() : null,
+    expiresAt: date(row.retention_expires_at).toISOString(),
+  });
+}
+
+function mapReportHistory(row: QueryResultRow): ReportHistoryRecord {
+  const report = mapStoredReport(row);
+  const recovery = "recovery" in report ? report.recovery : [];
+  const recovered = recovery.reduce((total, item) => total + item.recovered, 0);
+  const eligible = recovery.reduce((total, item) => total + item.initiallyIncorrectWithBoth, 0);
+  return {
+    id: report.id,
+    sessionId: report.sessionId,
+    quizId: String(row.quiz_id),
+    title: String(row.quiz_title),
+    status: report.status,
+    participantCount: report.metrics.participantCount,
+    initialAccuracyPercent:
+      "initialAccuracy" in report ? report.initialAccuracy.percent : report.metrics.accuracyPercent,
+    recovery: {
+      recovered,
+      eligible,
+      percent:
+        eligible > 0 ? Math.min(100, Math.round((recovered / eligible) * 10_000) / 100) : null,
+    },
+    unresolvedConceptCount:
+      "unresolvedConcepts" in report
+        ? report.unresolvedConcepts.filter((concept) => concept.unresolved > 0).length
+        : 0,
+    interventionCount: "interventions" in report ? report.interventions.length : 0,
+    followupId: row.followup_id ? String(row.followup_id) : null,
+    followupStatus: row.followup_status ?? null,
+    generatedAt: report.generatedAt ? new Date(report.generatedAt) : null,
+    createdAt: date(row.created_at),
+    cursorCreatedAt: row.cursor_created_at ? String(row.cursor_created_at) : undefined,
+    expiresAt: date(row.retention_expires_at),
+  };
+}
+
+function mapFollowupHistory(row: QueryResultRow, now: Date): FollowupHistoryRecord {
+  const opensAt = date(row.opens_at);
+  const closesAt = date(row.closes_at);
+  const expiresAt = date(row.expires_at);
+  const closedAt = row.closed_at ? date(row.closed_at) : null;
+  const status: FollowupHistoryRecord["status"] =
+    expiresAt <= now
+      ? "expired"
+      : closedAt || closesAt <= now
+        ? "closed"
+        : opensAt > now
+          ? "scheduled"
+          : "open";
+  const content = row.content as QuizDraft;
+  return {
+    id: String(row.id),
+    sourceSessionId: String(row.source_session_id),
+    sourceReportId: String(row.source_report_id),
+    title: String(row.title),
+    status,
+    conceptKeys: Array.isArray(row.concept_keys) ? row.concept_keys.map(String) : [],
+    checkpointCount: content.questions.length,
+    attemptCount: Number(row.attempt_count ?? 0),
+    completedAttemptCount: Number(row.completed_attempt_count ?? 0),
+    opensAt,
+    closesAt,
+    expiresAt,
+    createdAt: date(row.created_at),
+    cursorCreatedAt: row.cursor_created_at ? String(row.cursor_created_at) : undefined,
   };
 }
 
@@ -1982,6 +2089,88 @@ export class PostgresRepository implements Repository {
     return result.rows.map((row) => String(row.id));
   }
 
+  async listSessionHistory(
+    workspaceId: string,
+    options: {
+      cursor?: HistoryCursor;
+      limit: number;
+      status?: SessionHistoryRecord["status"];
+      quizId?: string;
+      from?: Date;
+      to?: Date;
+      now: Date;
+    },
+  ) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT game_sessions.*, quiz_versions.quiz_id,
+              reports.id AS report_id,
+              to_char(
+                game_sessions.created_at AT TIME ZONE 'UTC',
+                'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+              ) AS cursor_created_at,
+              (SELECT count(*)::integer FROM answers
+               WHERE answers.workspace_id = game_sessions.workspace_id
+                 AND answers.session_id = game_sessions.id) AS answer_count
+       FROM game_sessions
+       JOIN quiz_versions ON quiz_versions.id = game_sessions.quiz_version_id
+       LEFT JOIN reports ON reports.session_id = game_sessions.id
+       WHERE game_sessions.workspace_id = $1 AND game_sessions.deleted_at IS NULL
+         AND ($2::timestamptz IS NULL OR (game_sessions.created_at, game_sessions.id) < ($2, $3::uuid))
+         AND ($4::uuid IS NULL OR quiz_versions.quiz_id = $4)
+         AND ($5::timestamptz IS NULL OR game_sessions.created_at >= $5)
+         AND ($6::timestamptz IS NULL OR game_sessions.created_at <= $6)
+         AND (
+           $7::text IS NULL
+           OR ($7 = 'finished' AND game_sessions.state = 'finished')
+           OR ($7 = 'active' AND game_sessions.state <> 'finished' AND game_sessions.expires_at > $8)
+           OR ($7 = 'expired' AND game_sessions.state <> 'finished' AND game_sessions.expires_at <= $8)
+         )
+       ORDER BY game_sessions.created_at DESC, game_sessions.id DESC
+       LIMIT $9`,
+      [
+        workspaceId,
+        options.cursor?.cursorCreatedAt ?? options.cursor?.createdAt ?? null,
+        options.cursor?.id ?? null,
+        options.quizId ?? null,
+        options.from ?? null,
+        options.to ?? null,
+        options.status ?? null,
+        options.now,
+        options.limit + 1,
+      ],
+    );
+    const hasMore = result.rows.length > options.limit;
+    const rows = result.rows.slice(0, options.limit);
+    return {
+      items: rows.map((row): SessionHistoryRecord => {
+        const state = upgradeGameState(row.state_snapshot as GameState);
+        return {
+          id: String(row.id),
+          quizId: String(row.quiz_id),
+          title: state.quiz.title,
+          status: sessionHistoryStatus(state, date(row.expires_at), options.now),
+          phase: state.phase,
+          code: state.code,
+          participantCount: Object.values(state.participants).filter(
+            (participant) => !participant.kicked,
+          ).length,
+          answerCount: Number(row.answer_count ?? 0),
+          questionCount: state.quiz.questions.filter(
+            (question) => questionDelivery(question) === "main",
+          ).length,
+          questionPosition: sessionQuestionPosition(state),
+          createdAt: date(row.created_at),
+          cursorCreatedAt: row.cursor_created_at ? String(row.cursor_created_at) : undefined,
+          updatedAt: date(row.updated_at),
+          expiresAt: date(row.expires_at),
+          reportId: row.report_id ? String(row.report_id) : null,
+        };
+      }),
+      hasMore,
+    };
+  }
+
   async saveSession(input: StoredSession, expectedVersion: number, report?: Report) {
     const state = input.state;
     if (report && report.sessionId !== input.id) throw new Error("Report session does not match");
@@ -2146,13 +2335,13 @@ export class PostgresRepository implements Repository {
     }));
   }
 
-  async createSessionStaffCredential(input: SessionStaffCredentialRecord) {
+  async createSessionStaffCredential(input: SessionStaffCredentialInput) {
     const result = await this.workspaceQuery(
       input.workspaceId,
       `INSERT INTO session_staff_credentials
          (id, workspace_id, session_id, role, label, token_hash, created_by, expires_at,
-          revoked_at, created_at, embed_policy_key_hash, embed_allowed_origins)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::text[]) RETURNING *`,
+          revoked_at, created_at, embed_policy_key_hash, embed_allowed_origins, purpose)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::text[],$13) RETURNING *`,
       [
         input.id,
         input.workspaceId,
@@ -2166,9 +2355,69 @@ export class PostgresRepository implements Repository {
         input.createdAt,
         input.embedPolicyKeyHash ?? null,
         input.embedAllowedOrigins ?? [],
+        input.purpose ?? "collaboration",
       ],
     );
     return mapSessionStaff(result.rows[0]!);
+  }
+
+  async replaceCreatorResumeCredential(input: SessionStaffCredentialRecord) {
+    if (input.purpose !== "creator_resume" || input.role !== "cohost") {
+      throw new Error("A creator resume credential must be a cohost credential");
+    }
+    return this.transaction(
+      async (client) => {
+        const session = await client.query(
+          `SELECT state, expires_at FROM game_sessions
+           WHERE workspace_id = $1 AND id = $2 AND deleted_at IS NULL
+           FOR UPDATE`,
+          [input.workspaceId, input.sessionId],
+        );
+        if (session.rowCount !== 1) throw new SessionNotActiveError(input.sessionId);
+        const clock = await client.query("SELECT clock_timestamp() AS checked_at");
+        const lockedSession = session.rows[0]!;
+        if (
+          lockedSession.state === "finished" ||
+          date(lockedSession.expires_at) <= date(clock.rows[0]!.checked_at)
+        ) {
+          throw new SessionNotActiveError(input.sessionId);
+        }
+        const revoked = await client.query(
+          `UPDATE session_staff_credentials SET revoked_at = $4
+           WHERE workspace_id = $1 AND session_id = $2 AND created_by = $3
+             AND purpose = 'creator_resume' AND revoked_at IS NULL
+           RETURNING id`,
+          [input.workspaceId, input.sessionId, input.createdBy, input.createdAt],
+        );
+        const result = await client.query(
+          `INSERT INTO session_staff_credentials
+             (id, workspace_id, session_id, role, purpose, label, token_hash, created_by,
+              expires_at, revoked_at, created_at, embed_policy_key_hash, embed_allowed_origins)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::text[])
+           RETURNING *`,
+          [
+            input.id,
+            input.workspaceId,
+            input.sessionId,
+            input.role,
+            input.purpose,
+            input.label,
+            input.tokenHash,
+            input.createdBy,
+            input.expiresAt,
+            input.revokedAt,
+            input.createdAt,
+            input.embedPolicyKeyHash ?? null,
+            input.embedAllowedOrigins ?? [],
+          ],
+        );
+        return {
+          credential: mapSessionStaff(result.rows[0]!),
+          revokedCredentialIds: revoked.rows.map((row) => String(row.id)),
+        };
+      },
+      { workspaceId: input.workspaceId },
+    );
   }
 
   async getSessionStaffByToken(tokenHash: string, now: Date) {
@@ -2190,12 +2439,13 @@ export class PostgresRepository implements Repository {
     return result.rows.map(mapSessionStaff);
   }
 
-  async revokeSessionStaff(workspaceId: string, credentialId: string) {
+  async revokeSessionStaff(workspaceId: string, sessionId: string, credentialId: string) {
     const result = await this.workspaceQuery(
       workspaceId,
       `UPDATE session_staff_credentials SET revoked_at = now()
-       WHERE workspace_id = $1 AND id = $2 AND revoked_at IS NULL RETURNING id`,
-      [workspaceId, credentialId],
+       WHERE workspace_id = $1 AND session_id = $2 AND id = $3 AND revoked_at IS NULL
+       RETURNING id`,
+      [workspaceId, sessionId, credentialId],
     );
     return result.rowCount === 1;
   }
@@ -3700,10 +3950,7 @@ export class PostgresRepository implements Repository {
   }
 
   private mapReport(row: QueryResultRow): Report {
-    return {
-      ...(row.metrics as Report),
-      expiresAt: date(row.retention_expires_at).toISOString(),
-    };
+    return mapStoredReport(row);
   }
 
   async getReport(workspaceId: string, reportId: string) {
@@ -3726,6 +3973,65 @@ export class PostgresRepository implements Repository {
       [workspaceId, sessionId],
     );
     return result.rows[0] ? this.mapReport(result.rows[0]) : null;
+  }
+
+  async listReportHistory(
+    workspaceId: string,
+    options: {
+      cursor?: HistoryCursor;
+      limit: number;
+      status?: Report["status"];
+      quizId?: string;
+      from?: Date;
+      to?: Date;
+      now: Date;
+    },
+  ) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT reports.*, game_sessions.retention_expires_at, quiz_versions.quiz_id,
+              game_sessions.state_snapshot->'quiz'->>'title' AS quiz_title,
+              followups.id AS followup_id,
+              to_char(
+                reports.created_at AT TIME ZONE 'UTC',
+                'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+              ) AS cursor_created_at,
+              CASE
+                WHEN followups.id IS NULL THEN NULL
+                WHEN followups.expires_at <= $8 THEN 'expired'
+                WHEN followups.closed_at IS NOT NULL OR followups.closes_at <= $8 THEN 'closed'
+                WHEN followups.opens_at > $8 THEN 'scheduled'
+                ELSE 'open'
+              END AS followup_status
+       FROM reports
+       JOIN game_sessions ON game_sessions.id = reports.session_id
+       JOIN quiz_versions ON quiz_versions.id = game_sessions.quiz_version_id
+       LEFT JOIN followups ON followups.source_report_id = reports.id
+       WHERE reports.workspace_id = $1
+         AND ($2::timestamptz IS NULL OR (reports.created_at, reports.id) < ($2, $3::uuid))
+         AND ($4::text IS NULL OR reports.status = $4)
+         AND ($5::uuid IS NULL OR quiz_versions.quiz_id = $5)
+       AND ($6::timestamptz IS NULL OR reports.created_at >= $6)
+       AND ($7::timestamptz IS NULL OR reports.created_at <= $7)
+       ORDER BY reports.created_at DESC, reports.id DESC
+       LIMIT $9`,
+      [
+        workspaceId,
+        options.cursor?.cursorCreatedAt ?? options.cursor?.createdAt ?? null,
+        options.cursor?.id ?? null,
+        options.status ?? null,
+        options.quizId ?? null,
+        options.from ?? null,
+        options.to ?? null,
+        options.now,
+        options.limit + 1,
+      ],
+    );
+    const hasMore = result.rows.length > options.limit;
+    return {
+      items: result.rows.slice(0, options.limit).map(mapReportHistory),
+      hasMore,
+    };
   }
 
   async createFollowup(input: FollowupRecord, access: FollowupAccessRecord[]) {
@@ -3797,6 +4103,67 @@ export class PostgresRepository implements Repository {
       [workspaceId, reportId],
     );
     return result.rows[0] ? mapFollowup(result.rows[0]) : null;
+  }
+
+  async listFollowupHistory(
+    workspaceId: string,
+    options: {
+      cursor?: HistoryCursor;
+      limit: number;
+      status?: FollowupHistoryRecord["status"];
+      from?: Date;
+      to?: Date;
+      now: Date;
+    },
+  ) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT followups.*,
+              to_char(
+                followups.created_at AT TIME ZONE 'UTC',
+                'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+              ) AS cursor_created_at,
+              count(followup_attempts.id)::integer AS attempt_count,
+              count(followup_attempts.id) FILTER (
+                WHERE followup_attempts.status = 'completed'
+              )::integer AS completed_attempt_count
+       FROM followups
+       LEFT JOIN followup_attempts ON followup_attempts.followup_id = followups.id
+       WHERE followups.workspace_id = $1
+         AND ($2::timestamptz IS NULL OR (followups.created_at, followups.id) < ($2, $3::uuid))
+         AND ($4::timestamptz IS NULL OR followups.created_at >= $4)
+         AND ($5::timestamptz IS NULL OR followups.created_at <= $5)
+         AND (
+           $6::text IS NULL
+           OR ($6 = 'expired' AND followups.expires_at <= $7)
+           OR ($6 = 'closed' AND followups.expires_at > $7
+               AND (followups.closed_at IS NOT NULL OR followups.closes_at <= $7))
+           OR ($6 = 'scheduled' AND followups.expires_at > $7
+               AND followups.closed_at IS NULL AND followups.closes_at > $7
+               AND followups.opens_at > $7)
+           OR ($6 = 'open' AND followups.expires_at > $7
+               AND followups.closed_at IS NULL AND followups.closes_at > $7
+               AND followups.opens_at <= $7)
+         )
+       GROUP BY followups.id
+       ORDER BY followups.created_at DESC, followups.id DESC
+       LIMIT $8`,
+      [
+        workspaceId,
+        options.cursor?.cursorCreatedAt ?? options.cursor?.createdAt ?? null,
+        options.cursor?.id ?? null,
+        options.from ?? null,
+        options.to ?? null,
+        options.status ?? null,
+        options.now,
+        options.limit + 1,
+      ],
+    );
+    const hasMore = result.rows.length > options.limit;
+    return {
+      items: result.rows.slice(0, options.limit).map((row) => mapFollowupHistory(row, options.now)),
+      hasMore,
+    };
   }
 
   async getFollowupByGenericToken(followupId: string, tokenHash: string, now: Date) {
@@ -4394,6 +4761,43 @@ export class PostgresRepository implements Repository {
     const result = await this.systemQuery(
       "DELETE FROM audit_events WHERE created_at <= $1 RETURNING id",
       [cutoff],
+    );
+    return result.rowCount ?? 0;
+  }
+
+  async recordProductEvents(events: ProductEventRecord[]) {
+    if (events.length === 0) return;
+    const workspaceId = events[0]!.workspaceId;
+    if (events.some((event) => event.workspaceId !== workspaceId)) {
+      throw new Error("Product event batches cannot span workspaces");
+    }
+    await this.transaction(
+      async (client) => {
+        for (const event of events) {
+          await client.query(
+            `INSERT INTO product_events
+               (id, workspace_id, event_name, dimensions, occurred_at, expires_at, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+            [
+              event.id,
+              event.workspaceId,
+              event.name,
+              JSON.stringify(event.dimensions),
+              new Date(event.occurredAt),
+              event.expiresAt,
+              event.createdAt,
+            ],
+          );
+        }
+      },
+      { workspaceId },
+    );
+  }
+
+  async purgeProductEvents(now: Date) {
+    const result = await this.systemQuery(
+      "DELETE FROM product_events WHERE expires_at <= $1 RETURNING id",
+      [now],
     );
     return result.rowCount ?? 0;
   }

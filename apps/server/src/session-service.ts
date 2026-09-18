@@ -20,12 +20,14 @@ import {
 import { resolveExperienceTheme } from "@openround/experience";
 import {
   SessionCodeConflictError,
+  SessionNotActiveError,
   SessionVersionConflictError,
   type AudienceOutboxRecord,
   type CreatorContext,
   type ParticipantRecord,
   type Repository,
   type SessionStaffCredentialRecord,
+  type SessionStaffCredentialReplacement,
   type StoredSession,
 } from "@openround/db";
 import {
@@ -154,6 +156,12 @@ export class SessionService {
     private readonly config: AppConfig,
     private readonly metrics: MetricsService,
   ) {}
+
+  private uxBetaEnabled(workspaceId: string) {
+    return (
+      this.config.FEATURE_UX_BETA && this.config.UX_BETA_WORKSPACE_ALLOWLIST.includes(workspaceId)
+    );
+  }
 
   subscribe(listener: MutationListener) {
     this.listeners.add(listener);
@@ -310,6 +318,7 @@ export class SessionService {
     if (cached && cached.version >= persisted.state.version) {
       persisted.state = upgradeGameState(cached);
     }
+    persisted.state.uxBeta = this.uxBetaEnabled(persisted.workspaceId);
     this.active.set(sessionId, persisted);
     this.metrics.setActiveSessions(this.active.size);
     this.scheduleDeadline(persisted);
@@ -328,9 +337,11 @@ export class SessionService {
       const cached = await this.cache.get(sessionId);
       if (cached && cached.version >= active.state.version) {
         active.state = upgradeGameState(cached);
+        active.state.uxBeta = this.uxBetaEnabled(active.workspaceId);
         this.scheduleDeadline(active);
         return active;
       }
+      active.state.uxBeta = this.uxBetaEnabled(active.workspaceId);
     }
     return this.loadSession(sessionId);
   }
@@ -432,6 +443,12 @@ export class SessionService {
     if (creator.role === "viewer") {
       throw new SessionError("UNAUTHORIZED", "Viewers cannot create session staff credentials");
     }
+    if (input.role === "cohost" && !entitlementsFor(creator.plan, this.config).cohosting) {
+      throw new SessionError(
+        "ENTITLEMENT_LIMIT",
+        "Shareable cohost access is available on Pro, Team, and Community plans",
+      );
+    }
     const session = await this.repository.getSessionById(sessionId);
     if (!session || session.workspaceId !== creator.workspaceId) {
       throw new SessionError("NOT_FOUND", "Session not found");
@@ -449,6 +466,7 @@ export class SessionService {
       workspaceId: creator.workspaceId,
       sessionId,
       role: input.role,
+      purpose: "collaboration",
       label: input.label,
       tokenHash: hashToken(token),
       embedPolicyKeyHash: embedPolicyKey ? hashToken(embedPolicyKey) : null,
@@ -467,9 +485,71 @@ export class SessionService {
         id: record.id,
         sessionId: record.sessionId,
         role: record.role,
+        purpose: record.purpose,
         label: record.label,
         expiresAt: record.expiresAt.toISOString(),
         revokedAt: record.revokedAt?.toISOString() ?? null,
+        createdAt: record.createdAt.toISOString(),
+      },
+    };
+  }
+
+  async createCreatorControlPass(creator: CreatorContext, sessionId: string, now = new Date()) {
+    if (creator.role === "viewer") {
+      throw new SessionError("UNAUTHORIZED", "Viewers cannot resume live sessions");
+    }
+    const session = await this.repository.getSessionById(sessionId);
+    if (!session || session.workspaceId !== creator.workspaceId) {
+      throw new SessionError("NOT_FOUND", "Session not found");
+    }
+    if (session.state.phase === "finished" || session.expiresAt <= now) {
+      throw new SessionError("CONFLICT", "Only an active live session can be resumed");
+    }
+    const token = opaqueToken();
+    const expiresAt = new Date(
+      Math.min(session.expiresAt.getTime(), now.getTime() + 4 * 60 * 60_000),
+    );
+    let replacement: SessionStaffCredentialReplacement;
+    try {
+      replacement = await this.repository.replaceCreatorResumeCredential({
+        id: randomUUID(),
+        workspaceId: creator.workspaceId,
+        sessionId,
+        role: "cohost",
+        purpose: "creator_resume",
+        label: "Creator resume",
+        tokenHash: hashToken(token),
+        embedPolicyKeyHash: null,
+        embedAllowedOrigins: [],
+        createdBy: creator.userId,
+        expiresAt,
+        revokedAt: null,
+        createdAt: now,
+      });
+    } catch (error) {
+      if (error instanceof SessionNotActiveError) {
+        throw new SessionError("CONFLICT", "Only an active live session can be resumed");
+      }
+      throw error;
+    }
+    for (const credentialId of replacement.revokedCredentialIds) {
+      await this.publishAuxiliary({
+        sessionId,
+        type: "session.staff.revoked",
+        payload: { credentialId },
+      }).catch(() => undefined);
+    }
+    const record = replacement.credential;
+    return {
+      token,
+      credential: {
+        id: record.id,
+        sessionId: record.sessionId,
+        role: record.role,
+        purpose: record.purpose,
+        label: record.label,
+        expiresAt: record.expiresAt.toISOString(),
+        revokedAt: null,
         createdAt: record.createdAt.toISOString(),
       },
     };
@@ -628,6 +708,7 @@ export class SessionService {
             settings,
             brandTheme,
             experienceTheme,
+            uxBeta: this.uxBetaEnabled(creator.workspaceId),
           }),
           expiresAt: new Date(now.getTime() + ttlMs),
           retentionExpiresAt: retentionExpiry(now, entitlements),

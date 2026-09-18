@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { ReportV2Schema, type QuizDraft } from "@openround/contracts";
+import { ReportV2Schema, ReportV3Schema, type QuizDraft } from "@openround/contracts";
 import { MemoryRepository, type CreatorContext } from "@openround/db";
 import { createGameState } from "@openround/game-engine";
 import { FollowupService } from "../src/followup-service.js";
 import type { FollowupError } from "../src/followup-service.js";
 
-async function fixture(timeMode: "timed" | "flex" = "timed") {
+async function fixture(timeMode: "timed" | "flex" = "timed", reportVersion: 2 | 3 = 2) {
   const repository = new MemoryRepository();
   const service = new FollowupService(repository);
   const workspaceId = randomUUID();
@@ -100,60 +100,82 @@ async function fixture(timeMode: "timed" | "flex" = "timed") {
     status: "active",
     joinedAt: now,
   });
+  const reportBase = {
+    id: reportId,
+    sessionId,
+    status: "ready",
+    generatedAt: now.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    metrics: {
+      participantCount: 1,
+      completedCount: 1,
+      answerCount: 1,
+      accuracyPercent: 0,
+    },
+    questions: [
+      {
+        questionId: mainId,
+        prompt: "What should happen first?",
+        responses: 1,
+        correct: 0,
+        accuracyPercent: 0,
+        difficult: true,
+      },
+    ],
+    participants: [
+      {
+        participantId,
+        nickname: "Curious Otter",
+        score: 0,
+        correctCount: 0,
+        answerCount: 1,
+      },
+    ],
+    initialAccuracy: { correct: 0, responses: 1, percent: 0 },
+    confidenceMatrix: [
+      { confidence: 1, correct: 0, incorrect: 0, total: 0 },
+      { confidence: 2, correct: 0, incorrect: 0, total: 0 },
+      { confidence: 3, correct: 0, incorrect: 1, total: 1 },
+    ],
+    misconceptions: [],
+    interventions: [],
+    recovery: [],
+    unresolvedConcepts: [
+      { conceptKey: "lockout", initiallyIncorrect: 1, recovered: 0, unresolved: 1 },
+    ],
+    participation: { participants: 1, respondents: 1, percent: 100 },
+    responseTime: { responses: 1, medianMs: 2_000, p95Ms: 2_000 },
+    qna: { questions: 0, answered: 0, unresolved: 0 },
+    participantFeedback: [
+      { participantId, correct: 0, responses: 1, unresolvedConcepts: ["lockout"] },
+    ],
+    evidenceNote: "Session evidence only.",
+  } as const;
   await repository.saveReport(
     workspaceId,
-    ReportV2Schema.parse({
-      id: reportId,
-      sessionId,
-      schemaVersion: 2,
-      status: "ready",
-      generatedAt: now.toISOString(),
-      expiresAt: expiresAt.toISOString(),
-      metrics: {
-        participantCount: 1,
-        completedCount: 1,
-        answerCount: 1,
-        accuracyPercent: 0,
-      },
-      questions: [
-        {
-          questionId: mainId,
-          prompt: "What should happen first?",
-          responses: 1,
-          correct: 0,
-          accuracyPercent: 0,
-          difficult: true,
-        },
-      ],
-      participants: [
-        {
-          participantId,
-          nickname: "Curious Otter",
-          score: 0,
-          correctCount: 0,
-          answerCount: 1,
-        },
-      ],
-      initialAccuracy: { correct: 0, responses: 1, percent: 0 },
-      confidenceMatrix: [
-        { confidence: 1, correct: 0, incorrect: 0, total: 0 },
-        { confidence: 2, correct: 0, incorrect: 0, total: 0 },
-        { confidence: 3, correct: 0, incorrect: 1, total: 1 },
-      ],
-      misconceptions: [],
-      interventions: [],
-      recovery: [],
-      unresolvedConcepts: [
-        { conceptKey: "lockout", initiallyIncorrect: 1, recovered: 0, unresolved: 1 },
-      ],
-      participation: { participants: 1, respondents: 1, percent: 100 },
-      responseTime: { responses: 1, medianMs: 2_000, p95Ms: 2_000 },
-      qna: { questions: 0, answered: 0, unresolved: 0 },
-      participantFeedback: [
-        { participantId, correct: 0, responses: 1, unresolvedConcepts: ["lockout"] },
-      ],
-      evidenceNote: "Session evidence only.",
-    }),
+    reportVersion === 3
+      ? ReportV3Schema.parse({
+          ...reportBase,
+          schemaVersion: 3,
+          experience: { category: "safety_compliance", preset: { id: "signal", version: 1 } },
+          audiencePulse: {
+            uniqueParticipants: 0,
+            events: 0,
+            bySignal: { got_it: 0, unsure: 0, need_example: 0, too_fast: 0 },
+            contexts: [],
+          },
+          conversation: {
+            messages: 0,
+            uniqueContributors: 0,
+            reactions: 0,
+            reports: 0,
+            removed: 0,
+            moderationActions: 0,
+            peakMessagesPerMinute: 0,
+            transcriptAvailable: false,
+          },
+        })
+      : ReportV2Schema.parse({ ...reportBase, schemaVersion: 2 }),
   );
   const creator: CreatorContext = {
     userId,
@@ -186,6 +208,13 @@ async function fixture(timeMode: "timed" | "flex" = "timed") {
 }
 
 describe("self-paced follow-up", () => {
+  it("creates follow-ups from both ready Report V2 and Report V3 evidence", async () => {
+    const v2 = await fixture("flex", 2);
+    const v3 = await fixture("flex", 3);
+    expect(v2.created.followup.conceptKeys).toEqual(["lockout"]);
+    expect(v3.created.followup.conceptKeys).toEqual(["lockout"]);
+  });
+
   it("uses an immutable linked recheck and resumes one personal attempt", async () => {
     const { service, created, now, correctChoiceId, participantId } = await fixture("timed");
     expect(created.followup).toMatchObject({

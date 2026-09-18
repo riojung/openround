@@ -15,16 +15,35 @@ embed, and follow-up routes use their own scoped credentials as documented by th
 - `GET /health/live` — process liveness.
 - `GET /health/ready` — active PostgreSQL and Redis-compatible checks; returns 503 without secret
   connection detail when either is unavailable.
-- `GET /v1/features` — public URL, edition mode, and effective
-  signup/session/media/experience/Pulse/chat switches.
+- `GET /v1/features` — public URL, edition mode, effective
+  signup/session/media/experience/Pulse/chat switches, and deployment-level `uxBeta` and
+  `recoveryRehearsal` availability.
+- `POST /v1/product-events` — creator-authenticated batch of 1–20 schema-allowlisted beta events;
+  accepted names are `creation_started`, `creation_completed`, `setup_recipe_selected`,
+  `rehearsal_started`, and `rehearsal_completed`.
 - `GET /metrics` — private Prometheus output when enabled and authorized.
+
+`FEATURE_UX_BETA` and `FEATURE_RECOVERY_REHEARSAL` default off. The authenticated
+`productFeatures` view requires explicit membership in `UX_BETA_WORKSPACE_ALLOWLIST`; an empty
+allowlist fails closed and enables no workspace. Rehearsal requires both flags and allowlist
+membership.
+Because guests do not call `/v1/auth/me`, every role-filtered session snapshot carries the
+workspace-resolved `uxBeta` value. The public feature view is deployment availability, not evidence
+that a particular workspace is allowlisted.
+
+Product events accept only `creationPath`, `recipe`, `scenario`, `segment`, `betaVersion`, and
+`durationBucket` categorical dimensions. The server replaces `segment` and `betaVersion` with
+trusted workspace/release values. Actor/object IDs, content, answers, aliases, source text, and
+free-form metadata are rejected. Raw rows expire after 30 days and the same bounded labels feed the
+Prometheus counter.
 
 ## Authentication, workspaces, and account
 
 - `POST /v1/auth/magic-link`
 - `GET /v1/auth/verify?token=...`
-- `GET /v1/auth/me` — creator/workspace context, entitlements, branding, and workspace-resolved
-  `productFeatures` after the partner allowlist and global switches are applied.
+- `GET /v1/auth/me` — creator/workspace context, entitlements (including `cohosting`), branding,
+  and workspace-resolved `productFeatures` after the partner allowlist and global switches are
+  applied.
 - `POST /v1/auth/logout`
 - `GET /v1/workspaces`
 - `POST /v1/workspaces/{id}/select`
@@ -76,6 +95,9 @@ learner launches, NRPS, and AGS are deliberately rejected in this release.
 Legacy `/v1/quizzes` naming is intentionally stable through v1 even though the UI says
 **checkpoint set**.
 
+- `GET /v1/starters` — six immutable, versioned first-party starter summaries.
+- `POST /v1/starters/{id}/use` — owner/editor creation of a normal draft with fresh Round,
+  question, and choice IDs while preserving linked-recheck relationships.
 - `GET|POST /v1/quizzes`; `GET` accepts `archived=true`.
 - `GET|PATCH /v1/quizzes/{id}`
 - `POST /v1/quizzes/{id}/publish`
@@ -120,11 +142,13 @@ cleanup.
 
 ## Live session, staff, presenter, and embed APIs
 
+- `GET /v1/sessions` — tenant-scoped summary history with status, Round, and date filters.
 - `POST /v1/sessions`
 - `POST /v1/sessions/join`
 - `GET /v1/sessions/{id}/snapshot?role=...`
 - `POST /v1/sessions/{id}/commands`
 - `POST /v1/sessions/{id}/answers`
+- `POST /v1/sessions/{id}/control-pass` — owner/editor secure resume for an active room.
 - `DELETE /v1/sessions/{id}`
 - Session staff credential creation/list/revocation routes under `/v1/sessions/{id}/staff`
 - Presenter/embed policy issuance under the session routes
@@ -134,6 +158,19 @@ Host commands carry `commandId` and `expectedVersion`. Recovery actions include
 `intervention.start`, `intervention.finish`, and `recheck.open`; the engine validates when peer
 discussion, explain/example/break, linked recheck, or revote is legal. A dedicated presenter or
 embed credential is read-only and never reuses the host token.
+
+Shareable cohost credential creation requires the `cohosting` entitlement (Pro, Team, or Community);
+presenter credentials remain core. Staff credential views include
+`purpose: collaboration | creator_resume`. A creator control pass is a host-equivalent cohost
+credential with purpose `creator_resume`, expires after four hours or at session expiry (whichever
+comes first), and does not depend on the cohosting entitlement. Issuing another pass for the same
+creator/session atomically revokes the prior one. The response is `Cache-Control: private,
+no-store`; clients keep its bearer only in session storage and never place it in a URL.
+
+After lock/reveal, staff snapshots may include an additive `responseDistribution` only when at
+least five people answered. Choice and rating payloads contain aggregate buckets; multi-select uses
+`percentBasis: respondents`; numeric payloads expose only correct/incorrect totals. Participant
+snapshots never contain this field.
 
 Normal routes deny framing. `/embed/present/{sessionId}` is constrained by a server-issued policy
 and the workspace's allowlist of at most ten HTTPS origins.
@@ -189,12 +226,14 @@ moderation, kick/ban, retention, export, and deletion are enforced server-side.
 ## Reports and self-paced follow-up APIs
 
 - `GET /v1/sessions/{id}/report`
+- `GET /v1/reports` — tenant-scoped recovery-oriented result summaries.
 - `GET /v1/reports/{id}`
 - `GET /v1/reports/{id}.csv`
 - `GET /v1/reports/{id}.json`
 - `GET /v1/reports/{id}/interactions`
 - `GET /v1/reports/{id}/interactions.csv`
 - `POST /v1/reports/{id}/followups`
+- `GET /v1/followups` — tenant-scoped practice follow-up summaries and attempt counts.
 - `GET /v1/followups/{id}` — creator view and access management.
 - `POST /v1/followups/{id}/accommodation-passes`
 - `DELETE /v1/followups/{id}/access/{accessId}`
@@ -215,6 +254,13 @@ Follow-up start accepts a generic/personal bearer and returns a separate attempt
 Attempt answer and advance calls require that attempt bearer. Personal links allow one attempt by
 default; generic links create unpaired anonymous attempts. All timing, resume, completion,
 idempotency, revocation, and expiry are server-owned.
+
+The session, report, and follow-up history endpoints return `{ items, nextCursor }`, default to 25
+rows, cap at 50, and order by `(createdAt DESC, id DESC)`. Cursors are opaque base64url values;
+malformed cursors return a validation error. These endpoints expose summaries only—never answer
+bodies, aliases, chat content, or state snapshots. Report detail keeps the versioned `report` and
+adds Round/session context (`quizId`, `quizTitle`, `sessionCreatedAt`, `sessionUpdatedAt`) when
+available. Follow-up creation accepts ready Report V2 and Report V3 evidence.
 
 ## Billing APIs
 

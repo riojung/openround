@@ -71,16 +71,11 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   ).toBeVisible();
 
   await creator.getByText("Round staff").click();
-  await creator.getByLabel("Co-host label").fill("Teaching assistant");
-  await creator.getByRole("button", { name: "Create cohost link" }).click();
-  const cohostUrl = await creator.locator(".staff-share-link a").getAttribute("href");
-  expect(cohostUrl).toBeTruthy();
-  const cohostContext = await browser.newContext();
-  const cohost = await cohostContext.newPage();
-  await cohost.goto(cohostUrl!);
-  await expect(cohost.getByRole("button", { name: "Start round" })).toBeVisible();
-  await cohostContext.close();
-  await creator.locator(".staff-list").getByRole("button", { name: "Revoke" }).click();
+  await expect(
+    creator.getByText("Shareable cohost links are available on Pro, Team, and Community plans."),
+  ).toBeVisible();
+  await expect(creator.getByLabel("Co-host label")).toHaveCount(0);
+  await expect(creator.getByRole("button", { name: "Create cohost link" })).toHaveCount(0);
 
   const lanJoinUrl = `http://192.168.1.20:8080/join?code=${code}`;
   await creator.getByLabel("Network or public product address").fill("http://192.168.1.20:8080");

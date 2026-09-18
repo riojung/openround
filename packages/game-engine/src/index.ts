@@ -13,6 +13,7 @@ import {
   type PublicQuestion,
   type QuestionDraft,
   type QuizDraft,
+  type ResponseDistribution,
   type ResponsePayload,
   type RoundKind,
   type SessionPhase,
@@ -70,6 +71,7 @@ export interface EngineIntervention {
 
 export interface GameState {
   stateSchemaVersion: number;
+  uxBeta?: boolean;
   sessionId: string;
   code: string;
   quiz: QuizDraft;
@@ -231,10 +233,12 @@ export function createGameState(input: {
   settings: SessionSettings;
   brandTheme?: BrandTheme | null;
   experienceTheme?: ExperienceThemeSnapshot;
+  uxBeta?: boolean;
 }): GameState {
   const brandTheme = input.brandTheme ?? null;
   return {
     stateSchemaVersion: CURRENT_GAME_STATE_SCHEMA_VERSION,
+    uxBeta: input.uxBeta,
     sessionId: input.sessionId,
     code: input.code,
     quiz: input.quiz,
@@ -300,6 +304,62 @@ function isChoiceQuestion(
   { type: "single_select" | "true_false" | "multi_select" | "poll" }
 > {
   return ["single_select", "true_false", "multi_select", "poll"].includes(question.type);
+}
+
+function distributionFor(
+  state: GameState,
+  question: QuestionDraft | undefined,
+): ResponseDistribution | undefined {
+  if (!question || !state.roundId) return undefined;
+  const answers = Object.values(state.answers).filter((answer) => answer.roundId === state.roundId);
+  if (answers.length < 5) return undefined;
+  const percent = (count: number) => Math.round((count / answers.length) * 10_000) / 100;
+  if (isChoiceQuestion(question)) {
+    const counts = new Map<string, number>();
+    for (const answer of answers) {
+      if (answer.response.kind !== "choice" && answer.response.kind !== "poll") continue;
+      for (const choiceId of answer.response.choiceIds) {
+        counts.set(choiceId, (counts.get(choiceId) ?? 0) + 1);
+      }
+    }
+    const totalSelections = [...counts.values()].reduce((sum, count) => sum + count, 0);
+    return {
+      kind: "choice",
+      respondents: answers.length,
+      totalSelections,
+      percentBasis: question.type === "multi_select" ? "respondents" : "responses",
+      buckets: question.choices.map((choice) => ({
+        value: choice.id,
+        label: choice.label,
+        count: counts.get(choice.id) ?? 0,
+        percent: percent(counts.get(choice.id) ?? 0),
+      })),
+    };
+  }
+  if (question.type === "rating") {
+    const counts = new Map<number, number>();
+    for (const answer of answers) {
+      if (answer.response.kind === "rating") {
+        counts.set(answer.response.value, (counts.get(answer.response.value) ?? 0) + 1);
+      }
+    }
+    return {
+      kind: "rating",
+      respondents: answers.length,
+      buckets: Array.from({ length: question.max - question.min + 1 }, (_, index) => {
+        const value = question.min + index;
+        const count = counts.get(value) ?? 0;
+        return { value: String(value), label: String(value), count, percent: percent(count) };
+      }),
+    };
+  }
+  const correct = answers.filter((answer) => answer.correct).length;
+  return {
+    kind: "numeric",
+    respondents: answers.length,
+    correct,
+    incorrect: answers.length - correct,
+  };
 }
 
 function nextMainQuestionIndex(quiz: QuizDraft, afterIndex: number) {
@@ -977,6 +1037,7 @@ export function snapshotForRole(
     state.phase !== "paused";
   return {
     mode: "live",
+    uxBeta: state.uxBeta ?? false,
     stateSchemaVersion: CURRENT_GAME_STATE_SCHEMA_VERSION,
     sessionId: state.sessionId,
     code: state.code,
@@ -1040,5 +1101,9 @@ export function snapshotForRole(
           ).length,
         })
       : undefined,
+    responseDistribution:
+      options.role !== "participant" && insightVisible
+        ? distributionFor(state, question)
+        : undefined,
   };
 }

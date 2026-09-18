@@ -1,13 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { Entitlements, QuizDraft } from "@openround/contracts";
 import { AuthoringAssistant } from "../../components/authoring-assistant";
 import { Brand } from "../../components/brand";
 import { CheckpointSetImport } from "../../components/checkpoint-set-import";
 import { API_URL, apiFetch, humanError } from "../../lib/api";
+import { dashboardMessage } from "../../components/workspace/workspace-model";
+import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
+import { WorkspaceShell } from "../../components/workspace/workspace-shell";
+import styles from "../../components/workspace/workspace-content.module.css";
 
 interface Creator {
   userId: string;
@@ -35,7 +39,7 @@ interface FolderRecord {
   name: string;
 }
 
-export default function DashboardPage() {
+function LegacyDashboardPage() {
   const router = useRouter();
   const [creator, setCreator] = useState<Creator | null>(null);
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
@@ -656,5 +660,546 @@ export default function DashboardPage() {
         </section>
       </main>
     </>
+  );
+}
+
+function BetaDashboard() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { creator, entitlements, productFeatures, canEdit, startUpgrade } = useWorkspace();
+  const [quizzes, setQuizzes] = useState<QuizRecord[]>([]);
+  const [folders, setFolders] = useState<FolderRecord[]>([]);
+  const [search, setSearch] = useState("");
+  const [folderFilter, setFolderFilter] = useState("all");
+  const [newFolderName, setNewFolderName] = useState("");
+  const [editingFolder, setEditingFolder] = useState<FolderRecord | null>(null);
+  const [organizingId, setOrganizingId] = useState("");
+  const [organizationFolderId, setOrganizationFolderId] = useState("");
+  const [organizationTags, setOrganizationTags] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState("");
+  const [error, setError] = useState("");
+
+  const refresh = useCallback(
+    async (includeArchived: boolean) => {
+      try {
+        const [list, folderList] = await Promise.all([
+          apiFetch<{ quizzes: QuizRecord[] }>(
+            `/v1/quizzes${includeArchived ? "?archived=true" : ""}`,
+          ),
+          apiFetch<{ folders: FolderRecord[] }>("/v1/folders"),
+        ]);
+        setQuizzes(list.quizzes);
+        setFolders(folderList.folders);
+      } catch (caught) {
+        if ((caught as { status?: number }).status === 401) router.replace("/signin");
+        else setError(humanError(caught));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    setLoading(true);
+    void refresh(showArchived);
+  }, [refresh, showArchived]);
+
+  async function duplicate(quizId: string) {
+    setBusyId(quizId);
+    setError("");
+    try {
+      await apiFetch(`/v1/quizzes/${quizId}/duplicate`, { method: "POST", body: "{}" });
+      await refresh(showArchived);
+    } catch (caught) {
+      setError(humanError(caught));
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function setArchived(quizId: string, archived: boolean) {
+    setBusyId(quizId);
+    setError("");
+    try {
+      await apiFetch(`/v1/quizzes/${quizId}/archive`, {
+        method: "POST",
+        body: JSON.stringify({ archived }),
+      });
+      await refresh(showArchived);
+    } catch (caught) {
+      setError(humanError(caught));
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function createFolder(event: FormEvent) {
+    event.preventDefault();
+    setBusyId("folder-create");
+    setError("");
+    try {
+      await apiFetch("/v1/folders", {
+        method: "POST",
+        body: JSON.stringify({ name: newFolderName }),
+      });
+      setNewFolderName("");
+      await refresh(showArchived);
+    } catch (caught) {
+      setError(humanError(caught));
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function renameFolder(event: FormEvent) {
+    event.preventDefault();
+    if (!editingFolder) return;
+    setBusyId(editingFolder.id);
+    setError("");
+    try {
+      await apiFetch(`/v1/folders/${editingFolder.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: editingFolder.name }),
+      });
+      setEditingFolder(null);
+      await refresh(showArchived);
+    } catch (caught) {
+      setError(humanError(caught));
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function deleteFolder(folder: FolderRecord) {
+    if (
+      !window.confirm(`Delete the folder “${folder.name}”? Its Rounds will remain in the library.`)
+    ) {
+      return;
+    }
+    setBusyId(folder.id);
+    setError("");
+    try {
+      await apiFetch(`/v1/folders/${folder.id}`, { method: "DELETE" });
+      if (folderFilter === folder.id) setFolderFilter("all");
+      await refresh(showArchived);
+    } catch (caught) {
+      setError(humanError(caught));
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  function beginOrganizing(quiz: QuizRecord) {
+    setOrganizingId(quiz.id);
+    setOrganizationFolderId(quiz.folderId ?? "");
+    setOrganizationTags(quiz.tags.join(", "));
+  }
+
+  async function saveOrganization(event: FormEvent, quizId: string) {
+    event.preventDefault();
+    setBusyId(quizId);
+    setError("");
+    try {
+      await apiFetch(`/v1/quizzes/${quizId}/organization`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          folderId: organizationFolderId || null,
+          tags: organizationTags
+            .split(",")
+            .map((tag) => tag.trim())
+            .filter(Boolean),
+        }),
+      });
+      setOrganizingId("");
+      await refresh(showArchived);
+    } catch (caught) {
+      setError(humanError(caught));
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function downloadRound(quizId: string, format: "json" | "csv" | "qti.zip") {
+    setBusyId(quizId);
+    setError("");
+    try {
+      const response = await fetch(`${API_URL}/v1/quizzes/${quizId}/export.${format}`, {
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        throw new Error(body?.error?.message ?? `Export failed (${response.status}).`);
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `openround-round-${quizId}.${format}`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (caught) {
+      setError(humanError(caught));
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const visibleQuizzes = quizzes.filter(
+    (quiz) =>
+      (folderFilter === "all" ||
+        (folderFilter === "unfiled" ? !quiz.folderId : quiz.folderId === folderFilter)) &&
+      (!normalizedSearch ||
+        quiz.title.toLocaleLowerCase().includes(normalizedSearch) ||
+        quiz.description.toLocaleLowerCase().includes(normalizedSearch) ||
+        quiz.tags.some((tag) => tag.toLocaleLowerCase().includes(normalizedSearch))),
+  );
+  const publishedQuizCount = quizzes.filter((quiz) => quiz.status === "published").length;
+  const queryMessage = dashboardMessage(new URLSearchParams(searchParams.toString()));
+
+  return (
+    <WorkspaceShell
+      description="Create, rehearse, and host reusable checks that make the next learning action clear."
+      requireBeta={false}
+      title="Rounds"
+    >
+      {queryMessage ? (
+        <p className="success" role="status">
+          {queryMessage}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {entitlements && entitlements.maxPublishedQuizzes !== null ? (
+        <div className={styles.planNotice}>
+          <span>
+            <strong>
+              {publishedQuizCount} of {entitlements.maxPublishedQuizzes}
+            </strong>{" "}
+            published Round slots used. Drafts and archived Rounds do not use a slot.
+          </span>
+          {creator?.plan === "free" ? (
+            <button
+              className={styles.inlineButton}
+              onClick={() => void startUpgrade().catch((caught) => setError(humanError(caught)))}
+              type="button"
+            >
+              Explore Pro
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {!canEdit && creator ? (
+        <p className="notice">Viewer access is read-only for Rounds and results.</p>
+      ) : null}
+
+      <section className={styles.libraryToolbar} aria-label="Round library filters">
+        <label className="field">
+          <span>Search Rounds</span>
+          <input
+            className="input"
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search title, description, or tag"
+            type="search"
+            value={search}
+          />
+        </label>
+        <label className="field">
+          <span>Folder</span>
+          <select
+            className="select"
+            onChange={(event) => setFolderFilter(event.target.value)}
+            value={folderFilter}
+          >
+            <option value="all">All folders</option>
+            <option value="unfiled">Unfiled</option>
+            {folders.map((folder) => (
+              <option key={folder.id} value={folder.id}>
+                {folder.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className={styles.archivedToggle}>
+          <input
+            checked={showArchived}
+            onChange={(event) => setShowArchived(event.target.checked)}
+            type="checkbox"
+          />
+          Include archived
+        </label>
+      </section>
+
+      {canEdit ? (
+        <details className={styles.folderManager}>
+          <summary>Manage folders</summary>
+          <form className={styles.folderForm} onSubmit={createFolder}>
+            <label className="field">
+              <span>New folder name</span>
+              <input
+                className="input"
+                maxLength={80}
+                onChange={(event) => setNewFolderName(event.target.value)}
+                required
+                value={newFolderName}
+              />
+            </label>
+            <button
+              className="button-quiet small-button"
+              disabled={busyId === "folder-create"}
+              type="submit"
+            >
+              Add folder
+            </button>
+          </form>
+          {folders.length ? (
+            <ul className={styles.folderList}>
+              {folders.map((folder) => (
+                <li key={folder.id}>
+                  {editingFolder?.id === folder.id ? (
+                    <form className={styles.folderForm} onSubmit={renameFolder}>
+                      <label className="field">
+                        <span className="sr-only">Rename {folder.name}</span>
+                        <input
+                          autoFocus
+                          className="input"
+                          maxLength={80}
+                          onChange={(event) =>
+                            setEditingFolder({ ...editingFolder, name: event.target.value })
+                          }
+                          required
+                          value={editingFolder.name}
+                        />
+                      </label>
+                      <button className="button-quiet small-button" type="submit">
+                        Save
+                      </button>
+                      <button
+                        className="button-quiet small-button"
+                        onClick={() => setEditingFolder(null)}
+                        type="button"
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <span>{folder.name}</span>
+                      <span className={styles.folderActions}>
+                        <button onClick={() => setEditingFolder(folder)} type="button">
+                          Rename
+                        </button>
+                        <button onClick={() => void deleteFolder(folder)} type="button">
+                          Delete
+                        </button>
+                      </span>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className={styles.muted}>No folders yet.</p>
+          )}
+        </details>
+      ) : null}
+
+      {loading ? <p className={styles.muted}>Loading Rounds…</p> : null}
+      {!loading && visibleQuizzes.length === 0 ? (
+        <div className={styles.emptyState}>
+          <h2>{quizzes.length === 0 ? "Your first Round starts here" : "No Rounds match"}</h2>
+          <p>
+            {quizzes.length === 0 && canEdit
+              ? "Use a starter, trusted source, import, or blank canvas to create it."
+              : quizzes.length === 0
+                ? "No Rounds have been shared in this workspace yet."
+                : "Try a different search, folder, or include archived Rounds."}
+          </p>
+          {canEdit ? (
+            <Link className="button" href="/create">
+              Create a Round
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
+
+      <section className={styles.roundGrid} aria-label="Round library">
+        {visibleQuizzes.map((quiz) => {
+          const archived = quiz.status === "archived";
+          const canHost = canEdit && Boolean(quiz.currentVersionId) && !archived;
+          return (
+            <article className={styles.roundCard} key={quiz.id}>
+              <div className={styles.cardTopline}>
+                <span
+                  className={styles.status}
+                  data-tone={quiz.status === "published" ? "ready" : quiz.status}
+                >
+                  {quiz.status}
+                </span>
+                <span className={styles.updatedAt}>
+                  Updated {new Date(quiz.updatedAt).toLocaleDateString("en-CA")}
+                </span>
+              </div>
+              <div>
+                <h2>{quiz.title}</h2>
+                {quiz.description ? (
+                  <p className={styles.roundDescription}>{quiz.description}</p>
+                ) : null}
+              </div>
+              {quiz.folderId || quiz.tags.length ? (
+                <div className={styles.conceptList}>
+                  {quiz.folderId ? (
+                    <span className={styles.subtlePill}>
+                      {folders.find((folder) => folder.id === quiz.folderId)?.name ?? "Folder"}
+                    </span>
+                  ) : null}
+                  {quiz.tags.map((tag) => (
+                    <span className={styles.subtlePill} key={tag}>
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <p className={styles.questionCount}>
+                {quiz.draft.questions.length} question{quiz.draft.questions.length === 1 ? "" : "s"}
+              </p>
+              <div className={styles.primaryActions}>
+                {canHost ? (
+                  <Link className="button small-button" href={`/host/setup/${quiz.id}`}>
+                    Host live
+                  </Link>
+                ) : null}
+                {!archived ? (
+                  <Link
+                    className="button-quiet small-button"
+                    href={canEdit ? `/quiz/${quiz.id}` : `/quiz/${quiz.id}/preview`}
+                  >
+                    {canEdit ? "Edit" : "View"}
+                  </Link>
+                ) : null}
+                {!archived && productFeatures?.recoveryRehearsal ? (
+                  <Link className="button-quiet small-button" href={`/quiz/${quiz.id}/rehearse`}>
+                    Rehearse
+                  </Link>
+                ) : null}
+                <details className={styles.moreMenu}>
+                  <summary>More</summary>
+                  <div className={styles.moreMenuPanel}>
+                    <Link href={`/quiz/${quiz.id}/preview`}>Preview</Link>
+                    {canEdit ? (
+                      <button
+                        disabled={busyId === quiz.id}
+                        onClick={() => void duplicate(quiz.id)}
+                        type="button"
+                      >
+                        Duplicate
+                      </button>
+                    ) : null}
+                    {canEdit ? (
+                      <button onClick={() => beginOrganizing(quiz)} type="button">
+                        Organize
+                      </button>
+                    ) : null}
+                    {entitlements?.csvExport ? (
+                      <>
+                        <button onClick={() => void downloadRound(quiz.id, "json")} type="button">
+                          Export JSON
+                        </button>
+                        <button onClick={() => void downloadRound(quiz.id, "csv")} type="button">
+                          Export CSV
+                        </button>
+                        <button
+                          onClick={() => void downloadRound(quiz.id, "qti.zip")}
+                          type="button"
+                        >
+                          Export QTI 3
+                        </button>
+                      </>
+                    ) : null}
+                    {canEdit ? (
+                      <button
+                        className={styles.dangerAction}
+                        disabled={busyId === quiz.id}
+                        onClick={() => void setArchived(quiz.id, !archived)}
+                        type="button"
+                      >
+                        {archived ? "Restore" : "Archive"}
+                      </button>
+                    ) : null}
+                  </div>
+                </details>
+              </div>
+              {organizingId === quiz.id ? (
+                <form
+                  className={styles.organizationForm}
+                  onSubmit={(event) => void saveOrganization(event, quiz.id)}
+                >
+                  <label className="field">
+                    <span>Folder</span>
+                    <select
+                      className="select"
+                      onChange={(event) => setOrganizationFolderId(event.target.value)}
+                      value={organizationFolderId}
+                    >
+                      <option value="">Unfiled</option>
+                      {folders.map((folder) => (
+                        <option key={folder.id} value={folder.id}>
+                          {folder.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Tags, separated by commas</span>
+                    <input
+                      className="input"
+                      onChange={(event) => setOrganizationTags(event.target.value)}
+                      placeholder="onboarding, safety"
+                      value={organizationTags}
+                    />
+                  </label>
+                  <div className={styles.listCardActions}>
+                    <button className="button small-button" type="submit">
+                      Save organization
+                    </button>
+                    <button
+                      className="button-quiet small-button"
+                      onClick={() => setOrganizingId("")}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+            </article>
+          );
+        })}
+      </section>
+    </WorkspaceShell>
+  );
+}
+
+function DashboardGate() {
+  const { loading, productFeatures } = useWorkspace();
+  if (loading) return <p className={styles.dashboardLoading}>Loading your workspace…</p>;
+  if (!productFeatures?.uxBeta) return <LegacyDashboardPage />;
+  return <BetaDashboard />;
+}
+
+export default function DashboardPage() {
+  return (
+    <WorkspaceProvider>
+      <DashboardGate />
+    </WorkspaceProvider>
   );
 }

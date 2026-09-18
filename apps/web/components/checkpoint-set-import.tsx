@@ -3,6 +3,7 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import type { ImportValidationReport } from "@openround/contracts";
 import { API_URL } from "../lib/api";
+import { recordCreationEvent } from "./workspace/product-events";
 
 type ImportFormat = ImportValidationReport["format"];
 
@@ -14,16 +15,12 @@ interface ImportResponse {
 
 interface CheckpointSetImportProps {
   enabled: boolean;
-  onImported: () => Promise<void>;
+  onImported: (quiz: { id: string; title: string }) => Promise<void>;
   onUpgrade: () => void;
+  plain?: boolean;
+  trackCreation?: boolean;
+  terminology?: "legacy" | "round";
 }
-
-const formatHelp: Record<ImportFormat, string> = {
-  openround_json: "Paste an OpenRound checkpoint-set export or choose its .json file.",
-  csv: "Paste an OpenRound CSV export or choose its .csv file.",
-  bulk: "Separate checkpoints with a blank line. Start choices with '* ' for correct or '- ' for incorrect.",
-  qti3: "Choose a QTI 3 ZIP package. Selected response, multi-select, true/false, and numeric items are supported.",
-};
 
 const formatAccept: Record<ImportFormat, string> = {
   openround_json: ".json,application/json",
@@ -46,7 +43,14 @@ function fileAsBase64(file: File) {
   });
 }
 
-export function CheckpointSetImport({ enabled, onImported, onUpgrade }: CheckpointSetImportProps) {
+export function CheckpointSetImport({
+  enabled,
+  onImported,
+  onUpgrade,
+  plain = false,
+  trackCreation = false,
+  terminology = "legacy",
+}: CheckpointSetImportProps) {
   const [format, setFormat] = useState<ImportFormat>("openround_json");
   const [title, setTitle] = useState("");
   const [data, setData] = useState("");
@@ -82,6 +86,7 @@ export function CheckpointSetImport({ enabled, onImported, onUpgrade }: Checkpoi
     setError("");
     setMessage("");
     setValidation(null);
+    if (trackCreation) recordCreationEvent("creation_started", "import");
     try {
       const response = await fetch(`${API_URL}/v1/quizzes/import`, {
         method: "POST",
@@ -98,18 +103,22 @@ export function CheckpointSetImport({ enabled, onImported, onUpgrade }: Checkpoi
       if (result.validation) setValidation(result.validation);
       if (!response.ok || !result.quiz) {
         throw new Error(
-          result.error?.message ?? `The checkpoint set could not be imported (${response.status}).`,
+          result.error?.message ??
+            `The ${terminology === "round" ? "Round" : "checkpoint set"} could not be imported (${response.status}).`,
         );
       }
       setMessage(
-        `${result.quiz.title} was imported as a draft with ${result.validation?.importedCheckpoints ?? 0} checkpoints.`,
+        `${result.quiz.title} was imported as a draft with ${result.validation?.importedCheckpoints ?? 0} ${terminology === "round" ? "questions" : "checkpoints"}.`,
       );
+      if (trackCreation) recordCreationEvent("creation_completed", "import");
       setData("");
       setTitle("");
-      await onImported();
+      await onImported(result.quiz);
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "The checkpoint set could not be imported.",
+        caught instanceof Error
+          ? caught.message
+          : `The ${terminology === "round" ? "Round" : "checkpoint set"} could not be imported.`,
       );
     } finally {
       setBusy(false);
@@ -117,11 +126,16 @@ export function CheckpointSetImport({ enabled, onImported, onUpgrade }: Checkpoi
   }
 
   return (
-    <section className="panel portability-panel" aria-labelledby="import-heading">
+    <section
+      className={plain ? "portability-panel" : "panel portability-panel"}
+      aria-labelledby="import-heading"
+    >
       <div className="portability-heading">
         <div>
           <p className="eyebrow">Portable by design</p>
-          <h2 id="import-heading">Import a checkpoint set</h2>
+          <h2 id="import-heading">
+            Import {terminology === "round" ? "a Round" : "a checkpoint set"}
+          </h2>
         </div>
         <span className="status-pill">Draft only</span>
       </div>
@@ -131,7 +145,11 @@ export function CheckpointSetImport({ enabled, onImported, onUpgrade }: Checkpoi
       </p>
       {!enabled ? (
         <div className="notice">
-          <p>Import and checkpoint-set exports are included with Hosted Pro.</p>
+          <p>
+            {terminology === "round"
+              ? "Round import and export are included with Hosted Pro."
+              : "Import and checkpoint-set exports are included with Hosted Pro."}
+          </p>
           <button className="button-quiet small-button" onClick={onUpgrade} type="button">
             Explore Pro
           </button>
@@ -159,7 +177,9 @@ export function CheckpointSetImport({ enabled, onImported, onUpgrade }: Checkpoi
               </select>
             </label>
             <label className="field">
-              <span>New title (optional)</span>
+              <span>
+                {terminology === "round" ? "New Round title (optional)" : "New title (optional)"}
+              </span>
               <input
                 className="input"
                 maxLength={160}
@@ -207,7 +227,13 @@ export function CheckpointSetImport({ enabled, onImported, onUpgrade }: Checkpoi
             </label>
           )}
           <p className="muted" id="import-format-help">
-            {formatHelp[format]}
+            {format === "openround_json"
+              ? `Paste an OpenRound ${terminology === "round" ? "JSON" : "checkpoint-set"} export or choose its .json file.`
+              : format === "csv"
+                ? "Paste an OpenRound CSV export or choose its .csv file."
+                : format === "bulk"
+                  ? `Separate ${terminology === "round" ? "questions" : "checkpoints"} with a blank line. Start choices with '* ' for correct or '- ' for incorrect.`
+                  : "Choose a QTI 3 ZIP package. Selected response, multi-select, true/false, and numeric items are supported."}
           </p>
           <button className="button" disabled={busy || !data.trim()} type="submit">
             {busy ? "Validating…" : "Validate and import draft"}

@@ -19,6 +19,7 @@ import {
   CreateQnaReplySchema,
   CreateSessionStaffCredentialSchema,
   CreateSessionSchema,
+  CreatorControlPassResponseSchema,
   EmbedAllowedOriginsSchema,
   EmbedPolicySchema,
   HostCommandSchema,
@@ -42,6 +43,13 @@ import {
   OperationalFeaturesViewSchema,
   OrganizeQuizSchema,
   PublicFeaturesSchema,
+  ProductEventBatchSchema,
+  ReportContextSchema,
+  ReportSummaryPageSchema,
+  SessionSummaryPageSchema,
+  FollowupSummaryPageSchema,
+  StarterIdSchema,
+  StartersResponseSchema,
   QuizContentSchema,
   QnaSettingsSchema,
   SetAudienceSignalSchema,
@@ -86,6 +94,7 @@ import { AuthoringError, type AuthoringService } from "./authoring-service.js";
 import { OidcError, type OidcService } from "./oidc-service.js";
 import { LtiError, type LtiService } from "./lti-service.js";
 import { InteractionError, type InteractionService } from "./interaction-service.js";
+import { instantiateStarter, starterSummaries } from "./starters.js";
 
 const IdParamsSchema = z.object({ id: z.string().uuid() });
 const SessionMediaParamsSchema = z.object({ id: z.string().uuid(), mediaId: z.string().uuid() });
@@ -126,6 +135,7 @@ const FollowupMediaParamsSchema = z.object({
   mediaId: z.string().uuid(),
 });
 const AuthoringJobParamsSchema = z.object({ id: z.string().uuid() });
+const StarterParamsSchema = z.object({ id: StarterIdSchema });
 const FederatedIdentityParamsSchema = z.object({ identityId: z.string().uuid() });
 const LtiLaunchParamsSchema = z.object({ launchId: z.string().uuid() });
 const LtiRegistrationParamsSchema = z.object({
@@ -144,6 +154,52 @@ const QuizListQuerySchema = z.object({ archived: z.enum(["true", "false"]).optio
 const InteractionTranscriptQuerySchema = z.object({
   audit: z.enum(["true", "false"]).default("false"),
 });
+const HistoryCursorSchema = z
+  .string()
+  .min(1)
+  .max(1_000)
+  .transform((value, context) => {
+    try {
+      const decoded = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+      return z
+        .object({ createdAt: z.string().datetime(), id: z.string().uuid() })
+        .strict()
+        .parse(decoded);
+    } catch {
+      context.addIssue({ code: "custom", message: "Cursor is malformed" });
+      return z.NEVER;
+    }
+  });
+const HistoryQueryBase = {
+  cursor: HistoryCursorSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(25),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+};
+const SessionHistoryQuerySchema = z.object({
+  ...HistoryQueryBase,
+  status: z.enum(["active", "finished", "expired"]).optional(),
+  quizId: z.string().uuid().optional(),
+});
+const ReportHistoryQuerySchema = z.object({
+  ...HistoryQueryBase,
+  status: z.enum(["pending", "ready", "failed"]).optional(),
+  quizId: z.string().uuid().optional(),
+});
+const FollowupHistoryQuerySchema = z.object({
+  ...HistoryQueryBase,
+  status: z.enum(["scheduled", "open", "closed", "expired"]).optional(),
+});
+
+function historyCursor(item: { createdAt: Date; cursorCreatedAt?: string; id: string }) {
+  return Buffer.from(
+    JSON.stringify({
+      createdAt: item.cursorCreatedAt ?? item.createdAt.toISOString(),
+      id: item.id,
+    }),
+    "utf8",
+  ).toString("base64url");
+}
 
 function transcriptCsvCell(value: unknown) {
   const raw = value === null || value === undefined ? "" : String(value);
@@ -337,10 +393,14 @@ export async function registerRoutes(
     const { effective } = await operationalFeatures();
     const allowlist = config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST;
     const workspaceAllowed = allowlist.length === 0 || allowlist.includes(workspaceId);
+    const uxAllowlist = config.UX_BETA_WORKSPACE_ALLOWLIST;
+    const uxAllowed = uxAllowlist.includes(workspaceId);
     return {
       roundExperiences: workspaceAllowed && effective.roundExperiences,
       audiencePulse: workspaceAllowed && effective.audiencePulse,
       roomChat: workspaceAllowed && effective.roomChat,
+      uxBeta: uxAllowed && config.FEATURE_UX_BETA,
+      recoveryRehearsal: uxAllowed && config.FEATURE_UX_BETA && config.FEATURE_RECOVERY_REHEARSAL,
     };
   };
   const requireWorkspaceRole = (
@@ -421,6 +481,18 @@ export async function registerRoutes(
         moderationActions: interactionEvidence.moderationActions,
       },
     };
+  };
+  const reportContext = async (report: { sessionId: string }) => {
+    const session = await repository.getSessionById(report.sessionId);
+    if (!session) return null;
+    const version = await repository.getQuizVersion(session.workspaceId, session.quizVersionId);
+    if (!version) return null;
+    return ReportContextSchema.parse({
+      quizId: version.quizId,
+      quizTitle: session.state.quiz.title,
+      sessionCreatedAt: session.createdAt.toISOString(),
+      sessionUpdatedAt: session.updatedAt.toISOString(),
+    });
   };
 
   app.setErrorHandler((error, request, reply) => {
@@ -517,6 +589,8 @@ export async function registerRoutes(
       roundExperiences: effective.roundExperiences,
       audiencePulse: effective.audiencePulse,
       roomChat: effective.roomChat,
+      uxBeta: config.FEATURE_UX_BETA,
+      recoveryRehearsal: config.FEATURE_UX_BETA && config.FEATURE_RECOVERY_REHEARSAL,
     });
   });
 
@@ -592,6 +666,34 @@ export async function registerRoutes(
         : null,
     };
   });
+
+  app.post(
+    "/v1/product-events",
+    { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const creator = await auth.requireCreator(request, reply);
+      if (!creator) return;
+      const input = ProductEventBatchSchema.parse(request.body);
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
+      const events = input.events.map((event) => ({
+        id: randomUUID(),
+        workspaceId: creator.workspaceId,
+        name: event.name,
+        occurredAt: event.occurredAt,
+        dimensions: {
+          ...event.dimensions,
+          segment: creator.segment,
+          betaVersion: "p0-2026" as const,
+        },
+        expiresAt,
+        createdAt: now,
+      }));
+      await repository.recordProductEvents(events);
+      for (const event of events) metrics.recordProductEvent(event);
+      return reply.code(202).send({ accepted: events.length });
+    },
+  );
 
   app.get("/v1/auth/oidc/status", async (request) => {
     const { workspaceId } = z.object({ workspaceId: z.string().uuid() }).parse(request.query);
@@ -1278,6 +1380,44 @@ export async function registerRoutes(
     };
   });
 
+  app.get("/v1/starters", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    return StartersResponseSchema.parse({ starters: starterSummaries });
+  });
+
+  app.post("/v1/starters/:id/use", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id } = StarterParamsSchema.parse(request.params);
+    const draft = instantiateStarter(id);
+    const now = new Date();
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: creator.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      folderId: null,
+      tags: ["starter"],
+      createdAt: now,
+      updatedAt: now,
+    });
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "starter.use",
+      targetType: "quiz",
+      targetId: quiz.id,
+      requestId: request.id,
+      metadata: { starterId: id, starterVersion: 1 },
+    });
+    return reply.code(201).send({ quiz });
+  });
+
   app.post("/v1/quizzes", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
@@ -1587,6 +1727,39 @@ export async function registerRoutes(
     return quiz ? { quiz } : apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
   });
 
+  app.get("/v1/sessions", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const query = SessionHistoryQuerySchema.parse(request.query);
+    const page = await repository.listSessionHistory(creator.workspaceId, {
+      limit: query.limit,
+      ...(query.cursor
+        ? {
+            cursor: {
+              createdAt: new Date(query.cursor.createdAt),
+              cursorCreatedAt: query.cursor.createdAt,
+              id: query.cursor.id,
+            },
+          }
+        : {}),
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.quizId ? { quizId: query.quizId } : {}),
+      ...(query.from ? { from: new Date(query.from) } : {}),
+      ...(query.to ? { to: new Date(query.to) } : {}),
+      now: new Date(),
+    });
+    const last = page.items.at(-1);
+    return SessionSummaryPageSchema.parse({
+      items: page.items.map((item) => ({
+        ...item,
+        createdAt: item.createdAt.toISOString(),
+        updatedAt: item.updatedAt.toISOString(),
+        expiresAt: item.expiresAt.toISOString(),
+      })),
+      nextCursor: page.hasMore && last ? historyCursor(last) : null,
+    });
+  });
+
   app.post("/v1/sessions", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
@@ -1610,6 +1783,31 @@ export async function registerRoutes(
     });
     return reply.code(201).send(session);
   });
+
+  app.post(
+    "/v1/sessions/:id/control-pass",
+    { config: { rateLimit: { max: 5, timeWindow: "5 minutes" } } },
+    async (request, reply) => {
+      const creator = await auth.requireCreator(request, reply);
+      if (!creator) return;
+      if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+      const { id } = IdParamsSchema.parse(request.params);
+      const created = await sessions.createCreatorControlPass(creator, id);
+      await repository.recordAudit({
+        workspaceId: creator.workspaceId,
+        actorId: creator.userId,
+        action: "session.creator_resume.create",
+        targetType: "session_staff_credential",
+        targetId: created.credential.id,
+        requestId: request.id,
+        metadata: { sessionId: id, expiresAt: created.credential.expiresAt },
+      });
+      return reply
+        .header("cache-control", "private, no-store")
+        .code(201)
+        .send(CreatorControlPassResponseSchema.parse(created));
+    },
+  );
 
   app.post("/v1/sessions/:id/staff", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
@@ -1645,6 +1843,7 @@ export async function registerRoutes(
         id: credential.id,
         sessionId: credential.sessionId,
         role: credential.role,
+        purpose: credential.purpose,
         label: credential.label,
         expiresAt: credential.expiresAt.toISOString(),
         revokedAt: credential.revokedAt?.toISOString() ?? null,
@@ -1662,7 +1861,7 @@ export async function registerRoutes(
     if (!session || session.workspaceId !== creator.workspaceId) {
       return apiError(reply, 404, "NOT_FOUND", "Session not found", request.id);
     }
-    const revoked = await repository.revokeSessionStaff(creator.workspaceId, credentialId);
+    const revoked = await repository.revokeSessionStaff(creator.workspaceId, id, credentialId);
     if (!revoked) {
       return apiError(reply, 404, "NOT_FOUND", "Staff credential not found", request.id);
     }
@@ -1934,8 +2133,45 @@ export async function registerRoutes(
     const { id } = IdParamsSchema.parse(request.params);
     const report = await repository.getReportBySession(creator.workspaceId, id);
     return report
-      ? { report, entitlements: entitlementsFor(creator.plan, config) }
+      ? {
+          report,
+          context: await reportContext(report),
+          entitlements: entitlementsFor(creator.plan, config),
+        }
       : apiError(reply, 404, "NOT_FOUND", "Report not found", request.id);
+  });
+
+  app.get("/v1/reports", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const query = ReportHistoryQuerySchema.parse(request.query);
+    const page = await repository.listReportHistory(creator.workspaceId, {
+      limit: query.limit,
+      ...(query.cursor
+        ? {
+            cursor: {
+              createdAt: new Date(query.cursor.createdAt),
+              cursorCreatedAt: query.cursor.createdAt,
+              id: query.cursor.id,
+            },
+          }
+        : {}),
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.quizId ? { quizId: query.quizId } : {}),
+      ...(query.from ? { from: new Date(query.from) } : {}),
+      ...(query.to ? { to: new Date(query.to) } : {}),
+      now: new Date(),
+    });
+    const last = page.items.at(-1);
+    return ReportSummaryPageSchema.parse({
+      items: page.items.map((item) => ({
+        ...item,
+        generatedAt: item.generatedAt?.toISOString() ?? null,
+        createdAt: item.createdAt.toISOString(),
+        expiresAt: item.expiresAt.toISOString(),
+      })),
+      nextCursor: page.hasMore && last ? historyCursor(last) : null,
+    });
   });
 
   app.get("/v1/reports/:id", async (request, reply) => {
@@ -1946,6 +2182,7 @@ export async function registerRoutes(
     return report
       ? {
           report,
+          context: await reportContext(report),
           entitlements: entitlementsFor(creator.plan, config),
           followup: await followups.getForReport(creator.workspaceId, id),
         }
@@ -2102,6 +2339,39 @@ export async function registerRoutes(
         ...access,
         url: link(access.token!),
       })),
+    });
+  });
+
+  app.get("/v1/followups", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const query = FollowupHistoryQuerySchema.parse(request.query);
+    const page = await repository.listFollowupHistory(creator.workspaceId, {
+      limit: query.limit,
+      ...(query.cursor
+        ? {
+            cursor: {
+              createdAt: new Date(query.cursor.createdAt),
+              cursorCreatedAt: query.cursor.createdAt,
+              id: query.cursor.id,
+            },
+          }
+        : {}),
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.from ? { from: new Date(query.from) } : {}),
+      ...(query.to ? { to: new Date(query.to) } : {}),
+      now: new Date(),
+    });
+    const last = page.items.at(-1);
+    return FollowupSummaryPageSchema.parse({
+      items: page.items.map((item) => ({
+        ...item,
+        opensAt: item.opensAt.toISOString(),
+        closesAt: item.closesAt.toISOString(),
+        expiresAt: item.expiresAt.toISOString(),
+        createdAt: item.createdAt.toISOString(),
+      })),
+      nextCursor: page.hasMore && last ? historyCursor(last) : null,
     });
   });
 

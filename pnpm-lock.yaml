@@ -183,6 +183,9 @@ importers:
       '@openround/experience':
         specifier: workspace:*
         version: link:../../packages/experience
+      '@openround/rehearsal':
+        specifier: workspace:*
+        version: link:../../packages/rehearsal
       next:
         specifier: 16.3.5
         version: 16.3.5(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@26.5.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -251,6 +254,18 @@ importers:
       '@openround/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/rehearsal:
+    dependencies:
+      '@openround/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@openround/game-engine':
+        specifier: workspace:*
+        version: link:../game-engine
+      '@openround/insights':
+        specifier: workspace:*
+        version: link:../insights
 
 packages:
 

@@ -2,10 +2,58 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Entitlements, Followup, Report, ReportV2, ReportV3 } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
+import { RecoveryStorySummary } from "../../../components/recovery-story";
 import { API_URL, apiFetch, humanError } from "../../../lib/api";
+import { deriveRecoverySummary } from "../../../lib/report-summary";
+
+interface ReportContext {
+  quizId: string;
+  quizTitle: string;
+  sessionCreatedAt: string;
+  sessionUpdatedAt: string;
+}
+
+type ReportTab = "evidence" | "questions" | "participants" | "interactions";
+
+function RecoveryStory({ report }: { report: ReportV2 | ReportV3 }) {
+  const summary = deriveRecoverySummary(report);
+  const evidenceLabel =
+    summary.evidenceTypes.length === 0
+      ? "No recheck evidence"
+      : summary.evidenceTypes
+          .map((type) => (type === "linked_recheck" ? "linked recheck" : "revote"))
+          .join(" and ");
+  return (
+    <RecoveryStorySummary
+      model={{
+        recovered: summary.recovered,
+        denominator: summary.denominator,
+        recoveryPercent: summary.recoveryPercent,
+        initialAccuracyPercent: report.initialAccuracy.percent,
+        evidenceLabel,
+        unresolvedCount: summary.unresolved.length,
+        unresolvedNarrative: summary.topUnresolved
+          ? `${summary.topUnresolved.conceptKey} has the strongest unresolved evidence (${summary.topUnresolved.unresolved}).`
+          : "No authored concept remains unresolved in the available evidence.",
+        interventions: report.interventions.map((item) => ({
+          id: item.id,
+          label: item.type.replaceAll("_", " "),
+          startedAt: item.startedAt,
+          followedByLinkedRecheck: Boolean(item.linkedRecheckRoundId),
+        })),
+        nextActionLabel: summary.unresolved.length ? "Target practice" : "Review evidence",
+        nextAction: summary.nextAction,
+        highConfidenceWrong: summary.highConfidenceWrong,
+        correctButUnsure: summary.correctButUnsure,
+        smallSample: summary.smallSample,
+        evidenceNote: report.evidenceNote,
+      }}
+    />
+  );
+}
 
 function EvidenceSections({ report }: { report: ReportV2 | ReportV3 }) {
   const recovered = report.recovery.reduce((total, item) => total + item.recovered, 0);
@@ -164,9 +212,11 @@ function EvidenceSections({ report }: { report: ReportV2 | ReportV3 }) {
 function InteractionEvidenceSections({
   report,
   transcriptExport,
+  uxBeta,
 }: {
   report: ReportV3;
   transcriptExport: boolean;
+  uxBeta: boolean;
 }) {
   return (
     <section className="panel" style={{ marginBottom: 26 }}>
@@ -223,7 +273,9 @@ function InteractionEvidenceSections({
                       ? "Intervention"
                       : context.contextKey === "lobby"
                         ? "Lobby"
-                        : "Checkpoint / recheck"}
+                        : uxBeta
+                          ? "Question / recheck"
+                          : "Checkpoint / recheck"}
                   </td>
                   <td>{context.uniqueParticipants}</td>
                   <td>{context.bySignal.got_it}</td>
@@ -288,10 +340,12 @@ function FollowupBuilder({
   report,
   entitlement,
   initialFollowup,
+  uxBeta,
 }: {
   report: ReportV2 | ReportV3;
   entitlement: boolean;
   initialFollowup: Followup | null;
+  uxBeta: boolean;
 }) {
   const unresolved = report.unresolvedConcepts.filter((concept) => concept.unresolved > 0);
   const [followup, setFollowup] = useState(initialFollowup);
@@ -446,14 +500,15 @@ function FollowupBuilder({
       ) : followup ? (
         <>
           <p>
-            <strong>{followup.title}</strong> contains {followup.checkpointCount} checkpoint
+            <strong>{followup.title}</strong> contains {followup.checkpointCount}{" "}
+            {uxBeta ? "question" : "checkpoint"}
             {followup.checkpointCount === 1 ? "" : "s"} and closes on{" "}
             {new Date(followup.closesAt).toLocaleString()}.
           </p>
           <p className="muted">
             {followup.timeMode === "flex"
               ? "Time-flex mode has no countdown."
-              : "Standard checkpoint timers are enforced by the server."}{" "}
+              : `Standard ${uxBeta ? "question" : "checkpoint"} timers are enforced by the server.`}{" "}
             {followup.closedAt ? "This follow-up is closed." : "Links remain revocable."}
           </p>
           {created ? (
@@ -613,7 +668,7 @@ function FollowupBuilder({
                 value={timeMode}
               >
                 <option value="flex">Time-flex, no countdown</option>
-                <option value="timed">Use checkpoint timers</option>
+                <option value="timed">Use {uxBeta ? "question" : "checkpoint"} timers</option>
               </select>
             </label>
             <label className="field">
@@ -647,8 +702,11 @@ export default function ReportPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [report, setReport] = useState<Report | null>(null);
+  const [context, setContext] = useState<ReportContext | null>(null);
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [followup, setFollowup] = useState<Followup | null>(null);
+  const [uxBeta, setUxBeta] = useState(false);
+  const [activeTab, setActiveTab] = useState<ReportTab>("evidence");
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
 
@@ -661,9 +719,11 @@ export default function ReportPage() {
           report: Report;
           entitlements: Entitlements;
           followup: Followup | null;
+          context?: ReportContext;
         }>(`/v1/reports/${id}`);
         if (cancelled) return;
         setReport(response.report);
+        setContext(response.context ?? null);
         setEntitlements(response.entitlements);
         setFollowup(response.followup);
         setError("");
@@ -681,7 +741,38 @@ export default function ReportPage() {
     };
   }, [id, router]);
 
+  useEffect(() => {
+    apiFetch<{ productFeatures?: { uxBeta?: boolean } }>("/v1/auth/me")
+      .then((account) => setUxBeta(Boolean(account.productFeatures?.uxBeta)))
+      .catch(() => setUxBeta(false));
+  }, []);
+
   const evidence = report?.schemaVersion === 2 || report?.schemaVersion === 3 ? report : null;
+  const detailTabs: { id: ReportTab; label: string }[] = [
+    ...(evidence ? [{ id: "evidence" as const, label: "Evidence" }] : []),
+    ...(report?.schemaVersion === 3
+      ? [{ id: "interactions" as const, label: "Conversation" }]
+      : []),
+    { id: "questions", label: "Questions" },
+    { id: "participants", label: "Participants" },
+  ];
+  const selectedTab = detailTabs.some((tab) => tab.id === activeTab)
+    ? activeTab
+    : detailTabs[0]?.id;
+
+  function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % detailTabs.length;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + detailTabs.length) % detailTabs.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = detailTabs.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextTab = detailTabs[nextIndex];
+    if (!nextTab) return;
+    setActiveTab(nextTab.id);
+    document.getElementById(`report-tab-${nextTab.id}`)?.focus();
+  }
 
   async function deleteSession() {
     if (!report || !window.confirm("Delete this session, its answers, and this report?")) return;
@@ -704,11 +795,20 @@ export default function ReportPage() {
           Dashboard
         </Link>
       </header>
-      <main className="shell page-main">
+      <main className="shell page-main" id="main">
         <div className="page-heading">
           <div>
             <p className="eyebrow">Session report</p>
-            <h1>What the room understood</h1>
+            <h1>
+              {uxBeta
+                ? (context?.quizTitle ?? "What the room understood")
+                : "What the room understood"}
+            </h1>
+            {uxBeta && context ? (
+              <p className="muted">
+                What the room understood · {new Date(context.sessionCreatedAt).toLocaleDateString()}
+              </p>
+            ) : null}
           </div>
           {report?.status === "ready" && entitlements?.csvExport ? (
             <div className="button-row">
@@ -749,108 +849,186 @@ export default function ReportPage() {
         ) : null}
         {report?.status === "ready" ? (
           <>
-            <p className="notice" style={{ marginBottom: 26 }}>
-              This report&apos;s stored retention deadline is{" "}
-              {new Date(report.expiresAt).toLocaleDateString()}. The current{" "}
-              {entitlements?.plan ?? "account"} plan defaults to{" "}
-              {entitlements?.reportRetentionDays ?? ""} days. You can delete it sooner below.
-            </p>
-            <section className="metric-grid" style={{ marginBottom: 26 }}>
-              <div className="metric">
-                <strong>{report.metrics.participantCount}</strong>
-                <span>participants</span>
-              </div>
-              <div className="metric">
-                <strong>{report.metrics.answerCount}</strong>
-                <span>answers</span>
-              </div>
-              <div className="metric">
-                <strong>{report.metrics.accuracyPercent}%</strong>
-                <span>accuracy</span>
-              </div>
-              <div className="metric">
-                <strong>{report.questions.filter((question) => question.difficult).length}</strong>
-                <span>difficult checkpoints</span>
-              </div>
-            </section>
-            {evidence ? <EvidenceSections report={evidence} /> : null}
-            {report.schemaVersion === 3 ? (
-              <InteractionEvidenceSections
-                report={report}
-                transcriptExport={Boolean(entitlements?.csvExport)}
-              />
+            {!uxBeta ? (
+              <p className="notice" style={{ marginBottom: 26 }}>
+                This report&apos;s stored retention deadline is{" "}
+                {new Date(report.expiresAt).toLocaleDateString()}. The current{" "}
+                {entitlements?.plan ?? "account"} plan defaults to{" "}
+                {entitlements?.reportRetentionDays ?? ""} days. You can delete it sooner below.
+              </p>
             ) : null}
-            {evidence && entitlements ? (
+            {evidence && uxBeta ? (
+              <RecoveryStory report={evidence} />
+            ) : (
+              <section className="metric-grid" style={{ marginBottom: 26 }}>
+                <div className="metric">
+                  <strong>{report.metrics.participantCount}</strong>
+                  <span>participants</span>
+                </div>
+                <div className="metric">
+                  <strong>{report.metrics.answerCount}</strong>
+                  <span>answers</span>
+                </div>
+                <div className="metric">
+                  <strong>{report.metrics.accuracyPercent}%</strong>
+                  <span>accuracy</span>
+                </div>
+                <div className="metric">
+                  <strong>
+                    {report.questions.filter((question) => question.difficult).length}
+                  </strong>
+                  <span>difficult {uxBeta ? "questions" : "checkpoints"}</span>
+                </div>
+              </section>
+            )}
+            {evidence && entitlements && uxBeta ? (
               <FollowupBuilder
                 entitlement={entitlements.followups}
                 initialFollowup={followup}
                 report={evidence}
+                uxBeta={uxBeta}
               />
             ) : null}
-            <section className="panel" style={{ marginBottom: 26 }}>
-              <h2 style={{ fontSize: "1.7rem" }}>Checkpoint analysis</h2>
+            {uxBeta ? (
+              <p className="notice" style={{ marginBottom: 26 }}>
+                This report&apos;s stored retention deadline is{" "}
+                {new Date(report.expiresAt).toLocaleDateString()}. The current{" "}
+                {entitlements?.plan ?? "account"} plan defaults to{" "}
+                {entitlements?.reportRetentionDays ?? ""} days. You can delete it sooner below.
+              </p>
+            ) : null}
+            {uxBeta ? (
+              <nav className="report-tabs" aria-label="Report details" role="tablist">
+                {detailTabs.map((tab, index) => (
+                  <button
+                    aria-controls={`report-panel-${tab.id}`}
+                    aria-selected={selectedTab === tab.id}
+                    className={selectedTab === tab.id ? "active" : ""}
+                    id={`report-tab-${tab.id}`}
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    onKeyDown={(event) => moveTabFocus(event, index)}
+                    role="tab"
+                    tabIndex={selectedTab === tab.id ? 0 : -1}
+                    type="button"
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </nav>
+            ) : null}
+            {(!uxBeta || selectedTab === "evidence") && evidence ? (
               <div
-                aria-label="Scrollable checkpoint analysis table"
-                role="region"
-                style={{ overflowX: "auto" }}
-                tabIndex={0}
+                aria-labelledby={uxBeta ? "report-tab-evidence" : undefined}
+                id={uxBeta ? "report-panel-evidence" : undefined}
+                role={uxBeta ? "tabpanel" : undefined}
               >
-                <table className="report-table">
-                  <thead>
-                    <tr>
-                      <th>Checkpoint</th>
-                      <th>Responses</th>
-                      <th>Correct</th>
-                      <th>Accuracy</th>
-                      <th>Follow-up</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.questions.map((question) => (
-                      <tr key={question.questionId}>
-                        <td>{question.prompt}</td>
-                        <td>{question.responses}</td>
-                        <td>{question.correct}</td>
-                        <td>{question.accuracyPercent}%</td>
-                        <td>{question.difficult ? "Review" : "On track"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <EvidenceSections report={evidence} />
               </div>
-            </section>
-            <section className="panel" style={{ marginBottom: 26 }}>
-              <h2 style={{ fontSize: "1.7rem" }}>Participant outcomes</h2>
+            ) : null}
+            {(!uxBeta || selectedTab === "interactions") && report.schemaVersion === 3 ? (
               <div
-                aria-label="Scrollable participant outcomes table"
-                role="region"
-                style={{ overflowX: "auto" }}
-                tabIndex={0}
+                aria-labelledby={uxBeta ? "report-tab-interactions" : undefined}
+                id={uxBeta ? "report-panel-interactions" : undefined}
+                role={uxBeta ? "tabpanel" : undefined}
               >
-                <table className="report-table">
-                  <thead>
-                    <tr>
-                      <th>Nickname</th>
-                      <th>Score</th>
-                      <th>Correct</th>
-                      <th>Answered</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.participants
-                      .sort((a, b) => b.score - a.score)
-                      .map((participant) => (
-                        <tr key={participant.participantId}>
-                          <td>{participant.nickname}</td>
-                          <td>{participant.score}</td>
-                          <td>{participant.correctCount}</td>
-                          <td>{participant.answerCount}</td>
+                <InteractionEvidenceSections
+                  report={report}
+                  transcriptExport={Boolean(entitlements?.csvExport)}
+                  uxBeta={uxBeta}
+                />
+              </div>
+            ) : null}
+            {!uxBeta && evidence && entitlements ? (
+              <FollowupBuilder
+                entitlement={entitlements.followups}
+                initialFollowup={followup}
+                report={evidence}
+                uxBeta={uxBeta}
+              />
+            ) : null}
+            {!uxBeta || selectedTab === "questions" ? (
+              <section
+                aria-labelledby={uxBeta ? "report-tab-questions" : undefined}
+                className="panel"
+                id={uxBeta ? "report-panel-questions" : undefined}
+                role={uxBeta ? "tabpanel" : undefined}
+                style={{ marginBottom: 26 }}
+              >
+                <h2 style={{ fontSize: "1.7rem" }}>
+                  {uxBeta ? "Question" : "Checkpoint"} analysis
+                </h2>
+                <div
+                  aria-label={`Scrollable ${uxBeta ? "question" : "checkpoint"} analysis table`}
+                  role="region"
+                  style={{ overflowX: "auto" }}
+                  tabIndex={0}
+                >
+                  <table className="report-table">
+                    <thead>
+                      <tr>
+                        <th>{uxBeta ? "Question" : "Checkpoint"}</th>
+                        <th>Responses</th>
+                        <th>Correct</th>
+                        <th>Accuracy</th>
+                        <th>Follow-up</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {report.questions.map((question) => (
+                        <tr key={question.questionId}>
+                          <td>{question.prompt}</td>
+                          <td>{question.responses}</td>
+                          <td>{question.correct}</td>
+                          <td>{question.accuracyPercent}%</td>
+                          <td>{question.difficult ? "Review" : "On track"}</td>
                         </tr>
                       ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : null}
+            {!uxBeta || selectedTab === "participants" ? (
+              <section
+                aria-labelledby={uxBeta ? "report-tab-participants" : undefined}
+                className="panel"
+                id={uxBeta ? "report-panel-participants" : undefined}
+                role={uxBeta ? "tabpanel" : undefined}
+                style={{ marginBottom: 26 }}
+              >
+                <h2 style={{ fontSize: "1.7rem" }}>Participant outcomes</h2>
+                <div
+                  aria-label="Scrollable participant outcomes table"
+                  role="region"
+                  style={{ overflowX: "auto" }}
+                  tabIndex={0}
+                >
+                  <table className="report-table">
+                    <thead>
+                      <tr>
+                        <th>Nickname</th>
+                        <th>Score</th>
+                        <th>Correct</th>
+                        <th>Answered</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...report.participants]
+                        .sort((a, b) => b.score - a.score)
+                        .map((participant) => (
+                          <tr key={participant.participantId}>
+                            <td>{participant.nickname}</td>
+                            <td>{participant.score}</td>
+                            <td>{participant.correctCount}</td>
+                            <td>{participant.answerCount}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : null}
             <section className="panel danger-panel">
               <h2 style={{ fontSize: "1.5rem" }}>Delete session data</h2>
               <p className="muted">

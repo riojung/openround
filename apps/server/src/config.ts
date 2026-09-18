@@ -136,7 +136,11 @@ export const ConfigSchema = z
     FEATURE_ROUND_EXPERIENCES: defaultTrueBooleanString,
     FEATURE_AUDIENCE_PULSE: defaultTrueBooleanString,
     FEATURE_ROOM_CHAT: defaultTrueBooleanString,
+    FEATURE_UX_BETA: booleanString,
+    FEATURE_RECOVERY_REHEARSAL: booleanString,
     THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST: uuidAllowlist,
+    UX_BETA_WORKSPACE_ALLOWLIST: uuidAllowlist,
+    TEST_INITIAL_WORKSPACE_ID: z.string().uuid().optional(),
     METRICS_ENABLED: defaultTrueBooleanString,
     METRICS_TOKEN: z.string().min(24).optional(),
     TRACING_ENABLED: booleanString,
@@ -169,6 +173,13 @@ export const ConfigSchema = z
       .default("info"),
   })
   .superRefine((config, ctx) => {
+    if (config.TEST_INITIAL_WORKSPACE_ID && config.NODE_ENV !== "test") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["TEST_INITIAL_WORKSPACE_ID"],
+        message: "Test workspace seeding is allowed only when NODE_ENV=test",
+      });
+    }
     const requireHttps = (key: "WEB_ORIGIN" | "PUBLIC_API_URL" | "S3_PUBLIC_ENDPOINT") => {
       const value = config[key];
       if (value && new URL(value).protocol !== "https:") {
