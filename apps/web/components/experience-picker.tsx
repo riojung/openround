@@ -87,7 +87,7 @@ export function ExperiencePicker({
         style={experienceThemeStyle(preview)}
       >
         <span className="status-pill">{selected.motion} motion</span>
-        <h3>{selected.name}</h3>
+        <h2 className="experience-preview-title">{selected.name}</h2>
         <p>{selected.description}</p>
         <div className="experience-choice-preview" aria-hidden="true">
           <span>A</span>

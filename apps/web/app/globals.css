@@ -1219,7 +1219,7 @@ h3 {
   background-size: 95px 80px;
 }
 
-.experience-preview h3 {
+.experience-preview-title {
   color: var(--experience-text);
   font-size: 1.8rem;
   margin: 18px 0 5px;

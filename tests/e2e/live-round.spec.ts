@@ -155,7 +155,12 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await expect(participant.getByText("It is Alberta's seat of government.")).toBeVisible();
 
   await creator.getByRole("button", { name: "Start round" }).click();
-  await expect(participant.getByText("Edmonton is the capital of Alberta.")).toBeVisible();
+  await expect(
+    participant.getByRole("heading", {
+      name: "Edmonton is the capital of Alberta.",
+      level: 1,
+    }),
+  ).toBeVisible();
   expect((await new AxeBuilder({ page: participant }).analyze()).violations).toEqual([]);
   await participant.getByRole("button", { name: "True", exact: true }).click();
   await expect(participant.getByText("Answer received and saved.")).toBeVisible();
