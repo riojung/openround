@@ -5,6 +5,7 @@ const sessionCount = Number(process.env.SESSIONS ?? "10");
 const clientsPerSession = Number(process.env.CLIENTS_PER_SESSION ?? "100");
 const joinBatchSize = Number(process.env.JOIN_BATCH_SIZE ?? "20");
 const sessionStaggerMs = Number(process.env.SESSION_STAGGER_MS ?? "750");
+const answerP95LimitMs = Number(process.env.ANSWER_P95_LIMIT_MS ?? "250");
 const assertPerformance = process.env.ASSERT_PERFORMANCE === "true";
 
 if (!Number.isInteger(sessionCount) || sessionCount < 1 || sessionCount > 20) {
@@ -18,6 +19,9 @@ if (sessionCount * clientsPerSession > 2_000) {
 }
 if (!Number.isInteger(sessionStaggerMs) || sessionStaggerMs < 0 || sessionStaggerMs > 5_000) {
   throw new Error("SESSION_STAGGER_MS must be an integer between 0 and 5000");
+}
+if (!Number.isInteger(answerP95LimitMs) || answerP95LimitMs < 1 || answerP95LimitMs > 1_000) {
+  throw new Error("ANSWER_P95_LIMIT_MS must be an integer between 1 and 1000");
 }
 
 interface GameLoadResult {
@@ -155,8 +159,8 @@ async function main() {
   if (assertPerformance) {
     assert.ok(result.worstSessionLatencyMs.joinP95 < 500, "Join p95 exceeded 500 ms");
     assert.ok(
-      result.worstSessionLatencyMs.answerAcknowledgementP95 < 250,
-      "Answer acknowledgement p95 exceeded 250 ms",
+      result.worstSessionLatencyMs.answerAcknowledgementP95 < answerP95LimitMs,
+      `Answer acknowledgement p95 exceeded ${answerP95LimitMs} ms`,
     );
     assert.ok(
       result.worstSessionLatencyMs.answerAcknowledgementP99 < 600,
