@@ -12,6 +12,7 @@ import type {
   ResponseDistribution,
 } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
+import { ParticipantIdentity } from "../../../components/participant-avatar";
 import { RecoveryStorySummary } from "../../../components/recovery-story";
 import { recordFollowupShared } from "../../../components/workspace/product-events";
 import { API_URL, apiFetch, humanError } from "../../../lib/api";
@@ -1080,7 +1081,12 @@ export default function ReportPage() {
                         .sort((a, b) => b.score - a.score)
                         .map((participant) => (
                           <tr key={participant.participantId}>
-                            <td>{participant.nickname}</td>
+                            <td>
+                              <ParticipantIdentity
+                                avatarId={participant.avatarId}
+                                nickname={participant.nickname}
+                              />
+                            </td>
                             <td>{participant.score}</td>
                             <td>{participant.correctCount}</td>
                             <td>{participant.answerCount}</td>

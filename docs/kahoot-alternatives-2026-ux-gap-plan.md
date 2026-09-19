@@ -11,6 +11,30 @@ Prices, plan limits, and vendor features change frequently. Recheck them before 
 publishing a comparison page, or making a sales claim. “Missing” below means no implemented or
 discoverable OpenRound workflow was found; it is not a claim that a competitor owns a feature.
 
+## Implementation re-baseline — 2026-09-19
+
+The walkthrough and gap table below are the pre-beta research baseline, not the current product
+state. The merged P0 beta closes the first-run creation, authoring hierarchy, Sessions/Results/
+Follow-ups history, live command-center, participant submit/receipt, visual Recovery Story,
+privacy-safe telemetry, and Recovery Rehearsal gaps. Session avatars are also implemented from
+join through live staff/presenter and retained report views without creating learner profiles.
+
+The remaining product gaps are deliberately sequenced after beta evidence:
+
+| Current priority | Remaining gap                                         | Evidence or implementation boundary                                                                                                       |
+| ---------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| P1               | Standalone `Assign practice` from any published Round | Existing practice is report-scoped remediation; use an additive assignment purpose/source rather than weakening report evidence semantics |
+| P1               | Private workspace question reuse                      | First-party starters exist, but creators cannot yet reuse selected questions from another Round as a maintained private bank              |
+| P1 evidence      | Hosted Free capacity above 20 and Pro above 100       | Do not change published limits before Canadian-region cost, abuse, support, soak, and failover evidence                                   |
+| P1               | Accountless live time-flex/extra time                 | Follow-up accommodation passes exist; live participant-specific timing still requires privacy-safe UX and usability validation            |
+| P1/P2            | Accessible team discussion delivery                   | Add only after the core command-center and recovery workflow pass observed trials                                                         |
+| P2               | Exact-match short text and rank/order                 | New response contracts remain outside the P0 beta                                                                                         |
+| P2               | Slide companion and institutional grade services      | Companion workflow precedes native add-ins; NRPS/AGS remains contract-, privacy-, and pilot-gated                                         |
+
+Public marketplaces, arcade economies, persistent learner profiles, and large game-mode catalogs
+remain intentional non-goals. Post-beta innovations remain ordered as Concept Health Map, Session
+Decision Replay, then Source-to-Recovery Pack, each behind separate evidence and privacy review.
+
 ## Executive decision
 
 OpenRound should **not** copy Kahoot, Blooket, Gimkit, or StudyGlen screen-for-screen, and it should
@@ -138,7 +162,7 @@ Those capabilities are present in the current implementation.
 - Recovery-oriented reports, privacy-aware retention/deletion, open-source community operation,
   and unusually strong live-session correctness and security foundations.
 
-### What the live UX walkthrough showed
+### What the pre-beta live UX walkthrough showed
 
 The public home, join card, participant entry, lobby, question, host question stage, and Recovery
 guidance are visually coherent and already more polished than the phrase “MVP” suggests. The

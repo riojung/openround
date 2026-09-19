@@ -118,4 +118,6 @@ burst. Do not translate either local result into a hosted SLO without a target-r
 See [observability and operational controls](observability.md) for metric, trace, alert, and
 kill-switch guidance. Use the [Canadian staging workflow](staging-readiness.md) for the remote
 probe and target-region game, [evidence templates](../evidence/README.md) for non-code gates, and
-`pnpm readiness:require:beta` before creating a beta tag.
+`pnpm readiness:require:beta:preflight` before creating a beta tag. After the workflow publishes
+and verifies the signed artifacts, accept that evidence for `signed-release` and run
+`pnpm readiness:require:beta` for the final beta decision.

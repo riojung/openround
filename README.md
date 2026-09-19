@@ -186,11 +186,13 @@ lightweight join-only sample against a prepared room. Local results are not prod
 evidence.
 
 For an already deployed environment, the manual `Staging readiness` GitHub workflow validates TLS,
-dependency health, public feature flags, protected metrics, security headers, and a complete
-20- or 100-client game. It can separately replay signed, duplicate, stale, invalid, and
-cancellation billing events against a dedicated staging workspace. See the
-[staging runbook](docs/runbooks/staging-readiness.md); locally signed events do not replace a real
-Stripe test-mode checkout and delivery exercise.
+dependency health, public feature flags, protected metrics, and security headers from a hosted
+runner. Its complete 20- or 100-client latency game and soak run only on a self-hosted runner
+labeled `canada-staging` in the target region. It can separately replay signed, duplicate, stale,
+invalid, and cancellation billing events against a dedicated staging workspace. See the
+[staging runbook](docs/runbooks/staging-readiness.md); the public probe is not target-region
+performance evidence, and locally signed events do not replace a real Stripe test-mode checkout
+and delivery exercise.
 
 The test-only `compose.test.yaml` overlay raises the session ceiling to 250 without changing the
 normal community profile. Run the Phase 6 stress profiles with:

@@ -13,10 +13,12 @@ For each completed gate:
    reviewers.
 3. Record failures and follow-up issues; a partial exercise is not a passing gate.
 4. Update `docs/release-readiness.json` only after the named reviewer accepts the evidence.
-5. Run `pnpm readiness:check`; run `pnpm readiness:require:beta` before tagging a beta candidate.
+5. Run `pnpm readiness:check`; run `pnpm readiness:require:beta:preflight` before tagging a beta
+   candidate, then run `pnpm readiness:require:beta` after the signed-release evidence is accepted.
 
 Available templates cover [accessibility](accessibility-review.md),
 [security](security-review.md), [physical devices](device-matrix.md),
 [provider restoration](provider-restore.md), [alert delivery](operations-rehearsal.md),
 [design-partner interviews](design-partner-interview.md), and
-[observed beta sessions](session-observation.md).
+[observed beta sessions](session-observation.md), plus the aggregate
+[P0 beta usability study](beta-usability.md).

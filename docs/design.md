@@ -245,10 +245,12 @@ The UI must not claim success before the corresponding durable action completes.
 
 ## Deliberate non-goals
 
-Native apps, a full slide editor, public content marketplace, avatars/rewards, generic AI chat,
-open-text grading, advertising, participant profiling, and 1,000-player single events remain out
-of scope. Native PowerPoint or Google Slides add-ins require evidence from at least three paying
-design partners that companion mode is insufficient.
+Native apps, a full slide editor, public content marketplace, persistent learner avatar profiles or
+reward economies, generic AI chat, open-text grading, advertising, participant profiling, and
+1,000-player single events remain out of scope. Session-scoped avatar choice is intentionally
+allowed because it carries no learner account or cross-session profile. Native PowerPoint or
+Google Slides add-ins require evidence from at least three paying design partners that companion
+mode is insufficient.
 
 ## Design change checklist
 
