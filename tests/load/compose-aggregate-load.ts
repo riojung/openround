@@ -6,6 +6,8 @@ const clientsPerSession = Number(process.env.CLIENTS_PER_SESSION ?? "100");
 const joinBatchSize = Number(process.env.JOIN_BATCH_SIZE ?? "20");
 const sessionStaggerMs = Number(process.env.SESSION_STAGGER_MS ?? "750");
 const answerP95LimitMs = Number(process.env.ANSWER_P95_LIMIT_MS ?? "250");
+const answerP99LimitMs = Number(process.env.ANSWER_P99_LIMIT_MS ?? "600");
+const questionBroadcastP95LimitMs = Number(process.env.QUESTION_BROADCAST_P95_LIMIT_MS ?? "500");
 const assertPerformance = process.env.ASSERT_PERFORMANCE === "true";
 
 if (!Number.isInteger(sessionCount) || sessionCount < 1 || sessionCount > 20) {
@@ -22,6 +24,16 @@ if (!Number.isInteger(sessionStaggerMs) || sessionStaggerMs < 0 || sessionStagge
 }
 if (!Number.isInteger(answerP95LimitMs) || answerP95LimitMs < 1 || answerP95LimitMs > 1_000) {
   throw new Error("ANSWER_P95_LIMIT_MS must be an integer between 1 and 1000");
+}
+if (!Number.isInteger(answerP99LimitMs) || answerP99LimitMs < 1 || answerP99LimitMs > 1_000) {
+  throw new Error("ANSWER_P99_LIMIT_MS must be an integer between 1 and 1000");
+}
+if (
+  !Number.isInteger(questionBroadcastP95LimitMs) ||
+  questionBroadcastP95LimitMs < 1 ||
+  questionBroadcastP95LimitMs > 1_000
+) {
+  throw new Error("QUESTION_BROADCAST_P95_LIMIT_MS must be an integer between 1 and 1000");
 }
 
 interface GameLoadResult {
@@ -163,12 +175,12 @@ async function main() {
       `Answer acknowledgement p95 exceeded ${answerP95LimitMs} ms`,
     );
     assert.ok(
-      result.worstSessionLatencyMs.answerAcknowledgementP99 < 600,
-      "Answer acknowledgement p99 exceeded 600 ms",
+      result.worstSessionLatencyMs.answerAcknowledgementP99 < answerP99LimitMs,
+      `Answer acknowledgement p99 exceeded ${answerP99LimitMs} ms`,
     );
     assert.ok(
-      result.worstSessionLatencyMs.questionBroadcastP95 < 500,
-      "Question broadcast p95 exceeded 500 ms",
+      result.worstSessionLatencyMs.questionBroadcastP95 < questionBroadcastP95LimitMs,
+      `Question broadcast p95 exceeded ${questionBroadcastP95LimitMs} ms`,
     );
     assert.ok(result.worstSessionLatencyMs.reconnectSnapshot < 2_000, "Reconnect exceeded 2 s");
     assert.ok(result.worstSessionLatencyMs.reportAvailable < 60_000, "Report exceeded 60 s");
