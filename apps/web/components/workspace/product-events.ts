@@ -33,3 +33,7 @@ export function recordCreationEvent(
 export function recordFollowupShared() {
   recordProductEvent("followup_shared");
 }
+
+export function recordPracticeAssignmentShared() {
+  recordProductEvent("practice_assignment_shared");
+}

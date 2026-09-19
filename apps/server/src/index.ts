@@ -34,6 +34,7 @@ const retentionTimer = setInterval(() => {
       if (
         result.expiredLiveSessions > 0 ||
         result.purgedSessions > 0 ||
+        result.purgedPracticeAssignments > 0 ||
         result.purgedAuditEvents > 0 ||
         result.purgedProductEvents > 0 ||
         result.purgedMedia > 0

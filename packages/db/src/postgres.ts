@@ -13,6 +13,7 @@ import {
 } from "@openround/contracts";
 import {
   AudienceStoreError,
+  FollowupAccessLimitError,
   FollowupVersionConflictError,
   PublishedQuizLimitError,
   SessionCodeConflictError,
@@ -431,11 +432,23 @@ function mapFollowupHistory(row: QueryResultRow, now: Date): FollowupHistoryReco
           ? "scheduled"
           : "open";
   const content = row.content as QuizDraft;
+  const source =
+    row.purpose === "assignment"
+      ? ({
+          purpose: "assignment" as const,
+          sourceSessionId: null,
+          sourceReportId: null,
+        } as const)
+      : ({
+          purpose: "recovery" as const,
+          sourceSessionId: String(row.source_session_id),
+          sourceReportId: String(row.source_report_id),
+        } as const);
   return {
     id: String(row.id),
-    sourceSessionId: String(row.source_session_id),
-    sourceReportId: String(row.source_report_id),
+    ...source,
     quizId: String(row.quiz_id),
+    sourceQuizVersionId: String(row.source_quiz_version_id),
     title: String(row.title),
     status,
     conceptKeys: Array.isArray(row.concept_keys) ? row.concept_keys.map(String) : [],
@@ -451,11 +464,23 @@ function mapFollowupHistory(row: QueryResultRow, now: Date): FollowupHistoryReco
 }
 
 function mapFollowup(row: QueryResultRow): FollowupRecord {
+  const source =
+    row.purpose === "assignment"
+      ? ({
+          purpose: "assignment" as const,
+          sourceSessionId: null,
+          sourceReportId: null,
+        } as const)
+      : ({
+          purpose: "recovery" as const,
+          sourceSessionId: String(row.source_session_id),
+          sourceReportId: String(row.source_report_id),
+        } as const);
   return {
     id: String(row.id),
     workspaceId: String(row.workspace_id),
-    sourceSessionId: String(row.source_session_id),
-    sourceReportId: String(row.source_report_id),
+    sourceQuizVersionId: String(row.source_quiz_version_id),
+    ...source,
     title: String(row.title),
     content: row.content as QuizDraft,
     conceptKeys: Array.isArray(row.concept_keys) ? row.concept_keys.map(String) : [],
@@ -4085,13 +4110,15 @@ export class PostgresRepository implements Repository {
       async (client) => {
         await client.query(
           `INSERT INTO followups
-             (id, workspace_id, source_session_id, source_report_id, title, content,
-              concept_keys, time_mode, generic_token_hash, opens_at, closes_at, expires_at,
-              closed_at, created_by, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+             (id, workspace_id, purpose, source_quiz_version_id, source_session_id,
+              source_report_id, title, content, concept_keys, time_mode, generic_token_hash,
+              opens_at, closes_at, expires_at, closed_at, created_by, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
           [
             input.id,
             input.workspaceId,
+            input.purpose,
+            input.sourceQuizVersionId,
             input.sourceSessionId,
             input.sourceReportId,
             input.title,
@@ -4142,6 +4169,29 @@ export class PostgresRepository implements Repository {
     return result.rows[0] ? mapFollowup(result.rows[0]) : null;
   }
 
+  async getFollowupProgress(workspaceId: string, followupId: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT count(attempt.id)::integer AS attempt_count,
+              count(attempt.id) FILTER (WHERE attempt.status = 'completed')::integer
+                AS completed_attempt_count
+       FROM followups AS followup
+       LEFT JOIN followup_attempts AS attempt
+         ON attempt.followup_id = followup.id
+        AND attempt.workspace_id = followup.workspace_id
+       WHERE followup.workspace_id = $1 AND followup.id = $2
+       GROUP BY followup.id`,
+      [workspaceId, followupId],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          attemptCount: Number(row.attempt_count),
+          completedAttemptCount: Number(row.completed_attempt_count),
+        }
+      : null;
+  }
+
   async getFollowupByReport(workspaceId: string, reportId: string) {
     const result = await this.workspaceQuery(
       workspaceId,
@@ -4176,11 +4226,8 @@ export class PostgresRepository implements Repository {
                 WHERE followup_attempts.status = 'completed'
               )::integer AS completed_attempt_count
        FROM followups
-       JOIN game_sessions
-         ON game_sessions.id = followups.source_session_id
-        AND game_sessions.workspace_id = followups.workspace_id
        JOIN quiz_versions
-         ON quiz_versions.id = game_sessions.quiz_version_id
+         ON quiz_versions.id = followups.source_quiz_version_id
         AND quiz_versions.workspace_id = followups.workspace_id
        LEFT JOIN followup_attempts
          ON followup_attempts.followup_id = followups.id
@@ -4274,6 +4321,71 @@ export class PostgresRepository implements Repository {
       ],
     );
     return mapFollowupAccess(result.rows[0]!);
+  }
+
+  async createAssignmentPersonalAccess(input: FollowupAccessRecord, maximumLinks: number) {
+    if (
+      input.kind !== "assignment_personal" ||
+      input.sourceParticipantId !== null ||
+      input.timeMultiplier !== 1 ||
+      input.label.length < 1 ||
+      input.label.length > 80
+    ) {
+      throw new TypeError("Assignment personal access is invalid");
+    }
+    if (!Number.isSafeInteger(maximumLinks) || maximumLinks < 0) {
+      throw new RangeError("Maximum personal links must be a non-negative safe integer");
+    }
+    return this.transaction(
+      async (client) => {
+        const target = await client.query(
+          `SELECT purpose, closed_at, closes_at FROM followups
+           WHERE workspace_id = $1 AND id = $2
+           FOR UPDATE /* create_assignment_personal_access */`,
+          [input.workspaceId, input.followupId],
+        );
+        const followup = target.rows[0];
+        if (followup?.purpose !== "assignment") return null;
+        const checkedAt = await client.query("SELECT clock_timestamp() AS checked_at");
+        if (
+          followup.closed_at !== null ||
+          date(followup.closes_at) <= date(checkedAt.rows[0]?.checked_at)
+        ) {
+          return null;
+        }
+        const count = await client.query(
+          `SELECT count(*)::integer AS count
+           FROM followup_access_tokens
+           WHERE workspace_id = $1 AND followup_id = $2 AND kind = 'assignment_personal'`,
+          [input.workspaceId, input.followupId],
+        );
+        if (Number(count.rows[0]?.count ?? 0) >= maximumLinks) {
+          throw new FollowupAccessLimitError(input.followupId, maximumLinks);
+        }
+        const result = await client.query(
+          `INSERT INTO followup_access_tokens
+             (id, workspace_id, followup_id, source_participant_id, kind, label, token_hash,
+              time_multiplier, expires_at, revoked_at, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           RETURNING *`,
+          [
+            input.id,
+            input.workspaceId,
+            input.followupId,
+            input.sourceParticipantId,
+            input.kind,
+            input.label,
+            input.tokenHash,
+            input.timeMultiplier,
+            input.expiresAt,
+            input.revokedAt,
+            input.createdAt,
+          ],
+        );
+        return mapFollowupAccess(result.rows[0]!);
+      },
+      { workspaceId: input.workspaceId },
+    );
   }
 
   async revokeFollowupAccess(
@@ -4977,9 +5089,9 @@ export class PostgresRepository implements Repository {
            ORDER BY session_id, participant_id`,
         );
         const followups = await queryWorkspaceData(
-          `SELECT id, workspace_id, source_session_id, source_report_id, title, content,
-                  concept_keys, time_mode, opens_at, closes_at, expires_at, closed_at,
-                  created_by, created_at
+          `SELECT id, workspace_id, purpose, source_quiz_version_id, source_session_id,
+                  source_report_id, title, content, concept_keys, time_mode, opens_at, closes_at,
+                  expires_at, closed_at, created_by, created_at
            FROM followups WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
         );
         const followupAccess = await queryWorkspaceData(
@@ -5137,5 +5249,15 @@ export class PostgresRepository implements Repository {
       },
       { system: true },
     );
+  }
+
+  async purgeExpiredPracticeAssignments(now: Date) {
+    const result = await this.systemQuery(
+      `DELETE FROM followups
+       WHERE purpose = 'assignment' AND expires_at <= $1
+       RETURNING id`,
+      [now],
+    );
+    return result.rowCount ?? 0;
   }
 }

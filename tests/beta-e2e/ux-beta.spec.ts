@@ -81,12 +81,25 @@ function waitForCreationEvent(
   });
 }
 
+async function productEventMetricValue(page: Page, name: string) {
+  const response = await page.request.get(`${apiUrl}/metrics`);
+  expect(response.ok()).toBeTruthy();
+  const exposition = await response.text();
+  return exposition
+    .split("\n")
+    .filter(
+      (line) =>
+        line.startsWith("openround_product_events_total{") && line.includes(`name="${name}"`),
+    )
+    .reduce((total, line) => total + Number(line.match(/\s([\d.e+-]+)$/)?.[1] ?? 0), 0);
+}
+
 test("creator starts a blank Round with the selected first response type", async ({ page }) => {
   await signIn(page, betaEmail);
 
   await page.goto("/create");
   await expect(page.getByRole("heading", { name: "How do you want to start?" })).toBeVisible();
-  await page.getByLabel("Round title").fill("Beta blank Round");
+  await page.getByLabel("Round title (optional for now)", { exact: true }).fill("Beta blank Round");
   await page.getByRole("radio", { name: /^Number/ }).check();
 
   const creation = page.waitForResponse(
@@ -240,6 +253,252 @@ test("starter rehearsal completes privately with bounded telemetry", async ({ pa
   expect(await metrics.text()).toContain(
     'name="rehearsal_completed",creation_path="none",recipe="none",scenario="confident_misconception",segment="education",beta_version="p0-2026",duration_bucket="under_1m"',
   );
+});
+
+test("creator assigns immutable practice and manages accountless progress", async ({
+  browser,
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await signIn(page, betaEmail);
+
+  const suffix = randomUUID().slice(0, 8);
+  const publishedTitle = `Published assignment source ${suffix}`;
+  const draftTitle = `Draft changes after publish ${suffix}`;
+  const mainPrompt = "Which action belongs in the published practice?";
+  const draftOnlyPrompt = "This draft-only prompt must not enter practice.";
+  const recheckPrompt = "This linked recheck must stay conditional.";
+  const mainQuestionId = randomUUID();
+  const recheckQuestionId = randomUUID();
+  const correctChoiceId = randomUUID();
+  const baseQuestion = {
+    type: "single_select" as const,
+    purpose: "diagnostic" as const,
+    confidence: "required" as const,
+    conceptKeys: ["practice-e2e"],
+    timeLimitSeconds: 30,
+    explanation: "Use the published source evidence.",
+    mediaId: null,
+    mediaAlt: null,
+  };
+  const publishedDraft = {
+    title: publishedTitle,
+    description: "Browser coverage for standalone practice.",
+    category: "education" as const,
+    experiencePreset: { id: "focus" as const, version: 1 as const },
+    questions: [
+      {
+        ...baseQuestion,
+        id: mainQuestionId,
+        prompt: mainPrompt,
+        delivery: "main" as const,
+        linkedRecheckQuestionId: recheckQuestionId,
+        basePoints: 1_000,
+        choices: [
+          { id: correctChoiceId, label: "Use the published answer", isCorrect: true },
+          { id: randomUUID(), label: "Use the draft-only answer", isCorrect: false },
+        ],
+      },
+      {
+        ...baseQuestion,
+        id: recheckQuestionId,
+        prompt: recheckPrompt,
+        delivery: "recheck" as const,
+        linkedRecheckQuestionId: null,
+        basePoints: 0,
+        choices: [
+          { id: randomUUID(), label: "Recheck correct", isCorrect: true },
+          { id: randomUUID(), label: "Recheck incorrect", isCorrect: false },
+        ],
+      },
+    ],
+  };
+
+  const quizResponse = await page.request.post(`${apiUrl}/v1/quizzes`, {
+    data: { title: publishedTitle, description: publishedDraft.description },
+  });
+  expect(quizResponse.status()).toBe(201);
+  const quizId = (await quizResponse.json()).quiz.id as string;
+  const updateResponse = await page.request.patch(`${apiUrl}/v1/quizzes/${quizId}`, {
+    data: publishedDraft,
+  });
+  expect(updateResponse.ok()).toBeTruthy();
+  const publishResponse = await page.request.post(`${apiUrl}/v1/quizzes/${quizId}/publish`, {
+    data: {},
+  });
+  expect(publishResponse.ok()).toBeTruthy();
+
+  const draftUpdateResponse = await page.request.patch(`${apiUrl}/v1/quizzes/${quizId}`, {
+    data: {
+      ...publishedDraft,
+      title: draftTitle,
+      questions: [
+        { ...publishedDraft.questions[0], prompt: draftOnlyPrompt },
+        publishedDraft.questions[1],
+      ],
+    },
+  });
+  expect(draftUpdateResponse.ok()).toBeTruthy();
+
+  await page.goto("/dashboard");
+  const roundCard = page.getByRole("article").filter({
+    has: page.getByRole("heading", { name: draftTitle, exact: true }),
+  });
+  await expect(roundCard).toBeVisible();
+  await roundCard.getByRole("link", { name: "Assign practice" }).click();
+  await expect(page).toHaveURL(new RegExp(`/quiz/${quizId}/assign$`));
+  await expect(page).toHaveTitle("Assign practice · OpenRound");
+  await expect(page.getByRole("heading", { name: publishedTitle, level: 2 })).toBeVisible();
+  await expect(page.getByText("Published v1", { exact: true })).toBeVisible();
+  await expect(page.getByText("main question", { exact: true }).locator("..")).toContainText("1");
+  await expect(page.getByText(/newer draft edits/i)).toBeVisible();
+  await expect(page.getByText(/Conditional live rechecks are not repeated/i)).toBeVisible();
+
+  await page.getByText("Create personal one-attempt links (optional)", { exact: true }).click();
+  await page.getByLabel("One label per line").fill("Learner Alpha");
+  const createdMetricBefore = await productEventMetricValue(page, "practice_assignment_created");
+  const creationResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `/v1/quizzes/${quizId}/practice-assignments`,
+  );
+  await page.getByRole("button", { name: "Create assignment" }).click();
+  const creationResponse = await creationResponsePromise;
+  expect(creationResponse.status()).toBe(201);
+  const creation = (await creationResponse.json()) as {
+    followup: { id: string; purpose: string; checkpointCount: number };
+    genericUrl: string;
+    personalAccess: Array<{ label: string; url: string }>;
+  };
+  expect(creation.followup).toMatchObject({ purpose: "assignment", checkpointCount: 1 });
+  expect(creation.personalAccess).toEqual([
+    expect.objectContaining({ label: "Learner Alpha", url: expect.stringContaining("#token=") }),
+  ]);
+  await expect(page.getByRole("heading", { name: "Save and share these links now" })).toBeFocused();
+  await expect(page.getByLabel("Generic anonymous link")).toHaveValue(creation.genericUrl);
+  await expect(page.getByLabel("Learner Alpha")).toHaveValue(creation.personalAccess[0]!.url);
+
+  const sharedMetricBefore = await productEventMetricValue(page, "practice_assignment_shared");
+  const shareTelemetryPromise = page.waitForResponse((response) => {
+    if (
+      response.request().method() !== "POST" ||
+      new URL(response.url()).pathname !== "/v1/product-events"
+    ) {
+      return false;
+    }
+    const body = response.request().postDataJSON() as {
+      events?: Array<{ name?: string }>;
+    };
+    return body.events?.[0]?.name === "practice_assignment_shared";
+  });
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download links as CSV" }).click();
+  const [shareTelemetry, download] = await Promise.all([shareTelemetryPromise, downloadPromise]);
+  expect(shareTelemetry.status()).toBe(202);
+  expect(shareTelemetry.request().postDataJSON()).toEqual({
+    events: [
+      {
+        name: "practice_assignment_shared",
+        occurredAt: expect.any(String),
+        dimensions: {},
+      },
+    ],
+  });
+  expect(download.suggestedFilename()).toBe(`openround-practice-${creation.followup.id}-links.csv`);
+  await download.delete();
+
+  const participantContext = await browser.newContext({
+    baseURL: webUrl,
+    reducedMotion: "reduce",
+  });
+  try {
+    const participant = await participantContext.newPage();
+    await participant.goto(creation.genericUrl);
+    await expect(participant.getByText("Question 1 of 1", { exact: true })).toBeVisible();
+    await expect(participant.getByRole("heading", { name: mainPrompt, level: 1 })).toBeVisible();
+    await expect(participant.getByText(recheckPrompt, { exact: true })).toHaveCount(0);
+    await participant
+      .getByRole("button", { name: "Use the published answer", exact: true })
+      .click();
+    await participant.getByRole("button", { name: "Very sure", exact: true }).click();
+    await participant.getByRole("button", { name: "Submit response" }).click();
+    await expect(participant.getByText("Correct", { exact: true })).toBeVisible();
+    await participant.getByRole("button", { name: "Finish practice" }).click();
+    await expect(participant.getByText("Practice complete", { exact: true })).toBeVisible();
+    await expect(participant.getByText(recheckPrompt, { exact: true })).toHaveCount(0);
+  } finally {
+    await participantContext.close();
+  }
+
+  await page.getByRole("link", { name: "Manage practice" }).click();
+  await expect(page).toHaveURL(new RegExp(`/practice/${creation.followup.id}$`));
+  await expect(page).toHaveTitle("Manage practice · OpenRound");
+  await expect(page.getByRole("heading", { name: publishedTitle, level: 2 })).toBeVisible();
+  await expect(page.getByText("Published v1", { exact: true })).toBeVisible();
+  await expect(page.getByText(/already has unlimited response time/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create accommodation pass" })).toHaveCount(0);
+  await expect(page.getByLabel("Generic anonymous link")).toHaveCount(0);
+  const managementInputValues = await page
+    .locator("input")
+    .evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value));
+  expect(managementInputValues).not.toContain(creation.genericUrl);
+  expect(managementInputValues).not.toContain(creation.personalAccess[0]!.url);
+  await expect(page.getByText("attempts", { exact: true }).locator("..")).toContainText("1");
+  await expect(page.getByText("completed", { exact: true }).locator("..")).toContainText("1");
+
+  await page.route("**/v1/auth/me", async (route) => {
+    const response = await route.fetch();
+    const account = (await response.json()) as {
+      entitlements: Record<string, unknown>;
+      [key: string]: unknown;
+    };
+    await route.fulfill({
+      response,
+      json: {
+        ...account,
+        entitlements: { ...account.entitlements, followups: false },
+      },
+    });
+  });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Private access", level: 2 })).toBeVisible();
+  await expect(
+    page.getByText(/Creating new personal assignment links requires Pro/i),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Compare plans" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create personal link" })).toHaveCount(0);
+  await expect(
+    page.getByRole("row").filter({ hasText: "Learner Alpha" }).getByRole("button", {
+      name: "Revoke",
+    }),
+  ).toBeVisible();
+  await page.unroute("**/v1/auth/me");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Private access", level: 2 })).toBeVisible();
+
+  const personalRow = page.getByRole("row").filter({ hasText: "Learner Alpha" });
+  await expect(personalRow).toContainText("Active");
+  page.once("dialog", (dialog) => void dialog.accept());
+  await personalRow.getByRole("button", { name: "Revoke" }).click();
+  await expect(personalRow).toContainText("Revoked");
+  await expect(page.getByText("Learner Alpha link revoked.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Private access", level: 2 })).toBeFocused();
+
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Close practice for everyone" }).click();
+  await expect(page.getByText("closed", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Practice closed for every participant.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: publishedTitle, level: 2 })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Close practice for everyone" })).toHaveCount(0);
+
+  await expect
+    .poll(() => productEventMetricValue(page, "practice_assignment_created"))
+    .toBeGreaterThan(createdMetricBefore);
+  await expect
+    .poll(() => productEventMetricValue(page, "practice_assignment_shared"))
+    .toBeGreaterThan(sharedMetricBefore);
 });
 
 test("signed-in creator replaces one stale host credential and resumes", async ({ page }) => {
@@ -423,8 +682,7 @@ test("creator and participants complete a beta Recovery loop through report", as
         .getByText("explain", { exact: true }),
     ).toBeVisible();
     await expect(page.getByRole("heading", { name: "Self-paced follow-up" })).toBeVisible();
-    await expect(page.getByText(/Signed follow-up links.*Hosted Pro/s)).toBeVisible();
-    await expect(page.getByRole("link", { name: "Download CSV" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Create follow-up and links" })).toBeVisible();
 
     await page.getByRole("tab", { name: "Questions" }).click();
     const questionsPanel = page.getByRole("tabpanel", { name: "Questions" });
@@ -440,7 +698,8 @@ test("creator and participants complete a beta Recovery loop through report", as
     await page.getByRole("tab", { name: "Manage data" }).click();
     const managePanel = page.getByRole("tabpanel", { name: "Manage data" });
     await expect(managePanel.getByRole("heading", { name: "Export report data" })).toBeVisible();
-    await expect(managePanel.getByRole("link", { name: "CSV export requires Pro" })).toBeVisible();
+    await expect(managePanel.getByRole("link", { name: "Download CSV" })).toBeVisible();
+    await expect(managePanel.getByRole("link", { name: "Download JSON" })).toBeVisible();
     await expect(managePanel.getByRole("heading", { name: "Delete session data" })).toBeVisible();
   } finally {
     await Promise.all(participants.map(({ context }) => context.close()));
@@ -658,20 +917,6 @@ test("source and import starts reach real review drafts through mocked external 
   const sourceQuizId = await createReviewDraft("Source review draft");
   const importQuizId = await createReviewDraft("Imported review draft");
 
-  await page.route("**/v1/auth/me", async (route) => {
-    const response = await route.fetch();
-    const account = (await response.json()) as {
-      entitlements: Record<string, unknown>;
-      [key: string]: unknown;
-    };
-    await route.fulfill({
-      response,
-      json: {
-        ...account,
-        entitlements: { ...account.entitlements, csvExport: true },
-      },
-    });
-  });
   await page.route("**/v1/authoring/status", async (route) => {
     await route.fulfill({
       contentType: "application/json",

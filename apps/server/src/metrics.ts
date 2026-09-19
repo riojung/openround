@@ -465,6 +465,7 @@ export class MetricsService {
   recordRetention(result: {
     expiredLiveSessions: number;
     purgedSessions: number;
+    purgedPracticeAssignments: number;
     purgedAuditEvents: number;
     purgedProductEvents: number;
     purgedMedia: number;
@@ -477,6 +478,11 @@ export class MetricsService {
       );
     if (result.purgedSessions > 0)
       this.retention.inc({ resource: "session", outcome: "deleted" }, result.purgedSessions);
+    if (result.purgedPracticeAssignments > 0)
+      this.retention.inc(
+        { resource: "practice_assignment", outcome: "deleted" },
+        result.purgedPracticeAssignments,
+      );
     if (result.purgedAuditEvents > 0)
       this.retention.inc({ resource: "audit_event", outcome: "deleted" }, result.purgedAuditEvents);
     if (result.purgedProductEvents > 0)

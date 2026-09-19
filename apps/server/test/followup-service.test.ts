@@ -13,9 +13,12 @@ async function fixture(timeMode: "timed" | "flex" = "timed", reportVersion: 2 | 
   const userId = randomUUID();
   const sessionId = randomUUID();
   const reportId = randomUUID();
+  const quizId = randomUUID();
+  const quizVersionId = randomUUID();
   const participantId = randomUUID();
   const mainId = randomUUID();
   const recheckId = randomUUID();
+  const mediaId = randomUUID();
   const correctChoiceId = randomUUID();
   const now = new Date("2026-09-17T12:00:00.000Z");
   const expiresAt = new Date("2026-10-17T12:00:00.000Z");
@@ -63,8 +66,8 @@ async function fixture(timeMode: "timed" | "flex" = "timed", reportVersion: 2 | 
         timeLimitSeconds: 40,
         basePoints: 0,
         explanation: "A stop button does not isolate hazardous energy.",
-        mediaId: null,
-        mediaAlt: null,
+        mediaId,
+        mediaAlt: "Lockout verification diagram",
       },
     ],
   };
@@ -80,10 +83,32 @@ async function fixture(timeMode: "timed" | "flex" = "timed", reportVersion: 2 | 
       nicknamePolicy: "custom",
     },
   });
+  await repository.createQuiz({
+    id: quizId,
+    workspaceId,
+    title: quiz.title,
+    description: quiz.description,
+    status: "draft",
+    draft: quiz,
+    currentVersionId: null,
+    folderId: null,
+    tags: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+  await repository.publishQuiz({
+    id: quizVersionId,
+    workspaceId,
+    quizId,
+    version: 1,
+    content: quiz,
+    contentHash: "followup-service-fixture",
+    publishedAt: now,
+  });
   await repository.createSession({
     id: sessionId,
     workspaceId,
-    quizVersionId: randomUUID(),
+    quizVersionId,
     hostId: userId,
     hostTokenHash: "host",
     state: { ...state, phase: "finished" },
@@ -202,8 +227,112 @@ async function fixture(timeMode: "timed" | "flex" = "timed", reportVersion: 2 | 
     creator,
     created,
     now,
+    mediaId,
     correctChoiceId,
     participantId,
+  };
+}
+
+async function assignmentFixture() {
+  const repository = new MemoryRepository();
+  const service = new FollowupService(repository);
+  const workspaceId = randomUUID();
+  const userId = randomUUID();
+  const quizId = randomUUID();
+  const quizVersionId = randomUUID();
+  const mainQuestionId = randomUUID();
+  const recheckQuestionId = randomUUID();
+  const correctChoiceId = randomUUID();
+  const now = new Date("2026-09-19T12:00:00.000Z");
+  const published: QuizDraft = {
+    title: "Published safety practice",
+    description: "Immutable source material",
+    questions: [
+      {
+        id: mainQuestionId,
+        type: "single_select",
+        prompt: "Which control comes first?",
+        purpose: "practice",
+        confidence: "optional",
+        delivery: "main",
+        conceptKeys: ["controls"],
+        linkedRecheckQuestionId: recheckQuestionId,
+        choices: [
+          { id: correctChoiceId, label: "Eliminate the hazard", isCorrect: true },
+          { id: randomUUID(), label: "Add a warning", isCorrect: false },
+        ],
+        timeLimitSeconds: 30,
+        basePoints: 1_000,
+        explanation: "Elimination is the strongest control.",
+        mediaId: null,
+        mediaAlt: null,
+      },
+      {
+        id: recheckQuestionId,
+        type: "true_false",
+        prompt: "A warning is stronger than elimination.",
+        purpose: "diagnostic",
+        confidence: "off",
+        delivery: "recheck",
+        conceptKeys: ["controls"],
+        linkedRecheckQuestionId: null,
+        choices: [
+          { id: randomUUID(), label: "True", isCorrect: false },
+          { id: randomUUID(), label: "False", isCorrect: true },
+        ],
+        timeLimitSeconds: 20,
+        basePoints: 0,
+        explanation: "Warnings depend on behaviour.",
+        mediaId: null,
+        mediaAlt: null,
+      },
+    ],
+  };
+  await repository.createQuiz({
+    id: quizId,
+    workspaceId,
+    title: published.title,
+    description: published.description,
+    status: "draft",
+    draft: published,
+    currentVersionId: null,
+    folderId: null,
+    tags: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+  await repository.publishQuiz({
+    id: quizVersionId,
+    workspaceId,
+    quizId,
+    version: 1,
+    content: published,
+    contentHash: "assignment-service-fixture",
+    publishedAt: now,
+  });
+  await repository.updateQuiz(workspaceId, quizId, {
+    ...published,
+    title: "Unpublished edits",
+    questions: published.questions.map((question, index) =>
+      index === 0 ? { ...question, prompt: "This draft prompt must not be assigned" } : question,
+    ),
+  });
+  const creator: CreatorContext = {
+    userId,
+    workspaceId,
+    email: "assignment-owner@example.com",
+    segment: "workplace",
+    role: "owner",
+    plan: "pro",
+  };
+  return {
+    repository,
+    service,
+    creator,
+    quizId,
+    quizVersionId,
+    now,
+    correctChoiceId,
   };
 }
 
@@ -349,6 +478,48 @@ describe("self-paced follow-up", () => {
     ).rejects.toMatchObject<Partial<FollowupError>>({ code: "FOLLOWUP_CLOSED" });
   });
 
+  it("blocks snapshot and media reads after a creator manually closes the follow-up", async () => {
+    const { service, creator, created, now, mediaId } = await fixture("flex");
+    const token = created.personalAccess[0]!.token;
+    await service.start(created.followup.id, token, undefined, now);
+    const beforeClose = new Date(now.getTime() + 1);
+
+    await expect(service.resume(created.followup.id, token, beforeClose)).resolves.toMatchObject({
+      phase: "question_open",
+    });
+    await expect(
+      service.authorizeMedia(created.followup.id, token, mediaId, beforeClose),
+    ).resolves.toBe(creator.workspaceId);
+
+    await service.close(creator.workspaceId, created.followup.id, new Date(now.getTime() + 2));
+    const afterClose = new Date(now.getTime() + 3);
+    await expect(service.resume(created.followup.id, token, afterClose)).rejects.toMatchObject<
+      Partial<FollowupError>
+    >({ code: "FOLLOWUP_CLOSED" });
+    await expect(
+      service.authorizeMedia(created.followup.id, token, mediaId, afterClose),
+    ).rejects.toMatchObject<Partial<FollowupError>>({ code: "FOLLOWUP_CLOSED" });
+  });
+
+  it("blocks generic attempt reads at close time while preserving expired personal-token errors", async () => {
+    const { service, created, now, mediaId } = await fixture("flex");
+    const genericAttemptToken = "generic-close-boundary-attempt-token";
+    await service.start(created.followup.id, created.genericToken, genericAttemptToken, now);
+    const personalToken = created.personalAccess[0]!.token;
+    await service.start(created.followup.id, personalToken, undefined, now);
+    const closesAt = new Date(created.followup.closesAt);
+
+    await expect(
+      service.resume(created.followup.id, genericAttemptToken, closesAt),
+    ).rejects.toMatchObject<Partial<FollowupError>>({ code: "FOLLOWUP_CLOSED" });
+    await expect(
+      service.authorizeMedia(created.followup.id, genericAttemptToken, mediaId, closesAt),
+    ).rejects.toMatchObject<Partial<FollowupError>>({ code: "FOLLOWUP_CLOSED" });
+    await expect(
+      service.resume(created.followup.id, personalToken, closesAt),
+    ).rejects.toMatchObject<Partial<FollowupError>>({ code: "UNAUTHORIZED" });
+  });
+
   it("moves an expired timed checkpoint to reveal so the attempt can continue", async () => {
     const { repository, service, created, now, correctChoiceId } = await fixture("timed");
     const token = created.personalAccess[0]!.token;
@@ -379,5 +550,207 @@ describe("self-paced follow-up", () => {
     await expect(
       service.advance(created.followup.id, token, new Date(afterDeadline.getTime() + 2)),
     ).resolves.toMatchObject({ status: "completed", phase: "completed" });
+  });
+
+  it("creates standalone practice from the immutable published main questions", async () => {
+    const { repository, service, creator, quizId, quizVersionId, now } = await assignmentFixture();
+    const created = await service.createAssignment(
+      creator,
+      quizId,
+      {
+        sourceQuizVersionId: quizVersionId,
+        title: "Assigned controls practice",
+        timeMode: "flex",
+        closesAt: new Date(now.getTime() + 7 * 24 * 60 * 60_000).toISOString(),
+        personalLabels: ["Learner A", "Learner B"],
+      },
+      30,
+      100,
+      now,
+    );
+
+    expect(created.followup).toMatchObject({
+      purpose: "assignment",
+      sourceQuizVersionId: quizVersionId,
+      sourceSessionId: null,
+      sourceReportId: null,
+      checkpointCount: 1,
+      conceptKeys: [],
+    });
+    expect(created.personalAccess).toEqual([
+      expect.objectContaining({
+        kind: "assignment_personal",
+        participantId: null,
+        nickname: null,
+        label: "Learner A",
+      }),
+      expect.objectContaining({
+        kind: "assignment_personal",
+        participantId: null,
+        nickname: null,
+        label: "Learner B",
+      }),
+    ]);
+    const personalToken = created.personalAccess[1]!.token;
+    const firstStart = await service.start(created.followup.id, personalToken, undefined, now);
+    const repeatedStart = await service.start(
+      created.followup.id,
+      personalToken,
+      undefined,
+      new Date(now.getTime() + 1_000),
+    );
+    expect(repeatedStart.snapshot.attemptId).toBe(firstStart.snapshot.attemptId);
+    const stored = await repository.getFollowup(creator.workspaceId, created.followup.id);
+    expect(stored).toMatchObject({
+      purpose: "assignment",
+      sourceQuizVersionId: quizVersionId,
+      content: {
+        title: "Assigned controls practice",
+        questions: [
+          {
+            prompt: "Which control comes first?",
+            delivery: "main",
+            linkedRecheckQuestionId: null,
+          },
+        ],
+      },
+    });
+    expect(created.followup.expiresAt).toBe(
+      new Date(now.getTime() + 30 * 24 * 60 * 60_000).toISOString(),
+    );
+    await expect(service.getForCreator(creator.workspaceId, created.followup.id)).resolves.toEqual(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          quizId,
+          quizTitle: "Published safety practice",
+          version: 1,
+        }),
+        access: expect.arrayContaining([
+          expect.objectContaining({ label: "Learner A", nickname: null }),
+        ]),
+      }),
+    );
+    await expect(
+      service.createAssignmentPersonalPass(
+        creator,
+        created.followup.id,
+        "Over the plan limit",
+        2,
+        now,
+      ),
+    ).rejects.toMatchObject<Partial<FollowupError>>({ code: "ANSWER_INVALID" });
+    await service.revokeAccess(
+      creator.workspaceId,
+      created.followup.id,
+      created.personalAccess[0]!.id,
+      now,
+    );
+    await expect(
+      service.createAssignmentPersonalPass(
+        creator,
+        created.followup.id,
+        "Revocation does not restore quota",
+        2,
+        now,
+      ),
+    ).rejects.toMatchObject<Partial<FollowupError>>({ code: "ANSWER_INVALID" });
+    await expect(
+      service.createAssignmentPersonalPass(
+        creator,
+        created.followup.id,
+        "Replacement link",
+        100,
+        now,
+      ),
+    ).resolves.toEqual({
+      access: expect.objectContaining({
+        kind: "assignment_personal",
+        label: "Replacement link",
+        participantId: null,
+        token: expect.any(String),
+      }),
+    });
+  });
+
+  it("enforces assignment retention and the plan's personal-link ceiling", async () => {
+    const { service, creator, quizId, quizVersionId, now } = await assignmentFixture();
+    const base = {
+      sourceQuizVersionId: quizVersionId,
+      timeMode: "flex" as const,
+      closesAt: new Date(now.getTime() + 7 * 24 * 60 * 60_000).toISOString(),
+      personalLabels: ["Learner A", "Learner B"],
+    };
+
+    await expect(service.createAssignment(creator, quizId, base, 30, 1, now)).rejects.toMatchObject<
+      Partial<FollowupError>
+    >({ code: "ANSWER_INVALID" });
+    await expect(
+      service.createAssignment(
+        creator,
+        quizId,
+        {
+          ...base,
+          closesAt: new Date(now.getTime() + 31 * 24 * 60 * 60_000).toISOString(),
+          personalLabels: [],
+        },
+        30,
+        100,
+        now,
+      ),
+    ).rejects.toMatchObject<Partial<FollowupError>>({ code: "ANSWER_INVALID" });
+  });
+
+  it("requires an active published Round for a new assignment", async () => {
+    const { repository, service, creator, quizId, quizVersionId, now } = await assignmentFixture();
+    await repository.archiveQuiz(creator.workspaceId, quizId, true);
+
+    await expect(
+      service.createAssignment(
+        creator,
+        quizId,
+        {
+          sourceQuizVersionId: quizVersionId,
+          timeMode: "flex",
+          closesAt: new Date(now.getTime() + 24 * 60 * 60_000).toISOString(),
+          personalLabels: [],
+        },
+        30,
+        100,
+        now,
+      ),
+    ).rejects.toMatchObject<Partial<FollowupError>>({ code: "CONFLICT" });
+  });
+
+  it("rejects a source version that became stale before assignment creation", async () => {
+    const { repository, service, creator, quizId, quizVersionId, now } = await assignmentFixture();
+    const original = await repository.getQuizVersion(creator.workspaceId, quizVersionId);
+    expect(original).not.toBeNull();
+    await repository.publishQuiz({
+      ...original!,
+      id: randomUUID(),
+      version: 2,
+      contentHash: "assignment-service-fixture-v2",
+      publishedAt: new Date(now.getTime() + 1_000),
+    });
+
+    await expect(
+      service.createAssignment(
+        creator,
+        quizId,
+        {
+          sourceQuizVersionId: quizVersionId,
+          timeMode: "flex",
+          closesAt: new Date(now.getTime() + 24 * 60 * 60_000).toISOString(),
+          personalLabels: [],
+        },
+        30,
+        100,
+        new Date(now.getTime() + 2_000),
+      ),
+    ).rejects.toMatchObject<Partial<FollowupError>>({
+      code: "CONFLICT",
+      message: "The published Round changed. Refresh before assigning practice",
+    });
+    expect(repository.followups.size).toBe(0);
   });
 });

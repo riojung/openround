@@ -256,11 +256,10 @@ export interface ReportJob {
   expiresAt: Date;
 }
 
-export interface FollowupRecord {
+interface FollowupRecordBase {
   id: string;
   workspaceId: string;
-  sourceSessionId: string;
-  sourceReportId: string;
+  sourceQuizVersionId: string;
   title: string;
   content: QuizDraft;
   conceptKeys: string[];
@@ -274,12 +273,26 @@ export interface FollowupRecord {
   createdAt: Date;
 }
 
+export type FollowupRecord = FollowupRecordBase &
+  (
+    | {
+        purpose: "recovery";
+        sourceSessionId: string;
+        sourceReportId: string;
+      }
+    | {
+        purpose: "assignment";
+        sourceSessionId: null;
+        sourceReportId: null;
+      }
+  );
+
 export interface FollowupAccessRecord {
   id: string;
   workspaceId: string;
   followupId: string;
   sourceParticipantId: string | null;
-  kind: "personal" | "accommodation";
+  kind: "personal" | "assignment_personal" | "accommodation";
   label: string;
   tokenHash: string;
   timeMultiplier: TimeMultiplier;
@@ -381,6 +394,16 @@ export class FollowupVersionConflictError extends Error {
   }
 }
 
+export class FollowupAccessLimitError extends Error {
+  constructor(
+    public readonly followupId: string,
+    public readonly limit: number,
+  ) {
+    super(`This practice assignment supports up to ${limit} personal links`);
+    this.name = "FollowupAccessLimitError";
+  }
+}
+
 export class PublishedQuizLimitError extends Error {
   constructor(public readonly limit: number) {
     super(`This plan supports ${limit} published quizzes`);
@@ -468,11 +491,10 @@ export interface ReportHistoryRecord {
   expiresAt: Date;
 }
 
-export interface FollowupHistoryRecord {
+interface FollowupHistoryRecordBase {
   id: string;
-  sourceSessionId: string;
-  sourceReportId: string;
   quizId: string;
+  sourceQuizVersionId: string;
   title: string;
   status: "scheduled" | "open" | "closed" | "expired";
   conceptKeys: string[];
@@ -486,6 +508,20 @@ export interface FollowupHistoryRecord {
   /** Exact database timestamp used to create the next opaque keyset cursor. */
   cursorCreatedAt?: string;
 }
+
+export type FollowupHistoryRecord = FollowupHistoryRecordBase &
+  (
+    | {
+        purpose: "recovery";
+        sourceSessionId: string;
+        sourceReportId: string;
+      }
+    | {
+        purpose: "assignment";
+        sourceSessionId: null;
+        sourceReportId: null;
+      }
+  );
 
 export interface HistoryPage<T> {
   items: T[];
@@ -1078,6 +1114,10 @@ export interface Repository {
   ): Promise<HistoryPage<ReportHistoryRecord>>;
   createFollowup(input: FollowupRecord, access: FollowupAccessRecord[]): Promise<void>;
   getFollowup(workspaceId: string, followupId: string): Promise<FollowupRecord | null>;
+  getFollowupProgress(
+    workspaceId: string,
+    followupId: string,
+  ): Promise<{ attemptCount: number; completedAttemptCount: number } | null>;
   getFollowupByReport(workspaceId: string, reportId: string): Promise<FollowupRecord | null>;
   listFollowupHistory(
     workspaceId: string,
@@ -1103,6 +1143,10 @@ export interface Repository {
   ): Promise<FollowupAccessRecord | null>;
   listFollowupAccess(workspaceId: string, followupId: string): Promise<FollowupAccessRecord[]>;
   createFollowupAccess(input: FollowupAccessRecord): Promise<FollowupAccessRecord>;
+  createAssignmentPersonalAccess(
+    input: FollowupAccessRecord,
+    maximumLinks: number,
+  ): Promise<FollowupAccessRecord | null>;
   revokeFollowupAccess(
     workspaceId: string,
     followupId: string,
@@ -1173,4 +1217,5 @@ export interface Repository {
   deleteAccount(userId: string): Promise<void>;
   expireLiveSessions(now: Date): Promise<string[]>;
   purgeExpired(now: Date): Promise<string[]>;
+  purgeExpiredPracticeAssignments(now: Date): Promise<number>;
 }

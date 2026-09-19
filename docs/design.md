@@ -196,15 +196,20 @@ pagination, moderation, and realtime updates.
 The moderator can change these settings before or during a round, but a hidden identity is never
 retroactively exposed publicly.
 
-## Follow-up and accommodations
+## Practice assignments, recovery follow-up, and accommodations
 
-A facilitator can turn unresolved concepts into an immutable self-paced follow-up. Live guests may
-receive a one-attempt personal bearer link; a generic link remains anonymous and unpaired. Both
-are expiring and revocable.
+A facilitator can turn unresolved concepts into an immutable self-paced recovery follow-up or
+assign the main questions from a Round's current published version as standalone practice. The
+source version is frozen so later edits do not change work already shared. Recovery may issue
+one-attempt links to live guests; a standalone assignment may issue labelled, accountless,
+one-attempt links. A generic link remains anonymous and unpaired. All bearer links expire;
+personal and accommodation links can be revoked without exposing their stored hashes, and closing
+the practice disables every link.
 
 Time-flex mode removes the countdown. A 1.5× or 2× pass changes only server timing, stores no
-reason, and is not visible to other participants. Resume and completion are server-owned. Follow-up
-data inherits source-session retention and deletion.
+reason, and is not visible to other participants. Resume and completion are server-owned. Recovery
+data inherits source-session retention and deletion; standalone assignment data uses the plan's
+retention window and is purged directly at its immutable expiry.
 
 ## Presentation and portability
 

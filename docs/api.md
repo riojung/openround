@@ -23,15 +23,18 @@ embed, and follow-up routes use their own scoped credentials as documented by th
   `setup_recipe_selected`, `host_setup_completed`, `participant_joined`,
   `first_answer_submitted`, `response_saved_acknowledged`, `question_locked`, `insight_shown`,
   `intervention_started`, `recheck_opened`, `report_viewed`, `followup_shared`,
-  `rehearsal_started`, and `rehearsal_completed`. Feature-on plus explicit workspace allowlist
+  `practice_assignment_created`, `practice_assignment_shared`, `rehearsal_started`, and
+  `rehearsal_completed`. Feature-on plus explicit workspace allowlist
   membership is required; excluded workspaces receive `{ "accepted": 0 }`. `accepted` means the
   events entered the bounded best-effort persistence queue; the request does not wait for storage.
 - `GET /metrics` — private Prometheus output when enabled and authorized.
 
-`FEATURE_UX_BETA` and `FEATURE_RECOVERY_REHEARSAL` default off. The authenticated
+`FEATURE_UX_BETA`, `FEATURE_RECOVERY_REHEARSAL`, and `FEATURE_PRACTICE_ASSIGNMENTS` default off. The authenticated
 `productFeatures` view requires explicit membership in `UX_BETA_WORKSPACE_ALLOWLIST`; an empty
 allowlist fails closed and enables no workspace. Rehearsal requires both flags and allowlist
-membership.
+membership. Standalone practice creation similarly requires the UX beta, its independent practice
+flag, and allowlist membership; already-issued participant links and creator close/revoke controls
+remain available when creation is disabled.
 Because guests do not call `/v1/auth/me`, every role-filtered session snapshot carries the
 workspace-resolved `uxBeta` value. The public feature view is deployment availability, not evidence
 that a particular workspace is allowlisted.
@@ -44,8 +47,9 @@ free-form metadata are rejected. Creation events require `creationPath`, setup s
 `durationBucket`. Raw rows expire after 30 days and the same bounded labels feed the Prometheus
 counter.
 Authoritative server transitions emit publish, room-created, join, first-answer, durable-save,
-lock/insight, intervention, recheck, and ready-report-view milestones. `followup_shared` is emitted
-only from an explicit Copy or link-download action, never merely because a follow-up was created.
+lock/insight, intervention, recheck, ready-report-view, and committed practice-assignment creation
+milestones. `followup_shared` and `practice_assignment_shared` are emitted only from an explicit
+Copy or link-download action, never merely because a practice link was created.
 All product-event writes run through a bounded serial dispatcher, are drained before repository
 shutdown, and log failures without delaying or failing the originating product flow.
 The retention result/log and `openround_retention_records_total` expose deleted product-event
@@ -257,7 +261,7 @@ replies use `pending | published | removed`. Stable errors include `QNA_DISABLED
 `MODERATION_REQUIRED`, and `QNA_RATE_LIMITED`. Unique participant votes, sanitization, limits,
 moderation, kick/ban, retention, export, and deletion are enforced server-side.
 
-## Reports and self-paced follow-up APIs
+## Reports and self-paced practice APIs
 
 - `GET /v1/sessions/{id}/report`
 - `GET /v1/reports` — tenant-scoped recovery-oriented result summaries; filters are
@@ -268,9 +272,17 @@ moderation, kick/ban, retention, export, and deletion are enforced server-side.
 - `GET /v1/reports/{id}/interactions`
 - `GET /v1/reports/{id}/interactions.csv`
 - `POST /v1/reports/{id}/followups`
-- `GET /v1/followups` — tenant-scoped practice follow-up summaries and attempt counts; filters are
+- `POST /v1/quizzes/{id}/practice-assignments` — create an immutable standalone assignment from
+  the reviewed published version identified by the required `sourceQuizVersionId`; returns `409`
+  if that version is no longer current, and returns the generic link and any requested labelled
+  one-attempt links exactly once.
+- `GET /v1/followups` — tenant-scoped recovery-follow-up and standalone-assignment summaries and
+  attempt counts; filters are
   `status=scheduled|open|closed|expired`, `quizId`, `from`, and `to`.
-- `GET /v1/followups/{id}` — creator view and access management.
+- `GET /v1/followups/{id}` — creator view, immutable Round/version context, aggregate progress, and
+  access management; bearer tokens and answer bodies are never returned.
+- `POST /v1/followups/{id}/personal-passes` — create a labelled, revocable, single-attempt link for
+  a standalone assignment; the bearer URL is returned exactly once.
 - `POST /v1/followups/{id}/accommodation-passes`
 - `DELETE /v1/followups/{id}/access/{accessId}`
 - `POST /v1/followups/{id}/close`
@@ -286,9 +298,13 @@ report, and moderation evidence. Report v1/v2 remain renderable. The standard re
 chat and participant-level signals; the transcript requires report access, CSV follows the export
 entitlement, and revealing removed bodies additionally requires owner/editor audit access.
 
-Follow-up start accepts a generic/personal bearer and returns a separate attempt credential.
-Attempt answer and advance calls require that attempt bearer. Personal links allow one attempt by
-default; generic links create unpaired anonymous attempts. All timing, resume, completion,
+Practice start accepts a generic, personal, or accommodation bearer and returns the credential to
+use for that attempt. Generic access receives a separate client- or server-generated resume
+credential. A personal or accommodation bearer is also its attempt credential so repeated starts
+deterministically resume its one allowed attempt. Attempt answer and advance calls require the
+returned credential. Generic links create unpaired anonymous attempts. Standalone assignments
+clone only the published version's main questions: linked conditional rechecks stay in the live
+Recovery Loop and are not made unconditional practice. All timing, resume, completion,
 idempotency, revocation, and expiry are server-owned.
 
 The session, report, and follow-up history endpoints return `{ items, nextCursor }`, default to 25
@@ -296,7 +312,10 @@ rows, cap at 50, and order by `(createdAt DESC, id DESC)`. Cursors are opaque ba
 malformed cursors return a validation error. These endpoints expose summaries only—never answer
 bodies, aliases, chat content, or state snapshots. Report detail keeps the versioned `report` and
 adds Round/session context (`quizId`, `quizTitle`, `sessionCreatedAt`, `sessionUpdatedAt`) when
-available. Follow-up creation accepts ready Report V2 and Report V3 evidence.
+available. Recovery-follow-up creation accepts ready Report V2 and Report V3 evidence. Standalone
+assignment creation and personal-link issuance require the independent practice-assignment beta
+feature plus the workspace beta allowlist; existing practice remains manageable and answerable if
+that creation switch is later disabled.
 
 ## Billing APIs
 

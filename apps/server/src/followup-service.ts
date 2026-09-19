@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import {
   FollowupSchema,
+  FollowupContextSchema,
   FollowupSnapshotSchema,
   QuizContentSchema,
   canonicalizeResponse,
   questionConfidence,
   questionDelivery,
   type CreateFollowup,
+  type CreatePracticeAssignment,
   type FollowupAnswerSubmit,
   type Followup,
   type FollowupSnapshot,
@@ -14,6 +16,7 @@ import {
   type TimeMultiplier,
 } from "@openround/contracts";
 import {
+  FollowupAccessLimitError,
   FollowupVersionConflictError,
   type CreatorContext,
   type FollowupAccessRecord,
@@ -52,6 +55,8 @@ export class FollowupError extends Error {
 function view(record: FollowupRecord): Followup {
   return FollowupSchema.parse({
     id: record.id,
+    purpose: record.purpose,
+    sourceQuizVersionId: record.sourceQuizVersionId,
     sourceSessionId: record.sourceSessionId,
     sourceReportId: record.sourceReportId,
     title: record.title,
@@ -127,6 +132,38 @@ function followupContent(source: FollowupRecord["content"], title: string, conce
   });
 }
 
+function assignmentContent(source: FollowupRecord["content"], title: string) {
+  return QuizContentSchema.parse({
+    ...structuredClone(source),
+    title,
+    questions: source.questions
+      .filter((question) => questionDelivery(question) === "main")
+      .map((question) => ({
+        ...structuredClone(question),
+        delivery: "main" as const,
+        linkedRecheckQuestionId: null,
+      })),
+  });
+}
+
+function personalAccessView(
+  access: FollowupAccessRecord,
+  token: string,
+  nickname: string | null = null,
+) {
+  return {
+    id: access.id,
+    kind: access.kind,
+    participantId: access.sourceParticipantId,
+    nickname,
+    label: access.label,
+    timeMultiplier: access.timeMultiplier,
+    expiresAt: access.expiresAt.toISOString(),
+    revokedAt: null,
+    token,
+  };
+}
+
 export class FollowupService {
   constructor(private readonly repository: Repository) {}
 
@@ -179,6 +216,8 @@ export class FollowupService {
     const followup: FollowupRecord = {
       id: randomUUID(),
       workspaceId: creator.workspaceId,
+      purpose: "recovery",
+      sourceQuizVersionId: session.quizVersionId,
       sourceSessionId: report.sessionId,
       sourceReportId: report.id,
       title,
@@ -227,17 +266,118 @@ export class FollowupService {
     return {
       followup: view(followup),
       genericToken,
-      personalAccess: personal.map(({ access, token, nickname }) => ({
-        id: access.id,
-        kind: access.kind,
-        participantId: access.sourceParticipantId,
-        nickname,
-        label: access.label,
-        timeMultiplier: access.timeMultiplier,
-        expiresAt: access.expiresAt.toISOString(),
+      personalAccess: personal.map(({ access, token, nickname }) =>
+        personalAccessView(access, token, nickname),
+      ),
+    };
+  }
+
+  async createAssignment(
+    creator: CreatorContext,
+    quizId: string,
+    input: CreatePracticeAssignment,
+    retentionDays: number,
+    maximumPersonalLinks: number,
+    now = new Date(),
+  ) {
+    const quiz = await this.repository.getQuiz(creator.workspaceId, quizId);
+    if (!quiz) throw new FollowupError("NOT_FOUND", "Round not found");
+    if (quiz.status !== "published" || !quiz.currentVersionId) {
+      throw new FollowupError(
+        "CONFLICT",
+        "Publish this Round before creating a practice assignment",
+      );
+    }
+    const version = await this.repository.getQuizVersion(
+      creator.workspaceId,
+      input.sourceQuizVersionId,
+    );
+    if (!version || version.quizId !== quiz.id) {
+      throw new FollowupError("CONFLICT", "The published Round version is unavailable");
+    }
+    if (quiz.currentVersionId !== version.id) {
+      throw new FollowupError(
+        "CONFLICT",
+        "The published Round changed. Refresh before assigning practice",
+      );
+    }
+    if (input.personalLabels.length > maximumPersonalLinks) {
+      throw new FollowupError(
+        "ANSWER_INVALID",
+        `This plan supports up to ${maximumPersonalLinks} personal practice links`,
+      );
+    }
+
+    const opensAt = input.opensAt ? new Date(input.opensAt) : now;
+    const closesAt = new Date(input.closesAt);
+    const expiresAt = new Date(now.getTime() + retentionDays * 24 * 60 * 60_000);
+    if (closesAt <= now || closesAt <= opensAt) {
+      throw new FollowupError("ANSWER_INVALID", "Choose a future close time after the open time");
+    }
+    if (closesAt > expiresAt) {
+      throw new FollowupError(
+        "ANSWER_INVALID",
+        `The practice assignment must close within the ${retentionDays}-day retention window`,
+      );
+    }
+
+    const title = (input.title ?? `Practice: ${version.content.title}`).slice(0, 160);
+    let content: FollowupRecord["content"];
+    try {
+      content = assignmentContent(version.content, title);
+      if (content.questions.length === 0) throw new Error("No main questions");
+    } catch {
+      throw new FollowupError(
+        "CONFLICT",
+        "The published Round does not contain a complete main question",
+      );
+    }
+
+    const genericToken = opaqueToken();
+    const followup: FollowupRecord = {
+      id: randomUUID(),
+      workspaceId: creator.workspaceId,
+      purpose: "assignment",
+      sourceQuizVersionId: version.id,
+      sourceSessionId: null,
+      sourceReportId: null,
+      title,
+      content,
+      conceptKeys: [],
+      timeMode: input.timeMode,
+      genericTokenHash: hashToken(genericToken),
+      opensAt,
+      closesAt,
+      expiresAt,
+      closedAt: null,
+      createdBy: creator.userId,
+      createdAt: now,
+    };
+    const personal = input.personalLabels.map((label) => {
+      const token = opaqueToken();
+      const access: FollowupAccessRecord = {
+        id: randomUUID(),
+        workspaceId: creator.workspaceId,
+        followupId: followup.id,
+        sourceParticipantId: null,
+        kind: "assignment_personal",
+        label,
+        tokenHash: hashToken(token),
+        timeMultiplier: 1,
+        expiresAt: closesAt,
         revokedAt: null,
-        token,
-      })),
+        createdAt: now,
+      };
+      return { access, token };
+    });
+    await this.repository.createFollowup(
+      followup,
+      personal.map((item) => item.access),
+    );
+    return {
+      followup: view(followup),
+      genericToken,
+      personalAccess: personal.map(({ access, token }) => personalAccessView(access, token)),
     };
   }
 
@@ -249,13 +389,29 @@ export class FollowupService {
   async getForCreator(workspaceId: string, followupId: string) {
     const followup = await this.repository.getFollowup(workspaceId, followupId);
     if (!followup) throw new FollowupError("NOT_FOUND", "Follow-up not found");
+    const version = await this.repository.getQuizVersion(workspaceId, followup.sourceQuizVersionId);
+    if (!version) throw new FollowupError("CONFLICT", "Follow-up source version is unavailable");
+    const quiz = await this.repository.getQuiz(workspaceId, version.quizId);
+    if (!quiz) throw new FollowupError("CONFLICT", "Follow-up source Round is unavailable");
     const access = await this.repository.listFollowupAccess(workspaceId, followupId);
-    const participants = await this.repository.getParticipants(followup.sourceSessionId);
+    const progress = await this.repository.getFollowupProgress(workspaceId, followupId);
+    if (!progress) throw new FollowupError("CONFLICT", "Follow-up progress is unavailable");
+    const participants = followup.sourceSessionId
+      ? await this.repository.getParticipants(followup.sourceSessionId)
+      : [];
     const nicknames = new Map(
       participants.map((participant) => [participant.id, participant.nickname]),
     );
     return {
       followup: view(followup),
+      context: FollowupContextSchema.parse({
+        quizId: quiz.id,
+        quizTitle: version.content.title,
+        version: version.version,
+        publishedAt: version.publishedAt.toISOString(),
+      }),
+      attemptCount: progress.attemptCount,
+      completedAttemptCount: progress.completedAttemptCount,
       access: access.map((item) => ({
         id: item.id,
         kind: item.kind,
@@ -269,6 +425,48 @@ export class FollowupService {
         revokedAt: item.revokedAt?.toISOString() ?? null,
       })),
     };
+  }
+
+  async createAssignmentPersonalPass(
+    creator: CreatorContext,
+    followupId: string,
+    label: string,
+    maximumPersonalLinks: number,
+    now = new Date(),
+  ) {
+    const followup = await this.repository.getFollowup(creator.workspaceId, followupId);
+    if (!followup) throw new FollowupError("NOT_FOUND", "Practice assignment not found");
+    if (followup.purpose !== "assignment") {
+      throw new FollowupError("CONFLICT", "Personal practice passes require an assignment");
+    }
+    this.assertAvailable(followup, now, false);
+    const token = opaqueToken();
+    const access: FollowupAccessRecord = {
+      id: randomUUID(),
+      workspaceId: creator.workspaceId,
+      followupId,
+      sourceParticipantId: null,
+      kind: "assignment_personal",
+      label,
+      tokenHash: hashToken(token),
+      timeMultiplier: 1,
+      expiresAt: followup.closesAt,
+      revokedAt: null,
+      createdAt: now,
+    };
+    try {
+      const stored = await this.repository.createAssignmentPersonalAccess(
+        access,
+        maximumPersonalLinks,
+      );
+      if (!stored) throw new FollowupError("NOT_FOUND", "Practice assignment not found");
+    } catch (error) {
+      if (error instanceof FollowupAccessLimitError) {
+        throw new FollowupError("ANSWER_INVALID", error.message);
+      }
+      throw error;
+    }
+    return { access: personalAccessView(access, token) };
   }
 
   async createAccommodation(
@@ -374,6 +572,7 @@ export class FollowupService {
 
   async resume(followupId: string, attemptToken: string, now = new Date()) {
     const { followup, attempt } = await this.authorizeAttempt(followupId, attemptToken, now);
+    this.assertAvailable(followup, now, true);
     const timed = await this.revealTimedOutAttempt(attempt, now);
     return this.snapshot(followup, timed.attempt);
   }
@@ -385,6 +584,7 @@ export class FollowupService {
     now = new Date(),
   ) {
     const { followup, attempt } = await this.authorizeAttempt(followupId, attemptToken, now);
+    this.assertAvailable(followup, now, true);
     const question =
       attempt.status === "in_progress" ? followup.content.questions[attempt.currentIndex] : null;
     if (!question || question.mediaId !== mediaId) {
@@ -546,6 +746,7 @@ export class FollowupService {
     if (attempt.status === "completed") {
       return FollowupSnapshotSchema.parse({
         mode: "followup",
+        purpose: followup.purpose,
         followupId: followup.id,
         attemptId: attempt.id,
         version: attempt.version,
@@ -576,6 +777,7 @@ export class FollowupService {
     const revealed = attempt.phase === "answer_reveal";
     return FollowupSnapshotSchema.parse({
       mode: "followup",
+      purpose: followup.purpose,
       followupId: followup.id,
       attemptId: attempt.id,
       version: attempt.version,

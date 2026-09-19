@@ -1075,6 +1075,11 @@ function BetaDashboard() {
         {visibleQuizzes.map((quiz) => {
           const archived = quiz.status === "archived";
           const canHost = canEdit && Boolean(quiz.currentVersionId) && !archived;
+          const canAssign =
+            canEdit &&
+            quiz.status === "published" &&
+            Boolean(quiz.currentVersionId) &&
+            productFeatures?.practiceAssignments === true;
           return (
             <article className={`${styles.roundCard} ${styles.betaRoundCard}`} key={quiz.id}>
               <div className={styles.cardTopline}>
@@ -1129,6 +1134,11 @@ function BetaDashboard() {
                     Host live
                   </Link>
                 ) : null}
+                {canAssign ? (
+                  <Link className="button-quiet small-button" href={`/quiz/${quiz.id}/assign`}>
+                    Assign practice
+                  </Link>
+                ) : null}
                 {!archived ? (
                   <Link
                     className="button-quiet small-button"
@@ -1137,7 +1147,7 @@ function BetaDashboard() {
                     {canEdit ? "Edit" : "View"}
                   </Link>
                 ) : null}
-                {!archived && productFeatures?.recoveryRehearsal ? (
+                {!archived && productFeatures?.recoveryRehearsal && !canAssign ? (
                   <Link className="button-quiet small-button" href={`/quiz/${quiz.id}/rehearse`}>
                     Rehearse
                   </Link>
@@ -1146,6 +1156,9 @@ function BetaDashboard() {
                   <summary>More</summary>
                   <div className={styles.moreMenuPanel}>
                     <Link href={`/quiz/${quiz.id}/preview`}>Preview</Link>
+                    {canAssign && productFeatures?.recoveryRehearsal ? (
+                      <Link href={`/quiz/${quiz.id}/rehearse`}>Rehearse</Link>
+                    ) : null}
                     {canEdit ? (
                       <button
                         disabled={busyId === quiz.id}

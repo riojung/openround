@@ -262,6 +262,27 @@ Personal bearer links allow one attempt by default. A generic link creates an un
 attempt. Progress and deadlines are server-owned, attempts can resume on the same device, and
 follow-up deletion/retention cascades with its source session.
 
+## Assign practice from a published Round
+
+When standalone practice is enabled for your workspace, open a published Round and choose
+**Assign practice**. OpenRound freezes the current published version, so publishing later edits does
+not change an assignment that learners have already opened.
+
+- Choose an optional title, a timed or no-countdown mode, and a close date within your plan's
+  retention window.
+- Use the generic link for anonymous, unpaired practice or add recipient labels to create
+  revocable one-attempt links. Labels help you distribute links; learners still do not need
+  accounts.
+- Copy or download every new bearer link when it is shown. OpenRound stores only its hash and does
+  not reveal the same URL again.
+- Open **Practice** to see aggregate started/completed counts, add another labelled personal link,
+  revoke a link, create an accommodation pass, or close the assignment early.
+
+Standalone practice includes the published Round's main questions. Linked rechecks remain
+conditional Recovery Loop material and are not added as unconditional practice questions. If a
+workspace administrator later disables new assignment creation, already-created assignments stay
+available to manage and complete until they close or expire.
+
 ## Account and data controls
 
 Open **Account** to manage members, workspace selection, branding, secure embed origins, billing,

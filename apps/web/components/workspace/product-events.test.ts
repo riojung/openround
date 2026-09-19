@@ -13,4 +13,19 @@ describe("workspace product events", () => {
     });
     expect(JSON.stringify(event)).not.toMatch(/id|token|url|content|answer|alias/i);
   });
+
+  it("builds a content-free standalone practice share event", () => {
+    const event = buildProductEvent(
+      "practice_assignment_shared",
+      {},
+      new Date("2026-09-18T12:00:00Z"),
+    );
+
+    expect(ProductEventSchema.parse(event)).toEqual({
+      name: "practice_assignment_shared",
+      occurredAt: "2026-09-18T12:00:00.000Z",
+      dimensions: {},
+    });
+    expect(JSON.stringify(event)).not.toMatch(/id|token|url|content|answer|alias/i);
+  });
 });

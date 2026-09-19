@@ -1,0 +1,247 @@
+.stack {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.sourceCard,
+.formCard,
+.receipt,
+.summaryCard,
+.accessCard {
+  border: 1px solid #d6e2ea;
+  border-radius: 1.15rem;
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(16, 42, 67, 0.055);
+  padding: clamp(1.1rem, 3vw, 1.6rem);
+}
+
+.sourceHeader,
+.receiptHeader,
+.summaryHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.sourceHeader h2,
+.receiptHeader h2,
+.summaryHeader h2,
+.formCard h2,
+.accessCard h2,
+.accessCard h3 {
+  margin: 0;
+  letter-spacing: -0.025em;
+}
+
+.sourceCard p,
+.receipt p,
+.summaryCard p,
+.accessCard p {
+  color: #486581;
+  line-height: 1.55;
+}
+
+.sourceFacts,
+.metricGrid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 1rem;
+}
+
+.sourceFact,
+.metric {
+  display: grid;
+  gap: 0.2rem;
+  border-left: 3px solid #d9f1f4;
+  padding-left: 0.7rem;
+}
+
+.sourceFact strong,
+.metric strong {
+  color: #102a43;
+  font-size: 1.02rem;
+}
+
+.sourceFact span,
+.metric span {
+  color: #486581;
+  font-size: 0.82rem;
+}
+
+.optionGrid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.option {
+  position: relative;
+  display: block;
+}
+
+.option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.option span {
+  display: grid;
+  min-height: 92px;
+  align-content: start;
+  gap: 0.3rem;
+  border: 2px solid #d6e2ea;
+  border-radius: 0.9rem;
+  background: #ffffff;
+  color: #486581;
+  cursor: pointer;
+  line-height: 1.4;
+  padding: 0.9rem;
+}
+
+.option span strong {
+  color: #102a43;
+}
+
+.option input:checked + span {
+  border-color: #087375;
+  background: #edf9f7;
+  box-shadow: 0 0 0 3px rgba(8, 115, 117, 0.12);
+}
+
+.option input:focus-visible + span {
+  outline: 3px solid #f5b700;
+  outline-offset: 3px;
+}
+
+.fields {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 1.25rem;
+}
+
+.fullField {
+  grid-column: 1 / -1;
+}
+
+.disclosure {
+  border: 1px solid #d6e2ea;
+  border-radius: 0.9rem;
+  background: #f8fbfc;
+  margin-top: 1.25rem;
+  padding: 0.75rem 1rem;
+}
+
+.disclosure > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  color: #31566d;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.formActions,
+.receiptActions,
+.managementActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 1.25rem;
+}
+
+.linkBox {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 1rem;
+}
+
+.linkRow {
+  display: grid;
+  align-items: end;
+  gap: 0.65rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.linkRow label {
+  min-width: 0;
+  margin: 0;
+}
+
+.linkRow input {
+  width: 100%;
+}
+
+.personalLinks {
+  display: grid;
+  gap: 0.65rem;
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+
+.personalLinks li {
+  border-top: 1px solid #e7edef;
+  padding-top: 0.65rem;
+}
+
+.statusGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.accessTable {
+  overflow-x: auto;
+  margin-top: 1rem;
+}
+
+.accessTable table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.accessTable th,
+.accessTable td {
+  border-bottom: 1px solid #dce5ea;
+  padding: 0.75rem;
+  text-align: left;
+}
+
+.emptyState {
+  border: 1px dashed #a9bbc7;
+  border-radius: 1.1rem;
+  background: rgba(255, 255, 255, 0.68);
+  padding: 2rem;
+  text-align: center;
+}
+
+.emptyState h2 {
+  margin-top: 0;
+}
+
+.muted {
+  color: #486581;
+}
+
+@media (max-width: 680px) {
+  .sourceHeader,
+  .receiptHeader,
+  .summaryHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sourceFacts,
+  .metricGrid,
+  .optionGrid,
+  .fields,
+  .linkRow {
+    grid-template-columns: 1fr;
+  }
+}

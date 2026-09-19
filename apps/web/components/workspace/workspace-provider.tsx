@@ -20,6 +20,7 @@ export interface WorkspaceProductFeatures {
   roomChat: boolean;
   uxBeta: boolean;
   recoveryRehearsal: boolean;
+  practiceAssignments: boolean;
 }
 
 interface WorkspaceAccountResponse {

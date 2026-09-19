@@ -46,6 +46,8 @@ const reportSummaryKeys = [
 
 const followupSummaryKeys = [
   "id",
+  "purpose",
+  "sourceQuizVersionId",
   "sourceSessionId",
   "sourceReportId",
   "quizId",

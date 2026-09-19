@@ -56,6 +56,7 @@ describe("MetricsService", () => {
     metrics.recordRetention({
       expiredLiveSessions: 0,
       purgedSessions: 0,
+      purgedPracticeAssignments: 4,
       purgedAuditEvents: 2,
       purgedProductEvents: 3,
       purgedMedia: 0,
@@ -68,6 +69,9 @@ describe("MetricsService", () => {
     );
     expect(rendered).toContain(
       'openround_retention_records_total{resource="product_event",outcome="deleted"} 3',
+    );
+    expect(rendered).toContain(
+      'openround_retention_records_total{resource="practice_assignment",outcome="deleted"} 4',
     );
   });
 });

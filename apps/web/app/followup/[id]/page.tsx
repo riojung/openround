@@ -2,14 +2,20 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ConfidenceValue, FollowupSnapshot, ResponsePayload } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
 import { Countdown } from "../../../components/countdown";
 import { QuestionMedia } from "../../../components/question-media";
 import { API_URL, ApiClientError, humanError } from "../../../lib/api";
 import { followupStatusAnnouncement } from "../../../lib/followup-announcement";
-import { shouldReplaceSavedAttempt } from "../../../lib/followup-resume";
+import {
+  isCurrentFollowupAccess,
+  releasePendingFollowupAttempt,
+  reservePendingFollowupAttempt,
+  shouldDiscardSavedAttemptForAccess,
+  shouldReplaceSavedAttempt,
+} from "../../../lib/followup-resume";
 import { clientUuid } from "../../../lib/uuid";
 
 async function followupFetch<T>(path: string, token: string, init: RequestInit = {}) {
@@ -44,34 +50,80 @@ export default function FollowupPage() {
   const [confidence, setConfidence] = useState<ConfidenceValue | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [accessRevision, setAccessRevision] = useState(0);
+  const accessRevisionRef = useRef(0);
+  const confidenceControlRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const incomingAccessToken =
+        new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "";
+      if (!incomingAccessToken) return;
+      const accessKey = `openround:followup-access:${id}`;
+      const attemptKey = `openround:followup-attempt:${id}`;
+      const pendingAttemptKey = `openround:followup-pending-attempt:${id}`;
+      const storedAccessToken = sessionStorage.getItem(accessKey) ?? "";
+      if (shouldDiscardSavedAttemptForAccess(incomingAccessToken, storedAccessToken)) {
+        sessionStorage.removeItem(attemptKey);
+        sessionStorage.removeItem(pendingAttemptKey);
+        setSnapshot(null);
+        setAttemptToken("");
+        setError("");
+      }
+      accessRevisionRef.current += 1;
+      setBusy(false);
+      sessionStorage.setItem(accessKey, incomingAccessToken);
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      setAccessRevision(accessRevisionRef.current);
+    };
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, [id]);
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     const accessKey = `openround:followup-access:${id}`;
     const attemptKey = `openround:followup-attempt:${id}`;
+    const pendingAttemptKey = `openround:followup-pending-attempt:${id}`;
     const fragmentToken = new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "";
+    const storedAccessToken = sessionStorage.getItem(accessKey) ?? "";
+    if (shouldDiscardSavedAttemptForAccess(fragmentToken, storedAccessToken)) {
+      sessionStorage.removeItem(attemptKey);
+      sessionStorage.removeItem(pendingAttemptKey);
+    }
     if (fragmentToken) {
       sessionStorage.setItem(accessKey, fragmentToken);
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     }
-    const accessToken = fragmentToken || sessionStorage.getItem(accessKey) || "";
-    const savedAttemptToken = sessionStorage.getItem(attemptKey) || "";
+    const accessToken = fragmentToken || storedAccessToken;
+    const savedAttemptToken = sessionStorage.getItem(attemptKey) ?? "";
+    const accessIsCurrent = () =>
+      isCurrentFollowupAccess(accessToken, sessionStorage.getItem(accessKey) ?? "", cancelled);
 
     const start = async () => {
       if (!accessToken) {
         throw new Error(
-          "This follow-up link is missing its private access token. Ask the facilitator for a new link.",
+          "This practice link is missing its private access token. Ask the facilitator for a new link.",
         );
       }
-      const clientAttemptToken = `${clientUuid()}${clientUuid()}`;
+      const clientAttemptToken = reservePendingFollowupAttempt(
+        sessionStorage,
+        pendingAttemptKey,
+        () => `${clientUuid()}${clientUuid()}`,
+      );
       const result = await followupFetch<{
         attemptToken: string;
         snapshot: FollowupSnapshot;
       }>(`/v1/followups/${id}/start`, accessToken, {
         method: "POST",
         body: JSON.stringify({ attemptToken: clientAttemptToken }),
+        signal: controller.signal,
       });
-      sessionStorage.setItem(attemptKey, result.attemptToken);
+      if (accessIsCurrent()) {
+        sessionStorage.setItem(attemptKey, result.attemptToken);
+        releasePendingFollowupAttempt(sessionStorage, pendingAttemptKey, clientAttemptToken);
+      }
       return result;
     };
 
@@ -83,28 +135,32 @@ export default function FollowupPage() {
             const resumed = await followupFetch<{ snapshot: FollowupSnapshot }>(
               `/v1/followups/${id}/snapshot`,
               savedAttemptToken,
+              { signal: controller.signal },
             );
+            if (accessIsCurrent()) sessionStorage.removeItem(pendingAttemptKey);
             result = { attemptToken: savedAttemptToken, snapshot: resumed.snapshot };
           } catch (caught) {
             if (!shouldReplaceSavedAttempt(caught)) throw caught;
+            if (!accessIsCurrent()) return;
             sessionStorage.removeItem(attemptKey);
             result = await start();
           }
         } else result = await start();
-        if (!cancelled) {
+        if (accessIsCurrent()) {
           setAttemptToken(result.attemptToken);
           setSnapshot(result.snapshot);
           setError("");
         }
       } catch (caught) {
-        if (!cancelled) setError(humanError(caught));
+        if (accessIsCurrent()) setError(humanError(caught));
       }
     };
     void load();
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [id]);
+  }, [accessRevision, id]);
 
   useEffect(() => {
     setSelectedChoiceIds([]);
@@ -149,8 +205,10 @@ export default function FollowupPage() {
     }
     if (snapshot.question.confidence === "required" && confidence === null) {
       setError("Choose how sure you are before submitting.");
+      window.requestAnimationFrame(() => confidenceControlRef.current?.focus());
       return;
     }
+    const requestAccessRevision = accessRevisionRef.current;
     setBusy(true);
     setError("");
     try {
@@ -166,16 +224,17 @@ export default function FollowupPage() {
           }),
         },
       );
-      setSnapshot(result.snapshot);
+      if (accessRevisionRef.current === requestAccessRevision) setSnapshot(result.snapshot);
     } catch (caught) {
-      setError(humanError(caught));
+      if (accessRevisionRef.current === requestAccessRevision) setError(humanError(caught));
     } finally {
-      setBusy(false);
+      if (accessRevisionRef.current === requestAccessRevision) setBusy(false);
     }
   }
 
   async function advance() {
     if (!attemptToken) return;
+    const requestAccessRevision = accessRevisionRef.current;
     setBusy(true);
     setError("");
     try {
@@ -184,11 +243,11 @@ export default function FollowupPage() {
         attemptToken,
         { method: "POST", body: "{}" },
       );
-      setSnapshot(result.snapshot);
+      if (accessRevisionRef.current === requestAccessRevision) setSnapshot(result.snapshot);
     } catch (caught) {
-      setError(humanError(caught));
+      if (accessRevisionRef.current === requestAccessRevision) setError(humanError(caught));
     } finally {
-      setBusy(false);
+      if (accessRevisionRef.current === requestAccessRevision) setBusy(false);
     }
   }
 
@@ -197,6 +256,7 @@ export default function FollowupPage() {
       ? snapshot.response.choiceIds
       : selectedChoiceIds;
   const revealed = snapshot?.phase === "answer_reveal";
+  const assignment = snapshot?.purpose === "assignment";
 
   return (
     <div className="live-shell">
@@ -208,7 +268,7 @@ export default function FollowupPage() {
           </span>
         ) : null}
       </header>
-      <main className="shell live-stage">
+      <main className="shell live-stage" id="main">
         <p aria-atomic="true" aria-live="polite" className="sr-only">
           {followupStatusAnnouncement(snapshot)}
         </p>
@@ -226,12 +286,12 @@ export default function FollowupPage() {
         ) : null}
         {!snapshot && !error ? (
           <section className="live-card">
-            <p>Opening your private follow-up…</p>
+            <p>Opening your private practice…</p>
           </section>
         ) : null}
         {snapshot?.status === "completed" ? (
           <section className="live-card">
-            <p className="eyebrow">Follow-up complete</p>
+            <p className="eyebrow">{assignment ? "Practice complete" : "Follow-up complete"}</p>
             <h1>Thanks for checking your understanding.</h1>
             <p className="lead">Your responses were saved without creating an account.</p>
           </section>
@@ -240,7 +300,7 @@ export default function FollowupPage() {
           <section className="live-card">
             <div className="page-heading" style={{ alignItems: "center", marginBottom: 20 }}>
               <span className="status-pill">
-                Checkpoint {(snapshot.questionIndex ?? 0) + 1} of {snapshot.questionCount}
+                Question {(snapshot.questionIndex ?? 0) + 1} of {snapshot.questionCount}
               </span>
               {snapshot.phase === "question_open" && snapshot.deadline ? (
                 <Countdown deadline={snapshot.deadline} />
@@ -341,6 +401,7 @@ export default function FollowupPage() {
                       data-selected={confidence === value || undefined}
                       key={value}
                       onClick={() => setConfidence(value as ConfidenceValue)}
+                      ref={value === 1 ? confidenceControlRef : undefined}
                       type="button"
                     >
                       {label}
@@ -366,7 +427,7 @@ export default function FollowupPage() {
                     ? "Response recorded"
                     : snapshot.correct
                       ? "Correct"
-                      : "Review this checkpoint"}
+                      : "Review this question"}
                 </strong>
                 {snapshot.explanation ? <div>{snapshot.explanation}</div> : null}
                 {snapshot.feedback ? <div>{snapshot.feedback}</div> : null}
@@ -378,8 +439,10 @@ export default function FollowupPage() {
                   type="button"
                 >
                   {snapshot.questionIndex === snapshot.questionCount - 1
-                    ? "Finish follow-up"
-                    : "Next checkpoint"}
+                    ? assignment
+                      ? "Finish practice"
+                      : "Finish follow-up"
+                    : "Next question"}
                 </button>
               </div>
             ) : null}

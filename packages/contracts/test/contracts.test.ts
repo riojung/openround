@@ -6,7 +6,9 @@ import {
   AvatarIdSchema,
   BrandThemeSchema,
   canonicalizeResponse,
+  CreatePracticeAssignmentSchema,
   EntitlementsSchema,
+  FollowupSchema,
   FollowupSummarySchema,
   HostCommandSchema,
   JoinRequestSchema,
@@ -118,8 +120,10 @@ describe("public contracts", () => {
     expect(
       FollowupSummarySchema.parse({
         id: randomUUID(),
+        purpose: "recovery",
         sourceSessionId: randomUUID(),
         sourceReportId: randomUUID(),
+        sourceQuizVersionId: randomUUID(),
         quizId,
         title: "Practice follow-up",
         status: "open",
@@ -133,6 +137,84 @@ describe("public contracts", () => {
         createdAt: "2026-09-18T12:00:00.000Z",
       }),
     ).toMatchObject({ quizId });
+  });
+
+  it("keeps recovery and standalone practice sources distinct", () => {
+    const shared = {
+      id: randomUUID(),
+      sourceQuizVersionId: randomUUID(),
+      title: "Independent practice",
+      conceptKeys: [],
+      checkpointCount: 2,
+      timeMode: "flex" as const,
+      opensAt: "2026-09-18T12:00:00.000Z",
+      closesAt: "2026-09-25T12:00:00.000Z",
+      expiresAt: "2026-10-18T12:00:00.000Z",
+      closedAt: null,
+      createdAt: "2026-09-18T12:00:00.000Z",
+    };
+    expect(
+      FollowupSchema.parse({
+        ...shared,
+        purpose: "assignment",
+        sourceSessionId: null,
+        sourceReportId: null,
+      }),
+    ).toMatchObject({ purpose: "assignment", sourceReportId: null });
+    expect(
+      FollowupSchema.safeParse({
+        ...shared,
+        purpose: "assignment",
+        sourceSessionId: randomUUID(),
+        sourceReportId: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      FollowupSchema.safeParse({
+        ...shared,
+        purpose: "recovery",
+        sourceSessionId: null,
+        sourceReportId: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      FollowupSchema.safeParse({
+        ...shared,
+        purpose: "assignment",
+        sourceSessionId: null,
+        sourceReportId: null,
+        conceptKeys: ["recovery-only"],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates bounded, unique personal labels for practice assignments", () => {
+    const closesAt = "2026-09-25T12:00:00.000Z";
+    const sourceQuizVersionId = randomUUID();
+    expect(
+      CreatePracticeAssignmentSchema.parse({
+        sourceQuizVersionId,
+        closesAt,
+        personalLabels: ["Ada", "Grace"],
+      }),
+    ).toMatchObject({
+      sourceQuizVersionId,
+      timeMode: "flex",
+      personalLabels: ["Ada", "Grace"],
+    });
+    expect(
+      CreatePracticeAssignmentSchema.safeParse({
+        closesAt,
+        personalLabels: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      CreatePracticeAssignmentSchema.safeParse({
+        sourceQuizVersionId,
+        closesAt,
+        personalLabels: ["Ada", " ada "],
+      }).success,
+    ).toBe(false);
   });
 
   it("keeps history Round filter options summary-only", () => {
@@ -165,6 +247,8 @@ describe("public contracts", () => {
       "recheck_opened",
       "report_viewed",
       "followup_shared",
+      "practice_assignment_created",
+      "practice_assignment_shared",
       "rehearsal_started",
       "rehearsal_completed",
     ]);

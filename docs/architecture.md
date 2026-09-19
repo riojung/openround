@@ -55,17 +55,17 @@ The browser receives all public pages from Next.js. Fastify owns versioned REST 
 
 ## Repository structure
 
-| Path                   | Responsibility                                                                                                                                                  |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web`             | Next.js creator, collaboration, host/cohost, presenter/embed, participant, Q&A, report, follow-up, institution-linking, policy, pricing, and account interfaces |
-| `apps/server`          | Fastify, Socket.IO, auth/OIDC/LTI, sessions, Q&A, report/authoring workers, follow-up, portability, storage, billing, retention, metrics, and tracing           |
-| `packages/contracts`   | Shared Zod schemas, public DTOs, realtime envelopes, commands, acknowledgements, and stable error codes                                                         |
-| `packages/game-engine` | Pure state transitions, scoring, deadlines, ranking, and role-filtered snapshot projection                                                                      |
-| `packages/insights`    | Pure deterministic diagnostic measurements and facilitator recommendation rules                                                                                 |
-| `packages/experience`  | Immutable preset registry, semantic-token validation, brand layering, and contrast checks                                                                       |
-| `packages/db`          | Repository interface, PostgreSQL implementation, in-memory development implementation, and migrations                                                           |
-| `infra`                | Caddy routing, PostgreSQL runtime role initialization, and Cloud Run/Fly deployment profiles                                                                    |
-| `tests`                | Browser, integration, smoke, multi-writer, restart/recovery, and load scenarios                                                                                 |
+| Path                   | Responsibility                                                                                                                                                 |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`             | Next.js creator, collaboration, host/cohost, presenter/embed, participant, Q&A, report, practice, institution-linking, policy, pricing, and account interfaces |
+| `apps/server`          | Fastify, Socket.IO, auth/OIDC/LTI, sessions, Q&A, report/authoring workers, practice, portability, storage, billing, retention, metrics, and tracing           |
+| `packages/contracts`   | Shared Zod schemas, public DTOs, realtime envelopes, commands, acknowledgements, and stable error codes                                                        |
+| `packages/game-engine` | Pure state transitions, scoring, deadlines, ranking, and role-filtered snapshot projection                                                                     |
+| `packages/insights`    | Pure deterministic diagnostic measurements and facilitator recommendation rules                                                                                |
+| `packages/experience`  | Immutable preset registry, semantic-token validation, brand layering, and contrast checks                                                                      |
+| `packages/db`          | Repository interface, PostgreSQL implementation, in-memory development implementation, and migrations                                                          |
+| `infra`                | Caddy routing, PostgreSQL runtime role initialization, and Cloud Run/Fly deployment profiles                                                                   |
+| `tests`                | Browser, integration, smoke, multi-writer, restart/recovery, and load scenarios                                                                                |
 
 The application follows one domain model and one release train. Splitting web and realtime deployment does not create independent business services or databases.
 
@@ -81,7 +81,7 @@ The application follows one domain model and one release train. Splitting web an
 - Stores host and participant resume credentials in tab-scoped `sessionStorage`.
 - Uses shared contracts for response and event shapes.
 - Renders the complete public question and labels on participant devices.
-- Keeps Audience Pulse, chat, Q&A, intervention/recheck, follow-up, collaboration, portability,
+- Keeps Audience Pulse, chat, Q&A, intervention/recheck, practice, collaboration, portability,
   and secure embed flows role-specific and accessible.
 - Converts only validated experience tokens into CSS variables and applies device-local contrast,
   motion, and mute preferences last.
@@ -99,7 +99,7 @@ The web process does not decide deadlines, answer acceptance, score, rank, or se
 - Validates environment, HTTP input, event input, and webhook input at boundaries.
 - Issues and verifies creator, host, and participant credentials.
 - Coordinates game mutations through `SessionService`.
-- Runs Audience Pulse, chat, Q&A, and follow-up services outside the canonical live-game snapshot.
+- Runs Audience Pulse, chat, Q&A, and practice services outside the canonical live-game snapshot.
 - Persists accepted answers and canonical state before acknowledgement.
 - Produces role-filtered snapshots and queues versioned reports from durable evidence.
 - Claims report and authoring jobs with database leases and retry/failure state.
@@ -122,7 +122,8 @@ PostgreSQL stores creator identity, workspaces, roles/invitations, magic links, 
 checkpoint-set drafts, immutable versions, folders/tags, media metadata, live sessions,
 round/intervention evidence, accepted canonical responses and confidence, Audience Pulse, chat,
 Q&A, staff credentials, transactional audience outbox records, versioned report jobs, self-paced
-follow-ups, authoring jobs, subscriptions, consent, institution policies, external identity links,
+recovery follow-ups and standalone assignments, authoring jobs, subscriptions, consent,
+institution policies, external identity links,
 LTI registrations/launches, and audit events.
 
 Ordered transactional migration files are tracked in `_openround_migrations` with version, name,
@@ -406,7 +407,7 @@ the requesting participant's avatar and suppresses avatars belonging to everyone
 
 Intentional realtime-process shutdown avoids converting every attached guest into a durable disconnect mutation. Ordinary network disconnects still update presence through the guarded session queue.
 
-### Report, follow-up, export, and deletion
+### Report, practice, export, and deletion
 
 Finishing a session stamps a purge deadline from the then-active plan and queues report generation
 from durable participant, answer, intervention, Pulse, chat, moderation, and Q&A rows. Hosted Free
@@ -415,12 +416,17 @@ operators configure their own duration. A later downgrade does not shorten an ex
 Versioned JSON and formula-safe UTF-8 CSV are server-enforced for the entitled edition.
 
 A Pro/community facilitator may select unresolved concepts and create one immutable self-paced
-follow-up. The service hashes generic, personal, accommodation, and resume tokens; server time owns
-timed attempts while flex mode has no countdown. Answers remain idempotent and durable. Follow-up
-rows reference the source session with cascading deletion and cannot outlive its retention window.
+recovery follow-up. An allowlisted facilitator may also create a standalone practice assignment
+from the Round's current published version. Both kinds retain that immutable source-version ID;
+standalone practice clones main questions only and has no source session or report. The service
+hashes generic, personal, accommodation, and resume tokens; server time owns timed attempts while
+flex mode has no countdown. Answers remain idempotent and durable. Recovery rows reference the
+source session with cascading deletion and cannot outlive its retention window. Standalone rows use
+the plan retention duration captured at creation and are purged directly at their stored expiry.
 
-Scheduled retention closes expired live/follow-up access, removes expired authoring jobs, then
-cascades deletion at the stored deadline. Explicit session deletion removes the same tree,
+Scheduled retention closes expired live/practice access, directly purges expired standalone
+assignments, removes expired authoring jobs, then cascades session deletion at the stored deadline.
+Explicit session deletion removes the same tree,
 including interaction state and outbox rows, and invalidates active cache. Account export gathers
 collaboration, Pulse, chat, moderation, Q&A, recovery, follow-up, and authoring/institution data
 while excluding bearer hashes and LTI response JWTs; account deletion removes or anonymizes owned

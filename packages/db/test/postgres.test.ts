@@ -19,6 +19,7 @@ import {
 } from "@openround/game-engine";
 import { PostgresRepository } from "../src/postgres.js";
 import {
+  FollowupAccessLimitError,
   SessionCodeConflictError,
   SessionNotActiveError,
   SessionVersionConflictError,
@@ -73,6 +74,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 14, name: "ux_beta_foundation" },
       { version: 15, name: "product_event_funnel" },
       { version: 16, name: "round_last_hosted_indexes" },
+      { version: 17, name: "round_practice_assignments" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -82,7 +84,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("16");
+    expect(bootstrapped.rows[0]?.count).toBe("17");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -282,13 +284,15 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       for (let index = 0; index < followupIds.length; index += 1) {
         await followupClient.query(
           `INSERT INTO followups
-             (id, workspace_id, source_session_id, source_report_id, title, content,
-              concept_keys, time_mode, generic_token_hash, opens_at, closes_at, expires_at,
-              closed_at, created_by, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+             (id, workspace_id, purpose, source_quiz_version_id, source_session_id,
+              source_report_id, title, content, concept_keys, time_mode, generic_token_hash,
+              opens_at, closes_at, expires_at, closed_at, created_by, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
           [
             followupIds[index],
             owner.workspaceId,
+            "recovery",
+            version.id,
             sessionIds[index],
             reportIds[index],
             `Cursor follow-up ${index + 1}`,
@@ -592,6 +596,16 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       id: randomUUID(),
       workspaceId: first.workspaceId,
       quizId: firstQuiz.id,
+      version: 1,
+      content: versionContent,
+      contentHash: randomUUID(),
+      publishedAt: now,
+    });
+    await repository.updateQuiz(second.workspaceId, secondQuiz.id, versionContent);
+    const secondVersion = await repository.publishQuiz({
+      id: randomUUID(),
+      workspaceId: second.workspaceId,
+      quizId: secondQuiz.id,
       version: 1,
       content: versionContent,
       contentHash: randomUUID(),
@@ -1261,10 +1275,64 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const genericFollowupTokenHash = `generic-${randomUUID()}`;
     const personalFollowupTokenHash = `personal-${randomUUID()}`;
     const followupClosesAt = new Date(Date.now() + 24 * 60 * 60_000);
+    const legacyFollowupId = randomUUID();
+    const legacyClient = await runtimePool.connect();
+    try {
+      await legacyClient.query("BEGIN");
+      await legacyClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        first.workspaceId,
+      ]);
+      const sourceVersionColumn = await legacyClient.query(
+        `SELECT is_nullable
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = 'followups'
+           AND column_name = 'source_quiz_version_id'`,
+      );
+      expect(sourceVersionColumn.rows[0]?.is_nullable).toBe("YES");
+      const legacyInsert = await legacyClient.query(
+        `INSERT INTO followups
+           (id, workspace_id, source_session_id, source_report_id, title, content,
+            concept_keys, time_mode, generic_token_hash, opens_at, closes_at, expires_at,
+            closed_at, created_by, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         RETURNING purpose, source_quiz_version_id`,
+        [
+          legacyFollowupId,
+          first.workspaceId,
+          sessionId,
+          report.id,
+          "Legacy recovery follow-up",
+          JSON.stringify(versionContent),
+          ["transactions"],
+          "flex",
+          randomUUID(),
+          now,
+          followupClosesAt,
+          persistedSession.retentionExpiresAt,
+          null,
+          first.userId,
+          now,
+        ],
+      );
+      expect(legacyInsert.rows[0]).toMatchObject({
+        purpose: "recovery",
+        source_quiz_version_id: firstVersion.id,
+      });
+      await legacyClient.query("DELETE FROM followups WHERE id = $1", [legacyFollowupId]);
+      await legacyClient.query("COMMIT");
+    } catch (error) {
+      await legacyClient.query("ROLLBACK");
+      throw error;
+    } finally {
+      legacyClient.release();
+    }
     await repository.createFollowup(
       {
         id: followupId,
         workspaceId: first.workspaceId,
+        purpose: "recovery",
+        sourceQuizVersionId: firstVersion.id,
         sourceSessionId: sessionId,
         sourceReportId: report.id,
         title: "Database follow-up",
@@ -1340,6 +1408,319 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     expect(
       await repository.getFollowupByGenericToken(followupId, genericFollowupTokenHash, now),
     ).toMatchObject({ id: followupId });
+    await expect(
+      repository.createFollowupAccess({
+        id: randomUUID(),
+        workspaceId: first.workspaceId,
+        followupId,
+        sourceParticipantId: null,
+        kind: "assignment_personal",
+        label: "Wrong purpose",
+        tokenHash: randomUUID(),
+        timeMultiplier: 1,
+        expiresAt: followupClosesAt,
+        revokedAt: null,
+        createdAt: now,
+      }),
+    ).rejects.toMatchObject({ code: "23514" });
+    const assignmentExpiresAt = new Date(now.getTime() + 2 * 24 * 60 * 60_000);
+    const assignmentClosesAt = new Date(now.getTime() + 24 * 60 * 60_000);
+    const assignmentIds = [randomUUID(), randomUUID()];
+    const assignmentPersonalTokenHash = randomUUID();
+    for (const [index, assignmentId] of assignmentIds.entries()) {
+      await repository.createFollowup(
+        {
+          id: assignmentId,
+          workspaceId: first.workspaceId,
+          purpose: "assignment",
+          sourceQuizVersionId: firstVersion.id,
+          sourceSessionId: null,
+          sourceReportId: null,
+          title: `Database assignment ${index + 1}`,
+          content: versionContent,
+          conceptKeys: [],
+          timeMode: "flex",
+          genericTokenHash: randomUUID(),
+          opensAt: now,
+          closesAt: assignmentClosesAt,
+          expiresAt: assignmentExpiresAt,
+          closedAt: null,
+          createdBy: first.userId,
+          createdAt: new Date(now.getTime() + index + 1),
+        },
+        index === 0
+          ? [
+              {
+                id: randomUUID(),
+                workspaceId: first.workspaceId,
+                followupId: assignmentId,
+                sourceParticipantId: null,
+                kind: "assignment_personal",
+                label: "Independent learner",
+                tokenHash: assignmentPersonalTokenHash,
+                timeMultiplier: 1,
+                expiresAt: assignmentClosesAt,
+                revokedAt: null,
+                createdAt: now,
+              },
+            ]
+          : [],
+      );
+    }
+    expect(
+      await repository.listFollowupHistory(first.workspaceId, {
+        limit: 10,
+        quizId: firstQuiz.id,
+        now,
+      }),
+    ).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          id: assignmentIds[0],
+          purpose: "assignment",
+          sourceQuizVersionId: firstVersion.id,
+          sourceSessionId: null,
+          sourceReportId: null,
+        }),
+        expect.objectContaining({ id: assignmentIds[1], purpose: "assignment" }),
+      ]),
+    });
+    expect(
+      await repository.getFollowupAccessByToken(
+        assignmentIds[0]!,
+        assignmentPersonalTokenHash,
+        now,
+      ),
+    ).toMatchObject({ kind: "assignment_personal", sourceParticipantId: null });
+    await repository.createOrGetFollowupAttempt({
+      id: randomUUID(),
+      workspaceId: first.workspaceId,
+      followupId: assignmentIds[0]!,
+      accessTokenId: null,
+      sourceParticipantId: null,
+      attemptTokenHash: randomUUID(),
+      status: "completed",
+      phase: "completed",
+      currentIndex: 0,
+      version: 1,
+      timeMultiplier: 1,
+      questionOpenedAt: now,
+      deadlineAt: null,
+      completedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(await repository.getFollowupProgress(first.workspaceId, assignmentIds[0]!)).toEqual({
+      attemptCount: 1,
+      completedAttemptCount: 1,
+    });
+    expect(await repository.getFollowupProgress(second.workspaceId, assignmentIds[0]!)).toBeNull();
+    const createdAssignmentAccess = {
+      id: randomUUID(),
+      workspaceId: first.workspaceId,
+      followupId: assignmentIds[1]!,
+      sourceParticipantId: null,
+      kind: "assignment_personal" as const,
+      label: "Post-creation learner",
+      tokenHash: randomUUID(),
+      timeMultiplier: 1 as const,
+      expiresAt: assignmentClosesAt,
+      revokedAt: null,
+      createdAt: now,
+    };
+    await expect(
+      repository.createAssignmentPersonalAccess(
+        { ...createdAssignmentAccess, kind: "accommodation", timeMultiplier: 1.5 },
+        1,
+      ),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      repository.createAssignmentPersonalAccess(createdAssignmentAccess, 1),
+    ).resolves.toMatchObject({ id: createdAssignmentAccess.id });
+    expect(
+      await repository.revokeFollowupAccess(
+        first.workspaceId,
+        assignmentIds[1]!,
+        createdAssignmentAccess.id,
+        now,
+      ),
+    ).toBe(true);
+    await expect(
+      repository.createAssignmentPersonalAccess(
+        {
+          ...createdAssignmentAccess,
+          id: randomUUID(),
+          tokenHash: randomUUID(),
+          revokedAt: null,
+        },
+        1,
+      ),
+    ).rejects.toBeInstanceOf(FollowupAccessLimitError);
+    await expect(
+      repository.createAssignmentPersonalAccess(
+        {
+          ...createdAssignmentAccess,
+          workspaceId: second.workspaceId,
+          id: randomUUID(),
+          tokenHash: randomUUID(),
+        },
+        1,
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      repository.createAssignmentPersonalAccess(
+        {
+          ...createdAssignmentAccess,
+          followupId,
+          id: randomUUID(),
+          tokenHash: randomUUID(),
+        },
+        1,
+      ),
+    ).resolves.toBeNull();
+    let accessWhileClosing:
+      ReturnType<typeof repository.createAssignmentPersonalAccess> | undefined;
+    const closingClient = await runtimePool.connect();
+    try {
+      await closingClient.query("BEGIN");
+      await closingClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        first.workspaceId,
+      ]);
+      await closingClient.query(
+        `UPDATE followups SET closed_at = $3
+         WHERE workspace_id = $1 AND id = $2`,
+        [first.workspaceId, assignmentIds[1], new Date()],
+      );
+      accessWhileClosing = repository.createAssignmentPersonalAccess(
+        {
+          ...createdAssignmentAccess,
+          id: randomUUID(),
+          tokenHash: randomUUID(),
+          label: "Closing race learner",
+        },
+        100,
+      );
+
+      let waitingOnClose = false;
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        const activity = await closingClient.query(
+          `SELECT EXISTS (
+             SELECT 1
+             FROM pg_stat_activity
+             WHERE pid <> pg_backend_pid()
+               AND query LIKE '%create_assignment_personal_access%'
+               AND wait_event_type = 'Lock'
+           ) AS waiting`,
+        );
+        waitingOnClose = activity.rows[0]?.waiting === true;
+        if (waitingOnClose) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(waitingOnClose).toBe(true);
+      await closingClient.query("COMMIT");
+    } catch (error) {
+      await closingClient.query("ROLLBACK");
+      throw error;
+    } finally {
+      closingClient.release();
+    }
+    await expect(accessWhileClosing!).resolves.toBeNull();
+    const elapsedAssignmentId = randomUUID();
+    const elapsedClosesAt = new Date(now.getTime() + 1);
+    await repository.createFollowup(
+      {
+        id: elapsedAssignmentId,
+        workspaceId: first.workspaceId,
+        purpose: "assignment",
+        sourceQuizVersionId: firstVersion.id,
+        sourceSessionId: null,
+        sourceReportId: null,
+        title: "Elapsed assignment",
+        content: versionContent,
+        conceptKeys: [],
+        timeMode: "flex",
+        genericTokenHash: randomUUID(),
+        opensAt: now,
+        closesAt: elapsedClosesAt,
+        expiresAt: assignmentExpiresAt,
+        closedAt: null,
+        createdBy: first.userId,
+        createdAt: now,
+      },
+      [],
+    );
+    await expect(
+      repository.createAssignmentPersonalAccess(
+        {
+          ...createdAssignmentAccess,
+          followupId: elapsedAssignmentId,
+          id: randomUUID(),
+          tokenHash: randomUUID(),
+          expiresAt: elapsedClosesAt,
+        },
+        100,
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      repository.createFollowup(
+        {
+          id: randomUUID(),
+          workspaceId: first.workspaceId,
+          purpose: "assignment",
+          sourceQuizVersionId: secondVersion.id,
+          sourceSessionId: null,
+          sourceReportId: null,
+          title: "Cross-tenant source",
+          content: versionContent,
+          conceptKeys: [],
+          timeMode: "flex",
+          genericTokenHash: randomUUID(),
+          opensAt: now,
+          closesAt: assignmentClosesAt,
+          expiresAt: assignmentExpiresAt,
+          closedAt: null,
+          createdBy: first.userId,
+          createdAt: now,
+        },
+        [],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      repository.createFollowup(
+        {
+          id: randomUUID(),
+          workspaceId: first.workspaceId,
+          purpose: "assignment",
+          sourceQuizVersionId: firstVersion.id,
+          sourceSessionId: null,
+          sourceReportId: null,
+          title: "Invalid assignment concepts",
+          content: versionContent,
+          conceptKeys: ["recovery-only"],
+          timeMode: "flex",
+          genericTokenHash: randomUUID(),
+          opensAt: now,
+          closesAt: assignmentClosesAt,
+          expiresAt: assignmentExpiresAt,
+          closedAt: null,
+          createdBy: first.userId,
+          createdAt: now,
+        },
+        [],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    expect(
+      await repository.purgeExpiredPracticeAssignments(new Date(assignmentExpiresAt.getTime() - 1)),
+    ).toBe(0);
+    expect(await repository.purgeExpiredPracticeAssignments(assignmentExpiresAt)).toBe(3);
+    expect(await repository.getFollowup(first.workspaceId, assignmentIds[0]!)).toBeNull();
+    expect(
+      await repository.getFollowupAccessByToken(
+        assignmentIds[0]!,
+        assignmentPersonalTokenHash,
+        now,
+      ),
+    ).toBeNull();
     const attemptTokenHash = personalFollowupTokenHash;
     const attempt = await repository.createOrGetFollowupAttempt({
       id: randomUUID(),

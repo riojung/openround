@@ -92,7 +92,10 @@ export async function buildApp(
     (config.DATABASE_URL
       ? new PostgresRepository(config.DATABASE_URL)
       : config.ALLOW_IN_MEMORY || config.NODE_ENV === "test"
-        ? new MemoryRepository({ initialWorkspaceId: config.TEST_INITIAL_WORKSPACE_ID })
+        ? new MemoryRepository({
+            initialWorkspaceId: config.TEST_INITIAL_WORKSPACE_ID,
+            initialPlan: config.TEST_INITIAL_PLAN,
+          })
         : (() => {
             throw new Error("DATABASE_URL is required unless ALLOW_IN_MEMORY=true");
           })());

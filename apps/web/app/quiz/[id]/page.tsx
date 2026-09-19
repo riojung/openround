@@ -210,6 +210,7 @@ export default function QuizEditorPage() {
   const [mediaUploadsEnabled, setMediaUploadsEnabled] = useState(false);
   const [roundExperiencesAvailable, setRoundExperiencesAvailable] = useState(false);
   const [uxBeta, setUxBeta] = useState(false);
+  const [practiceAssignmentsAvailable, setPracticeAssignmentsAvailable] = useState(false);
   const [mediaState, setMediaState] = useState<"idle" | "uploading" | "scanning">("idle");
   const [mediaPreviewUrl, setMediaPreviewUrl] = useState("");
   const [error, setError] = useState("");
@@ -258,7 +259,11 @@ export default function QuizEditorPage() {
       apiFetch<{ quiz: QuizRecord }>(`/v1/quizzes/${id}`),
       apiFetch<{
         entitlements: Entitlements;
-        productFeatures: { roundExperiences: boolean; uxBeta: boolean };
+        productFeatures: {
+          roundExperiences: boolean;
+          uxBeta: boolean;
+          practiceAssignments?: boolean;
+        };
       }>("/v1/auth/me"),
       apiFetch<{ quizzes: QuizRecord[] }>("/v1/quizzes"),
     ])
@@ -269,6 +274,7 @@ export default function QuizEditorPage() {
         setEntitlements(account.entitlements);
         setRoundExperiencesAvailable(account.productFeatures.roundExperiences);
         setUxBeta(account.productFeatures.uxBeta);
+        setPracticeAssignmentsAvailable(Boolean(account.productFeatures.practiceAssignments));
         setPublishedQuizCount(
           library.quizzes.filter((candidate) => candidate.status === "published").length,
         );
@@ -627,6 +633,11 @@ export default function QuizEditorPage() {
           >
             Preview
           </button>
+          {practiceAssignmentsAvailable && quiz?.status === "published" && quiz.currentVersionId ? (
+            <Link className="button-quiet small-button" href={`/quiz/${id}/assign`}>
+              Assign practice
+            </Link>
+          ) : null}
           <button
             className="button small-button"
             disabled={!draft?.questions.length || saveState === "saving" || publishLimitReached}
