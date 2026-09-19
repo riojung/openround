@@ -6,6 +6,7 @@ import {
   addParticipant,
   applyHostCommand,
   createGameState,
+  snapshotForRole,
 } from "@openround/game-engine";
 import { ConfigSchema } from "../src/config.js";
 import { MetricsService } from "../src/metrics.js";
@@ -180,6 +181,66 @@ describe("realtime authorization", () => {
       correctResponse: { kind: "choice", choiceIds: [correctChoiceId] },
       participants: [expect.objectContaining({ id: participantId, nickname: "Private learner" })],
     });
+  });
+
+  it("reuses the participant projection without changing answer-free private snapshots", () => {
+    const participantIds = [crypto.randomUUID(), crypto.randomUUID()];
+    let state = createGameState({
+      sessionId: crypto.randomUUID(),
+      code: "7654321",
+      quiz: {
+        title: "Realtime projection",
+        description: "",
+        questions: [
+          {
+            id: crypto.randomUUID(),
+            type: "true_false",
+            prompt: "Projection remains role-safe.",
+            choices: [
+              { id: crypto.randomUUID(), label: "True", isCorrect: true },
+              { id: crypto.randomUUID(), label: "False", isCorrect: false },
+            ],
+            timeLimitSeconds: 20,
+            basePoints: 1_000,
+            explanation: "",
+            mediaId: null,
+            mediaAlt: null,
+          },
+        ],
+      },
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    for (const [index, participantId] of participantIds.entries()) {
+      state = addParticipant(state, {
+        id: participantId,
+        nickname: `Private learner ${index + 1}`,
+        score: index * 100,
+        correctCount: index,
+        acceptedResponseMs: index * 1_000,
+        connected: true,
+        kicked: false,
+      }).state;
+    }
+    state = applyHostCommand(state, {
+      action: "start",
+      commandId: crypto.randomUUID(),
+      expectedVersion: state.version,
+      nowMs: 1_000,
+      newRoundId: () => crypto.randomUUID(),
+    }).state;
+
+    const selectSnapshot = snapshotSelector(state);
+    for (const participantId of participantIds) {
+      expect(selectSnapshot("participant", participantId)).toEqual(
+        snapshotForRole(state, { role: "participant", participantId }),
+      );
+    }
   });
 
   it("does not promote or subscribe a socket when host authentication fails", async () => {

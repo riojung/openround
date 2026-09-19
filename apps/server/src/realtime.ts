@@ -68,12 +68,30 @@ function consumeRateLimit(
 export function snapshotSelector(state: GameState) {
   const staffSnapshot = snapshotForRole(state, { role: "host" });
   const participantBase = snapshotForRole(state, { role: "participant" });
+  const currentRoundHasAnswers = Object.values(state.answers).some(
+    (answer) => answer.roundId === state.roundId,
+  );
+  const visibleParticipantById = new Map(
+    staffSnapshot.participants.map((participant) => [participant.id, participant]),
+  );
 
   return (role: RealtimeRole, participantId?: string): SessionSnapshot => {
     if (role !== "participant") return staffSnapshot;
-    return participantId
-      ? snapshotForRole(state, { role: "participant", participantId })
-      : participantBase;
+    if (!participantId) return participantBase;
+    if (currentRoundHasAnswers) {
+      return snapshotForRole(state, { role: "participant", participantId });
+    }
+    const visibleParticipant = visibleParticipantById.get(participantId);
+    return {
+      ...participantBase,
+      myParticipantId: participantId,
+      participants:
+        state.settings.resultVisibility === "private" && visibleParticipant
+          ? participantBase.participants.map((participant) =>
+              participant.id === participantId ? visibleParticipant : participant,
+            )
+          : participantBase.participants,
+    };
   };
 }
 

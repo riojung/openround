@@ -22,6 +22,21 @@ describe("MetricsService", () => {
     expect(rendered).not.toContain("unexpected.dynamic.event");
   });
 
+  it("records answer commit wait and persistence without session labels", async () => {
+    const metrics = new MetricsService();
+
+    metrics.observeAnswerCommitStage("wait", 0.003);
+    metrics.observeAnswerCommitStage("persist", 0.04);
+
+    const rendered = await metrics.render();
+    expect(rendered).toContain(
+      'openround_answer_commit_stage_duration_seconds_count{stage="wait"} 1',
+    );
+    expect(rendered).toContain(
+      'openround_answer_commit_stage_duration_seconds_count{stage="persist"} 1',
+    );
+  });
+
   it("records authoring completion and failure attempts without workspace labels", async () => {
     const metrics = new MetricsService();
     metrics.recordAuthoringJob("pdf", "completed", 1.25);

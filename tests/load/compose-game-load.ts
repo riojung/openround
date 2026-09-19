@@ -15,6 +15,7 @@ const batchSize = Number(process.env.JOIN_BATCH_SIZE ?? "20");
 const assertPerformance = process.env.ASSERT_PERFORMANCE === "true";
 const restartServer = process.env.RESTART_SERVER === "true";
 const synchronizedStartAtMs = Number(process.env.START_AT_MS ?? "0");
+const synchronizedAnswerAtMs = Number(process.env.ANSWER_AT_MS ?? "0");
 const suppliedCreatorCookie = process.env.LOAD_CREATOR_COOKIE?.trim() ?? "";
 const keepData = process.env.LOAD_KEEP_DATA === "true";
 const runId = process.env.LOAD_RUN_ID?.trim() || randomUUID();
@@ -29,6 +30,16 @@ if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 50) {
 }
 if (!Number.isFinite(synchronizedStartAtMs) || synchronizedStartAtMs < 0) {
   throw new Error("START_AT_MS must be a non-negative Unix timestamp in milliseconds");
+}
+if (!Number.isFinite(synchronizedAnswerAtMs) || synchronizedAnswerAtMs < 0) {
+  throw new Error("ANSWER_AT_MS must be a non-negative Unix timestamp in milliseconds");
+}
+if (
+  synchronizedStartAtMs > 0 &&
+  synchronizedAnswerAtMs > 0 &&
+  synchronizedAnswerAtMs < synchronizedStartAtMs
+) {
+  throw new Error("ANSWER_AT_MS must not be earlier than START_AT_MS");
 }
 if (suppliedCreatorCookie && /[\r\n]/.test(suppliedCreatorCookie)) {
   throw new Error("LOAD_CREATOR_COOKIE must not contain line breaks");
@@ -337,6 +348,14 @@ async function main() {
   assert.equal(started.snapshot.phase, "question_open");
   assert.ok(started.snapshot.roundId);
   const broadcastMs = await Promise.all(broadcastSamples);
+
+  const answerBarrierDelayMs = synchronizedAnswerAtMs - Date.now();
+  if (synchronizedAnswerAtMs > 0 && answerBarrierDelayMs <= 0) {
+    throw new Error("Question broadcast missed the synchronized answer barrier");
+  }
+  if (answerBarrierDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, answerBarrierDelayMs));
+  }
 
   const answerMs = await Promise.all(
     participants.map(async (participant) => {

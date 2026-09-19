@@ -96,6 +96,7 @@ interface AnswerBatch {
   items: PendingAnswer[];
   timer: NodeJS.Timeout;
   deadlineAtMs: number;
+  awaitingParticipantIds: Set<string> | null;
 }
 
 interface AnswerIngress {
@@ -128,9 +129,9 @@ const maximumAnswerBatchWaitMs = 150;
 const maximumAnswerBatchSize = 250;
 const joinBatchWindowMs = 50;
 const maximumJoinBatchSize = 250;
-// Keep synchronized rooms from occupying the whole PostgreSQL pool with
-// WAL-heavy answer commits; leave capacity for host and recovery traffic.
-const maximumConcurrentAnswerCommits = 8;
+// Admit the supported ten-room synchronized load while leaving five of the
+// repository's fifteen PostgreSQL connections for host and recovery traffic.
+const maximumConcurrentAnswerCommits = 10;
 
 export class SessionError extends Error {
   constructor(
@@ -1117,14 +1118,25 @@ export class SessionService {
           () => this.dispatchAnswerBatch(input.sessionId, items),
           answerBatchWindowMs,
         );
-        batch = { items, timer, deadlineAtMs: Date.now() + maximumAnswerBatchWaitMs };
+        batch = {
+          items,
+          timer,
+          deadlineAtMs: Date.now() + maximumAnswerBatchWaitMs,
+          awaitingParticipantIds: this.participantsAwaitingAnswer(input.sessionId),
+        };
         this.answerBatches.set(input.sessionId, batch);
       }
       batch.items.push(item);
+      if (
+        batch.awaitingParticipantIds &&
+        input.roundId === this.active.get(input.sessionId)?.state.roundId
+      ) {
+        batch.awaitingParticipantIds.delete(item.participant.id);
+      }
       markReady();
       if (
         batch.items.length >= maximumAnswerBatchSize ||
-        this.answerBatchCompletesOpenRound(input.sessionId, batch.items)
+        batch.awaitingParticipantIds?.size === 0
       ) {
         clearTimeout(batch.timer);
         this.dispatchAnswerBatch(input.sessionId, batch.items);
@@ -1191,9 +1203,9 @@ export class SessionService {
     }
   }
 
-  private answerBatchCompletesOpenRound(sessionId: string, items: PendingAnswer[]) {
+  private participantsAwaitingAnswer(sessionId: string) {
     const state = this.active.get(sessionId)?.state;
-    if (!state || state.phase !== "question_open" || !state.roundId) return false;
+    if (!state || state.phase !== "question_open" || !state.roundId) return null;
 
     const awaiting = new Set(
       Object.values(state.participants)
@@ -1203,11 +1215,7 @@ export class SessionService {
     for (const answer of Object.values(state.answers)) {
       if (answer.roundId === state.roundId) awaiting.delete(answer.participantId);
     }
-    if (awaiting.size === 0) return false;
-    for (const item of items) {
-      if (item.input.roundId === state.roundId) awaiting.delete(item.participant.id);
-    }
-    return awaiting.size === 0;
+    return awaiting.size > 0 ? awaiting : null;
   }
 
   private async withAnswerCommitSlot<T>(work: () => Promise<T>): Promise<T> {
@@ -1260,20 +1268,29 @@ export class SessionService {
       const session = await this.loadSessionForMutation(sessionId);
       if (!session) throw new SessionError("NOT_FOUND", "Session not found");
       const priorState = session.state;
-      const durableAnswers = await this.repository.findAnswers(
-        session.workspaceId,
-        session.id,
-        items.map(({ input, participant }) => ({
-          participantId: participant.id,
-          roundId: input.roundId,
-          idempotencyKey: input.idempotencyKey,
-        })),
+      // Current-round answers are part of the atomically persisted session
+      // snapshot. While the first round is active, it cannot have historical
+      // idempotency keys, so avoid a second PostgreSQL transaction on this
+      // latency-critical path. Later rounds and finished sessions still consult
+      // durable history because those transitions clear `state.answers`.
+      const durableAnswers =
+        Object.keys(priorState.rounds).length > 1 || priorState.phase === "finished"
+          ? await this.repository.findAnswers(
+              session.workspaceId,
+              session.id,
+              items.map(({ input, participant }) => ({
+                participantId: participant.id,
+                roundId: input.roundId,
+                idempotencyKey: input.idempotencyKey,
+              })),
+            )
+          : [];
+      const existingAnswers = [...Object.values(priorState.answers), ...durableAnswers];
+      const existingByIdempotencyKey = new Map(
+        existingAnswers.map((answer) => [answer.idempotencyKey, answer]),
       );
-      const durableByIdempotencyKey = new Map(
-        durableAnswers.map((answer) => [answer.idempotencyKey, answer]),
-      );
-      const durableByParticipantRound = new Map(
-        durableAnswers.map((answer) => [`${answer.participantId}:${answer.roundId}`, answer]),
+      const existingByParticipantRound = new Map(
+        existingAnswers.map((answer) => [`${answer.participantId}:${answer.roundId}`, answer]),
       );
       let nextState = priorState;
       const newAnswers: EngineAnswer[] = [];
@@ -1283,20 +1300,20 @@ export class SessionService {
 
       for (const item of items) {
         try {
-          const durableForKey = durableByIdempotencyKey.get(item.input.idempotencyKey);
-          const durableForRound = durableByParticipantRound.get(
+          const existingForKey = existingByIdempotencyKey.get(item.input.idempotencyKey);
+          const existingForRound = existingByParticipantRound.get(
             `${item.participant.id}:${item.input.roundId}`,
           );
-          const durable = durableForKey ?? durableForRound;
-          if (durable) {
+          const existing = existingForKey ?? existingForRound;
+          if (existing) {
             const idempotentRequestMatches =
-              !durableForKey ||
-              (durable.participantId === item.participant.id &&
-                durable.roundId === item.input.roundId &&
-                durable.confidence === (item.input.confidence ?? null) &&
-                JSON.stringify(canonicalizeResponse(durable.response)) ===
+              !existingForKey ||
+              (existing.participantId === item.participant.id &&
+                existing.roundId === item.input.roundId &&
+                existing.confidence === (item.input.confidence ?? null) &&
+                JSON.stringify(canonicalizeResponse(existing.response)) ===
                   JSON.stringify(responseForAnswer(item.input)));
-            if (durable.participantId !== item.participant.id || !idempotentRequestMatches) {
+            if (existing.participantId !== item.participant.id || !idempotentRequestMatches) {
               outcomes.push({
                 item,
                 acknowledgement: {
@@ -1310,9 +1327,9 @@ export class SessionService {
                 item,
                 acknowledgement: {
                   accepted: true,
-                  answerId: durable.answerId,
-                  acceptedAt: new Date(durable.acceptedAtMs).toISOString(),
-                  score: durable.score,
+                  answerId: existing.answerId,
+                  acceptedAt: new Date(existing.acceptedAtMs).toISOString(),
+                  score: existing.score,
                   duplicate: true,
                 },
               });
@@ -1333,6 +1350,11 @@ export class SessionService {
           if (!duplicate) {
             nextState = result.state;
             newAnswers.push(result.answer);
+            existingByIdempotencyKey.set(result.answer.idempotencyKey, result.answer);
+            existingByParticipantRound.set(
+              `${result.answer.participantId}:${result.answer.roundId}`,
+              result.answer,
+            );
             events.push({ type: "session.snapshot", seq: result.state.seq });
             eventVersions.set(result.state.seq, result.state.version);
           }
@@ -1380,16 +1402,26 @@ export class SessionService {
         session.state = nextState;
         session.updatedAt = new Date();
         try {
-          const persisted = await this.withAnswerCommitSlot(() =>
-            this.repository.commitAnswers(
-              session,
-              newAnswers,
-              priorState.version,
-              // The question-open transition is committed before participants receive
-              // the round, and accepting an answer cannot change round evidence.
-              { roundEvidencePersisted: true },
-            ),
-          );
+          const queuedAt = performance.now();
+          const persisted = await this.withAnswerCommitSlot(async () => {
+            this.metrics.observeAnswerCommitStage("wait", (performance.now() - queuedAt) / 1_000);
+            const commitStartedAt = performance.now();
+            try {
+              return await this.repository.commitAnswers(
+                session,
+                newAnswers,
+                priorState.version,
+                // The question-open transition is committed before participants receive
+                // the round, and accepting an answer cannot change round evidence.
+                { roundEvidencePersisted: true },
+              );
+            } finally {
+              this.metrics.observeAnswerCommitStage(
+                "persist",
+                (performance.now() - commitStartedAt) / 1_000,
+              );
+            }
+          });
           for (let index = 0; index < newAnswers.length; index += 1) {
             if (persisted[index]?.answerId !== newAnswers[index]?.answerId) {
               throw new SessionError(

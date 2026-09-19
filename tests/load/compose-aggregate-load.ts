@@ -39,7 +39,7 @@ interface GameLoadResult {
   };
 }
 
-function runSession(index: number, startAtMs: number) {
+function runSession(index: number, startAtMs: number, answerAtMs: number) {
   return new Promise<GameLoadResult>((resolve, reject) => {
     execFile(
       "pnpm",
@@ -56,6 +56,7 @@ function runSession(index: number, startAtMs: number) {
           RESTART_SERVER: "false",
           LOAD_RUN_ID: `aggregate-${index + 1}`,
           START_AT_MS: String(startAtMs),
+          ANSWER_AT_MS: String(answerAtMs),
         },
         maxBuffer: 2 * 1024 * 1024,
         timeout: 120_000,
@@ -87,9 +88,13 @@ async function main() {
   const startedAt = performance.now();
   const synchronizedStartAtMs =
     Date.now() + Math.max(20_000, sessionCount * sessionStaggerMs + 10_000);
+  // Measure question-open fanout and synchronized answer persistence as separate
+  // phases. Every child still submits together, but no session starts its answer
+  // SLA while another session is still opening the question.
+  const synchronizedAnswerAtMs = synchronizedStartAtMs + 5_000;
   const runs: Array<Promise<GameLoadResult>> = [];
   for (let index = 0; index < sessionCount; index += 1) {
-    runs.push(runSession(index, synchronizedStartAtMs));
+    runs.push(runSession(index, synchronizedStartAtMs, synchronizedAnswerAtMs));
     if (sessionStaggerMs > 0 && index < sessionCount - 1) {
       await new Promise((resolve) => setTimeout(resolve, sessionStaggerMs));
     }

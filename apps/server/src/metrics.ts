@@ -89,6 +89,14 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private readonly answerCommitStageDuration = new Histogram({
+    name: "openround_answer_commit_stage_duration_seconds",
+    help: "Time answer batches spend waiting for and executing durable PostgreSQL commits",
+    labelNames: ["stage"] as const,
+    buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
+    registers: [this.registry],
+  });
+
   private readonly hostCommands = new Counter({
     name: "openround_host_commands_total",
     help: "Host commands by outcome",
@@ -383,6 +391,10 @@ export class MetricsService {
 
   recordAnswerBatch(size: number) {
     if (size > 0) this.answerBatchSize.observe(size);
+  }
+
+  observeAnswerCommitStage(stage: "wait" | "persist", seconds: number) {
+    this.answerCommitStageDuration.observe({ stage }, Math.max(0, seconds));
   }
 
   recordHostCommand(action: string, outcome: string) {
