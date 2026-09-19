@@ -133,21 +133,17 @@ test("direct beta pages fail closed when product features are missing", async ({
 
 test("viewer template access remains read-only", async ({ page }) => {
   await signIn(page, betaEmail);
-  await page.route(
-    "**/v1/auth/me",
-    async (route) => {
-      const response = await route.fetch();
-      const account = (await response.json()) as {
-        creator: Record<string, unknown>;
-        [key: string]: unknown;
-      };
-      await route.fulfill({
-        response,
-        json: { ...account, creator: { ...account.creator, role: "viewer" } },
-      });
-    },
-    { times: 1 },
-  );
+  await page.route("**/v1/auth/me", async (route) => {
+    const response = await route.fetch();
+    const account = (await response.json()) as {
+      creator: Record<string, unknown>;
+      [key: string]: unknown;
+    };
+    await route.fulfill({
+      response,
+      json: { ...account, creator: { ...account.creator, role: "viewer" } },
+    });
+  });
 
   await page.goto("/templates");
   await expect(page.getByRole("heading", { name: "Templates" })).toBeVisible();
@@ -347,7 +343,14 @@ test("creator and participants complete a beta Recovery loop through report", as
     },
   });
   expect(sessionResponse.status()).toBe(201);
-  const session = (await sessionResponse.json()) as { sessionId: string; code: string };
+  const session = (await sessionResponse.json()) as {
+    sessionId: string;
+    code: string;
+    hostToken: string;
+  };
+  await page.evaluate(({ sessionId, hostToken }) => {
+    sessionStorage.setItem(`openround:host:${sessionId}`, hostToken);
+  }, session);
 
   const participants: Array<{ context: BrowserContext; page: Page }> = [];
   try {
@@ -539,7 +542,14 @@ test("every remaining response type requires explicit Submit before it is saved"
     },
   });
   expect(sessionResponse.status()).toBe(201);
-  const session = (await sessionResponse.json()) as { sessionId: string; code: string };
+  const session = (await sessionResponse.json()) as {
+    sessionId: string;
+    code: string;
+    hostToken: string;
+  };
+  await page.evaluate(({ sessionId, hostToken }) => {
+    sessionStorage.setItem(`openround:host:${sessionId}`, hostToken);
+  }, session);
 
   const participant = await joinParticipant(browser, session.code);
   try {

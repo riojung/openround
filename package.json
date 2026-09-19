@@ -41,7 +41,7 @@
     "test:multi-writer": "pnpm --filter @openround/server test:multi-writer",
     "test:smoke-support": "vitest run tests/support/report-readiness.test.ts",
     "test:e2e": "playwright test",
-    "test:e2e:beta": "playwright test --config=playwright.beta.config.ts",
+    "test:e2e:beta": "playwright test --config=playwright.beta.config.ts --project=chromium-beta && playwright test --config=playwright.beta.config.ts --project=firefox-beta && playwright test --config=playwright.beta.config.ts --project=chromium-beta-mobile && playwright test --config=playwright.beta.config.ts --project=webkit-beta-mobile",
     "test:e2e:compose": "playwright test --config=playwright.compose.config.ts",
     "test:coverage": "turbo run test:coverage",
     "typecheck": "turbo run typecheck",
