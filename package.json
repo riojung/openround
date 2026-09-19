@@ -27,6 +27,7 @@
     "network:urls": "node scripts/show-network-urls.mjs",
     "readiness:check": "node scripts/check-release-readiness.mjs",
     "readiness:require:beta": "node scripts/check-release-readiness.mjs --require=canadian-beta",
+    "readiness:require:beta:preflight": "node scripts/check-release-readiness.mjs --require=canadian-beta-preflight",
     "smoke:compose": "tsx tests/smoke/compose.ts",
     "smoke:multi-process": "tsx tests/smoke/multi-process.ts",
     "smoke:observability": "tsx tests/smoke/observability.ts",

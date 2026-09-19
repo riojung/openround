@@ -433,6 +433,10 @@ test("creator and participants complete a beta Recovery loop through report", as
       questionsPanel.getByText(/Replace with the common misconception: 5 \(100%/),
     ).toBeVisible();
 
+    await page.getByRole("tab", { name: "Participants" }).click();
+    const participantsPanel = page.getByRole("tabpanel", { name: "Participants" });
+    await expect(participantsPanel.getByRole("img", { name: "Owl avatar" })).toHaveCount(5);
+
     await page.getByRole("tab", { name: "Manage data" }).click();
     const managePanel = page.getByRole("tabpanel", { name: "Manage data" });
     await expect(managePanel.getByRole("heading", { name: "Export report data" })).toBeVisible();

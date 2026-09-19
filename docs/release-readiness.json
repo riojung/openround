@@ -7,32 +7,29 @@
       "id": "source-ci",
       "name": "Source, database, browser, and security CI",
       "owner": "engineering",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "complete",
       "criterion": "Main passes checks, PostgreSQL isolation, browser coverage, dependency review, secret scanning, SBOM generation, and CodeQL.",
       "evidence": [
-        "https://github.com/riojung/openround/actions/runs/35427208968",
-        "https://github.com/riojung/openround/actions/runs/35427208975",
-        "https://github.com/riojung/openround/actions/runs/35427208998"
+        "https://github.com/riojung/openround/actions/runs/35455109657",
+        "https://github.com/riojung/openround/actions/runs/35455109697",
+        "https://github.com/riojung/openround/actions/runs/35431824098"
       ]
     },
     {
       "id": "local-production-smoke",
       "name": "Local production-path smoke",
       "owner": "engineering",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "complete",
       "criterion": "The containerized production profile passes media, observability, multi-writer, backup/restore, restart, and 100-client correctness checks.",
-      "evidence": [
-        "https://github.com/riojung/openround/actions/runs/35181158243",
-        "https://github.com/riojung/openround/actions/runs/35427208998"
-      ]
+      "evidence": ["https://github.com/riojung/openround/actions/runs/35455109587"]
     },
     {
       "id": "canada-staging",
       "name": "Canadian staging deployment",
       "owner": "operations",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "pending",
       "criterion": "A TLS-only Canadian deployment passes configuration preflight and the remote readiness workflow with PostgreSQL, Redis, SMTP, object storage, metrics, and tracing enabled.",
       "evidence": [],
@@ -42,7 +39,7 @@
       "id": "paging",
       "name": "Monitoring and paging delivery",
       "owner": "operations",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "pending",
       "criterion": "Production telemetry reaches the selected backend and test page, warning, and ticket alerts reach named responders.",
       "evidence": [],
@@ -52,17 +49,17 @@
       "id": "target-region-load",
       "name": "Target-region load and soak",
       "owner": "engineering",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "pending",
-      "criterion": "Canadian staging passes the 100-client latency gate and a representative soak without correctness or reconciliation loss.",
+      "criterion": "Canadian staging passes the 100-client latency gate and a representative soak from the self-hosted canada-staging runner without correctness or reconciliation loss.",
       "evidence": [],
-      "nextAction": "Run Staging readiness at 100 clients, then execute and attach the soak record."
+      "nextAction": "Bring an isolated runner online in the Canadian target region with the canada-staging label, run Staging readiness at 100 clients, and attach the load and soak record."
     },
     {
       "id": "managed-restore",
       "name": "Managed backup and restore drill",
       "owner": "operations",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "pending",
       "criterion": "A managed PostgreSQL backup and private object-storage restore is timed and verified against the stated RPO and RTO.",
       "evidence": [],
@@ -72,7 +69,7 @@
       "id": "accessibility-review",
       "name": "Manual accessibility review",
       "owner": "accessibility",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "pending",
       "criterion": "Keyboard, VoiceOver, NVDA, 200% zoom, contrast, reduced-motion, and extended-time scenarios are reviewed with no unresolved launch blockers.",
       "evidence": [],
@@ -82,7 +79,7 @@
       "id": "security-review",
       "name": "Independent security review",
       "owner": "security",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "pending",
       "criterion": "An independent review covers authentication, realtime authorization, replay, XSS, uploads, rate limits, billing, administration, and infrastructure with no open critical or high findings.",
       "evidence": [],
@@ -92,7 +89,7 @@
       "id": "privacy-legal",
       "name": "Canadian privacy and legal approval",
       "owner": "legal",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "pending",
       "criterion": "Qualified counsel approves the privacy notice, terms, consent, retention, deletion, data residency, subprocessors, and paid-beta posture.",
       "evidence": [],
@@ -102,7 +99,7 @@
       "id": "live-billing",
       "name": "Live billing rehearsal",
       "owner": "operations",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "pending",
       "criterion": "Stripe test mode proves checkout, portal, signed webhook delivery, retry idempotency, cancellation, and entitlement reconciliation in Canadian staging.",
       "evidence": [],
@@ -112,17 +109,17 @@
       "id": "repository-governance",
       "name": "Protected release governance",
       "owner": "maintainer",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "pending",
       "criterion": "Main requires passing CI and security checks, review, conversation resolution, and blocks force pushes and deletion.",
-      "evidence": [],
-      "nextAction": "Apply the documented GitHub ruleset after this workflow lands and capture the ruleset URL."
+      "evidence": ["https://github.com/riojung/openround/rules/23705684"],
+      "nextAction": "Add a second human reviewer, activate the prepared ruleset, pass a normally reviewed canary PR without bypass, and record the ruleset insight."
     },
     {
       "id": "device-matrix",
       "name": "Physical-device and network matrix",
       "owner": "qa",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "pending",
       "criterion": "Supported mobile and desktop devices complete QR join, play, reconnect, and report flows on representative Wi-Fi and cellular networks.",
       "evidence": [],
@@ -132,11 +129,21 @@
       "id": "design-partners",
       "name": "Design partners and observed sessions",
       "owner": "product",
-      "requiredFor": ["canadian-beta", "canadian-ga"],
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
       "status": "pending",
       "criterion": "At least three education and three workplace partners are recruited and at least ten beta sessions are observed with reconciled reports.",
       "evidence": [],
       "nextAction": "Recruit named partners and store redacted interview and session records."
+    },
+    {
+      "id": "beta-usability",
+      "name": "P0 beta usability success metrics",
+      "owner": "product-research",
+      "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
+      "status": "pending",
+      "criterion": "Representative first-time facilitators and participants meet every P0 creation, live-action comprehension, response, receipt, results-discovery, report-comprehension, and Recovery Rehearsal threshold in an accepted usability study.",
+      "evidence": [],
+      "nextAction": "Run the moderated beta usability protocol and have product research approve a completed usability evidence record."
     },
     {
       "id": "signed-release",
@@ -146,7 +153,7 @@
       "status": "pending",
       "criterion": "A v0.9.0 release candidate publishes signed OCI images, provenance, SBOMs, scan results, Compose documentation, and upgrade and rollback guidance.",
       "evidence": [],
-      "nextAction": "Tag v0.9.0 only after all Canadian beta gates are complete."
+      "nextAction": "After every Canadian beta preflight gate is complete, create a signed v0.9.0 tag from main and retain the release workflow evidence."
     }
   ]
 }

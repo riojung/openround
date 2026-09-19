@@ -31,7 +31,7 @@ concurrency:
 jobs:
   remote-readiness:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 20
     environment: canada-staging
     env:
       READINESS_API_URL: ${{ vars.OPENROUND_API_URL }}
@@ -44,20 +44,6 @@ jobs:
       READINESS_EXPECT_MEDIA_UPLOADS: ${{ vars.OPENROUND_EXPECTED_MEDIA_UPLOADS }}
       READINESS_EXPECT_METRICS: protected
       READINESS_OUTPUT: artifacts/readiness/remote-probe.json
-      LOAD_BASE_URL: ${{ vars.OPENROUND_API_URL }}
-      LOAD_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
-      LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
-      LOAD_OUTPUT: artifacts/readiness/target-region-load.json
-      LOAD_RUN_ID: staging-${{ github.run_id }}-${{ github.run_attempt }}
-      CLIENTS: ${{ inputs.clients }}
-      JOIN_BATCH_SIZE: "20"
-      ASSERT_PERFORMANCE: "true"
-      RESTART_SERVER: "false"
-      STRIPE_REHEARSAL_BASE_URL: ${{ vars.OPENROUND_API_URL }}
-      STRIPE_REHEARSAL_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
-      STRIPE_REHEARSAL_CREATOR_COOKIE: ${{ secrets.OPENROUND_STRIPE_REHEARSAL_COOKIE }}
-      STRIPE_REHEARSAL_WEBHOOK_SECRET: ${{ secrets.OPENROUND_STRIPE_WEBHOOK_SECRET }}
-      STRIPE_REHEARSAL_OUTPUT: artifacts/readiness/stripe-replay.json
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -72,9 +58,70 @@ jobs:
         run: |
           test -n "$READINESS_API_URL"
           test -n "$READINESS_WEB_URL"
-          test -n "$LOAD_CREATOR_COOKIE"
       - name: Probe deployment and dependency readiness
         run: pnpm smoke:remote
+      - name: Upload public-endpoint probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canada-staging-remote-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/readiness/remote-probe.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  target-region-load:
+    needs: remote-readiness
+    runs-on: [self-hosted, canada-staging]
+    timeout-minutes: 90
+    environment: canada-staging
+    env:
+      LOAD_BASE_URL: ${{ vars.OPENROUND_API_URL }}
+      LOAD_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
+      LOAD_RUNNER_REGION: ${{ vars.OPENROUND_LOAD_RUNNER_REGION }}
+      LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
+      LOAD_OUTPUT: artifacts/readiness/target-region-load.json
+      LOAD_RUN_ID: staging-${{ github.run_id }}-${{ github.run_attempt }}
+      CLIENTS: ${{ inputs.clients }}
+      JOIN_BATCH_SIZE: "20"
+      ASSERT_PERFORMANCE: "true"
+      RESTART_SERVER: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate target-region load configuration
+        run: |
+          test -n "$LOAD_BASE_URL"
+          test -n "$LOAD_ORIGIN"
+          test -n "$LOAD_RUNNER_REGION"
+          test -n "$LOAD_CREATOR_COOKIE"
+      - name: Capture load-generator provenance
+        run: |
+          mkdir -p artifacts/readiness
+          node -e '
+            const fs = require("node:fs");
+            fs.writeFileSync(
+              "artifacts/readiness/load-runner-provenance.json",
+              `${JSON.stringify({
+                schemaVersion: 1,
+                commit: process.env.GITHUB_SHA,
+                declaredRegion: process.env.LOAD_RUNNER_REGION,
+                runner: {
+                  name: process.env.RUNNER_NAME,
+                  os: process.env.RUNNER_OS,
+                  architecture: process.env.RUNNER_ARCH,
+                  requiredLabels: ["self-hosted", "canada-staging"],
+                },
+              }, null, 2)}\n`,
+              { mode: 0o600 },
+            );
+          '
       - name: Run target-region correctness and latency game
         run: pnpm load:compose
       - name: Run repeated target-region soak
@@ -110,17 +157,53 @@ jobs:
               { mode: 0o600 },
             );
           '
-      - name: Rehearse signed Stripe webhook ordering
-        if: inputs.run_stripe_replay
-        run: |
-          test -n "$STRIPE_REHEARSAL_CREATOR_COOKIE"
-          test -n "$STRIPE_REHEARSAL_WEBHOOK_SECRET"
-          pnpm smoke:stripe-replay
-      - name: Upload redacted readiness evidence
+      - name: Upload Canada-local load and soak evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: canada-staging-readiness-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/readiness/
+          name: canada-staging-load-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/readiness/load-runner-provenance.json
+            artifacts/readiness/target-region-load.json
+            artifacts/readiness/soak/
+            artifacts/readiness/soak-summary.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  stripe-replay:
+    if: inputs.run_stripe_replay
+    needs: remote-readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: canada-staging
+    env:
+      STRIPE_REHEARSAL_BASE_URL: ${{ vars.OPENROUND_API_URL }}
+      STRIPE_REHEARSAL_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
+      STRIPE_REHEARSAL_CREATOR_COOKIE: ${{ secrets.OPENROUND_STRIPE_REHEARSAL_COOKIE }}
+      STRIPE_REHEARSAL_WEBHOOK_SECRET: ${{ secrets.OPENROUND_STRIPE_WEBHOOK_SECRET }}
+      STRIPE_REHEARSAL_OUTPUT: artifacts/readiness/stripe-replay.json
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Rehearse signed Stripe webhook ordering
+        run: |
+          test -n "$STRIPE_REHEARSAL_BASE_URL"
+          test -n "$STRIPE_REHEARSAL_ORIGIN"
+          test -n "$STRIPE_REHEARSAL_CREATOR_COOKIE"
+          test -n "$STRIPE_REHEARSAL_WEBHOOK_SECRET"
+          pnpm smoke:stripe-replay
+      - name: Upload signed-webhook rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canada-staging-stripe-replay-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/readiness/stripe-replay.json
           if-no-files-found: warn
           retention-days: 30

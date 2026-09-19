@@ -11,7 +11,116 @@ permissions:
   security-events: write
 
 jobs:
+  preflight:
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Require all pre-release Canadian beta gates
+        run: pnpm readiness:require:beta:preflight
+      - name: Verify signed semantic-version tag from main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "Release tag must be a v-prefixed semantic version without build metadata" >&2
+            exit 1
+          fi
+
+          git fetch --force origin \
+            "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = "tag"
+          local_tag_object="$(git rev-parse "refs/tags/$GITHUB_REF_NAME")"
+          tag_commit="$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")"
+          git merge-base --is-ancestor "$tag_commit" origin/main
+
+          tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME")"
+          test "$(jq -r '.object.type' <<<"$tag_ref")" = "tag"
+          tag_object="$(jq -r '.object.sha' <<<"$tag_ref")"
+          test "$tag_object" = "$local_tag_object"
+          if [[ "$GITHUB_SHA" != "$tag_object" && "$GITHUB_SHA" != "$tag_commit" ]]; then
+            echo "The current tag no longer matches the tag-push event" >&2
+            exit 1
+          fi
+
+          tag_details="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object")"
+          test "$(jq -r '.object.type' <<<"$tag_details")" = "commit"
+          test "$(jq -r '.object.sha' <<<"$tag_details")" = "$tag_commit"
+          verification="$(jq -c '{verified: .verification.verified, reason: .verification.reason, verifiedAt: .verification.verified_at}' <<<"$tag_details")"
+          test "$(jq -r '.verified' <<<"$verification")" = "true"
+          test "$(jq -r '.reason' <<<"$verification")" = "valid"
+
+          require_successful_workflow() {
+            local workflow_file="$1"
+            local workflow_label="$2"
+            local runs
+            local latest_run
+            runs="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_file/runs?head_sha=$tag_commit&per_page=100")"
+            latest_run="$(
+              jq -c --arg sha "$tag_commit" '
+                [.[].workflow_runs[] | select(.head_sha == $sha)]
+                | sort_by(.run_number, .run_attempt)
+                | last
+              ' <<<"$runs"
+            )"
+            if [[ "$latest_run" == "null" ]]; then
+              echo "$workflow_label has no run for candidate commit $tag_commit" >&2
+              exit 1
+            fi
+            if [[ "$(jq -r '.status' <<<"$latest_run")" != "completed" ]]; then
+              echo "$workflow_label latest run for candidate commit $tag_commit is not completed" >&2
+              exit 1
+            fi
+            if [[ "$(jq -r '.conclusion' <<<"$latest_run")" != "success" ]]; then
+              echo "$workflow_label latest run for candidate commit $tag_commit did not succeed" >&2
+              exit 1
+            fi
+            jq -c \
+              --arg workflow "$workflow_label" \
+              '{workflow: $workflow, runId: .id, runNumber: .run_number, runAttempt: .run_attempt, event: .event, status: .status, conclusion: .conclusion, url: .html_url, commit: .head_sha, startedAt: .run_started_at, completedAt: .updated_at}' \
+              <<<"$latest_run"
+          }
+
+          ci_run="$(require_successful_workflow ci.yml CI)"
+          security_run="$(require_successful_workflow security.yml Security)"
+          production_smoke_run="$(require_successful_workflow production-smoke.yml Production-path-smoke)"
+
+          mkdir -p artifacts/release
+          jq -n \
+            --arg tag "$GITHUB_REF_NAME" \
+            --arg commit "$tag_commit" \
+            --arg tagObject "$tag_object" \
+            --argjson verification "$verification" \
+            --argjson ciRun "$ci_run" \
+            --argjson securityRun "$security_run" \
+            --argjson productionSmokeRun "$production_smoke_run" \
+            '{schemaVersion: 1, tag: $tag, commit: $commit, tagObject: $tagObject, onOriginMain: true, verification: $verification, candidateWorkflows: {ci: $ciRun, security: $securityRun, productionSmoke: $productionSmokeRun}}' \
+            > artifacts/release/preflight.json
+      - name: Upload release preflight evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-preflight-${{ github.ref_name }}
+          path: artifacts/release/preflight.json
+          if-no-files-found: warn
+          retention-days: 90
+
   images:
+    needs: preflight
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -33,19 +142,39 @@ jobs:
           push: true
           sbom: true
           tags: ghcr.io/${{ github.repository }}/openround-${{ matrix.component }}:${{ github.ref_name }}
+      - name: Record immutable image digest
+        run: |
+          mkdir -p artifacts/release/${{ matrix.component }}
+          printf '%s\n' '${{ steps.build.outputs.digest }}' > artifacts/release/${{ matrix.component }}/digest.txt
       - uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: ghcr.io/${{ github.repository }}/openround-${{ matrix.component }}@${{ steps.build.outputs.digest }}
           format: sarif
-          output: trivy-${{ matrix.component }}.sarif
+          output: artifacts/release/${{ matrix.component }}/trivy.sarif
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: 1
       - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
-          sarif_file: trivy-${{ matrix.component }}.sarif
+          sarif_file: artifacts/release/${{ matrix.component }}/trivy.sarif
           category: openround-${{ matrix.component }}-image
       - uses: sigstore/cosign-installer@v3
       - run: cosign sign --yes ghcr.io/${{ github.repository }}/openround-${{ matrix.component }}@${{ steps.build.outputs.digest }}
+      - name: Verify keyless image signature
+        run: >-
+          cosign verify
+          --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}"
+          --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+          --output json
+          "ghcr.io/${GITHUB_REPOSITORY}/openround-${{ matrix.component }}@${{ steps.build.outputs.digest }}"
+          > artifacts/release/${{ matrix.component }}/cosign-verification.json
+      - name: Upload image release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-${{ matrix.component }}-${{ github.ref_name }}
+          path: artifacts/release/${{ matrix.component }}/
+          if-no-files-found: warn
+          retention-days: 90

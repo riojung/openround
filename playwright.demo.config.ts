@@ -26,7 +26,7 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: `NEXT_PUBLIC_API_URL=http://127.0.0.1:${demoApiPort} pnpm --filter @openround/web exec next dev -p ${demoWebPort}`,
+      command: `node scripts/prepare-playwright-next.mjs && NEXT_PUBLIC_API_URL=http://127.0.0.1:${demoApiPort} pnpm --filter @openround/web exec next dev -p ${demoWebPort}`,
       port: demoWebPort,
       reuseExistingServer: false,
       timeout: 120_000,

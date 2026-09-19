@@ -49,6 +49,22 @@ const statusCounts = Object.fromEntries(
     ledger.gates.filter((gate) => gate.status === status).length,
   ]),
 );
+
+const betaGates = ledger.gates.filter((gate) => gate.requiredFor.includes("canadian-beta"));
+assert.ok(betaGates.length > 0, "no gates are defined for target canadian-beta");
+for (const gate of betaGates) {
+  if (gate.id === "signed-release") {
+    assert.ok(
+      !gate.requiredFor.includes("canadian-beta-preflight"),
+      "signed-release must not be required for canadian-beta-preflight",
+    );
+  } else {
+    assert.ok(
+      gate.requiredFor.includes("canadian-beta-preflight"),
+      `${gate.id}: canadian-beta gates except signed-release must be required for canadian-beta-preflight`,
+    );
+  }
+}
 process.stdout.write(`Release readiness ledger is valid: ${JSON.stringify(statusCounts)}\n`);
 
 if (requiredTarget) {

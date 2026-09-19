@@ -6,6 +6,20 @@ This document uses public product and pricing material as market evidence. It is
 and delivery plan, not a claim that planned capabilities already exist. Prices, limits, provider
 terms, and competitor features must be checked again before a launch or pricing decision.
 
+## Implementation update — 2026-09-19
+
+This document records the strategy baseline that led to the Recovery Loop. The merged P0 beta now
+implements six response types, confidence, misconception rationale, deterministic intervention and
+recheck flows, source-grounded authoring, import/export, cohosting, accountless follow-ups,
+workspace history, participant-selected session avatars, and the Recovery Rehearsal. Statements
+below describing those capabilities as absent should be read as historical audit findings.
+
+The current product frontier is standalone practice assignment from any published Round, private
+workspace question reuse, live time-flex, hosted capacity evidence, team discussion delivery,
+short-text/rank response types, slide companion workflows, and contract-gated NRPS/AGS. The
+Canadian beta remains blocked by deployment, operational, accessibility, security, legal, device,
+and design-partner evidence rather than a missing P0 feature epic.
+
 ## Executive decision
 
 OpenRound should not position itself as another live quiz platform. That category is mature, and
@@ -38,7 +52,8 @@ The implemented P0 already provides several useful foundations:
 - Session-scoped identities, deletion, retention, regional deployment profiles, and self-hosting.
 - Apache-2.0 distribution with a production-oriented Compose stack and operational runbooks.
 
-The current product is narrow in the areas buyers can see most easily: two question types, no
+At the original 2026-09-17 audit, the product was narrow in the areas buyers could see most
+easily: two question types, no
 confidence signal, no in-session remediation workflow, no self-paced follow-up, no content
 interchange, no co-facilitation, and no LMS or presentation integration.
 
@@ -129,22 +144,22 @@ profiles.
 
 ## What to build, and what not to chase
 
-| Priority | Capability                                                                                                                          | Reason                                                                                 |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Now      | Confidence alongside an answer                                                                                                      | Creates a signal competitors rarely make central and needs no persistent identity      |
-| Now      | Choice-specific misconception labels and feedback                                                                                   | Turns distributions into an actionable diagnosis                                       |
-| Now      | Linked rechecks and intervention tracking                                                                                           | Implements the differentiated recovery loop                                            |
-| Now      | Recovery report and CSV/JSON export                                                                                                 | Makes the outcome inspectable and useful after the session                             |
-| Now      | Multi-select, numeric, and unscored rating/poll items                                                                               | Covers common formative checks without becoming a presentation suite                   |
-| Next     | Co-facilitator role and handoff                                                                                                     | Reduces live-session operational risk and supports moderation                          |
-| Next     | Bulk paste, CSV, and QTI import/export                                                                                              | Lowers switching cost and reinforces openness/data portability                         |
-| Next     | Folders, tags, concept tags, and reusable checkpoint sets                                                                           | Supports repeat use without a public marketplace                                       |
-| Next     | Time-flex mode and account-free accommodation passes                                                                                | Improves access while preserving guest participation                                   |
-| Next     | Signed self-paced follow-up links                                                                                                   | Extends recovery after the room without creating child accounts                        |
-| Later    | LTI 1.3 Advantage, institutional SSO/SCIM, and optional roster/grade passback                                                       | Required for institutional scale, but high-cost and contract-sensitive                 |
-| Later    | Moderated anonymous question parking lot                                                                                            | Useful for higher education/workplace sessions after moderation safeguards exist       |
-| Later    | Source-grounded AI authoring with citations and human approval                                                                      | Saves authoring time only after import, evaluation, privacy, and cost controls exist   |
-| Defer    | Full slide editor, public content marketplace, avatars/rewards, native apps, generic chat assistant, and 1,000-player single events | Incumbents have strong advantages here and these do not strengthen the recovery thesis |
+| Priority | Capability                                                                                                                                            | Reason                                                                                 |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Now      | Confidence alongside an answer                                                                                                                        | Creates a signal competitors rarely make central and needs no persistent identity      |
+| Now      | Choice-specific misconception labels and feedback                                                                                                     | Turns distributions into an actionable diagnosis                                       |
+| Now      | Linked rechecks and intervention tracking                                                                                                             | Implements the differentiated recovery loop                                            |
+| Now      | Recovery report and CSV/JSON export                                                                                                                   | Makes the outcome inspectable and useful after the session                             |
+| Now      | Multi-select, numeric, and unscored rating/poll items                                                                                                 | Covers common formative checks without becoming a presentation suite                   |
+| Next     | Co-facilitator role and handoff                                                                                                                       | Reduces live-session operational risk and supports moderation                          |
+| Next     | Bulk paste, CSV, and QTI import/export                                                                                                                | Lowers switching cost and reinforces openness/data portability                         |
+| Next     | Folders, tags, concept tags, and reusable checkpoint sets                                                                                             | Supports repeat use without a public marketplace                                       |
+| Next     | Time-flex mode and account-free accommodation passes                                                                                                  | Improves access while preserving guest participation                                   |
+| Next     | Signed self-paced follow-up links                                                                                                                     | Extends recovery after the room without creating child accounts                        |
+| Later    | LTI 1.3 Advantage, institutional SSO/SCIM, and optional roster/grade passback                                                                         | Required for institutional scale, but high-cost and contract-sensitive                 |
+| Later    | Moderated anonymous question parking lot                                                                                                              | Useful for higher education/workplace sessions after moderation safeguards exist       |
+| Later    | Source-grounded AI authoring with citations and human approval                                                                                        | Saves authoring time only after import, evaluation, privacy, and cost controls exist   |
+| Defer    | Full slide editor, public content marketplace, persistent avatar/reward profiles, native apps, generic chat assistant, and 1,000-player single events | Incumbents have strong advantages here and these do not strengthen the recovery thesis |
 
 ## Technical design
 
