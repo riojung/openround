@@ -89,34 +89,29 @@ test("creator starts a blank Round with the selected first response type", async
   ).toContainText("Numeric response");
 });
 
-test("direct beta pages fail closed when account features cannot be established", async ({
-  page,
-}) => {
+test("direct beta pages fail closed when the account lookup is unavailable", async ({ page }) => {
   await signIn(page, betaEmail);
 
-  await page.route(
-    "**/v1/auth/me",
-    async (route) => {
-      await route.fulfill({
-        body: JSON.stringify({ error: { message: "Account lookup unavailable." } }),
-        contentType: "application/json",
-        status: 503,
-      });
-    },
-    { times: 1 },
-  );
+  await page.route("**/v1/auth/me", async (route) => {
+    await route.fulfill({
+      body: JSON.stringify({ error: { message: "Account lookup unavailable." } }),
+      contentType: "application/json",
+      status: 503,
+    });
+  });
   await page.goto("/sessions");
   await expect(page).toHaveURL(/\/dashboard/);
+  await expect(page).not.toHaveURL(/\/signin/);
+});
 
-  await page.route(
-    "**/v1/auth/me",
-    async (route) => {
-      const response = await route.fetch();
-      const account = (await response.json()) as Record<string, unknown>;
-      await route.fulfill({ response, json: { ...account, productFeatures: null } });
-    },
-    { times: 1 },
-  );
+test("direct beta pages fail closed when product features are missing", async ({ page }) => {
+  await signIn(page, betaEmail);
+
+  await page.route("**/v1/auth/me", async (route) => {
+    const response = await route.fetch();
+    const account = (await response.json()) as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...account, productFeatures: null } });
+  });
   await page.goto("/results");
   await expect(page).toHaveURL(/\/dashboard/);
   await expect(page).not.toHaveURL(/\/signin/);

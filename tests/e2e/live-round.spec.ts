@@ -1,7 +1,21 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { testEmail } from "./test-email";
+
+async function closePresenter(page: Page) {
+  const closeButton = page.getByRole("button", { name: "Close presenter" });
+  await expect(closeButton).toBeVisible();
+  await expect(closeButton).toBeEnabled();
+  await closeButton.click({ trial: true });
+
+  const closed = page.waitForEvent("close");
+  await closeButton.evaluate((button) => {
+    window.setTimeout(() => button.click(), 0);
+  });
+  await closed;
+  expect(page.isClosed()).toBe(true);
+}
 
 test("creator and participant complete a live round", async ({ browser }, testInfo) => {
   const creatorContext = await browser.newContext();
@@ -87,10 +101,7 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   const presenter = await presenterPagePromise;
   await expect(presenter).toHaveURL(/\/present\//);
   await expect(presenter.getByTestId("join-url")).toHaveAttribute("href", lanJoinUrl);
-  await Promise.all([
-    presenter.waitForEvent("close"),
-    presenter.getByRole("button", { name: "Close presenter" }).click({ noWaitAfter: true }),
-  ]);
+  await closePresenter(presenter);
   await creator.getByText("Change join address").click();
   await creator.getByRole("button", { name: "Reset address" }).click();
   await expect(creator.getByTestId("join-url")).toHaveAttribute("href", expectedJoinUrl);
@@ -131,10 +142,7 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   const pulsePresenter = await pulsePresenterPagePromise;
   await expect(pulsePresenter.locator(".live-shell")).toHaveAttribute("data-pattern", "grid");
   await expect(pulsePresenter.getByText("Could we see a practical example?")).toBeVisible();
-  await Promise.all([
-    pulsePresenter.waitForEvent("close"),
-    pulsePresenter.getByRole("button", { name: "Close presenter" }).click({ noWaitAfter: true }),
-  ]);
+  await closePresenter(pulsePresenter);
 
   await participant.getByLabel("Ask the facilitator").fill("Why is Edmonton the capital?");
   await participant.getByRole("button", { name: "Ask question" }).click();
