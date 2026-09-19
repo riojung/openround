@@ -68,28 +68,31 @@ jobs:
             local workflow_file="$1"
             local workflow_label="$2"
             local runs
-            local matching_run
-            runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_file/runs?head_sha=$tag_commit&status=success&per_page=100")"
-            matching_run="$(
+            local latest_run
+            runs="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_file/runs?head_sha=$tag_commit&per_page=100")"
+            latest_run="$(
               jq -c --arg sha "$tag_commit" '
-                [.workflow_runs[]
-                  | select(
-                      .head_sha == $sha
-                      and .status == "completed"
-                      and .conclusion == "success"
-                    )]
-                | sort_by(.updated_at, .run_attempt)
+                [.[].workflow_runs[] | select(.head_sha == $sha)]
+                | sort_by(.run_number, .run_attempt)
                 | last
               ' <<<"$runs"
             )"
-            if [[ "$matching_run" == "null" ]]; then
-              echo "$workflow_label has no successful completed run for candidate commit $tag_commit" >&2
+            if [[ "$latest_run" == "null" ]]; then
+              echo "$workflow_label has no run for candidate commit $tag_commit" >&2
+              exit 1
+            fi
+            if [[ "$(jq -r '.status' <<<"$latest_run")" != "completed" ]]; then
+              echo "$workflow_label latest run for candidate commit $tag_commit is not completed" >&2
+              exit 1
+            fi
+            if [[ "$(jq -r '.conclusion' <<<"$latest_run")" != "success" ]]; then
+              echo "$workflow_label latest run for candidate commit $tag_commit did not succeed" >&2
               exit 1
             fi
             jq -c \
               --arg workflow "$workflow_label" \
-              '{workflow: $workflow, runId: .id, runAttempt: .run_attempt, url: .html_url, commit: .head_sha, completedAt: .updated_at}' \
-              <<<"$matching_run"
+              '{workflow: $workflow, runId: .id, runNumber: .run_number, runAttempt: .run_attempt, event: .event, status: .status, conclusion: .conclusion, url: .html_url, commit: .head_sha, startedAt: .run_started_at, completedAt: .updated_at}' \
+              <<<"$latest_run"
           }
 
           ci_run="$(require_successful_workflow ci.yml CI)"
