@@ -95,12 +95,18 @@ interface PendingAnswer {
 interface AnswerBatch {
   items: PendingAnswer[];
   timer: NodeJS.Timeout;
+  deadlineAtMs: number;
 }
 
 interface AnswerIngress {
   receivedAtMs: number;
   ready: Promise<void>;
   settled: Promise<void>;
+}
+
+interface AnswerIngressBarrier {
+  cutoffs: Map<symbol, number>;
+  items: PendingAnswer[];
 }
 
 interface PendingJoin {
@@ -114,9 +120,11 @@ interface JoinBatch {
   timer: NodeJS.Timeout;
 }
 
-// Keep the window below a perceptible interaction delay while allowing a burst
-// to reach one durable write even when the host is CPU-constrained.
+// Use a short quiet window so one synchronized response burst reaches a single
+// durable write. Cap the total wait so a steady trickle is still acknowledged
+// well inside the participant receipt target.
 const answerBatchWindowMs = 50;
+const maximumAnswerBatchWaitMs = 150;
 const maximumAnswerBatchSize = 250;
 const joinBatchWindowMs = 50;
 const maximumJoinBatchSize = 250;
@@ -151,6 +159,7 @@ export class SessionService {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly answerBatches = new Map<string, AnswerBatch>();
   private readonly answerIngress = new Map<string, Set<AnswerIngress>>();
+  private readonly answerIngressBarriers = new Map<string, AnswerIngressBarrier>();
   private activeAnswerCommits = 0;
   private readonly answerCommitWaiters: Array<() => void> = [];
   private readonly joinBatches = new Map<string, JoinBatch>();
@@ -650,29 +659,34 @@ export class SessionService {
   }
 
   private async autoLock(sessionId: string, deadlineMs: number) {
-    await this.flushAnswersReceivedBy(sessionId, deadlineMs);
-    await this.mutate(sessionId, "deadline", async () => {
-      const session = await this.loadSessionForMutation(sessionId);
-      if (!session || session.state.phase !== "question_open") return;
-      if (session.state.deadlineMs && Date.now() < session.state.deadlineMs) {
-        this.scheduleDeadline(session);
-        return;
-      }
-      const result = applyHostCommand(session.state, {
-        action: "lock",
-        commandId: `deadline:${session.state.roundId}`,
-        expectedVersion: session.state.version,
-        nowMs: Date.now(),
-        newRoundId: randomUUID,
+    const barrierToken = this.registerAnswerIngressBarrier(sessionId, deadlineMs);
+    try {
+      await this.flushAnswersReceivedBy(sessionId, deadlineMs);
+      await this.mutate(sessionId, "deadline", async () => {
+        const session = await this.loadSessionForMutation(sessionId);
+        if (!session || session.state.phase !== "question_open") return;
+        if (session.state.deadlineMs && Date.now() < session.state.deadlineMs) {
+          this.scheduleDeadline(session);
+          return;
+        }
+        const result = applyHostCommand(session.state, {
+          action: "lock",
+          commandId: `deadline:${session.state.roundId}`,
+          expectedVersion: session.state.version,
+          nowMs: Date.now(),
+          newRoundId: randomUUID,
+        });
+        session.state = result.state;
+        await this.save(session, result.events, result.state.version - 1);
+        this.recordSessionProductEvents(
+          session.workspaceId,
+          this.lifecycleProductEvents(result.events, new Date(deadlineMs)),
+        );
+        await this.publish({ state: session.state, events: result.events });
       });
-      session.state = result.state;
-      await this.save(session, result.events, result.state.version - 1);
-      this.recordSessionProductEvents(
-        session.workspaceId,
-        this.lifecycleProductEvents(result.events, new Date(deadlineMs)),
-      );
-      await this.publish({ state: session.state, events: result.events });
-    });
+    } finally {
+      this.releaseAnswerIngressBarrier(sessionId, barrierToken);
+    }
   }
 
   async createSession(
@@ -1084,7 +1098,18 @@ export class SessionService {
     if (!participant || participant.sessionId !== input.sessionId) {
       throw new SessionError("UNAUTHORIZED", "Participant token is invalid");
     }
+    if (this.closing) throw new SessionError("CONFLICT", "The server is shutting down");
     return new Promise<AnswerAck>((resolve, reject) => {
+      const item = { input, participant, receivedAtMs, resolve, reject };
+      const barrier = this.answerIngressBarriers.get(input.sessionId);
+      const earliestCutoffMs = barrier
+        ? Math.min(...barrier.cutoffs.values())
+        : Number.POSITIVE_INFINITY;
+      if (barrier && receivedAtMs > earliestCutoffMs) {
+        barrier.items.push(item);
+        markReady();
+        return;
+      }
       let batch = this.answerBatches.get(input.sessionId);
       if (!batch) {
         const items: PendingAnswer[] = [];
@@ -1092,10 +1117,10 @@ export class SessionService {
           () => this.dispatchAnswerBatch(input.sessionId, items),
           answerBatchWindowMs,
         );
-        batch = { items, timer };
+        batch = { items, timer, deadlineAtMs: Date.now() + maximumAnswerBatchWaitMs };
         this.answerBatches.set(input.sessionId, batch);
       }
-      batch.items.push({ input, participant, receivedAtMs, resolve, reject });
+      batch.items.push(item);
       markReady();
       if (
         batch.items.length >= maximumAnswerBatchSize ||
@@ -1103,8 +1128,67 @@ export class SessionService {
       ) {
         clearTimeout(batch.timer);
         this.dispatchAnswerBatch(input.sessionId, batch.items);
+      } else {
+        clearTimeout(batch.timer);
+        const delayMs = Math.max(0, Math.min(answerBatchWindowMs, batch.deadlineAtMs - Date.now()));
+        batch.timer = setTimeout(
+          () => this.dispatchAnswerBatch(input.sessionId, batch.items),
+          delayMs,
+        );
       }
     });
+  }
+
+  private registerAnswerIngressBarrier(sessionId: string, cutoffMs: number) {
+    const token = Symbol("answer-ingress-barrier");
+    let barrier = this.answerIngressBarriers.get(sessionId);
+    if (!barrier) {
+      barrier = { cutoffs: new Map(), items: [] };
+      this.answerIngressBarriers.set(sessionId, barrier);
+    }
+    barrier.cutoffs.set(token, cutoffMs);
+
+    const earliestCutoffMs = Math.min(...barrier.cutoffs.values());
+    const batch = this.answerBatches.get(sessionId);
+    if (batch) {
+      const eligible: PendingAnswer[] = [];
+      const deferred: PendingAnswer[] = [];
+      for (const item of batch.items) {
+        (item.receivedAtMs <= earliestCutoffMs ? eligible : deferred).push(item);
+      }
+      if (deferred.length > 0) {
+        clearTimeout(batch.timer);
+        this.answerBatches.delete(sessionId);
+        barrier.items.push(...deferred);
+        this.processPendingAnswerItems(sessionId, eligible);
+      }
+    }
+    return token;
+  }
+
+  private releaseAnswerIngressBarrier(sessionId: string, token: symbol) {
+    const barrier = this.answerIngressBarriers.get(sessionId);
+    if (!barrier || !barrier.cutoffs.delete(token)) return;
+
+    const nextCutoffMs =
+      barrier.cutoffs.size > 0 ? Math.min(...barrier.cutoffs.values()) : Number.POSITIVE_INFINITY;
+    const eligible: PendingAnswer[] = [];
+    const deferred: PendingAnswer[] = [];
+    for (const item of barrier.items) {
+      (item.receivedAtMs <= nextCutoffMs ? eligible : deferred).push(item);
+    }
+    barrier.items = deferred;
+    if (barrier.cutoffs.size === 0) this.answerIngressBarriers.delete(sessionId);
+    this.processPendingAnswerItems(sessionId, eligible);
+  }
+
+  private processPendingAnswerItems(sessionId: string, items: PendingAnswer[]) {
+    for (let index = 0; index < items.length; index += maximumAnswerBatchSize) {
+      const chunk = items.slice(index, index + maximumAnswerBatchSize);
+      void this.processAnswerBatch(sessionId, chunk).catch((error: unknown) => {
+        for (const item of chunk) item.reject(error);
+      });
+    }
   }
 
   private answerBatchCompletesOpenRound(sessionId: string, items: PendingAnswer[]) {
@@ -1151,7 +1235,13 @@ export class SessionService {
       const batch = this.answerBatches.get(sessionId);
       if (batch) {
         clearTimeout(batch.timer);
-        this.dispatchAnswerBatch(sessionId, batch.items);
+        const eligible = batch.items.filter((item) => item.receivedAtMs <= cutoffMs);
+        const deferred = batch.items.filter((item) => item.receivedAtMs > cutoffMs);
+        this.answerBatches.delete(sessionId);
+        const barrier = this.answerIngressBarriers.get(sessionId);
+        if (barrier) barrier.items.push(...deferred);
+        else this.processPendingAnswerItems(sessionId, deferred);
+        this.processPendingAnswerItems(sessionId, eligible);
       }
       await Promise.allSettled(ingress.map((item) => item.settled));
     }
@@ -1162,9 +1252,7 @@ export class SessionService {
     if (!current || current.items !== items) return;
     clearTimeout(current.timer);
     this.answerBatches.delete(sessionId);
-    void this.processAnswerBatch(sessionId, items).catch((error: unknown) => {
-      for (const item of items) item.reject(error);
-    });
+    this.processPendingAnswerItems(sessionId, items);
   }
 
   private async processAnswerBatch(sessionId: string, items: PendingAnswer[]) {
@@ -1362,111 +1450,120 @@ export class SessionService {
   }
 
   async hostCommand(input: HostCommand): Promise<SessionSnapshot> {
-    const commandReceivedAtMs = Date.now();
     const closesAnswerIngress = ["pause", "lock", "end"].includes(input.action);
     return this.traceOperation(
       "openround.session.host_command",
       { "openround.host.action": input.action },
       async () => {
-        if (closesAnswerIngress) {
-          await this.snapshot({
-            sessionId: input.sessionId,
-            hostToken: input.hostToken,
-            role: "host",
-          });
-          await this.flushAnswersReceivedBy(input.sessionId, commandReceivedAtMs);
-        }
-        return this.mutate(input.sessionId, "host", async () => {
-          const session = await this.loadSessionForMutation(input.sessionId);
-          if (!session) throw new SessionError("NOT_FOUND", "Session not found");
-          const staffActor = await this.authorizeStaff(session, input.hostToken, ["cohost"]);
-          try {
-            const commandTime = new Date(closesAnswerIngress ? commandReceivedAtMs : Date.now());
-            const priorState = session.state;
-            const priorRetentionExpiresAt = session.retentionExpiresAt;
-            const priorPhase = session.state.phase;
-            const result = applyHostCommand(session.state, {
-              commandId: input.commandId,
-              expectedVersion: input.expectedVersion,
-              action: input.action,
-              participantId: input.participantId,
-              interventionType: input.interventionType,
-              recheckMode: input.recheckMode,
-              recheckQuestionId: input.recheckQuestionId,
-              nowMs: commandTime.getTime(),
-              newRoundId: randomUUID,
+        let barrierToken: symbol | null = null;
+        let commandTimeMs: number | null = null;
+        try {
+          if (closesAnswerIngress) {
+            await this.snapshot({
+              sessionId: input.sessionId,
+              hostToken: input.hostToken,
+              role: "host",
             });
-            if (!result.duplicate) {
-              const expectedVersion = session.state.version;
-              session.state = result.state;
-              if (priorPhase !== "finished" && session.state.phase === "finished") {
-                const plan = this.config.COMMUNITY_MODE
-                  ? "team"
-                  : await this.repository.getPlan(session.workspaceId);
-                session.retentionExpiresAt = retentionExpiry(
-                  commandTime,
-                  entitlementsFor(plan, this.config),
-                );
-              }
-              const report =
-                session.state.phase === "finished"
-                  ? createPendingReport(session.state, session.retentionExpiresAt)
-                  : undefined;
-              try {
-                await this.save(session, result.events, expectedVersion, report);
-              } catch (error) {
-                session.state = priorState;
-                session.retentionExpiresAt = priorRetentionExpiresAt;
-                this.active.delete(session.id);
-                this.metrics.setActiveSessions(this.active.size);
-                throw error;
-              }
-              this.recordSessionProductEvents(session.workspaceId, [
-                ...this.lifecycleProductEvents(result.events, commandTime),
-                ...(input.action === "intervention.start"
-                  ? [
-                      {
-                        name: "intervention_started" as const,
-                        occurredAt: commandTime.toISOString(),
-                      },
-                    ]
-                  : []),
-              ]);
-              await this.publish({
-                state: session.state,
-                events: result.events,
-                reportId: report?.id,
-              });
-              await this.repository.recordAudit({
-                workspaceId: session.workspaceId,
-                actorId: staffActor.rootHost ? session.hostId : null,
-                action: `session.command.${input.action}`,
-                targetType: "game_session",
-                targetId: session.id,
-                requestId: input.commandId,
-                metadata: staffActor.credential
-                  ? {
-                      staffCredentialId: staffActor.credential.id,
-                      staffRole: staffActor.credential.role,
-                    }
-                  : {},
-              });
-            }
-            this.metrics.recordHostCommand(
-              input.action,
-              result.duplicate ? "duplicate" : "applied",
-            );
-            return snapshotForRole(session.state, { role: "host" });
-          } catch (error) {
-            if (error instanceof EngineError) {
-              const code = error.code === "STALE_VERSION" ? "STALE_VERSION" : "CONFLICT";
-              this.metrics.recordHostCommand(input.action, code.toLocaleLowerCase("en-CA"));
-              throw new SessionError(code, error.message);
-            }
-            this.metrics.recordHostCommand(input.action, "error");
-            throw error;
+            // Authentication is the command's ordering point. Do not let an
+            // unauthenticated request stall participant receipts.
+            commandTimeMs = Date.now();
+            barrierToken = this.registerAnswerIngressBarrier(input.sessionId, commandTimeMs);
+            await this.flushAnswersReceivedBy(input.sessionId, commandTimeMs);
           }
-        });
+          return await this.mutate(input.sessionId, "host", async () => {
+            const session = await this.loadSessionForMutation(input.sessionId);
+            if (!session) throw new SessionError("NOT_FOUND", "Session not found");
+            const staffActor = await this.authorizeStaff(session, input.hostToken, ["cohost"]);
+            try {
+              const commandTime = new Date(commandTimeMs ?? Date.now());
+              const priorState = session.state;
+              const priorRetentionExpiresAt = session.retentionExpiresAt;
+              const priorPhase = session.state.phase;
+              const result = applyHostCommand(session.state, {
+                commandId: input.commandId,
+                expectedVersion: input.expectedVersion,
+                action: input.action,
+                participantId: input.participantId,
+                interventionType: input.interventionType,
+                recheckMode: input.recheckMode,
+                recheckQuestionId: input.recheckQuestionId,
+                nowMs: commandTime.getTime(),
+                newRoundId: randomUUID,
+              });
+              if (!result.duplicate) {
+                const expectedVersion = session.state.version;
+                session.state = result.state;
+                if (priorPhase !== "finished" && session.state.phase === "finished") {
+                  const plan = this.config.COMMUNITY_MODE
+                    ? "team"
+                    : await this.repository.getPlan(session.workspaceId);
+                  session.retentionExpiresAt = retentionExpiry(
+                    commandTime,
+                    entitlementsFor(plan, this.config),
+                  );
+                }
+                const report =
+                  session.state.phase === "finished"
+                    ? createPendingReport(session.state, session.retentionExpiresAt)
+                    : undefined;
+                try {
+                  await this.save(session, result.events, expectedVersion, report);
+                } catch (error) {
+                  session.state = priorState;
+                  session.retentionExpiresAt = priorRetentionExpiresAt;
+                  this.active.delete(session.id);
+                  this.metrics.setActiveSessions(this.active.size);
+                  throw error;
+                }
+                this.recordSessionProductEvents(session.workspaceId, [
+                  ...this.lifecycleProductEvents(result.events, commandTime),
+                  ...(input.action === "intervention.start"
+                    ? [
+                        {
+                          name: "intervention_started" as const,
+                          occurredAt: commandTime.toISOString(),
+                        },
+                      ]
+                    : []),
+                ]);
+                await this.publish({
+                  state: session.state,
+                  events: result.events,
+                  reportId: report?.id,
+                });
+                await this.repository.recordAudit({
+                  workspaceId: session.workspaceId,
+                  actorId: staffActor.rootHost ? session.hostId : null,
+                  action: `session.command.${input.action}`,
+                  targetType: "game_session",
+                  targetId: session.id,
+                  requestId: input.commandId,
+                  metadata: staffActor.credential
+                    ? {
+                        staffCredentialId: staffActor.credential.id,
+                        staffRole: staffActor.credential.role,
+                      }
+                    : {},
+                });
+              }
+              this.metrics.recordHostCommand(
+                input.action,
+                result.duplicate ? "duplicate" : "applied",
+              );
+              return snapshotForRole(session.state, { role: "host" });
+            } catch (error) {
+              if (error instanceof EngineError) {
+                const code = error.code === "STALE_VERSION" ? "STALE_VERSION" : "CONFLICT";
+                this.metrics.recordHostCommand(input.action, code.toLocaleLowerCase("en-CA"));
+                throw new SessionError(code, error.message);
+              }
+              this.metrics.recordHostCommand(input.action, "error");
+              throw error;
+            }
+          });
+        } finally {
+          if (barrierToken) this.releaseAnswerIngressBarrier(input.sessionId, barrierToken);
+        }
       },
     );
   }
@@ -1669,6 +1766,12 @@ export class SessionService {
       }
     }
     this.answerBatches.clear();
+    for (const barrier of this.answerIngressBarriers.values()) {
+      for (const item of barrier.items) {
+        item.reject(new SessionError("CONFLICT", "The server is shutting down"));
+      }
+    }
+    this.answerIngressBarriers.clear();
     this.answerIngress.clear();
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();

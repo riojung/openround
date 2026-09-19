@@ -64,6 +64,67 @@ function storedSession(input: {
   };
 }
 
+async function openQuestionFixture(participantCount: number) {
+  const repository = new MemoryRepository();
+  const service = new SessionService(
+    repository,
+    new MemorySessionCache(),
+    config,
+    new MetricsService(),
+  );
+  const { quiz, correctChoiceId } = quizFixture();
+  const sessionId = randomUUID();
+  const hostToken = "host-answer-batch-token-long-enough";
+  const participantInputs = Array.from({ length: participantCount }, (_, index) => ({
+    id: randomUUID(),
+    nickname: `Learner ${index + 1}`,
+    token: `answer-batch-token-${index}-${randomUUID()}`,
+  }));
+  let state = createGameState({
+    sessionId,
+    code: "3456789",
+    quiz,
+    settings: {
+      audienceLimit: 20,
+      scoringMode: "accuracy",
+      resultVisibility: "private",
+      allowLateJoin: true,
+      nicknamePolicy: "custom",
+    },
+  });
+  for (const participant of participantInputs) {
+    state = addParticipant(state, {
+      id: participant.id,
+      nickname: participant.nickname,
+      score: 0,
+      correctCount: 0,
+      acceptedResponseMs: 0,
+      connected: true,
+      kicked: false,
+    }).state;
+  }
+  state = applyHostCommand(state, {
+    commandId: randomUUID(),
+    expectedVersion: state.version,
+    action: "start",
+    nowMs: Date.now(),
+    newRoundId: randomUUID,
+  }).state;
+  await repository.createSession(storedSession({ state, hostToken }));
+  for (const participant of participantInputs) {
+    await repository.createParticipant({
+      id: participant.id,
+      sessionId,
+      nickname: participant.nickname,
+      tokenHash: hashToken(participant.token),
+      status: "active",
+      joinedAt: new Date(),
+    });
+  }
+  await service.snapshot({ sessionId, hostToken, role: "host" });
+  return { correctChoiceId, hostToken, participantInputs, repository, service, sessionId, state };
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -279,72 +340,10 @@ describe("session service ordering", () => {
     service.close();
   });
 
-  it("commits a complete open-round answer batch without waiting for the batch timer", async () => {
+  it("keeps a synchronized open-round burst in one complete answer batch", async () => {
     vi.useFakeTimers();
-    const repository = new MemoryRepository();
-    const service = new SessionService(
-      repository,
-      new MemorySessionCache(),
-      config,
-      new MetricsService(),
-    );
-    const { quiz, correctChoiceId } = quizFixture();
-    const sessionId = randomUUID();
-    const hostToken = "host-complete-batch-token-long-enough";
-    const participantInputs = [
-      {
-        id: randomUUID(),
-        nickname: "First learner",
-        token: "first-complete-batch-token-long-enough",
-      },
-      {
-        id: randomUUID(),
-        nickname: "Second learner",
-        token: "second-complete-batch-token-long-enough",
-      },
-    ];
-    let state = createGameState({
-      sessionId,
-      code: "3456789",
-      quiz,
-      settings: {
-        audienceLimit: 20,
-        scoringMode: "accuracy",
-        resultVisibility: "private",
-        allowLateJoin: true,
-        nicknamePolicy: "custom",
-      },
-    });
-    for (const participant of participantInputs) {
-      state = addParticipant(state, {
-        id: participant.id,
-        nickname: participant.nickname,
-        score: 0,
-        correctCount: 0,
-        acceptedResponseMs: 0,
-        connected: true,
-        kicked: false,
-      }).state;
-    }
-    state = applyHostCommand(state, {
-      commandId: randomUUID(),
-      expectedVersion: state.version,
-      action: "start",
-      nowMs: Date.now(),
-      newRoundId: randomUUID,
-    }).state;
-    await repository.createSession(storedSession({ state, hostToken }));
-    for (const participant of participantInputs) {
-      await repository.createParticipant({
-        id: participant.id,
-        sessionId,
-        nickname: participant.nickname,
-        tokenHash: hashToken(participant.token),
-        status: "active",
-        joinedAt: new Date(),
-      });
-    }
-    await service.snapshot({ sessionId, hostToken, role: "host" });
+    const { correctChoiceId, participantInputs, repository, service, sessionId, state } =
+      await openQuestionFixture(3);
     const commitAnswers = vi.spyOn(repository, "commitAnswers");
 
     const first = service.answer({
@@ -354,7 +353,7 @@ describe("session service ordering", () => {
       choiceId: correctChoiceId,
       idempotencyKey: randomUUID(),
     });
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(40);
     expect(commitAnswers).not.toHaveBeenCalled();
 
     const second = service.answer({
@@ -364,16 +363,246 @@ describe("session service ordering", () => {
       choiceId: correctChoiceId,
       idempotencyKey: randomUUID(),
     });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(commitAnswers).not.toHaveBeenCalled();
+
+    const third = service.answer({
+      sessionId,
+      participantToken: participantInputs[2]!.token,
+      roundId: state.roundId!,
+      choiceId: correctChoiceId,
+      idempotencyKey: randomUUID(),
+    });
     await vi.advanceTimersByTimeAsync(0);
 
-    await expect(Promise.all([first, second])).resolves.toEqual([
+    await expect(Promise.all([first, second, third])).resolves.toEqual([
+      expect.objectContaining({ accepted: true, duplicate: false }),
       expect.objectContaining({ accepted: true, duplicate: false }),
       expect.objectContaining({ accepted: true, duplicate: false }),
     ]);
     expect(commitAnswers).toHaveBeenCalledTimes(1);
-    expect(commitAnswers.mock.calls[0]?.[1]).toHaveLength(2);
+    expect(commitAnswers.mock.calls[0]?.[1]).toHaveLength(3);
     expect(commitAnswers.mock.calls[0]?.[3]).toEqual({ roundEvidencePersisted: true });
     service.close();
+  });
+
+  it("caps a trailing answer batch while the room remains incomplete", async () => {
+    vi.useFakeTimers();
+    const { correctChoiceId, participantInputs, repository, service, sessionId, state } =
+      await openQuestionFixture(5);
+    const commitAnswers = vi.spyOn(repository, "commitAnswers");
+    const answers: Array<ReturnType<SessionService["answer"]>> = [];
+
+    for (let index = 0; index < 4; index += 1) {
+      answers.push(
+        service.answer({
+          sessionId,
+          participantToken: participantInputs[index]!.token,
+          roundId: state.roundId!,
+          choiceId: correctChoiceId,
+          idempotencyKey: randomUUID(),
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(index === 3 ? 29 : 40);
+    }
+
+    expect(commitAnswers).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(Promise.all(answers)).resolves.toHaveLength(4);
+    expect(commitAnswers).toHaveBeenCalledTimes(1);
+    expect(commitAnswers.mock.calls[0]?.[1]).toHaveLength(4);
+    service.close();
+  });
+
+  it("holds answers received after a lock command behind the host mutation", async () => {
+    vi.useFakeTimers();
+    const startedAtMs = new Date("2026-09-18T12:00:00.000Z").getTime();
+    vi.setSystemTime(startedAtMs);
+    const { correctChoiceId, hostToken, participantInputs, repository, service, sessionId, state } =
+      await openQuestionFixture(3);
+    const commitAnswers = vi.spyOn(repository, "commitAnswers");
+
+    let releaseParticipantLookup!: () => void;
+    const participantLookupBlocked = new Promise<void>((resolve) => {
+      releaseParticipantLookup = resolve;
+    });
+    const getParticipantByToken = repository.getParticipantByToken.bind(repository);
+    vi.spyOn(repository, "getParticipantByToken").mockImplementationOnce(
+      async (participantTokenHash) => {
+        await participantLookupBlocked;
+        return getParticipantByToken(participantTokenHash);
+      },
+    );
+
+    const beforeLock = service.answer({
+      sessionId,
+      participantToken: participantInputs[0]!.token,
+      roundId: state.roundId!,
+      choiceId: correctChoiceId,
+      idempotencyKey: randomUUID(),
+    });
+
+    vi.setSystemTime(startedAtMs + 10);
+    const lock = service.hostCommand({
+      sessionId,
+      hostToken,
+      action: "lock",
+      commandId: randomUUID(),
+      expectedVersion: state.version + 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      (
+        service as unknown as {
+          answerIngressBarriers: Map<string, unknown>;
+        }
+      ).answerIngressBarriers.has(sessionId),
+    ).toBe(true);
+
+    vi.setSystemTime(startedAtMs + 20);
+    const afterLock = service.answer({
+      sessionId,
+      participantToken: participantInputs[1]!.token,
+      roundId: state.roundId!,
+      choiceId: correctChoiceId,
+      idempotencyKey: randomUUID(),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    releaseParticipantLookup();
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(beforeLock).resolves.toMatchObject({ accepted: true, duplicate: false });
+    await expect(lock).resolves.toMatchObject({ phase: "question_locked" });
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(afterLock).resolves.toMatchObject({ accepted: false, duplicate: false });
+    expect(commitAnswers).toHaveBeenCalledTimes(1);
+    expect(commitAnswers.mock.calls[0]?.[1]).toHaveLength(1);
+    expect(repository.answers).toHaveLength(1);
+    service.close();
+  });
+
+  it("does not let an unauthorized closing command stall answers", async () => {
+    vi.useFakeTimers();
+    const startedAtMs = new Date("2026-09-18T13:00:00.000Z").getTime();
+    vi.setSystemTime(startedAtMs);
+    const { correctChoiceId, participantInputs, repository, service, sessionId, state } =
+      await openQuestionFixture(1);
+
+    let releaseAuthorization!: () => void;
+    const authorizationBlocked = new Promise<void>((resolve) => {
+      releaseAuthorization = resolve;
+    });
+    const getSessionById = repository.getSessionById.bind(repository);
+    vi.spyOn(repository, "getSessionById").mockImplementationOnce(async (targetSessionId) => {
+      await authorizationBlocked;
+      return getSessionById(targetSessionId);
+    });
+
+    vi.setSystemTime(startedAtMs + 10);
+    const unauthorizedLock = service.hostCommand({
+      sessionId,
+      hostToken: "invalid-host-token-long-enough",
+      action: "lock",
+      commandId: randomUUID(),
+      expectedVersion: state.version,
+    });
+    vi.setSystemTime(startedAtMs + 20);
+    const answer = service.answer({
+      sessionId,
+      participantToken: participantInputs[0]!.token,
+      roundId: state.roundId!,
+      choiceId: correctChoiceId,
+      idempotencyKey: randomUUID(),
+    });
+    const unauthorizedLockRejection = expect(unauthorizedLock).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(
+      (
+        service as unknown as {
+          answerIngressBarriers: Map<string, unknown>;
+        }
+      ).answerIngressBarriers.has(sessionId),
+    ).toBe(false);
+    await expect(answer).resolves.toMatchObject({ accepted: true, duplicate: false });
+    expect(repository.answers).toHaveLength(1);
+
+    releaseAuthorization();
+    await vi.advanceTimersByTimeAsync(0);
+
+    await unauthorizedLockRejection;
+    expect((await repository.getSessionById(sessionId))?.state.phase).toBe("question_open");
+    service.close();
+  });
+
+  it("rejects a held answer when the service closes", async () => {
+    vi.useFakeTimers();
+    const startedAtMs = new Date("2026-09-18T14:00:00.000Z").getTime();
+    vi.setSystemTime(startedAtMs);
+    const { correctChoiceId, hostToken, participantInputs, repository, service, sessionId, state } =
+      await openQuestionFixture(2);
+
+    let releaseParticipantLookup!: () => void;
+    const participantLookupBlocked = new Promise<void>((resolve) => {
+      releaseParticipantLookup = resolve;
+    });
+    const getParticipantByToken = repository.getParticipantByToken.bind(repository);
+    vi.spyOn(repository, "getParticipantByToken").mockImplementationOnce(
+      async (participantTokenHash) => {
+        await participantLookupBlocked;
+        return getParticipantByToken(participantTokenHash);
+      },
+    );
+
+    const beforeLock = service.answer({
+      sessionId,
+      participantToken: participantInputs[0]!.token,
+      roundId: state.roundId!,
+      choiceId: correctChoiceId,
+      idempotencyKey: randomUUID(),
+    });
+
+    vi.setSystemTime(startedAtMs + 10);
+    const lock = service.hostCommand({
+      sessionId,
+      hostToken,
+      action: "lock",
+      commandId: randomUUID(),
+      expectedVersion: state.version + 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(
+      (
+        service as unknown as {
+          answerIngressBarriers: Map<string, unknown>;
+        }
+      ).answerIngressBarriers.has(sessionId),
+    ).toBe(true);
+
+    vi.setSystemTime(startedAtMs + 20);
+    const afterLock = service.answer({
+      sessionId,
+      participantToken: participantInputs[1]!.token,
+      roundId: state.roundId!,
+      choiceId: correctChoiceId,
+      idempotencyKey: randomUUID(),
+    });
+    const beforeLockRejection = expect(beforeLock).rejects.toMatchObject({ code: "CONFLICT" });
+    const afterLockRejection = expect(afterLock).rejects.toMatchObject({ code: "CONFLICT" });
+    const lockRejection = expect(lock).rejects.toMatchObject({ code: "CONFLICT" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    service.close();
+    releaseParticipantLookup();
+    await vi.advanceTimersByTimeAsync(0);
+
+    await beforeLockRejection;
+    await afterLockRejection;
+    await lockRejection;
+    expect(repository.answers).toHaveLength(0);
   });
 
   it("rejects an idempotency key reused for a different round", async () => {
