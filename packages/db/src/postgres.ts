@@ -3783,11 +3783,16 @@ export class PostgresRepository implements Repository {
     return (await this.commitAnswers(session, [answer], expectedVersion))[0]!;
   }
 
-  async commitAnswers(session: StoredSession, answers: EngineAnswer[], expectedVersion: number) {
+  async commitAnswers(
+    session: StoredSession,
+    answers: EngineAnswer[],
+    expectedVersion: number,
+    options: { roundEvidencePersisted?: boolean } = {},
+  ) {
     if (answers.length === 0) return [];
     return this.transaction(
       async (client) => {
-        await this.syncSessionEvidence(client, session);
+        if (!options.roundEvidencePersisted) await this.syncSessionEvidence(client, session);
         const result = await client.query(
           `WITH answer_input AS (
              SELECT * FROM jsonb_to_recordset($1::jsonb) AS input(
@@ -3826,7 +3831,7 @@ export class PostgresRepository implements Repository {
                accepted_response_ms = input.accepted_response_ms,
                last_seen_at = now()
              FROM participant_input AS input
-             WHERE participant.id = input.id
+             WHERE participant.id = input.id AND participant.session_id = $3
              RETURNING participant.id
            )
            SELECT persisted_answers.*,

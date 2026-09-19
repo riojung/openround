@@ -39,7 +39,9 @@ jobs:
           LOAD_OUTPUT: capacity-single-session.json
           RESTART_SERVER: "true"
       - name: 1,000-client multi-session gate
-        run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml run --rm load
+        run: |
+          docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml build load
+          docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml run --rm load
       - name: Capture Compose logs
         if: failure()
         run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml logs --no-color > capacity-failure.log

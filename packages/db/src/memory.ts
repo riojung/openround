@@ -2218,7 +2218,12 @@ export class MemoryRepository implements Repository {
     return (await this.commitAnswers(session, [answer], expectedVersion))[0]!;
   }
 
-  async commitAnswers(session: StoredSession, answers: EngineAnswer[], expectedVersion: number) {
+  async commitAnswers(
+    session: StoredSession,
+    answers: EngineAnswer[],
+    expectedVersion: number,
+    _options: { roundEvidencePersisted?: boolean } = {},
+  ) {
     const current = this.sessions.get(session.id);
     if (!current || current.state.version !== expectedVersion) {
       throw new SessionVersionConflictError(session.id, expectedVersion);

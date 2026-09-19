@@ -120,6 +120,9 @@ const answerBatchWindowMs = 50;
 const maximumAnswerBatchSize = 250;
 const joinBatchWindowMs = 50;
 const maximumJoinBatchSize = 250;
+// Keep synchronized rooms from occupying the whole PostgreSQL pool with
+// WAL-heavy answer commits; leave capacity for host and recovery traffic.
+const maximumConcurrentAnswerCommits = 8;
 
 export class SessionError extends Error {
   constructor(
@@ -148,6 +151,8 @@ export class SessionService {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly answerBatches = new Map<string, AnswerBatch>();
   private readonly answerIngress = new Map<string, Set<AnswerIngress>>();
+  private activeAnswerCommits = 0;
+  private readonly answerCommitWaiters: Array<() => void> = [];
   private readonly joinBatches = new Map<string, JoinBatch>();
   private readonly participantCredentials = new Map<string, ParticipantRecord>();
   private readonly listeners = new Set<MutationListener>();
@@ -1092,11 +1097,48 @@ export class SessionService {
       }
       batch.items.push({ input, participant, receivedAtMs, resolve, reject });
       markReady();
-      if (batch.items.length >= maximumAnswerBatchSize) {
+      if (
+        batch.items.length >= maximumAnswerBatchSize ||
+        this.answerBatchCompletesOpenRound(input.sessionId, batch.items)
+      ) {
         clearTimeout(batch.timer);
         this.dispatchAnswerBatch(input.sessionId, batch.items);
       }
     });
+  }
+
+  private answerBatchCompletesOpenRound(sessionId: string, items: PendingAnswer[]) {
+    const state = this.active.get(sessionId)?.state;
+    if (!state || state.phase !== "question_open" || !state.roundId) return false;
+
+    const awaiting = new Set(
+      Object.values(state.participants)
+        .filter((participant) => !participant.kicked)
+        .map((participant) => participant.id),
+    );
+    for (const answer of Object.values(state.answers)) {
+      if (answer.roundId === state.roundId) awaiting.delete(answer.participantId);
+    }
+    if (awaiting.size === 0) return false;
+    for (const item of items) {
+      if (item.input.roundId === state.roundId) awaiting.delete(item.participant.id);
+    }
+    return awaiting.size === 0;
+  }
+
+  private async withAnswerCommitSlot<T>(work: () => Promise<T>): Promise<T> {
+    if (this.activeAnswerCommits >= maximumConcurrentAnswerCommits) {
+      await new Promise<void>((resolve) => this.answerCommitWaiters.push(resolve));
+    } else {
+      this.activeAnswerCommits += 1;
+    }
+    try {
+      return await work();
+    } finally {
+      const next = this.answerCommitWaiters.shift();
+      if (next) next();
+      else this.activeAnswerCommits -= 1;
+    }
   }
 
   private async flushAnswersReceivedBy(sessionId: string, cutoffMs: number) {
@@ -1250,10 +1292,15 @@ export class SessionService {
         session.state = nextState;
         session.updatedAt = new Date();
         try {
-          const persisted = await this.repository.commitAnswers(
-            session,
-            newAnswers,
-            priorState.version,
+          const persisted = await this.withAnswerCommitSlot(() =>
+            this.repository.commitAnswers(
+              session,
+              newAnswers,
+              priorState.version,
+              // The question-open transition is committed before participants receive
+              // the round, and accepting an answer cannot change round evidence.
+              { roundEvidencePersisted: true },
+            ),
           );
           for (let index = 0; index < newAnswers.length; index += 1) {
             if (persisted[index]?.answerId !== newAnswers[index]?.answerId) {

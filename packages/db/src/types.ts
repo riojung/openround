@@ -1056,6 +1056,7 @@ export interface Repository {
     session: StoredSession,
     answers: EngineAnswer[],
     expectedVersion: number,
+    options?: { roundEvidencePersisted?: boolean },
   ): Promise<EngineAnswer[]>;
   saveReport(workspaceId: string, report: Report): Promise<void>;
   claimReportJob(now: Date, leaseUntil: Date): Promise<ReportJob | null>;
