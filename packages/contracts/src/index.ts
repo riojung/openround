@@ -908,6 +908,23 @@ export type EventEnvelope<T = unknown> = Omit<z.infer<typeof EventEnvelopeSchema
   payload: T;
 };
 
+export const JoinPreflightRequestSchema = z
+  .object({
+    code: z
+      .string()
+      .trim()
+      .regex(/^\d{7}$/),
+  })
+  .strict();
+export type JoinPreflightRequest = z.infer<typeof JoinPreflightRequestSchema>;
+
+export const JoinPreflightResponseSchema = z
+  .object({
+    nicknamePolicy: z.enum(["custom", "friendly_only"]),
+  })
+  .strict();
+export type JoinPreflightResponse = z.infer<typeof JoinPreflightResponseSchema>;
+
 export const JoinRequestSchema = z.object({
   code: z
     .string()
@@ -1639,6 +1656,16 @@ export const StartersResponseSchema = z.object({
 });
 export type StartersResponse = z.infer<typeof StartersResponseSchema>;
 
+export const RoundFilterOptionSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().min(1).max(160),
+});
+export type RoundFilterOption = z.infer<typeof RoundFilterOptionSchema>;
+export const RoundFilterOptionsResponseSchema = z.object({
+  quizzes: z.array(RoundFilterOptionSchema),
+});
+export type RoundFilterOptionsResponse = z.infer<typeof RoundFilterOptionsResponseSchema>;
+
 export const SessionHistoryStatusSchema = z.enum(["active", "finished", "expired"]);
 export type SessionHistoryStatus = z.infer<typeof SessionHistoryStatusSchema>;
 export const SessionSummarySchema = z.object({
@@ -1691,6 +1718,7 @@ export const FollowupSummarySchema = z.object({
   id: z.string().uuid(),
   sourceSessionId: z.string().uuid(),
   sourceReportId: z.string().uuid(),
+  quizId: z.string().uuid(),
   title: z.string().min(1).max(160),
   status: FollowupHistoryStatusSchema,
   conceptKeys: z.array(ConceptKeySchema),
@@ -1731,7 +1759,18 @@ export type ReportContext = z.infer<typeof ReportContextSchema>;
 export const ProductEventNameSchema = z.enum([
   "creation_started",
   "creation_completed",
+  "round_published",
   "setup_recipe_selected",
+  "host_setup_completed",
+  "participant_joined",
+  "first_answer_submitted",
+  "response_saved_acknowledged",
+  "question_locked",
+  "insight_shown",
+  "intervention_started",
+  "recheck_opened",
+  "report_viewed",
+  "followup_shared",
   "rehearsal_started",
   "rehearsal_completed",
 ]);
@@ -1752,7 +1791,43 @@ export const ProductEventSchema = z
       .strict()
       .default({}),
   })
-  .strict();
+  .strict()
+  .superRefine((event, context) => {
+    if (
+      (event.name === "creation_started" || event.name === "creation_completed") &&
+      !event.dimensions.creationPath
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["dimensions", "creationPath"],
+        message: "Creation events require a creation path",
+      });
+    }
+    if (event.name === "setup_recipe_selected" && !event.dimensions.recipe) {
+      context.addIssue({
+        code: "custom",
+        path: ["dimensions", "recipe"],
+        message: "Setup recipe selection requires a recipe",
+      });
+    }
+    if (
+      (event.name === "rehearsal_started" || event.name === "rehearsal_completed") &&
+      !event.dimensions.scenario
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["dimensions", "scenario"],
+        message: "Rehearsal events require a scenario",
+      });
+    }
+    if (event.name === "rehearsal_completed" && !event.dimensions.durationBucket) {
+      context.addIssue({
+        code: "custom",
+        path: ["dimensions", "durationBucket"],
+        message: "Completed rehearsals require a duration bucket",
+      });
+    }
+  });
 export type ProductEvent = z.infer<typeof ProductEventSchema>;
 
 export const ProductEventBatchSchema = z
@@ -1804,6 +1879,7 @@ const ReportQuestionSchema = z.object({
   correct: z.number().int().nonnegative(),
   accuracyPercent: z.number().min(0).max(100),
   difficult: z.boolean(),
+  responseDistribution: ResponseDistributionSchema.optional(),
 });
 
 const ReportParticipantSchema = z.object({

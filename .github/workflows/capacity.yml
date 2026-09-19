@@ -14,6 +14,10 @@ jobs:
   local-compose:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Keep AOF writes and restart recovery in scope while deferring background
+      # compaction outside this short, disposable latency measurement window.
+      VALKEY_AUTO_AOF_REWRITE_PERCENTAGE: "0"
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -32,17 +36,27 @@ jobs:
           ASSERT_PERFORMANCE: "true"
           CLIENTS: "250"
           JOIN_BATCH_SIZE: "25"
+          LOAD_OUTPUT: capacity-single-session.json
           RESTART_SERVER: "true"
       - name: 1,000-client multi-session gate
-        run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml run --rm load
+        run: |
+          docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml build load
+          docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml run --rm load
       - name: Capture Compose logs
         if: failure()
         run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml logs --no-color > capacity-failure.log
+      - name: Capture server metrics
+        if: failure()
+        continue-on-error: true
+        run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml exec -T server wget -qO- http://127.0.0.1:4000/metrics > capacity-metrics.prom
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: capacity-failure
-          path: capacity-failure.log
+          path: |
+            capacity-failure.log
+            capacity-metrics.prom
+            capacity-single-session.json
           if-no-files-found: ignore
       - name: Stop disposable stack
         if: always()

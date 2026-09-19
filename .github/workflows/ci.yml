@@ -23,6 +23,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
+      - run: pnpm check:docker-context
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
@@ -118,7 +119,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
-      - run: pnpm test:e2e
+      - name: Run feature-off browser suite
+        run: pnpm test:e2e
+      - name: Run UX beta browser suite
+        run: pnpm test:e2e:beta
       - name: Upload browser failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
@@ -126,5 +130,7 @@ jobs:
           name: browser-smoke-failure
           path: |
             playwright-report/
+            playwright-report-beta/
             test-results/
+            test-results-beta/
           if-no-files-found: ignore

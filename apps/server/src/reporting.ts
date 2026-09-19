@@ -6,7 +6,7 @@ import {
   type ReportV3,
 } from "@openround/contracts";
 import type { SessionEvidence } from "@openround/db";
-import type { GameState } from "@openround/game-engine";
+import { responseDistributionFor, type GameState } from "@openround/game-engine";
 
 const evidenceNote =
   "Recovery is evidence from this session and should not be interpreted as proof of long-term learning.";
@@ -159,6 +159,7 @@ export function generateReport(
         question.type !== "poll" &&
         question.type !== "rating" &&
         questionPurpose(question) !== "opinion";
+      const responseDistribution = responseDistributionFor(question, roundAnswers);
       return {
         questionId: question.id,
         prompt: question.prompt,
@@ -166,6 +167,7 @@ export function generateReport(
         correct,
         accuracyPercent,
         difficult: scorable && roundAnswers.length > 0 && accuracyPercent < 60,
+        ...(responseDistribution ? { responseDistribution } : {}),
       };
     });
 

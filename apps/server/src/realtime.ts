@@ -28,6 +28,10 @@ const AUDIENCE_SUMMARY_MIN_INTERVAL_MS = 250;
 
 type RealtimeRole = "host" | "presenter" | "participant";
 
+export function isExpiredRealtimeStaffCredential(expiresAtMs: unknown, nowMs = Date.now()) {
+  return typeof expiresAtMs === "number" && expiresAtMs <= nowMs;
+}
+
 function socketError(error: unknown) {
   if (error instanceof ZodError) {
     return {
@@ -171,8 +175,8 @@ export async function attachRealtime(
       }
       return role;
     }
-    const staffExpiresAtMs = socket.data.staffExpiresAtMs as number | undefined;
-    if (staffExpiresAtMs !== undefined && staffExpiresAtMs <= Date.now()) {
+    const staffExpiresAtMs: unknown = socket.data.staffExpiresAtMs;
+    if (isExpiredRealtimeStaffCredential(staffExpiresAtMs)) {
       socket.disconnect(true);
       return null;
     }
@@ -289,8 +293,8 @@ export async function attachRealtime(
           const role = socket.data.role as RealtimeRole | undefined;
           if (!role) continue;
           if (role !== "participant") {
-            const staffExpiresAtMs = socket.data.staffExpiresAtMs as number | undefined;
-            if (staffExpiresAtMs !== undefined && staffExpiresAtMs <= Date.now()) {
+            const staffExpiresAtMs: unknown = socket.data.staffExpiresAtMs;
+            if (isExpiredRealtimeStaffCredential(staffExpiresAtMs)) {
               socket.disconnect(true);
               continue;
             }
@@ -513,7 +517,12 @@ export async function attachRealtime(
     socket.on("disconnect", () => {
       metrics.socketDisconnected();
       const participantToken = socket.data.participantToken as string | undefined;
-      if (participantToken && !closing) void sessions.disconnect(participantToken);
+      if (participantToken && !closing) {
+        // Presence cleanup is best effort once the transport is already gone. A
+        // transient coordination failure must not become an unhandled rejection
+        // that terminates the realtime process.
+        void sessions.disconnect(participantToken).catch(() => undefined);
+      }
     });
   });
 

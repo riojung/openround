@@ -51,6 +51,7 @@ describe("retention service", () => {
       expiredLiveSessions: 0,
       purgedSessions: 0,
       purgedAuditEvents: 0,
+      purgedProductEvents: 0,
       purgedMedia: 2,
       failedMedia: 0,
     });
@@ -134,6 +135,7 @@ describe("retention service", () => {
       expiredLiveSessions: 1,
       purgedSessions: 0,
       purgedAuditEvents: 0,
+      purgedProductEvents: 0,
       purgedMedia: 0,
       failedMedia: 0,
     });
@@ -145,6 +147,7 @@ describe("retention service", () => {
       expiredLiveSessions: 0,
       purgedSessions: 1,
       purgedAuditEvents: 0,
+      purgedProductEvents: 0,
       purgedMedia: 0,
       failedMedia: 0,
     });
@@ -194,10 +197,12 @@ describe("retention service", () => {
   it("purges privacy-safe product events at their 30-day expiry", async () => {
     const repository = new MemoryRepository();
     const now = new Date("2026-09-18T12:00:00.000Z");
+    const expiredWorkspaceId = randomUUID();
+    const retainedWorkspaceId = randomUUID();
     await repository.recordProductEvents([
       {
         id: randomUUID(),
-        workspaceId: randomUUID(),
+        workspaceId: expiredWorkspaceId,
         name: "rehearsal_completed",
         occurredAt: new Date(now.getTime() - 30 * 24 * 60 * 60_000).toISOString(),
         dimensions: {
@@ -210,14 +215,28 @@ describe("retention service", () => {
         createdAt: new Date(now.getTime() - 30 * 24 * 60 * 60_000),
       },
     ]);
+    await repository.recordProductEvents([
+      {
+        id: randomUUID(),
+        workspaceId: retainedWorkspaceId,
+        name: "host_setup_completed",
+        occurredAt: now.toISOString(),
+        dimensions: { betaVersion: "p0-2026" },
+        expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+        createdAt: now,
+      },
+    ]);
     const retention = new RetentionService(
       repository,
       { configured: true, deleteAsset: async () => undefined },
       24,
     );
 
-    await retention.run(now);
+    const result = await retention.run(now);
 
-    expect(repository.productEvents).toHaveLength(0);
+    expect(result.purgedProductEvents).toBe(1);
+    expect(repository.productEvents).toEqual([
+      expect.objectContaining({ workspaceId: retainedWorkspaceId, name: "host_setup_completed" }),
+    ]);
   });
 });

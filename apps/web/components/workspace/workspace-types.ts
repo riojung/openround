@@ -3,7 +3,12 @@ import type {
   ReportSummary as ContractReportSummary,
 } from "@openround/contracts";
 
-export type { FollowupSummary, SessionSummary, StarterSummary } from "@openround/contracts";
+export type {
+  FollowupSummary,
+  RoundFilterOption,
+  SessionSummary,
+  StarterSummary,
+} from "@openround/contracts";
 
 // Keep the beta UI compatible while the additive lifecycle field rolls out with
 // the server contract. Once present, it is always rendered rather than reduced

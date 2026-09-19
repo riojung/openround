@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { apiFetch, humanError } from "../../lib/api";
+import { buildHistoryQuery } from "../../lib/history-query";
 import { formatCompactDate, formatPercent } from "../../components/workspace/workspace-model";
 import { WorkspaceProvider } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
@@ -11,8 +12,97 @@ import type {
   CursorPage,
   FollowupSummary,
   ReportSummary,
+  RoundFilterOption,
 } from "../../components/workspace/workspace-types";
 import styles from "../../components/workspace/workspace-content.module.css";
+
+type ReportStatusFilter = "all" | ReportSummary["status"];
+type FollowupStatusFilter = "all" | FollowupSummary["status"];
+
+function HistoryFilters({
+  status,
+  statusLabel,
+  statusOptions,
+  quizId,
+  rounds,
+  fromDate,
+  toDate,
+  onStatusChange,
+  onQuizChange,
+  onFromDateChange,
+  onToDateChange,
+  onClear,
+}: {
+  status: string;
+  statusLabel: string;
+  statusOptions: ReadonlyArray<{ value: string; label: string }>;
+  quizId: string;
+  rounds: RoundFilterOption[];
+  fromDate: string;
+  toDate: string;
+  onStatusChange: (value: string) => void;
+  onQuizChange: (value: string) => void;
+  onFromDateChange: (value: string) => void;
+  onToDateChange: (value: string) => void;
+  onClear: () => void;
+}) {
+  const hasFilters = status !== "all" || quizId !== "all" || fromDate !== "" || toDate !== "";
+  return (
+    <section aria-label="History filters" className={styles.filters}>
+      <label className="field">
+        <span>{statusLabel}</span>
+        <select
+          className="select"
+          onChange={(event) => onStatusChange(event.target.value)}
+          value={status}
+        >
+          {statusOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Round</span>
+        <select
+          className="select"
+          onChange={(event) => onQuizChange(event.target.value)}
+          value={quizId}
+        >
+          <option value="all">All Rounds</option>
+          {rounds.map((round) => (
+            <option key={round.id} value={round.id}>
+              {round.title}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>From</span>
+        <input
+          className="input"
+          onChange={(event) => onFromDateChange(event.target.value)}
+          type="date"
+          value={fromDate}
+        />
+      </label>
+      <label className="field">
+        <span>To</span>
+        <input
+          className="input"
+          min={fromDate || undefined}
+          onChange={(event) => onToDateChange(event.target.value)}
+          type="date"
+          value={toDate}
+        />
+      </label>
+      <button className="button-quiet" disabled={!hasFilters} onClick={onClear} type="button">
+        Clear filters
+      </button>
+    </section>
+  );
+}
 
 function followupLifecycleLabel(report: ReportSummary) {
   if (!report.followupId) return "No practice follow-up yet";
@@ -20,51 +110,132 @@ function followupLifecycleLabel(report: ReportSummary) {
   return `Practice follow-up ${report.followupStatus}`;
 }
 
-function ReportList() {
+function ReportList({ rounds }: { rounds: RoundFilterOption[] }) {
+  const [status, setStatus] = useState<ReportStatusFilter>("all");
+  const [quizId, setQuizId] = useState("all");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [reports, setReports] = useState<ReportSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
+  const queryKey = `${status}\u0000${quizId}\u0000${fromDate}\u0000${toDate}`;
+  const activeQueryKey = useRef(queryKey);
+  const loadMoreController = useRef<AbortController | null>(null);
+  activeQueryKey.current = queryKey;
 
-  const load = useCallback(async (cursor?: string) => {
-    const params = new URLSearchParams({ limit: "25" });
-    if (cursor) params.set("cursor", cursor);
-    const response = await apiFetch<CursorPage<ReportSummary>>(`/v1/reports?${params}`);
-    setReports((current) => (cursor ? [...current, ...response.items] : response.items));
-    setNextCursor(response.nextCursor);
-  }, []);
+  const fetchPage = useCallback(
+    (cursor?: string, signal?: AbortSignal) =>
+      apiFetch<CursorPage<ReportSummary>>(
+        `/v1/reports?${buildHistoryQuery({ status, quizId, fromDate, toDate }, cursor)}`,
+        { signal },
+      ),
+    [fromDate, quizId, status, toDate],
+  );
 
   useEffect(() => {
-    void load()
-      .catch((caught) => setError(humanError(caught)))
-      .finally(() => setLoading(false));
-  }, [load]);
+    const controller = new AbortController();
+    const requestedQueryKey = queryKey;
+    loadMoreController.current?.abort();
+    loadMoreController.current = null;
+    setLoading(true);
+    setLoadingMore(false);
+    setReports([]);
+    setNextCursor(null);
+    setError("");
+    void fetchPage(undefined, controller.signal)
+      .then((response) => {
+        if (controller.signal.aborted || activeQueryKey.current !== requestedQueryKey) return;
+        setReports(response.items);
+        setNextCursor(response.nextCursor);
+      })
+      .catch((caught) => {
+        if (controller.signal.aborted || activeQueryKey.current !== requestedQueryKey) return;
+        setError(humanError(caught));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted && activeQueryKey.current === requestedQueryKey) {
+          setLoading(false);
+        }
+      });
+    return () => {
+      controller.abort();
+      loadMoreController.current?.abort();
+    };
+  }, [fetchPage, queryKey]);
 
   async function more() {
     if (!nextCursor) return;
+    const requestedQueryKey = queryKey;
+    const requestedCursor = nextCursor;
+    loadMoreController.current?.abort();
+    const controller = new AbortController();
+    loadMoreController.current = controller;
     setLoadingMore(true);
+    setError("");
     try {
-      await load(nextCursor);
+      const response = await fetchPage(requestedCursor, controller.signal);
+      if (controller.signal.aborted || activeQueryKey.current !== requestedQueryKey) return;
+      setReports((current) => [...current, ...response.items]);
+      setNextCursor(response.nextCursor);
     } catch (caught) {
+      if (controller.signal.aborted || activeQueryKey.current !== requestedQueryKey) return;
       setError(humanError(caught));
     } finally {
-      setLoadingMore(false);
+      if (loadMoreController.current === controller) {
+        loadMoreController.current = null;
+        if (activeQueryKey.current === requestedQueryKey) setLoadingMore(false);
+      }
     }
   }
 
-  if (loading) return <p className={styles.muted}>Loading results…</p>;
+  function clearFilters() {
+    setStatus("all");
+    setQuizId("all");
+    setFromDate("");
+    setToDate("");
+  }
+
   return (
     <>
+      <HistoryFilters
+        fromDate={fromDate}
+        onClear={clearFilters}
+        onFromDateChange={setFromDate}
+        onQuizChange={setQuizId}
+        onStatusChange={(value) => setStatus(value as ReportStatusFilter)}
+        onToDateChange={setToDate}
+        quizId={quizId}
+        rounds={rounds}
+        status={status}
+        statusLabel="Result status"
+        statusOptions={[
+          { value: "all", label: "All results" },
+          { value: "ready", label: "Ready" },
+          { value: "pending", label: "Processing" },
+          { value: "failed", label: "Needs attention" },
+        ]}
+        toDate={toDate}
+      />
       {error ? (
         <p className="error" role="alert">
           {error}
         </p>
       ) : null}
-      {!reports.length && !error ? (
+      {loading ? (
+        <p className={styles.muted} role="status">
+          Loading results…
+        </p>
+      ) : null}
+      {!loading && !reports.length && !error ? (
         <div className={styles.emptyState}>
           <h2>No results yet</h2>
-          <p>Finish a live session and its Recovery Story will appear here.</p>
+          <p>
+            {status === "all" && quizId === "all" && !fromDate && !toDate
+              ? "Finish a live session and its Recovery Story will appear here."
+              : "No results match these filters."}
+          </p>
           <Link className="button" href="/dashboard">
             Choose a Round
           </Link>
@@ -133,51 +304,133 @@ function ReportList() {
   );
 }
 
-function FollowupList() {
+function FollowupList({ rounds }: { rounds: RoundFilterOption[] }) {
+  const [status, setStatus] = useState<FollowupStatusFilter>("all");
+  const [quizId, setQuizId] = useState("all");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [followups, setFollowups] = useState<FollowupSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
+  const queryKey = `${status}\u0000${quizId}\u0000${fromDate}\u0000${toDate}`;
+  const activeQueryKey = useRef(queryKey);
+  const loadMoreController = useRef<AbortController | null>(null);
+  activeQueryKey.current = queryKey;
 
-  const load = useCallback(async (cursor?: string) => {
-    const params = new URLSearchParams({ limit: "25" });
-    if (cursor) params.set("cursor", cursor);
-    const response = await apiFetch<CursorPage<FollowupSummary>>(`/v1/followups?${params}`);
-    setFollowups((current) => (cursor ? [...current, ...response.items] : response.items));
-    setNextCursor(response.nextCursor);
-  }, []);
+  const fetchPage = useCallback(
+    (cursor?: string, signal?: AbortSignal) =>
+      apiFetch<CursorPage<FollowupSummary>>(
+        `/v1/followups?${buildHistoryQuery({ status, quizId, fromDate, toDate }, cursor)}`,
+        { signal },
+      ),
+    [fromDate, quizId, status, toDate],
+  );
 
   useEffect(() => {
-    void load()
-      .catch((caught) => setError(humanError(caught)))
-      .finally(() => setLoading(false));
-  }, [load]);
+    const controller = new AbortController();
+    const requestedQueryKey = queryKey;
+    loadMoreController.current?.abort();
+    loadMoreController.current = null;
+    setLoading(true);
+    setLoadingMore(false);
+    setFollowups([]);
+    setNextCursor(null);
+    setError("");
+    void fetchPage(undefined, controller.signal)
+      .then((response) => {
+        if (controller.signal.aborted || activeQueryKey.current !== requestedQueryKey) return;
+        setFollowups(response.items);
+        setNextCursor(response.nextCursor);
+      })
+      .catch((caught) => {
+        if (controller.signal.aborted || activeQueryKey.current !== requestedQueryKey) return;
+        setError(humanError(caught));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted && activeQueryKey.current === requestedQueryKey) {
+          setLoading(false);
+        }
+      });
+    return () => {
+      controller.abort();
+      loadMoreController.current?.abort();
+    };
+  }, [fetchPage, queryKey]);
 
   async function more() {
     if (!nextCursor) return;
+    const requestedQueryKey = queryKey;
+    const requestedCursor = nextCursor;
+    loadMoreController.current?.abort();
+    const controller = new AbortController();
+    loadMoreController.current = controller;
     setLoadingMore(true);
+    setError("");
     try {
-      await load(nextCursor);
+      const response = await fetchPage(requestedCursor, controller.signal);
+      if (controller.signal.aborted || activeQueryKey.current !== requestedQueryKey) return;
+      setFollowups((current) => [...current, ...response.items]);
+      setNextCursor(response.nextCursor);
     } catch (caught) {
+      if (controller.signal.aborted || activeQueryKey.current !== requestedQueryKey) return;
       setError(humanError(caught));
     } finally {
-      setLoadingMore(false);
+      if (loadMoreController.current === controller) {
+        loadMoreController.current = null;
+        if (activeQueryKey.current === requestedQueryKey) setLoadingMore(false);
+      }
     }
   }
 
-  if (loading) return <p className={styles.muted}>Loading practice follow-ups…</p>;
+  function clearFilters() {
+    setStatus("all");
+    setQuizId("all");
+    setFromDate("");
+    setToDate("");
+  }
+
   return (
     <>
+      <HistoryFilters
+        fromDate={fromDate}
+        onClear={clearFilters}
+        onFromDateChange={setFromDate}
+        onQuizChange={setQuizId}
+        onStatusChange={(value) => setStatus(value as FollowupStatusFilter)}
+        onToDateChange={setToDate}
+        quizId={quizId}
+        rounds={rounds}
+        status={status}
+        statusLabel="Follow-up status"
+        statusOptions={[
+          { value: "all", label: "All follow-ups" },
+          { value: "scheduled", label: "Scheduled" },
+          { value: "open", label: "Open" },
+          { value: "closed", label: "Closed" },
+          { value: "expired", label: "Expired" },
+        ]}
+        toDate={toDate}
+      />
       {error ? (
         <p className="error" role="alert">
           {error}
         </p>
       ) : null}
-      {!followups.length && !error ? (
+      {loading ? (
+        <p className={styles.muted} role="status">
+          Loading practice follow-ups…
+        </p>
+      ) : null}
+      {!loading && !followups.length && !error ? (
         <div className={styles.emptyState}>
           <h2>No practice follow-ups yet</h2>
-          <p>Create one from a ready Recovery Story to reinforce unresolved concepts.</p>
+          <p>
+            {status === "all" && quizId === "all" && !fromDate && !toDate
+              ? "Create one from a ready Recovery Story to reinforce unresolved concepts."
+              : "No practice follow-ups match these filters."}
+          </p>
         </div>
       ) : null}
       <section className={styles.list} aria-label="Practice follow-ups">
@@ -250,6 +503,20 @@ function FollowupList() {
 function ResultsContent() {
   const params = useSearchParams();
   const view = params.get("view") === "practice" ? "practice" : "results";
+  const [rounds, setRounds] = useState<RoundFilterOption[]>([]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void apiFetch<{ quizzes: RoundFilterOption[] }>("/v1/quizzes?archived=true&summary=true", {
+      signal: controller.signal,
+    })
+      .then((response) => {
+        if (!controller.signal.aborted) setRounds(response.quizzes);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+
   return (
     <>
       <nav className={styles.tabList} aria-label="Result views">
@@ -268,7 +535,7 @@ function ResultsContent() {
           Practice follow-ups
         </Link>
       </nav>
-      {view === "practice" ? <FollowupList /> : <ReportList />}
+      {view === "practice" ? <FollowupList rounds={rounds} /> : <ReportList rounds={rounds} />}
     </>
   );
 }

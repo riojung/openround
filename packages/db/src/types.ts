@@ -187,6 +187,11 @@ export interface QuizRecord {
   updatedAt: Date;
 }
 
+export interface QuizListRecord extends QuizRecord {
+  /** Latest retained session creation time for this Round, without exposing session details. */
+  lastHostedAt: Date | null;
+}
+
 export interface FolderRecord {
   id: string;
   workspaceId: string;
@@ -467,6 +472,7 @@ export interface FollowupHistoryRecord {
   id: string;
   sourceSessionId: string;
   sourceReportId: string;
+  quizId: string;
   title: string;
   status: "scheduled" | "open" | "closed" | "expired";
   conceptKeys: string[];
@@ -751,7 +757,7 @@ export interface Repository {
   ): Promise<CreatorContext | null>;
   revokeCreatorSession(tokenHash: string): Promise<void>;
   getCreatorByUserId(userId: string, workspaceId: string): Promise<CreatorContext | null>;
-  listQuizzes(workspaceId: string, includeArchived?: boolean): Promise<QuizRecord[]>;
+  listQuizzes(workspaceId: string, includeArchived?: boolean): Promise<QuizListRecord[]>;
   listFolders(workspaceId: string): Promise<FolderRecord[]>;
   createFolder(input: FolderRecord): Promise<FolderRecord>;
   renameFolder(workspaceId: string, folderId: string, name: string): Promise<FolderRecord | null>;
@@ -1021,6 +1027,11 @@ export interface Repository {
     sessionId: string,
     lookups: AnswerLookup[],
   ): Promise<EngineAnswer[]>;
+  findParticipantIdsWithAnswers(
+    workspaceId: string,
+    sessionId: string,
+    participantIds: string[],
+  ): Promise<string[]>;
   createMediaAsset(input: MediaAssetRecord): Promise<MediaAssetRecord>;
   getMediaAsset(workspaceId: string, mediaId: string): Promise<MediaAssetRecord | null>;
   listMediaAssets(workspaceId: string): Promise<MediaAssetRecord[]>;
@@ -1045,6 +1056,7 @@ export interface Repository {
     session: StoredSession,
     answers: EngineAnswer[],
     expectedVersion: number,
+    options?: { roundEvidencePersisted?: boolean },
   ): Promise<EngineAnswer[]>;
   saveReport(workspaceId: string, report: Report): Promise<void>;
   claimReportJob(now: Date, leaseUntil: Date): Promise<ReportJob | null>;
@@ -1073,6 +1085,7 @@ export interface Repository {
       cursor?: HistoryCursor;
       limit: number;
       status?: FollowupHistoryRecord["status"];
+      quizId?: string;
       from?: Date;
       to?: Date;
       now: Date;

@@ -128,7 +128,7 @@ export function getHostPhaseView(snapshot: SessionSnapshot): HostPhaseView {
             ? { action: "recheck.open", label: "Open linked recheck", recheckMode: "linked" }
             : { action: "recheck.open", label: "Recheck by revote", recheckMode: "revote" },
           secondary: [continueCommand(snapshot)],
-          suggestionKind: "action",
+          suggestionKind: "none",
         };
       }
       const legalSuggestion =

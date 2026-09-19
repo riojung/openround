@@ -1,4 +1,31 @@
-import type { AnswerAck, ConfidenceValue, ResponsePayload } from "@openround/contracts";
+import type {
+  AnswerAck,
+  ConfidenceValue,
+  ResponsePayload,
+  SessionSnapshot,
+} from "@openround/contracts";
+
+export type ParticipantProgressStage =
+  "waiting" | "answering" | "saved" | "discussing" | "reviewing" | "rechecking" | "complete";
+
+export function participantProgressStage(
+  snapshot: SessionSnapshot,
+  responseSaved: boolean,
+): ParticipantProgressStage {
+  if (snapshot.phase === "finished") return "complete";
+  if (snapshot.phase === "intervention") return "discussing";
+  if (snapshot.phase === "question_reveal" || snapshot.phase === "leaderboard") {
+    return "reviewing";
+  }
+  if (snapshot.roundKind === "linked_recheck" || snapshot.roundKind === "revote") {
+    return "rechecking";
+  }
+  if (snapshot.phase === "question_open") return responseSaved ? "saved" : "answering";
+  if (responseSaved && snapshot.phase === "question_locked") {
+    return "saved";
+  }
+  return "waiting";
+}
 
 export interface ParticipantResponseView {
   saved: boolean;

@@ -14,6 +14,7 @@ COPY packages/game-engine/package.json packages/game-engine/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY tests/load tests/load
+COPY tests/support/report-readiness.ts tests/support/report-readiness.ts
 
 USER node
 CMD ["pnpm", "load:compose:aggregate"]

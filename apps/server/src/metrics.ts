@@ -454,6 +454,7 @@ export class MetricsService {
     expiredLiveSessions: number;
     purgedSessions: number;
     purgedAuditEvents: number;
+    purgedProductEvents: number;
     purgedMedia: number;
     failedMedia: number;
   }) {
@@ -466,6 +467,11 @@ export class MetricsService {
       this.retention.inc({ resource: "session", outcome: "deleted" }, result.purgedSessions);
     if (result.purgedAuditEvents > 0)
       this.retention.inc({ resource: "audit_event", outcome: "deleted" }, result.purgedAuditEvents);
+    if (result.purgedProductEvents > 0)
+      this.retention.inc(
+        { resource: "product_event", outcome: "deleted" },
+        result.purgedProductEvents,
+      );
     if (result.purgedMedia > 0)
       this.retention.inc({ resource: "media", outcome: "deleted" }, result.purgedMedia);
     if (result.failedMedia > 0)

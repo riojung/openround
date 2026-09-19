@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   AudienceSignalSchema,
   ChatMessageSchema,
@@ -33,14 +33,189 @@ const reactionOptions: Array<{ id: ChatReaction; label: string; icon: string }> 
 
 export interface AudienceSync {
   settings: InteractionSettings;
+  settingsAudienceSeq?: number;
+  chatSyncAudienceSeq?: number;
+  privateProjectionOverlays?: AudienceEventEnvelope[];
   capabilities: { audiencePulse: boolean; roomChat: boolean };
   summary: InteractionSummary;
   chat: ChatPage;
 }
 
 export interface AudienceRealtimeUpdate {
+  ordinal: number;
   gap: boolean;
   envelope: AudienceEventEnvelope;
+}
+
+export interface AudienceRealtimeBatch {
+  updates: AudienceRealtimeUpdate[];
+  latestOrdinal: number;
+}
+
+interface MergeAudienceSyncOptions {
+  replay?: AudienceEventEnvelope[];
+}
+
+interface ApplyAudienceRealtimeOptions {
+  replay?: boolean;
+  recordPrivateOverlay?: boolean;
+}
+
+const MAX_REALTIME_BATCH_SIZE = 64;
+const MAX_REALTIME_REPLAY_SIZE = 256;
+// A full 250-person room can signal inside one 250 ms summary window. Leave
+// headroom for repeated signals and moderation events before the aggregate
+// summary that covers them arrives.
+const MAX_PRIVATE_PROJECTION_OVERLAYS = 512;
+
+export function createInFlightRefreshCoalescer<T>() {
+  type TrailingRefresh = {
+    promise: Promise<T>;
+    refresh: () => Promise<T>;
+    resolve: (value: T | PromiseLike<T>) => void;
+    reject: (reason?: unknown) => void;
+  };
+  type Entry = { active: Promise<T> | null; trailing: TrailingRefresh | null };
+  const entries = new Map<string, Entry>();
+
+  const launch = (key: string, entry: Entry, refresh: () => Promise<T>) => {
+    let promise: Promise<T>;
+    try {
+      promise = refresh();
+    } catch (error) {
+      promise = Promise.reject(error);
+    }
+    entry.active = promise;
+    const finish = () => {
+      if (entry.active !== promise) return;
+      entry.active = null;
+      const trailing = entry.trailing;
+      if (!trailing) {
+        entries.delete(key);
+        return;
+      }
+      entry.trailing = null;
+      const trailingPromise = launch(key, entry, trailing.refresh);
+      void trailingPromise.then(trailing.resolve, trailing.reject);
+    };
+    void promise.then(finish, finish);
+    return promise;
+  };
+
+  return {
+    run(key: string, refresh: () => Promise<T>, forceTrailing = false) {
+      let entry = entries.get(key);
+      if (!entry) {
+        entry = { active: null, trailing: null };
+        entries.set(key, entry);
+      }
+      if (!entry.active) return launch(key, entry, refresh);
+      if (!forceTrailing) return entry.active;
+      if (entry.trailing) {
+        entry.trailing.refresh = refresh;
+        return entry.trailing.promise;
+      }
+      let resolve!: TrailingRefresh["resolve"];
+      let reject!: TrailingRefresh["reject"];
+      const promise = new Promise<T>((onResolve, onReject) => {
+        resolve = onResolve;
+        reject = onReject;
+      });
+      entry.trailing = { promise, refresh, resolve, reject };
+      return promise;
+    },
+    isActive(key: string) {
+      return Boolean(entries.get(key)?.active);
+    },
+  };
+}
+
+export function enqueueAudienceRealtimeUpdate(
+  current: AudienceRealtimeBatch | null,
+  update: Omit<AudienceRealtimeUpdate, "ordinal">,
+): AudienceRealtimeBatch {
+  const latestOrdinal = (current?.latestOrdinal ?? 0) + 1;
+  const updates = [...(current?.updates ?? []), { ...update, ordinal: latestOrdinal }].slice(
+    -MAX_REALTIME_BATCH_SIZE,
+  );
+  return { updates, latestOrdinal };
+}
+
+export function audienceRealtimeBatchDelta(
+  batch: AudienceRealtimeBatch,
+  lastProcessedOrdinal: number,
+) {
+  const updates = batch.updates.filter((update) => update.ordinal > lastProcessedOrdinal);
+  return {
+    updates,
+    overflow: Boolean(updates[0] && updates[0].ordinal > lastProcessedOrdinal + 1),
+    lastProcessedOrdinal: updates.at(-1)?.ordinal ?? lastProcessedOrdinal,
+  };
+}
+
+export function mergeAudienceSync(
+  _current: AudienceSync | null,
+  synchronized: AudienceSync,
+  options: MergeAudienceSyncOptions = {},
+): AudienceSync {
+  const synchronizedChat = hydrateChatPage(synchronized.chat);
+  const synchronizedChatSyncSeq = synchronized.chatSyncAudienceSeq ?? synchronizedChat.audienceSeq;
+  const synchronizedSettingsSeq = synchronized.settingsAudienceSeq ?? synchronizedChat.audienceSeq;
+  const authoritative: AudienceSync = {
+    ...synchronized,
+    settingsAudienceSeq: synchronizedSettingsSeq,
+    chatSyncAudienceSeq: synchronizedChatSyncSeq,
+    privateProjectionOverlays: [],
+    chat: { ...synchronizedChat, settings: synchronized.settings },
+  };
+  return (options.replay ?? []).reduce(
+    (current, envelope) => applyAudienceRealtimeEvent(current, envelope, { replay: true }),
+    authoritative,
+  );
+}
+
+export function audienceReplayNeedsAuthoritativeSync(
+  synchronized: AudienceSync,
+  replay: AudienceEventEnvelope[],
+) {
+  const participantIds = new Set(
+    synchronized.summary.participants?.map((participant) => participant.participantId) ?? [],
+  );
+  return replay.some((envelope) => {
+    if (
+      envelope.type !== "audience.signal.updated" &&
+      envelope.type !== "audience.moderation.updated"
+    ) {
+      return false;
+    }
+    const payload = objectPayload(envelope.payload);
+    const participantId = typeof payload?.participantId === "string" ? payload.participantId : null;
+    if (!participantId) return false;
+    if (
+      envelope.type === "audience.signal.updated" &&
+      payload?.contextKey !== synchronized.summary.contextKey
+    ) {
+      return false;
+    }
+    return !participantIds.has(participantId);
+  });
+}
+
+function hydrateChatPage(page: ChatPage): ChatPage {
+  return {
+    ...page,
+    messages: page.messages.map((message) => ({
+      ...message,
+      audienceSeq: Math.max(message.audienceSeq, page.audienceSeq),
+    })),
+  };
+}
+
+function compareChatMessages(left: ChatMessage, right: ChatMessage) {
+  return (
+    new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() ||
+    right.id.localeCompare(left.id)
+  );
 }
 
 function objectPayload(payload: unknown): Record<string, unknown> | null {
@@ -49,40 +224,75 @@ function objectPayload(payload: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function appendPrivateProjectionOverlay(current: AudienceSync, envelope: AudienceEventEnvelope) {
+  const overlays = (current.privateProjectionOverlays ?? []).filter(
+    (overlay) => overlay.eventId !== envelope.eventId,
+  );
+  overlays.push(envelope);
+  return overlays.slice(-MAX_PRIVATE_PROJECTION_OVERLAYS);
+}
+
 export function applyAudienceRealtimeEvent(
   current: AudienceSync,
   envelope: AudienceEventEnvelope,
+  options: ApplyAudienceRealtimeOptions = {},
 ): AudienceSync {
   const payload = objectPayload(envelope.payload);
   if (!payload) return current;
   const summaryResult = InteractionSummarySchema.safeParse(payload.summary);
   if (summaryResult.success) {
+    if (
+      summaryResult.data.contextKey !== current.summary.contextKey ||
+      summaryResult.data.audienceSeq < current.summary.audienceSeq
+    ) {
+      return current;
+    }
     const priorOwnSignal = current.summary.mySignal;
     const summary =
       priorOwnSignal !== undefined && summaryResult.data.mySignal === undefined
         ? { ...summaryResult.data, mySignal: priorOwnSignal }
         : summaryResult.data;
-    return { ...current, summary };
+    const privateProjectionOverlays = (current.privateProjectionOverlays ?? []).filter(
+      (overlay) => overlay.audienceSeq > envelope.audienceSeq,
+    );
+    return privateProjectionOverlays.reduce<AudienceSync>(
+      (next, overlay) =>
+        applyAudienceRealtimeEvent(next, overlay, {
+          replay: true,
+          recordPrivateOverlay: false,
+        }),
+      { ...current, summary, privateProjectionOverlays },
+    );
   }
   const settingsResult = InteractionSettingsSchema.safeParse(payload.settings);
   if (settingsResult.success) {
+    if (envelope.audienceSeq < (current.settingsAudienceSeq ?? 0)) return current;
     return {
       ...current,
       settings: settingsResult.data,
+      settingsAudienceSeq: Math.max(current.settingsAudienceSeq ?? 0, envelope.audienceSeq),
       chat: { ...current.chat, settings: settingsResult.data },
     };
   }
   if (envelope.type.startsWith("chat.")) {
     const messageId = typeof payload.messageId === "string" ? payload.messageId : null;
     if (!messageId) return current;
+    const existing = current.chat.messages.find((message) => message.id === messageId);
+    if (
+      envelope.audienceSeq < (current.chatSyncAudienceSeq ?? 0) ||
+      (existing && envelope.audienceSeq < existing.audienceSeq)
+    ) {
+      return current;
+    }
     const messageResult = ChatMessageSchema.safeParse(payload.message);
     const messages = current.chat.messages.filter((message) => message.id !== messageId);
-    if (messageResult.success) messages.unshift(messageResult.data);
-    messages.sort(
-      (left, right) =>
-        new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() ||
-        right.id.localeCompare(left.id),
-    );
+    if (messageResult.success) {
+      messages.unshift({
+        ...messageResult.data,
+        audienceSeq: Math.max(messageResult.data.audienceSeq, envelope.audienceSeq),
+      });
+    }
+    messages.sort(compareChatMessages);
     return {
       ...current,
       chat: {
@@ -94,56 +304,93 @@ export function applyAudienceRealtimeEvent(
   }
   if (envelope.type === "audience.signal.updated") {
     const participantId = typeof payload.participantId === "string" ? payload.participantId : null;
+    const contextKey = typeof payload.contextKey === "string" ? payload.contextKey : null;
     const signalResult = AudienceSignalSchema.nullable().safeParse(payload.signal);
     const updatedAt = typeof payload.updatedAt === "string" ? payload.updatedAt : null;
-    if (!participantId || !signalResult.success || !current.summary.participants) return current;
-    const previous = current.summary.participants.find(
+    if (!participantId || contextKey !== current.summary.contextKey || !signalResult.success) {
+      return current;
+    }
+    const updatedAtTime = updatedAt ? Date.parse(updatedAt) : Number.NaN;
+    if (!Number.isFinite(updatedAtTime)) return current;
+    const previous = current.summary.participants?.find(
       (participant) => participant.participantId === participantId,
-    )?.currentSignal;
+    );
+    if (previous?.lastSignalAt && Date.parse(previous.lastSignalAt) > updatedAtTime) return current;
+    const withOverlay =
+      options.recordPrivateOverlay === false
+        ? current
+        : {
+            ...current,
+            privateProjectionOverlays: appendPrivateProjectionOverlay(current, envelope),
+          };
+    if (!previous || !current.summary.participants) return withOverlay;
+    if (previous?.currentSignal === signalResult.data && previous.lastSignalAt === updatedAt) {
+      return withOverlay;
+    }
     const participants = current.summary.participants.map((participant) =>
       participant.participantId === participantId
         ? {
             ...participant,
             currentSignal: signalResult.data,
             lastSignalAt: updatedAt,
-            lastActivityAt: updatedAt ?? participant.lastActivityAt,
+            lastActivityAt:
+              !participant.lastActivityAt || Date.parse(participant.lastActivityAt) < updatedAtTime
+                ? updatedAt
+                : participant.lastActivityAt,
           }
         : participant,
     );
-    const counts = current.summary.signalCounts
-      ? { ...current.summary.signalCounts }
-      : current.summary.signalCounts;
-    if (counts && previous) counts[previous] = Math.max(0, counts[previous] - 1);
+    const counts = withOverlay.summary.signalCounts
+      ? { ...withOverlay.summary.signalCounts }
+      : withOverlay.summary.signalCounts;
+    if (counts && previous?.currentSignal) {
+      counts[previous.currentSignal] = Math.max(0, counts[previous.currentSignal] - 1);
+    }
     if (counts && signalResult.data) counts[signalResult.data] += 1;
     return {
-      ...current,
+      ...withOverlay,
       summary: {
-        ...current.summary,
-        audienceSeq: Math.max(current.summary.audienceSeq, envelope.audienceSeq),
+        ...withOverlay.summary,
+        audienceSeq: Math.max(withOverlay.summary.audienceSeq, envelope.audienceSeq),
         participants,
         signalCounts: counts,
         uniqueSignalers:
-          current.summary.uniqueSignalers +
-          (previous ? 0 : signalResult.data ? 1 : 0) -
-          (previous && !signalResult.data ? 1 : 0),
-        signalsLastMinute: current.summary.signalsLastMinute + 1,
+          withOverlay.summary.uniqueSignalers +
+          (previous?.currentSignal ? 0 : signalResult.data ? 1 : 0) -
+          (previous?.currentSignal && !signalResult.data ? 1 : 0),
+        signalsLastMinute: withOverlay.summary.signalsLastMinute + 1,
       },
     };
   }
-  if (envelope.type === "audience.moderation.updated" && current.summary.participants) {
+  if (envelope.type === "audience.moderation.updated") {
+    if (!options.replay && envelope.audienceSeq < current.summary.audienceSeq) return current;
     const participantId = typeof payload.participantId === "string" ? payload.participantId : null;
     if (!participantId) return current;
+    const withOverlay =
+      options.recordPrivateOverlay === false
+        ? current
+        : {
+            ...current,
+            privateProjectionOverlays: appendPrivateProjectionOverlay(current, envelope),
+          };
+    const previous = current.summary.participants?.find(
+      (participant) => participant.participantId === participantId,
+    );
+    if (!previous || !current.summary.participants) return withOverlay;
+    const mutedUntil = typeof payload.mutedUntil === "string" ? payload.mutedUntil : null;
+    const banned = payload.banned === true;
+    if (previous?.mutedUntil === mutedUntil && previous.banned === banned) return withOverlay;
     return {
-      ...current,
+      ...withOverlay,
       summary: {
-        ...current.summary,
-        audienceSeq: Math.max(current.summary.audienceSeq, envelope.audienceSeq),
+        ...withOverlay.summary,
+        audienceSeq: Math.max(withOverlay.summary.audienceSeq, envelope.audienceSeq),
         participants: current.summary.participants.map((participant) =>
           participant.participantId === participantId
             ? {
                 ...participant,
-                mutedUntil: typeof payload.mutedUntil === "string" ? payload.mutedUntil : null,
-                banned: payload.banned === true,
+                mutedUntil,
+                banned,
               }
             : participant,
         ),
@@ -161,61 +408,173 @@ export function AudiencePanel({
   sessionId,
   token,
   role,
+  view = "all",
   syncRevision,
-  realtimeUpdate,
+  realtimeBatch,
   onKick,
 }: {
   sessionId: string;
   token: string;
   role: "moderator" | "participant" | "presenter";
+  view?: "all" | "participants" | "pulse" | "chat";
   syncRevision: number;
-  realtimeUpdate: AudienceRealtimeUpdate | null;
+  realtimeBatch: AudienceRealtimeBatch | null;
   onKick?: (participantId: string) => void;
 }) {
   const [data, setData] = useState<AudienceSync | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [projectionRecoveryRevision, setProjectionRecoveryRevision] = useState(0);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [reportedMessages, setReportedMessages] = useState<Set<string>>(() => new Set());
   const [participantFilter, setParticipantFilter] = useState<
     "all" | "needs_help" | "not_answered" | "disconnected" | "muted"
   >("all");
   const [muteDurationMinutes, setMuteDurationMinutes] = useState<5 | 15 | 60>(15);
+  const dataRef = useRef<AudienceSync | null>(null);
+  const refreshCoalescerRef = useRef(createInFlightRefreshCoalescer<void>());
+  const refreshContextRef = useRef("");
+  const refreshInvalidationRef = useRef(0);
+  const realtimeProjectionOrdinalRef = useRef(0);
+  const realtimeProjectionLogRef = useRef<
+    Array<{ ordinal: number; envelope: AudienceEventEnvelope }>
+  >([]);
+  const projectionRecoveryThroughRef = useRef(0);
+  const processedRealtimeOrdinalRef = useRef(realtimeBatch?.latestOrdinal ?? 0);
+  const lastSyncRevisionRef = useRef(syncRevision);
   const authorization = useMemo(() => ({ authorization: `Bearer ${token}` }), [token]);
+  const refreshKey = `${sessionId}:${token}`;
 
-  const refresh = useCallback(async () => {
-    if (!token) return;
-    try {
-      const synchronized = await apiFetch<AudienceSync>(
-        `/v1/sessions/${sessionId}/interactions/sync?limit=50`,
-        { headers: authorization },
+  const refresh = useCallback(
+    async (forceTrailing = false) => {
+      if (!token) return;
+      const context = refreshKey;
+      refreshContextRef.current = context;
+      await refreshCoalescerRef.current.run(
+        context,
+        async () => {
+          const replayAfter = realtimeProjectionOrdinalRef.current;
+          const invalidation = refreshInvalidationRef.current;
+          realtimeProjectionLogRef.current = realtimeProjectionLogRef.current.filter(
+            (projection) => projection.ordinal > replayAfter,
+          );
+          try {
+            const synchronized = await apiFetch<AudienceSync>(
+              `/v1/sessions/${sessionId}/interactions/sync?limit=50`,
+              { headers: authorization },
+            );
+            if (
+              refreshContextRef.current !== context ||
+              refreshInvalidationRef.current !== invalidation
+            ) {
+              return;
+            }
+            const replayThrough = realtimeProjectionOrdinalRef.current;
+            const replay = realtimeProjectionLogRef.current
+              .filter(
+                (projection) =>
+                  projection.ordinal > replayAfter && projection.ordinal <= replayThrough,
+              )
+              .map((projection) => projection.envelope);
+            const merged = mergeAudienceSync(null, synchronized, {
+              replay,
+            });
+            realtimeProjectionLogRef.current = realtimeProjectionLogRef.current.filter(
+              (projection) => projection.ordinal > replayThrough,
+            );
+            dataRef.current = merged;
+            setData(merged);
+            setError("");
+            if (
+              replayThrough > projectionRecoveryThroughRef.current &&
+              audienceReplayNeedsAuthoritativeSync(merged, replay)
+            ) {
+              projectionRecoveryThroughRef.current = replayThrough;
+              setProjectionRecoveryRevision((revision) => revision + 1);
+            }
+          } catch (caught) {
+            if (
+              refreshContextRef.current !== context ||
+              refreshInvalidationRef.current !== invalidation
+            ) {
+              return;
+            }
+            setError(humanError(caught));
+          }
+        },
+        forceTrailing,
       );
-      setData(synchronized);
-      setError("");
-    } catch (caught) {
-      setError(humanError(caught));
-    }
-  }, [authorization, sessionId, token]);
+    },
+    [authorization, refreshKey, sessionId, token],
+  );
 
   useEffect(() => {
-    void refresh();
+    const revisionChanged = lastSyncRevisionRef.current !== syncRevision;
+    lastSyncRevisionRef.current = syncRevision;
+    if (revisionChanged) refreshInvalidationRef.current += 1;
+    void refresh(revisionChanged);
   }, [refresh, syncRevision]);
 
   useEffect(() => {
-    if (!realtimeUpdate) return;
-    if (realtimeUpdate.gap) {
-      void refresh();
-      return;
-    }
-    if (role === "presenter" && realtimeUpdate.envelope.type === "audience.settings.updated") {
-      void refresh();
-      return;
-    }
-    setData((current) =>
-      current ? applyAudienceRealtimeEvent(current, realtimeUpdate.envelope) : current,
+    if (projectionRecoveryRevision === 0) return;
+    void refresh(true);
+  }, [projectionRecoveryRevision, refresh]);
+
+  useEffect(() => {
+    if (!realtimeBatch) return;
+    const delta = audienceRealtimeBatchDelta(realtimeBatch, processedRealtimeOrdinalRef.current);
+    const unseen = delta.updates;
+    processedRealtimeOrdinalRef.current = delta.lastProcessedOrdinal;
+    if (unseen.length === 0) return;
+    const invalidatesProjection = unseen.some(
+      (update) =>
+        update.gap ||
+        (role === "presenter" && update.envelope.type === "audience.settings.updated"),
     );
-  }, [realtimeUpdate, refresh, role]);
+    const refreshWasInFlight = refreshCoalescerRef.current.isActive(refreshKey);
+    let replayOverflow = false;
+    if (refreshWasInFlight && !invalidatesProjection && !delta.overflow) {
+      for (const update of unseen) {
+        realtimeProjectionOrdinalRef.current += 1;
+        realtimeProjectionLogRef.current.push({
+          ordinal: realtimeProjectionOrdinalRef.current,
+          envelope: update.envelope,
+        });
+      }
+      replayOverflow = realtimeProjectionLogRef.current.length > MAX_REALTIME_REPLAY_SIZE;
+      if (replayOverflow) {
+        realtimeProjectionLogRef.current.splice(
+          0,
+          realtimeProjectionLogRef.current.length - MAX_REALTIME_REPLAY_SIZE,
+        );
+      }
+    }
+    if (invalidatesProjection || delta.overflow || replayOverflow) {
+      refreshInvalidationRef.current += 1;
+      void refresh(true);
+      return;
+    }
+    if (!dataRef.current) {
+      void refresh();
+      return;
+    }
+    let next = dataRef.current;
+    for (const update of unseen) {
+      next = applyAudienceRealtimeEvent(next, update.envelope);
+    }
+    dataRef.current = next;
+    setData(next);
+    if (
+      !refreshWasInFlight &&
+      audienceReplayNeedsAuthoritativeSync(
+        next,
+        unseen.map((update) => update.envelope),
+      )
+    ) {
+      void refresh(true);
+    }
+  }, [realtimeBatch, refresh, refreshKey, role]);
 
   async function updateSettings(update: Partial<InteractionSettings>) {
     setBusy(true);
@@ -225,7 +584,7 @@ export function AudiencePanel({
         headers: { ...authorization, ...mutationHeaders() },
         body: JSON.stringify(update),
       });
-      await refresh();
+      await refresh(true);
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -241,7 +600,7 @@ export function AudiencePanel({
         headers: authorization,
         body: JSON.stringify({ signal, idempotencyKey: clientUuid() }),
       });
-      await refresh();
+      await refresh(true);
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -265,7 +624,7 @@ export function AudiencePanel({
       });
       setMessage("");
       setReplyTo(null);
-      await refresh();
+      await refresh(true);
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -281,7 +640,7 @@ export function AudiencePanel({
         headers: { ...authorization, ...mutationHeaders() },
         ...(!selected ? { body: JSON.stringify({ reaction }) } : {}),
       });
-      await refresh();
+      await refresh(true);
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -300,7 +659,7 @@ export function AudiencePanel({
         headers: { ...authorization, ...mutationHeaders() },
         body: JSON.stringify(update),
       });
-      await refresh();
+      await refresh(true);
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -316,7 +675,7 @@ export function AudiencePanel({
         headers: { ...authorization, ...mutationHeaders() },
       });
       setReportedMessages((current) => new Set(current).add(messageId));
-      await refresh();
+      await refresh(true);
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -338,7 +697,7 @@ export function AudiencePanel({
           ...(action === "mute" ? { durationMinutes: muteDurationMinutes } : {}),
         }),
       });
-      await refresh();
+      await refresh(true);
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -354,6 +713,9 @@ export function AudiencePanel({
     if (participantFilter === "muted") return Boolean(participant.mutedUntil || participant.banned);
     return true;
   });
+  const showParticipants = view === "all" || view === "participants";
+  const showPulse = view === "all" || view === "pulse";
+  const showChat = view === "all" || view === "chat";
 
   if (!data) {
     return (
@@ -367,8 +729,22 @@ export function AudiencePanel({
     <section className="panel audience-panel" aria-label="Audience interaction">
       <div className="audience-panel-heading">
         <div>
-          <p className="eyebrow">Audience Pulse</p>
-          <h2>Room signals and conversation</h2>
+          <p className="eyebrow">
+            {view === "participants"
+              ? "Participants"
+              : view === "chat"
+                ? "Room chat"
+                : "Audience Pulse"}
+          </p>
+          <h2>
+            {view === "participants"
+              ? "Participant activity"
+              : view === "pulse"
+                ? "Room signals"
+                : view === "chat"
+                  ? "Conversation"
+                  : "Room signals and conversation"}
+          </h2>
         </div>
         <span className="status-pill">Live · {data.summary.connectedParticipants} connected</span>
       </div>
@@ -380,122 +756,150 @@ export function AudiencePanel({
 
       {role === "moderator" ? (
         <>
-          <div className="interaction-settings" aria-label="Audience interaction settings">
-            <label className="checkbox-field">
-              <input
-                checked={data.settings.signalsEnabled}
-                disabled={busy || !data.capabilities.audiencePulse}
-                onChange={(event) => void updateSettings({ signalsEnabled: event.target.checked })}
-                type="checkbox"
-              />
-              Audience Pulse
-            </label>
-            <label className="checkbox-field">
-              <input
-                checked={data.settings.chatEnabled}
-                disabled={busy || !data.capabilities.roomChat}
-                onChange={(event) => void updateSettings({ chatEnabled: event.target.checked })}
-                type="checkbox"
-              />
-              Room chat
-            </label>
-            <label className="field compact-field">
-              <span>Chat names</span>
-              <select
-                className="select"
-                disabled={busy || !data.capabilities.roomChat}
-                onChange={(event) =>
-                  void updateSettings({
-                    chatIdentityMode: event.target.value as InteractionSettings["chatIdentityMode"],
-                  })
-                }
-                value={data.settings.chatIdentityMode}
-              >
-                <option value="alias_public">Show session aliases</option>
-                <option value="alias_private">Anonymous to the room</option>
-              </select>
-            </label>
-            <label className="field compact-field">
-              <span>Slow mode</span>
-              <select
-                className="select"
-                disabled={busy || !data.capabilities.roomChat}
-                onChange={(event) =>
-                  void updateSettings({
-                    slowModeSeconds: Number(
-                      event.target.value,
-                    ) as InteractionSettings["slowModeSeconds"],
-                  })
-                }
-                value={data.settings.slowModeSeconds}
-              >
-                <option value={0}>Off</option>
-                <option value={5}>5 seconds</option>
-                <option value={15}>15 seconds</option>
-                <option value={30}>30 seconds</option>
-              </select>
-            </label>
-            <label className="field compact-field">
-              <span>Presenter feed</span>
-              <select
-                className="select"
-                disabled={busy || !data.capabilities.roomChat}
-                onChange={(event) =>
-                  void updateSettings({
-                    presenterFeedMode: event.target
-                      .value as InteractionSettings["presenterFeedMode"],
-                  })
-                }
-                value={data.settings.presenterFeedMode}
-              >
-                <option value="off">Off</option>
-                <option value="pinned">Pinned only</option>
-                <option value="live">Live feed</option>
-              </select>
-            </label>
-          </div>
+          {showPulse || showChat ? (
+            <div className="interaction-settings" aria-label="Audience interaction settings">
+              {showPulse ? (
+                <label className="checkbox-field">
+                  <input
+                    checked={data.settings.signalsEnabled}
+                    disabled={busy || !data.capabilities.audiencePulse}
+                    onChange={(event) =>
+                      void updateSettings({ signalsEnabled: event.target.checked })
+                    }
+                    type="checkbox"
+                  />
+                  Audience Pulse
+                </label>
+              ) : null}
+              {showChat ? (
+                <>
+                  <label className="checkbox-field">
+                    <input
+                      checked={data.settings.chatEnabled}
+                      disabled={busy || !data.capabilities.roomChat}
+                      onChange={(event) =>
+                        void updateSettings({ chatEnabled: event.target.checked })
+                      }
+                      type="checkbox"
+                    />
+                    Room chat
+                  </label>
+                  <label className="field compact-field">
+                    <span>Chat names</span>
+                    <select
+                      className="select"
+                      disabled={busy || !data.capabilities.roomChat}
+                      onChange={(event) =>
+                        void updateSettings({
+                          chatIdentityMode: event.target
+                            .value as InteractionSettings["chatIdentityMode"],
+                        })
+                      }
+                      value={data.settings.chatIdentityMode}
+                    >
+                      <option value="alias_public">Show session aliases</option>
+                      <option value="alias_private">Anonymous to the room</option>
+                    </select>
+                  </label>
+                  <label className="field compact-field">
+                    <span>Slow mode</span>
+                    <select
+                      className="select"
+                      disabled={busy || !data.capabilities.roomChat}
+                      onChange={(event) =>
+                        void updateSettings({
+                          slowModeSeconds: Number(
+                            event.target.value,
+                          ) as InteractionSettings["slowModeSeconds"],
+                        })
+                      }
+                      value={data.settings.slowModeSeconds}
+                    >
+                      <option value={0}>Off</option>
+                      <option value={5}>5 seconds</option>
+                      <option value={15}>15 seconds</option>
+                      <option value={30}>30 seconds</option>
+                    </select>
+                  </label>
+                  <label className="field compact-field">
+                    <span>Presenter feed</span>
+                    <select
+                      className="select"
+                      disabled={busy || !data.capabilities.roomChat}
+                      onChange={(event) =>
+                        void updateSettings({
+                          presenterFeedMode: event.target
+                            .value as InteractionSettings["presenterFeedMode"],
+                        })
+                      }
+                      value={data.settings.presenterFeedMode}
+                    >
+                      <option value="off">Off</option>
+                      <option value="pinned">Pinned only</option>
+                      <option value="live">Live feed</option>
+                    </select>
+                  </label>
+                </>
+              ) : null}
+            </div>
+          ) : null}
 
-          {!data.capabilities.audiencePulse || !data.capabilities.roomChat ? (
+          {(showPulse && !data.capabilities.audiencePulse) ||
+          (showChat && !data.capabilities.roomChat) ? (
             <p className="notice">
-              {!data.capabilities.audiencePulse
+              {showPulse && !data.capabilities.audiencePulse
                 ? "Audience Pulse is not enabled for this workspace. "
                 : ""}
-              {!data.capabilities.roomChat ? "Room chat is not enabled for this workspace." : ""}
+              {showChat && !data.capabilities.roomChat
+                ? "Room chat is not enabled for this workspace."
+                : ""}
             </p>
           ) : null}
 
           <div className="audience-metrics">
-            <div className="metric">
-              <strong>{data.summary.connectedParticipants}</strong>
-              <span>connected</span>
-            </div>
-            <div className="metric">
-              <strong>{data.summary.disconnectedParticipants}</strong>
-              <span>disconnected</span>
-            </div>
-            <div className="metric">
-              <strong>{data.summary.answeredParticipants}</strong>
-              <span>answered</span>
-            </div>
-            <div className="metric">
-              <strong>{data.summary.uniqueSignalers}</strong>
-              <span>signaled</span>
-            </div>
-            <div className="metric">
-              <strong>{data.summary.signalsLastMinute}</strong>
-              <span>signals / min</span>
-            </div>
-            <div className="metric">
-              <strong>{data.summary.messagesLastMinute}</strong>
-              <span>messages / min</span>
-            </div>
-            <div className="metric">
-              <strong>{data.summary.uniqueChatContributors}</strong>
-              <span>contributors</span>
-            </div>
+            {showParticipants ? (
+              <>
+                <div className="metric">
+                  <strong>{data.summary.connectedParticipants}</strong>
+                  <span>connected</span>
+                </div>
+                <div className="metric">
+                  <strong>{data.summary.disconnectedParticipants}</strong>
+                  <span>disconnected</span>
+                </div>
+                <div className="metric">
+                  <strong>{data.summary.answeredParticipants}</strong>
+                  <span>answered</span>
+                </div>
+              </>
+            ) : null}
+            {showPulse ? (
+              <>
+                <div className="metric">
+                  <strong>{data.summary.uniqueSignalers}</strong>
+                  <span>signaled</span>
+                </div>
+                <div className="metric">
+                  <strong>{data.summary.signalsLastMinute}</strong>
+                  <span>signals / min</span>
+                </div>
+              </>
+            ) : null}
+            {showChat ? (
+              <>
+                <div className="metric">
+                  <strong>{data.summary.messagesLastMinute}</strong>
+                  <span>messages / min</span>
+                </div>
+                <div className="metric">
+                  <strong>{data.summary.uniqueChatContributors}</strong>
+                  <span>contributors</span>
+                </div>
+              </>
+            ) : null}
           </div>
         </>
-      ) : data.settings.signalsEnabled && role === "participant" ? (
+      ) : showPulse && data.settings.signalsEnabled && role === "participant" ? (
         <div className="pulse-compose">
           <p>
             <strong>How is this landing?</strong>
@@ -525,7 +929,7 @@ export function AudiencePanel({
         </div>
       ) : null}
 
-      {data.summary.signalCounts ? (
+      {showPulse && data.summary.signalCounts ? (
         <div className="pulse-distribution" aria-label="Current pulse distribution">
           {signalOptions.map((option) => {
             const count = data.summary.signalCounts?.[option.id] ?? 0;
@@ -543,13 +947,13 @@ export function AudiencePanel({
             );
           })}
         </div>
-      ) : data.summary.uniqueSignalers > 0 ? (
+      ) : showPulse && data.summary.uniqueSignalers > 0 ? (
         <p className="muted">
           Aggregate Pulse appears after five people signal to protect individual privacy.
         </p>
       ) : null}
 
-      {role === "moderator" && data.summary.participants ? (
+      {showParticipants && role === "moderator" && data.summary.participants ? (
         <div className="participant-pulse-table">
           <div className="toolbar">
             <strong>Participant activity</strong>
@@ -653,126 +1057,134 @@ export function AudiencePanel({
         </div>
       ) : null}
 
-      <div className="chat-section">
-        <div className="chat-heading">
-          <div>
-            <p className="eyebrow">Room chat</p>
-            <h3>{data.settings.chatEnabled ? "Conversation is open" : "Conversation is closed"}</h3>
-          </div>
-          {role === "moderator" ? (
-            <span className="muted">
-              {data.summary.reportedCount} reports · {data.summary.moderationCount} moderated
-            </span>
-          ) : null}
-        </div>
-        {data.settings.chatEnabled && role !== "presenter" ? (
-          <form className="chat-compose" onSubmit={sendMessage}>
-            {replyTo ? (
-              <div className="chat-replying">
-                Replying to {replyTo.author.displayName}
-                <button onClick={() => setReplyTo(null)} type="button">
-                  Cancel
-                </button>
-              </div>
+      {showChat ? (
+        <div className="chat-section">
+          <div className="chat-heading">
+            <div>
+              <p className="eyebrow">Room chat</p>
+              <h3>
+                {data.settings.chatEnabled ? "Conversation is open" : "Conversation is closed"}
+              </h3>
+            </div>
+            {role === "moderator" ? (
+              <span className="muted">
+                {data.summary.reportedCount} reports · {data.summary.moderationCount} moderated
+              </span>
             ) : null}
-            <label className="sr-only" htmlFor={`chat-message-${role}`}>
-              Chat message
-            </label>
-            <input
-              className="input"
-              id={`chat-message-${role}`}
-              maxLength={500}
-              onChange={(event) => setMessage(event.target.value)}
-              placeholder="Write a plain-text message…"
-              value={message}
-            />
-            <button className="button" disabled={busy || !message.trim()} type="submit">
-              Send
-            </button>
-          </form>
-        ) : null}
-        <ol className="chat-list" aria-label="Room messages">
-          {data.chat.messages.map((item) => (
-            <li className="chat-message" data-removed={item.status === "removed"} key={item.id}>
-              <div className="chat-message-meta">
-                <span>
-                  <strong>{item.author.displayName}</strong>
-                  {item.author.kind === "staff" ? " · facilitator" : ""}
-                </span>
-                {item.pinned ? <span className="status-pill">Pinned</span> : null}
-              </div>
-              <p>{item.body}</p>
-              {item.status !== "removed" ? (
-                <div className="chat-actions">
-                  {role === "participant"
-                    ? reactionOptions.map((reaction) => (
-                        <button
-                          aria-label={`${reaction.label}: ${item.reactions[reaction.id]}`}
-                          aria-pressed={item.myReaction === reaction.id}
-                          className="reaction-button"
-                          disabled={busy}
-                          key={reaction.id}
-                          onClick={() =>
-                            void react(item.id, reaction.id, item.myReaction === reaction.id)
-                          }
-                          type="button"
-                        >
-                          <span aria-hidden="true">{reaction.icon}</span>{" "}
-                          {item.reactions[reaction.id] || ""}
-                        </button>
-                      ))
-                    : reactionOptions
-                        .filter((reaction) => item.reactions[reaction.id] > 0)
-                        .map((reaction) => (
-                          <span className="reaction-count" key={reaction.id}>
-                            <span aria-hidden="true">{reaction.icon}</span>{" "}
-                            {item.reactions[reaction.id]}
-                          </span>
-                        ))}
-                  {role !== "presenter" && !item.replyToMessageId ? (
-                    <button className="text-button" onClick={() => setReplyTo(item)} type="button">
-                      Reply
-                    </button>
-                  ) : null}
-                  {role === "participant" && !item.author.mine ? (
-                    <button
-                      className="text-button"
-                      disabled={busy || reportedMessages.has(item.id)}
-                      onClick={() => void reportMessage(item.id)}
-                      type="button"
-                    >
-                      {reportedMessages.has(item.id) ? "Reported" : "Report"}
-                    </button>
-                  ) : null}
-                  {role === "moderator" ? (
-                    <>
-                      <button
-                        className="text-button"
-                        disabled={busy}
-                        onClick={() => void moderateMessage(item.id, { pinned: !item.pinned })}
-                        type="button"
-                      >
-                        {item.pinned ? "Unpin" : "Pin"}
-                      </button>
-                      <button
-                        className="danger-link"
-                        disabled={busy}
-                        onClick={() => void moderateMessage(item.id, { status: "removed" })}
-                        type="button"
-                      >
-                        Remove
-                      </button>
-                    </>
-                  ) : null}
+          </div>
+          {data.settings.chatEnabled && role !== "presenter" ? (
+            <form className="chat-compose" onSubmit={sendMessage}>
+              {replyTo ? (
+                <div className="chat-replying">
+                  Replying to {replyTo.author.displayName}
+                  <button onClick={() => setReplyTo(null)} type="button">
+                    Cancel
+                  </button>
                 </div>
               ) : null}
-            </li>
-          ))}
-        </ol>
-        {data.chat.messages.length === 0 ? (
-          <p className="qna-empty">No room messages yet.</p>
-        ) : null}
-      </div>
+              <label className="sr-only" htmlFor={`chat-message-${role}`}>
+                Chat message
+              </label>
+              <input
+                className="input"
+                id={`chat-message-${role}`}
+                maxLength={500}
+                onChange={(event) => setMessage(event.target.value)}
+                placeholder="Write a plain-text message…"
+                value={message}
+              />
+              <button className="button" disabled={busy || !message.trim()} type="submit">
+                Send
+              </button>
+            </form>
+          ) : null}
+          <ol className="chat-list" aria-label="Room messages">
+            {data.chat.messages.map((item) => (
+              <li className="chat-message" data-removed={item.status === "removed"} key={item.id}>
+                <div className="chat-message-meta">
+                  <span>
+                    <strong>{item.author.displayName}</strong>
+                    {item.author.kind === "staff" ? " · facilitator" : ""}
+                  </span>
+                  {item.pinned ? <span className="status-pill">Pinned</span> : null}
+                </div>
+                <p>{item.body}</p>
+                {item.status !== "removed" ? (
+                  <div className="chat-actions">
+                    {role === "participant"
+                      ? reactionOptions.map((reaction) => (
+                          <button
+                            aria-label={`${reaction.label}: ${item.reactions[reaction.id]}`}
+                            aria-pressed={item.myReaction === reaction.id}
+                            className="reaction-button"
+                            disabled={busy}
+                            key={reaction.id}
+                            onClick={() =>
+                              void react(item.id, reaction.id, item.myReaction === reaction.id)
+                            }
+                            type="button"
+                          >
+                            <span aria-hidden="true">{reaction.icon}</span>{" "}
+                            {item.reactions[reaction.id] || ""}
+                          </button>
+                        ))
+                      : reactionOptions
+                          .filter((reaction) => item.reactions[reaction.id] > 0)
+                          .map((reaction) => (
+                            <span className="reaction-count" key={reaction.id}>
+                              <span aria-hidden="true">{reaction.icon}</span>{" "}
+                              {item.reactions[reaction.id]}
+                            </span>
+                          ))}
+                    {role !== "presenter" && !item.replyToMessageId ? (
+                      <button
+                        className="text-button"
+                        onClick={() => setReplyTo(item)}
+                        type="button"
+                      >
+                        Reply
+                      </button>
+                    ) : null}
+                    {role === "participant" && !item.author.mine ? (
+                      <button
+                        className="text-button"
+                        disabled={busy || reportedMessages.has(item.id)}
+                        onClick={() => void reportMessage(item.id)}
+                        type="button"
+                      >
+                        {reportedMessages.has(item.id) ? "Reported" : "Report"}
+                      </button>
+                    ) : null}
+                    {role === "moderator" ? (
+                      <>
+                        <button
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() => void moderateMessage(item.id, { pinned: !item.pinned })}
+                          type="button"
+                        >
+                          {item.pinned ? "Unpin" : "Pin"}
+                        </button>
+                        <button
+                          className="danger-link"
+                          disabled={busy}
+                          onClick={() => void moderateMessage(item.id, { status: "removed" })}
+                          type="button"
+                        >
+                          Remove
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+          {data.chat.messages.length === 0 ? (
+            <p className="qna-empty">No room messages yet.</p>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

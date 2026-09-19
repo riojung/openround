@@ -19,8 +19,13 @@ embed, and follow-up routes use their own scoped credentials as documented by th
   signup/session/media/experience/Pulse/chat switches, and deployment-level `uxBeta` and
   `recoveryRehearsal` availability.
 - `POST /v1/product-events` — creator-authenticated batch of 1–20 schema-allowlisted beta events;
-  accepted names are `creation_started`, `creation_completed`, `setup_recipe_selected`,
-  `rehearsal_started`, and `rehearsal_completed`.
+  accepted names are `creation_started`, `creation_completed`, `round_published`,
+  `setup_recipe_selected`, `host_setup_completed`, `participant_joined`,
+  `first_answer_submitted`, `response_saved_acknowledged`, `question_locked`, `insight_shown`,
+  `intervention_started`, `recheck_opened`, `report_viewed`, `followup_shared`,
+  `rehearsal_started`, and `rehearsal_completed`. Feature-on plus explicit workspace allowlist
+  membership is required; excluded workspaces receive `{ "accepted": 0 }`. `accepted` means the
+  events entered the bounded best-effort persistence queue; the request does not wait for storage.
 - `GET /metrics` — private Prometheus output when enabled and authorized.
 
 `FEATURE_UX_BETA` and `FEATURE_RECOVERY_REHEARSAL` default off. The authenticated
@@ -34,8 +39,17 @@ that a particular workspace is allowlisted.
 Product events accept only `creationPath`, `recipe`, `scenario`, `segment`, `betaVersion`, and
 `durationBucket` categorical dimensions. The server replaces `segment` and `betaVersion` with
 trusted workspace/release values. Actor/object IDs, content, answers, aliases, source text, and
-free-form metadata are rejected. Raw rows expire after 30 days and the same bounded labels feed the
-Prometheus counter.
+free-form metadata are rejected. Creation events require `creationPath`, setup selection requires
+`recipe`, both rehearsal events require `scenario`, and rehearsal completion also requires
+`durationBucket`. Raw rows expire after 30 days and the same bounded labels feed the Prometheus
+counter.
+Authoritative server transitions emit publish, room-created, join, first-answer, durable-save,
+lock/insight, intervention, recheck, and ready-report-view milestones. `followup_shared` is emitted
+only from an explicit Copy or link-download action, never merely because a follow-up was created.
+All product-event writes run through a bounded serial dispatcher, are drained before repository
+shutdown, and log failures without delaying or failing the originating product flow.
+The retention result/log and `openround_retention_records_total` expose deleted product-event
+counts under the bounded `product_event` resource label.
 
 ## Authentication, workspaces, and account
 
@@ -98,7 +112,9 @@ Legacy `/v1/quizzes` naming is intentionally stable through v1 even though the U
 - `GET /v1/starters` — six immutable, versioned first-party starter summaries.
 - `POST /v1/starters/{id}/use` — owner/editor creation of a normal draft with fresh Round,
   question, and choice IDs while preserving linked-recheck relationships.
-- `GET|POST /v1/quizzes`; `GET` accepts `archived=true`.
+- `GET|POST /v1/quizzes`; `GET` accepts `archived=true|false` and `summary=true|false`. Normal
+  library rows include the tenant-scoped `lastHostedAt` across retained versions; `summary=true`
+  returns only each Round's `id` and `title` for filter controls.
 - `GET|PATCH /v1/quizzes/{id}`
 - `POST /v1/quizzes/{id}/publish`
 - `POST /v1/quizzes/{id}/duplicate`
@@ -144,6 +160,8 @@ cleanup.
 
 - `GET /v1/sessions` — tenant-scoped summary history with status, Round, and date filters.
 - `POST /v1/sessions`
+- `GET /v1/sessions/join/preflight?code=...` — rate-limited, non-mutating nickname-policy lookup
+  for the join form.
 - `POST /v1/sessions/join`
 - `GET /v1/sessions/{id}/snapshot?role=...`
 - `POST /v1/sessions/{id}/commands`
@@ -166,6 +184,12 @@ credential with purpose `creator_resume`, expires after four hours or at session
 comes first), and does not depend on the cohosting entitlement. Issuing another pass for the same
 creator/session atomically revokes the prior one. The response is `Cache-Control: private,
 no-store`; clients keep its bearer only in session storage and never place it in a URL.
+
+Join preflight accepts only a seven-digit code, is limited to 20 requests per minute, returns
+`Cache-Control: no-store`, and exposes only `nicknamePolicy` for a joinable room. Invalid, expired,
+locked, full, finished, and institution-restricted rooms all return the same `INVALID_CODE`
+response. It creates no participant, changes no session version, and reveals no title, workspace,
+phase, capacity, or participant count.
 
 After lock/reveal, staff snapshots may include an additive `responseDistribution` only when at
 least five people answered. Choice and rating payloads contain aggregate buckets; multi-select uses
@@ -226,14 +250,16 @@ moderation, kick/ban, retention, export, and deletion are enforced server-side.
 ## Reports and self-paced follow-up APIs
 
 - `GET /v1/sessions/{id}/report`
-- `GET /v1/reports` — tenant-scoped recovery-oriented result summaries.
+- `GET /v1/reports` — tenant-scoped recovery-oriented result summaries; filters are
+  `status=pending|ready|failed`, `quizId`, `from`, and `to`.
 - `GET /v1/reports/{id}`
 - `GET /v1/reports/{id}.csv`
 - `GET /v1/reports/{id}.json`
 - `GET /v1/reports/{id}/interactions`
 - `GET /v1/reports/{id}/interactions.csv`
 - `POST /v1/reports/{id}/followups`
-- `GET /v1/followups` — tenant-scoped practice follow-up summaries and attempt counts.
+- `GET /v1/followups` — tenant-scoped practice follow-up summaries and attempt counts; filters are
+  `status=scheduled|open|closed|expired`, `quizId`, `from`, and `to`.
 - `GET /v1/followups/{id}` — creator view and access management.
 - `POST /v1/followups/{id}/accommodation-passes`
 - `DELETE /v1/followups/{id}/access/{accessId}`

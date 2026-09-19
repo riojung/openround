@@ -4,11 +4,16 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EventEnvelope, SessionSnapshot } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
-import { AudiencePanel, type AudienceRealtimeUpdate } from "../../../components/audience-panel";
+import {
+  AudiencePanel,
+  enqueueAudienceRealtimeUpdate,
+  type AudienceRealtimeBatch,
+} from "../../../components/audience-panel";
 import { ExperiencePreferences } from "../../../components/experience-preferences";
 import { Countdown } from "../../../components/countdown";
 import { JoinAccess } from "../../../components/join-access";
 import { QuestionMedia } from "../../../components/question-media";
+import { ResponseDistributionView } from "../../../components/response-distribution";
 import {
   audienceContextKey,
   createAudienceRealtimeReceipt,
@@ -17,6 +22,7 @@ import {
 } from "../../../lib/realtime";
 import { experienceThemeStyle } from "../../../lib/theme";
 import { playPresenterCue } from "../../../lib/sound";
+import { clientUuid } from "../../../lib/uuid";
 
 type Ack<T> = { data?: T; error?: { message: string } };
 
@@ -29,8 +35,13 @@ export default function PresenterPage() {
   const [mediaCredential, setMediaCredential] = useState("");
   const [embedded, setEmbedded] = useState(false);
   const [audienceSyncRevision, setAudienceSyncRevision] = useState(0);
-  const [audienceRealtimeUpdate, setAudienceRealtimeUpdate] =
-    useState<AudienceRealtimeUpdate | null>(null);
+  const [audienceRealtimeBatch, setAudienceRealtimeBatch] = useState<AudienceRealtimeBatch | null>(
+    null,
+  );
+  const audiencePanelKey = useMemo(
+    () => (mediaCredential ? `${sessionId}:presenter:${clientUuid()}` : `${sessionId}:presenter`),
+    [mediaCredential, sessionId],
+  );
 
   useEffect(() => {
     snapshotRef.current = snapshot;
@@ -75,7 +86,9 @@ export default function PresenterPage() {
       setSnapshot(envelope.payload.snapshot);
     });
     const audienceUpdate = createAudienceRealtimeReceipt((gap, envelope) =>
-      setAudienceRealtimeUpdate({ gap, envelope }),
+      setAudienceRealtimeBatch((current) =>
+        enqueueAudienceRealtimeUpdate(current, { gap, envelope }),
+      ),
     );
     socket.on("connect", () => {
       setAudienceSyncRevision((current) => current + 1);
@@ -236,6 +249,9 @@ export default function PresenterPage() {
               </p>
             ) : null}
             {snapshot.explanation ? <p className="notice">{snapshot.explanation}</p> : null}
+            {snapshot.uxBeta === true && snapshot.responseDistribution ? (
+              <ResponseDistributionView distribution={snapshot.responseDistribution} />
+            ) : null}
             {snapshot.phase === "leaderboard" &&
             snapshot.settings.resultVisibility === "leaderboard" ? (
               <ol style={{ fontSize: "1.4rem", lineHeight: 1.8 }}>
@@ -259,7 +275,8 @@ export default function PresenterPage() {
         ) : null}
         {snapshot && snapshot.phase !== "finished" && mediaCredential ? (
           <AudiencePanel
-            realtimeUpdate={audienceRealtimeUpdate}
+            key={audiencePanelKey}
+            realtimeBatch={audienceRealtimeBatch}
             role="presenter"
             sessionId={sessionId}
             syncRevision={audienceSyncRevision}

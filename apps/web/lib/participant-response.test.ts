@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  participantProgressStage,
   participantResponseControlsDisabled,
   participantResponseView,
 } from "./participant-response";
+import type { SessionSnapshot } from "@openround/contracts";
 
 describe("participantResponseView", () => {
   it("rehydrates a durable choice receipt after reconnect", () => {
@@ -80,5 +82,23 @@ describe("participantResponseView", () => {
         submitting: false,
       }),
     ).toBe(true);
+  });
+});
+
+describe("participantProgressStage", () => {
+  const stage = (
+    phase: SessionSnapshot["phase"],
+    roundKind: SessionSnapshot["roundKind"] = "main",
+    saved = false,
+  ) => participantProgressStage({ phase, roundKind } as SessionSnapshot, saved);
+
+  it("maps the live recovery journey to compact participant stages", () => {
+    expect(stage("lobby")).toBe("waiting");
+    expect(stage("question_open")).toBe("answering");
+    expect(stage("question_open", "main", true)).toBe("saved");
+    expect(stage("intervention")).toBe("discussing");
+    expect(stage("question_reveal")).toBe("reviewing");
+    expect(stage("question_open", "linked_recheck")).toBe("rechecking");
+    expect(stage("finished")).toBe("complete");
   });
 });

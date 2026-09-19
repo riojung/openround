@@ -15,6 +15,7 @@
   },
   "scripts": {
     "build": "turbo run build",
+    "check:docker-context": "node scripts/check-docker-workspace-deps.mjs",
     "dev": "turbo run dev --parallel",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -33,17 +34,18 @@
     "smoke:remote": "tsx tests/smoke/remote-readiness.ts",
     "smoke:stripe-replay": "tsx tests/smoke/stripe-replay.ts",
     "smoke:tracing": "pnpm --filter @openround/server build && tsx tests/smoke/tracing.ts",
-    "test": "turbo run test",
+    "test": "turbo run test && pnpm test:smoke-support",
     "test:alerts": "docker run --rm --volume \"$PWD/infra/observability:/etc/prometheus:ro\" --entrypoint /bin/promtool prom/prometheus:v3.5.0 test rules /etc/prometheus/alerts.test.yml",
     "test:alert-routing": "node scripts/check-alert-routes.mjs",
     "test:collector-config": "node scripts/check-collector-config.mjs",
     "test:multi-writer": "pnpm --filter @openround/server test:multi-writer",
+    "test:smoke-support": "vitest run tests/support/report-readiness.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:beta": "playwright test --config=playwright.beta.config.ts",
     "test:e2e:compose": "playwright test --config=playwright.compose.config.ts",
     "test:coverage": "turbo run test:coverage",
     "typecheck": "turbo run typecheck",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm format:check && pnpm check:docker-context && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

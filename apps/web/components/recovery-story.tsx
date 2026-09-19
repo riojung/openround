@@ -10,6 +10,8 @@ export interface RecoveryStoryModel {
   denominator: number;
   recoveryPercent: number | null;
   initialAccuracyPercent: number | null;
+  initialCorrect?: number;
+  initialResponses?: number;
   evidenceLabel: string;
   unresolvedCount: number;
   unresolvedNarrative: string;
@@ -83,7 +85,10 @@ export function RecoveryStorySummary({ model }: { model: RecoveryStoryModel }) {
           <strong>
             {model.initialAccuracyPercent === null
               ? "Not measured"
-              : `${model.initialAccuracyPercent}%`}
+              : typeof model.initialCorrect === "number" &&
+                  typeof model.initialResponses === "number"
+                ? `${model.initialCorrect}/${model.initialResponses} · ${model.initialAccuracyPercent}%`
+                : `${model.initialAccuracyPercent}%`}
           </strong>
         </div>
         <div>

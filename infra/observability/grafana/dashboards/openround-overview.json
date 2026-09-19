@@ -388,6 +388,426 @@
       ],
       "title": "Media retention and billing",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "id": 11,
+      "panels": [],
+      "title": "P0 Beta Product Journey",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "openround-prometheus" },
+      "description": "Aggregate, privacy-safe event volume in the selected dashboard window. Bars follow the intended P0 journey; they are not a user- or session-level cohort funnel.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "min": 0, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 11, "w": 16, "x": 0, "y": 29 },
+      "id": 12,
+      "options": {
+        "displayMode": "gradient",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"creation_started\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "01 · Creation started",
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"creation_completed\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "02 · Creation completed",
+          "range": false,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"round_published\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "03 · Round published",
+          "range": false,
+          "refId": "C"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"setup_recipe_selected\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "04 · Setup recipe selected",
+          "range": false,
+          "refId": "D"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"host_setup_completed\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "05 · Host setup completed",
+          "range": false,
+          "refId": "E"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"participant_joined\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "06 · Participant joined",
+          "range": false,
+          "refId": "F"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"first_answer_submitted\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "07 · First answer submitted",
+          "range": false,
+          "refId": "G"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"response_saved_acknowledged\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "08 · Saved receipt acknowledged",
+          "range": false,
+          "refId": "H"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"question_locked\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "09 · Question locked",
+          "range": false,
+          "refId": "I"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"insight_shown\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "10 · Insight shown",
+          "range": false,
+          "refId": "J"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"intervention_started\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "11 · Intervention started",
+          "range": false,
+          "refId": "K"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"recheck_opened\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "12 · Recheck opened",
+          "range": false,
+          "refId": "L"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"report_viewed\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "13 · Report viewed",
+          "range": false,
+          "refId": "M"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"followup_shared\"}[$__range])) OR vector(0)",
+          "instant": true,
+          "legendFormat": "14 · Follow-up shared",
+          "range": false,
+          "refId": "N"
+        }
+      ],
+      "title": "P0 aggregate journey volume",
+      "type": "bargauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "openround-prometheus" },
+      "description": "Window-bound event-volume ratios for adjacent or closely related stages. These are directional product signals, not cohort conversion rates, and can exceed 100% around window boundaries.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "continuous-GrYlRd" }, "min": 0, "unit": "percentunit" },
+        "overrides": []
+      },
+      "gridPos": { "h": 11, "w": 8, "x": 16, "y": 29 },
+      "id": 13,
+      "options": {
+        "displayMode": "gradient",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"creation_completed\"}[$__range])) OR vector(0)) / clamp_min(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"creation_started\"}[$__range])) OR vector(0), 1)",
+          "instant": true,
+          "legendFormat": "Create completion / starts",
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"round_published\"}[$__range])) OR vector(0)) / clamp_min(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"creation_started\"}[$__range])) OR vector(0), 1)",
+          "instant": true,
+          "legendFormat": "Published / create starts",
+          "range": false,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"host_setup_completed\"}[$__range])) OR vector(0)) / clamp_min(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"round_published\"}[$__range])) OR vector(0), 1)",
+          "instant": true,
+          "legendFormat": "Host setup / published",
+          "range": false,
+          "refId": "C"
+        },
+        {
+          "editorMode": "code",
+          "expr": "(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"first_answer_submitted\"}[$__range])) OR vector(0)) / clamp_min(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"participant_joined\"}[$__range])) OR vector(0), 1)",
+          "instant": true,
+          "legendFormat": "First answer / joins",
+          "range": false,
+          "refId": "D"
+        },
+        {
+          "editorMode": "code",
+          "expr": "(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"response_saved_acknowledged\"}[$__range])) OR vector(0)) / clamp_min(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"first_answer_submitted\"}[$__range])) OR vector(0), 1)",
+          "instant": true,
+          "legendFormat": "Saved receipt / first answer",
+          "range": false,
+          "refId": "E"
+        },
+        {
+          "editorMode": "code",
+          "expr": "(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"insight_shown\"}[$__range])) OR vector(0)) / clamp_min(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"question_locked\"}[$__range])) OR vector(0), 1)",
+          "instant": true,
+          "legendFormat": "Insights / locks",
+          "range": false,
+          "refId": "F"
+        },
+        {
+          "editorMode": "code",
+          "expr": "(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"intervention_started\"}[$__range])) OR vector(0)) / clamp_min(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"insight_shown\"}[$__range])) OR vector(0), 1)",
+          "instant": true,
+          "legendFormat": "Interventions / insights",
+          "range": false,
+          "refId": "G"
+        },
+        {
+          "editorMode": "code",
+          "expr": "(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"recheck_opened\"}[$__range])) OR vector(0)) / clamp_min(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"intervention_started\"}[$__range])) OR vector(0), 1)",
+          "instant": true,
+          "legendFormat": "Rechecks / interventions",
+          "range": false,
+          "refId": "H"
+        },
+        {
+          "editorMode": "code",
+          "expr": "(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"followup_shared\"}[$__range])) OR vector(0)) / clamp_min(sum(increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"report_viewed\"}[$__range])) OR vector(0), 1)",
+          "instant": true,
+          "legendFormat": "Follow-up shares / report views",
+          "range": false,
+          "refId": "I"
+        }
+      ],
+      "title": "P0 aggregate progression ratios",
+      "type": "bargauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "openround-prometheus" },
+      "description": "Per-minute product-event throughput for creation, setup, and room entry. Only bounded P0 event names and dimensions are queried.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "sum"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (name) (rate(openround_product_events_total{beta_version=\"p0-2026\",name=~\"creation_started|creation_completed|round_published|setup_recipe_selected|host_setup_completed|participant_joined\"}[$__rate_interval])) * 60",
+          "legendFormat": "{{name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Creation to room entry events per minute",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "openround-prometheus" },
+      "description": "Per-minute product-event throughput through the response receipt and facilitated Recovery Loop.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "sum"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (name) (rate(openround_product_events_total{beta_version=\"p0-2026\",name=~\"first_answer_submitted|response_saved_acknowledged|question_locked|insight_shown|intervention_started|recheck_opened|report_viewed|followup_shared\"}[$__rate_interval])) * 60",
+          "legendFormat": "{{name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Recovery and follow-through events per minute",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "openround-prometheus" },
+      "description": "Selected-window entry and follow-through volume split only by the bounded education/workplace segment label.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "min": 0, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 48 },
+      "id": 16,
+      "options": {
+        "displayMode": "gradient",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (segment) (increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"creation_started\",segment=~\"education|workplace\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "{{segment}} · create starts",
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum by (segment) (increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"report_viewed\",segment=~\"education|workplace\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "{{segment}} · report views",
+          "range": false,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum by (segment) (increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"followup_shared\",segment=~\"education|workplace\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "{{segment}} · follow-up shares",
+          "range": false,
+          "refId": "C"
+        }
+      ],
+      "title": "Journey endpoints by segment",
+      "type": "bargauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "openround-prometheus" },
+      "description": "Selected-window demand across the four creation paths and three setup recipes. Missing labels are intentionally excluded.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "min": 0, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 48 },
+      "id": 17,
+      "options": {
+        "displayMode": "gradient",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (creation_path) (increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"creation_started\",creation_path=~\"starter|source|import|blank\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "start · {{creation_path}}",
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum by (recipe) (increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"setup_recipe_selected\",recipe=~\"recovery|friendly_competition|open_discussion\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "recipe · {{recipe}}",
+          "range": false,
+          "refId": "B"
+        }
+      ],
+      "title": "Creation paths and setup recipes",
+      "type": "bargauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "openround-prometheus" },
+      "description": "Aggregate rehearsal completion by deterministic scenario in the selected window. This is a volume ratio, not linked learner-level evidence.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "continuous-GrYlRd" }, "min": 0, "unit": "percentunit" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 48 },
+      "id": 18,
+      "options": {
+        "displayMode": "gradient",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (scenario) (increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"rehearsal_completed\",scenario=~\"low_participation|split_room|confident_misconception\"}[$__range])) / clamp_min(sum by (scenario) (increase(openround_product_events_total{beta_version=\"p0-2026\",name=\"rehearsal_started\",scenario=~\"low_participation|split_room|confident_misconception\"}[$__range])), 1)",
+          "instant": true,
+          "legendFormat": "{{scenario}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Rehearsal completion proxy",
+      "type": "bargauge"
     }
   ],
   "refresh": "10s",
@@ -399,6 +819,6 @@
   "timezone": "browser",
   "title": "OpenRound Operations",
   "uid": "openround-operations",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

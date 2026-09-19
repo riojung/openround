@@ -214,6 +214,25 @@ describe("memory repository", () => {
       },
       [],
     );
+    expect(
+      await repository.listFollowupHistory(workspaceId, {
+        limit: 10,
+        status: "scheduled",
+        quizId,
+        from: new Date(now.getTime() - 1),
+        to: new Date(now.getTime() + 1),
+        now,
+      }),
+    ).toMatchObject({
+      items: [expect.objectContaining({ id: followupId, quizId, status: "scheduled" })],
+    });
+    expect(
+      await repository.listFollowupHistory(workspaceId, {
+        limit: 10,
+        quizId: randomUUID(),
+        now,
+      }),
+    ).toMatchObject({ items: [] });
     const reportStatusAt = async (at: Date) =>
       (await repository.listReportHistory(workspaceId, { limit: 10, now: at })).items[0];
     await expect(reportStatusAt(now)).resolves.toMatchObject({
@@ -229,6 +248,124 @@ describe("memory repository", () => {
     await expect(reportStatusAt(followupExpiresAt)).resolves.toMatchObject({
       followupStatus: "expired",
     });
+  });
+
+  it("orders Rounds deterministically when update timestamps match", async () => {
+    const repository = new MemoryRepository();
+    const workspaceId = randomUUID();
+    const updatedAt = new Date("2026-09-18T12:00:00.000Z");
+    const ids = ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"];
+    for (const [index, id] of ids.entries()) {
+      await repository.createQuiz({
+        id,
+        workspaceId,
+        title: `Round ${index + 1}`,
+        description: "",
+        status: "draft",
+        draft: { title: `Round ${index + 1}`, description: "", questions: [] },
+        currentVersionId: null,
+        createdAt: updatedAt,
+        updatedAt,
+      });
+    }
+
+    expect((await repository.listQuizzes(workspaceId)).map(({ id }) => id)).toEqual([
+      ids[1],
+      ids[0],
+    ]);
+  });
+
+  it("summarizes the latest retained hosting time without crossing workspaces", async () => {
+    const repository = new MemoryRepository();
+    const workspaceId = randomUUID();
+    const otherWorkspaceId = randomUUID();
+    const quizId = randomUUID();
+    const unhostedQuizId = randomUUID();
+    const otherQuizId = randomUUID();
+    const draft = { title: "Hosted Round", description: "", questions: [] };
+    const createdAt = new Date("2026-09-18T12:00:00.000Z");
+    for (const [id, owner, title] of [
+      [quizId, workspaceId, "Hosted Round"],
+      [unhostedQuizId, workspaceId, "Not hosted"],
+      [otherQuizId, otherWorkspaceId, "Other workspace Round"],
+    ] as const) {
+      await repository.createQuiz({
+        id,
+        workspaceId: owner,
+        title,
+        description: "",
+        status: "draft",
+        draft: { ...draft, title },
+        currentVersionId: null,
+        createdAt,
+        updatedAt: createdAt,
+      });
+    }
+
+    const firstVersion = await repository.publishQuiz({
+      id: randomUUID(),
+      workspaceId,
+      quizId,
+      version: 1,
+      content: draft,
+      contentHash: randomUUID(),
+      publishedAt: createdAt,
+    });
+    const secondVersion = await repository.publishQuiz({
+      id: randomUUID(),
+      workspaceId,
+      quizId,
+      version: 2,
+      content: draft,
+      contentHash: randomUUID(),
+      publishedAt: new Date(createdAt.getTime() + 1_000),
+    });
+    const otherVersion = await repository.publishQuiz({
+      id: randomUUID(),
+      workspaceId: otherWorkspaceId,
+      quizId: otherQuizId,
+      version: 1,
+      content: { ...draft, title: "Other workspace Round" },
+      contentHash: randomUUID(),
+      publishedAt: createdAt,
+    });
+    const expiry = new Date("2030-01-01T00:00:00.000Z");
+    const host = async (owner: string, quizVersionId: string, hostedAt: Date, code: string) => {
+      const sessionId = randomUUID();
+      await repository.createSession({
+        id: sessionId,
+        workspaceId: owner,
+        quizVersionId,
+        hostId: randomUUID(),
+        hostTokenHash: randomUUID(),
+        state: createGameState({
+          sessionId,
+          code,
+          quiz: draft,
+          settings: {
+            audienceLimit: 20,
+            scoringMode: "accuracy",
+            resultVisibility: "private",
+            allowLateJoin: true,
+            nicknamePolicy: "friendly_only",
+          },
+        }),
+        expiresAt: expiry,
+        retentionExpiresAt: expiry,
+        createdAt: hostedAt,
+        updatedAt: hostedAt,
+      });
+    };
+    const firstHostedAt = new Date("2026-09-18T12:01:00.000Z");
+    const lastHostedAt = new Date("2026-09-18T12:02:00.000Z");
+    await host(workspaceId, firstVersion.id, firstHostedAt, "1234567");
+    await host(workspaceId, secondVersion.id, lastHostedAt, "2345678");
+    await host(otherWorkspaceId, otherVersion.id, new Date("2026-09-18T12:03:00.000Z"), "3456789");
+
+    const listed = await repository.listQuizzes(workspaceId);
+    expect(listed.find((quiz) => quiz.id === quizId)?.lastHostedAt).toEqual(lastHostedAt);
+    expect(listed.find((quiz) => quiz.id === unhostedQuizId)?.lastHostedAt).toBeNull();
+    expect(listed).toHaveLength(2);
   });
 
   it("persists partial operational feature updates with an audit record", async () => {

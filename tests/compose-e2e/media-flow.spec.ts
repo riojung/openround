@@ -35,7 +35,7 @@ test("creator uploads scanned media and a guest receives it privately", async ({
   await creator.getByLabel("Email address").fill(email);
   await creator.getByLabel(/I accept the Terms/).check();
   await creator.getByRole("button", { name: "Send sign-in link" }).click();
-  await expect(creator.getByRole("status")).toContainText("Check your inbox");
+  await expect(creator.getByRole("status")).toContainText("Your local sign-in email is ready");
   await creator.goto(await readMagicLink(request, email));
   await expect(creator).toHaveURL(/\/dashboard/);
   const creatorOrigin = new URL(creator.url()).origin;

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { waitForReadyReport } from "../support/report-readiness.js";
 
 const baseUrl = (process.env.SMOKE_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "");
 const mailpitUrl = (process.env.SMOKE_MAILPIT_URL ?? "http://localhost:8025").replace(/\/$/, "");
@@ -7,6 +8,15 @@ const adminToken = process.env.SMOKE_ADMIN_TOKEN ?? "replace-with-a-random-admin
 const email = `compose-smoke-${Date.now()}@example.com`;
 let creatorCookie = "";
 let browserOrigin = process.env.SMOKE_ORIGIN?.replace(/\/$/, "") ?? "";
+
+type OperationalFeatureFlags = {
+  signups: boolean;
+  sessionCreation: boolean;
+  mediaUploads: boolean;
+  roundExperiences: boolean;
+  audiencePulse: boolean;
+  roomChat: boolean;
+};
 
 async function api<T>(path: string, init: RequestInit = {}, bearer?: string): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
@@ -88,9 +98,9 @@ async function main() {
   assert.equal(me.entitlements.brandTheme, true);
 
   const featureView = await api<{
-    configured: { signups: boolean; sessionCreation: boolean; mediaUploads: boolean };
-    runtime: { signups: boolean; sessionCreation: boolean; mediaUploads: boolean };
-    effective: { signups: boolean; sessionCreation: boolean; mediaUploads: boolean };
+    configured: OperationalFeatureFlags;
+    runtime: OperationalFeatureFlags;
+    effective: OperationalFeatureFlags;
   }>("/v1/admin/features", {}, adminToken);
   try {
     const paused = await api<typeof featureView>(
@@ -102,6 +112,7 @@ async function main() {
       adminToken,
     );
     assert.deepEqual(paused.effective, {
+      ...featureView.effective,
       signups: false,
       sessionCreation: false,
       mediaUploads: false,
@@ -381,16 +392,20 @@ async function main() {
   await host("reveal");
   await host("next");
 
-  const { report } = await api<{
-    report: {
-      id: string;
-      generatedAt: string;
-      expiresAt: string;
-      metrics: { answerCount: number; accuracyPercent: number };
-    };
-  }>(`/v1/sessions/${session.sessionId}/report`);
+  const report = await waitForReadyReport((signal) =>
+    api<{
+      report: {
+        id: string;
+        status: "pending" | "ready" | "failed";
+        generatedAt: string | null;
+        expiresAt: string;
+        metrics: { answerCount: number; accuracyPercent: number };
+      };
+    }>(`/v1/sessions/${session.sessionId}/report`, { signal }).then(({ report }) => report),
+  );
   assert.equal(report.metrics.answerCount, 1);
   assert.equal(report.metrics.accuracyPercent, 100);
+  assert.ok(report.generatedAt);
   const retentionMs = new Date(report.expiresAt).getTime() - new Date(report.generatedAt).getTime();
   assert.ok(retentionMs >= 365 * 24 * 60 * 60_000 - 5_000);
   assert.ok(retentionMs <= 365 * 24 * 60 * 60_000 + 5_000);

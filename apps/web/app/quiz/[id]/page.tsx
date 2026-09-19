@@ -56,6 +56,15 @@ function editorTypeLabel(type: QuestionType, uxBeta: boolean) {
   return !uxBeta && type === "numeric" ? "Numeric" : responseTypeLabel(type);
 }
 
+const responseTypeGuidance: Record<QuestionType, string> = {
+  single_select: "Use when one answer best reveals understanding or a misconception.",
+  true_false: "Use for a fast check of one precise claim.",
+  multi_select: "Use when learners need to identify every valid option.",
+  numeric: "Use for calculations or measurements with an optional tolerance and unit.",
+  rating: "Use for an unscored confidence, sentiment, or reflection scale.",
+  poll: "Use for an unscored preference or discussion opener.",
+};
+
 function readableList(values: number[]) {
   if (values.length === 1) return String(values[0]);
   if (values.length === 2) return `${values[0]} and ${values[1]}`;
@@ -449,6 +458,21 @@ export default function QuizEditorPage() {
     updateQuestion((current) => (isChoiceQuestion(current) ? updater(current) : current));
   }
 
+  function applyQuestionStructuralChange(nextQuestion: QuestionDraft, message: string) {
+    if (!draft || !selectedQuestionId) return;
+    const undo = { draft, selectedQuestionId, message };
+    applyStructuralChange(
+      {
+        ...draft,
+        questions: draft.questions.map((candidate) =>
+          candidate.id === selectedQuestionId ? nextQuestion : candidate,
+        ),
+      },
+      selectedQuestionId,
+      undo,
+    );
+  }
+
   function addQuestion(type: QuestionType) {
     if (!draft) return;
     const inserted = newQuestion(type);
@@ -827,6 +851,7 @@ export default function QuizEditorPage() {
                     <label className="field" htmlFor="insert-question-type">
                       <span>Insert</span>
                       <select
+                        aria-describedby="insert-question-guidance"
                         className="select"
                         id="insert-question-type"
                         onChange={(event) => setInsertType(event.target.value as QuestionType)}
@@ -840,6 +865,9 @@ export default function QuizEditorPage() {
                         <option value="poll">Poll</option>
                       </select>
                     </label>
+                    <p className="muted" id="insert-question-guidance">
+                      {responseTypeGuidance[insertType]}
+                    </p>
                     <button
                       className="button small-button"
                       onClick={() => addQuestion(insertType)}
@@ -1114,11 +1142,10 @@ export default function QuizEditorPage() {
                           <button
                             className="danger-link"
                             onClick={() => {
-                              updateQuestion((item) => ({
-                                ...item,
-                                mediaId: null,
-                                mediaAlt: null,
-                              }));
+                              applyQuestionStructuralChange(
+                                { ...question, mediaId: null, mediaAlt: null },
+                                "Image removed.",
+                              );
                               setMediaPreviewUrl("");
                             }}
                             type="button"
@@ -1188,11 +1215,11 @@ export default function QuizEditorPage() {
                                   <BetaDisclosure
                                     className="choice-diagnostics"
                                     enabled={uxBeta}
-                                    summary="Misconception rationale and feedback"
+                                    summary="Diagnostic rationale and feedback"
                                   >
                                     <div className="toolbar" style={{ marginTop: 8 }}>
                                       <input
-                                        aria-label={`Misconception label for choice ${index + 1}`}
+                                        aria-label={`Misconception tag for choice ${index + 1}`}
                                         className="input"
                                         maxLength={64}
                                         onChange={(event) =>
@@ -1208,11 +1235,11 @@ export default function QuizEditorPage() {
                                             ),
                                           }))
                                         }
-                                        placeholder="Private misconception key"
+                                        placeholder="Misconception tag, such as unit-confusion"
                                         value={choice.misconceptionKey ?? ""}
                                       />
                                       <input
-                                        aria-label={`Feedback for choice ${index + 1}`}
+                                        aria-label={`Why someone might choose choice ${index + 1}`}
                                         className="input"
                                         maxLength={500}
                                         onChange={(event) =>
@@ -1225,7 +1252,7 @@ export default function QuizEditorPage() {
                                             ),
                                           }))
                                         }
-                                        placeholder="Private feedback after reveal"
+                                        placeholder="Why might someone choose this?"
                                         value={choice.feedback ?? ""}
                                       />
                                     </div>
@@ -1236,12 +1263,15 @@ export default function QuizEditorPage() {
                                 <button
                                   className="danger-link"
                                   onClick={() =>
-                                    updateChoiceQuestion((item) => ({
-                                      ...item,
-                                      choices: item.choices.filter(
-                                        (candidate) => candidate.id !== choice.id,
-                                      ),
-                                    }))
+                                    applyQuestionStructuralChange(
+                                      {
+                                        ...question,
+                                        choices: question.choices.filter(
+                                          (candidate) => candidate.id !== choice.id,
+                                        ),
+                                      },
+                                      "Choice removed.",
+                                    )
                                   }
                                   type="button"
                                 >
@@ -1460,10 +1490,12 @@ export default function QuizEditorPage() {
                       </details>
                     ) : null}
                     {uxBeta ? (
-                      <details className="editor-disclosure participant-preview-disclosure">
-                        <summary>Participant preview</summary>
+                      <section
+                        aria-label="Live participant preview"
+                        className="participant-preview-disclosure"
+                      >
                         <ParticipantPreview question={question} />
-                      </details>
+                      </section>
                     ) : null}
                     <button className="button-danger" onClick={removeQuestion} type="button">
                       Delete {uxBeta ? "question" : "checkpoint"}

@@ -45,7 +45,9 @@ function SessionsContent() {
   );
 
   useEffect(() => {
-    void apiFetch<{ quizzes: Array<{ id: string; title: string }> }>("/v1/quizzes")
+    void apiFetch<{ quizzes: Array<{ id: string; title: string }> }>(
+      "/v1/quizzes?archived=true&summary=true",
+    )
       .then((response) => setRounds(response.quizzes))
       .catch(() => undefined);
   }, []);

@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { io, type Socket } from "socket.io-client";
+import { waitForReadyReport } from "../support/report-readiness.js";
 
 const primaryUrl = (process.env.MULTI_WRITER_PRIMARY_URL ?? "http://127.0.0.1:4401").replace(
   /\/$/,
@@ -55,6 +56,7 @@ interface JoinedParticipant {
 let creatorCookie = "";
 let accountCreated = false;
 let primaryStopped = false;
+let smokeFailed = false;
 const sockets = new Set<Socket>();
 
 async function requestAt(endpoint: string, path: string, init: RequestInit = {}, bearer?: string) {
@@ -161,12 +163,22 @@ function waitForEvent(
   timeoutMs = 15_000,
 ) {
   return new Promise<Envelope>((resolve, reject) => {
+    let lastEnvelope: Envelope | null = null;
     const timeout = setTimeout(() => {
       socket.off(event, handler);
-      reject(new Error(`${event} broadcast timed out`));
+      reject(
+        new Error(
+          `${event} broadcast timed out${
+            lastEnvelope
+              ? ` (last snapshot version ${lastEnvelope.payload.snapshot.version}, answer count ${lastEnvelope.payload.snapshot.answerCount})`
+              : " (no matching event received)"
+          }`,
+        ),
+      );
     }, timeoutMs);
     const handler = (envelope: Envelope, acknowledge?: () => void) => {
       acknowledge?.();
+      lastEnvelope = envelope;
       if (!predicate(envelope)) return;
       clearTimeout(timeout);
       socket.off(event, handler);
@@ -512,10 +524,17 @@ async function main() {
     synchronized.replay.map(({ seq }) => seq),
     Array.from({ length: synchronized.snapshot.seq }, (_, index) => index + 1),
   );
-  const report = await apiAt<{
-    report: { metrics: { participantCount: number; answerCount: number; accuracyPercent: number } };
-  }>(secondaryUrl, `/v1/sessions/${session.sessionId}/report`);
-  assert.deepEqual(report.report.metrics, {
+  const report = await waitForReadyReport((signal) =>
+    apiAt<{
+      report: {
+        status: "pending" | "ready" | "failed";
+        metrics: { participantCount: number; answerCount: number; accuracyPercent: number };
+      };
+    }>(secondaryUrl, `/v1/sessions/${session.sessionId}/report`, { signal }).then(
+      ({ report }) => report,
+    ),
+  );
+  assert.deepEqual(report.metrics, {
     participantCount: 12,
     completedCount: 12,
     answerCount: 12,
@@ -539,7 +558,7 @@ async function main() {
         conflictingCommands: "one_applied_one_stale",
         primaryProcessLoss: "secondary_completed_game",
         replayComplete: synchronized.replayComplete,
-        durableAnswers: report.report.metrics.answerCount,
+        durableAnswers: report.metrics.answerCount,
       },
       null,
       2,
@@ -549,6 +568,7 @@ async function main() {
 
 void main()
   .catch((error: unknown) => {
+    smokeFailed = true;
     process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
     process.exitCode = 1;
   })
@@ -562,12 +582,15 @@ void main()
     }
     if (primaryStopped) {
       await setPrimaryRunning(true).catch((error: unknown) => {
+        smokeFailed = true;
         process.stderr.write(`Primary server restore failed: ${String(error)}\n`);
         process.exitCode = 1;
       });
     }
-    await removeSecondary().catch((error: unknown) => {
-      process.stderr.write(`Secondary server cleanup failed: ${String(error)}\n`);
-      process.exitCode = 1;
-    });
+    if (!smokeFailed) {
+      await removeSecondary().catch((error: unknown) => {
+        process.stderr.write(`Secondary server cleanup failed: ${String(error)}\n`);
+        process.exitCode = 1;
+      });
+    }
   });

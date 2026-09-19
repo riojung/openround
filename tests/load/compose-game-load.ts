@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { io, type Socket } from "socket.io-client";
+import { waitForReadyReport } from "../support/report-readiness.js";
 
 const baseUrl = (process.env.LOAD_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "");
 const mailpitUrl = (process.env.LOAD_MAILPIT_URL ?? "http://localhost:8025").replace(/\/$/, "");
@@ -45,6 +46,8 @@ interface Participant {
   socket: Socket;
   participantId: string;
   participantToken: string;
+  connectMs: number;
+  joinAcknowledgementMs: number;
   joinMs: number;
   answerId?: string;
   idempotencyKey?: string;
@@ -262,6 +265,7 @@ async function main() {
         const participantNumber = offset + index + 1;
         const startedAt = performance.now();
         const socket = await connectSocket();
+        const connectedAt = performance.now();
         const joined = await emitAck<{
           participantId: string;
           participantToken: string;
@@ -269,7 +273,14 @@ async function main() {
           code: session.code,
           nickname: `Load ${String(participantNumber).padStart(3, "0")}`,
         });
-        return { ...joined, socket, joinMs: performance.now() - startedAt };
+        const acknowledgedAt = performance.now();
+        return {
+          ...joined,
+          socket,
+          connectMs: connectedAt - startedAt,
+          joinAcknowledgementMs: acknowledgedAt - connectedAt,
+          joinMs: acknowledgedAt - startedAt,
+        };
       }),
     );
     participants.push(...batch);
@@ -449,20 +460,27 @@ async function main() {
   await command("reveal");
   const reportStartedAt = performance.now();
   await command("next");
-  const report = await api<{
-    report: { metrics: { participantCount: number; answerCount: number; accuracyPercent: number } };
-  }>(`/v1/sessions/${session.sessionId}/report`);
+  const report = await waitForReadyReport(
+    (signal) =>
+      api<{
+        report: {
+          status: "pending" | "ready" | "failed";
+          metrics: { participantCount: number; answerCount: number; accuracyPercent: number };
+        };
+      }>(`/v1/sessions/${session.sessionId}/report`, { signal }).then(({ report }) => report),
+    { timeoutMs: 60_000 },
+  );
   const reportMs = performance.now() - reportStartedAt;
-  assert.equal(report.report.metrics.participantCount, clientCount);
-  assert.equal(report.report.metrics.answerCount, clientCount);
-  assert.equal(report.report.metrics.accuracyPercent, 100);
+  assert.equal(report.metrics.participantCount, clientCount);
+  assert.equal(report.metrics.answerCount, clientCount);
+  assert.equal(report.metrics.accuracyPercent, 100);
 
   const results = {
     runId,
     target: new URL(baseUrl).origin,
     clients: clientCount,
     correctness: {
-      acceptedAnswers: report.report.metrics.answerCount,
+      acceptedAnswers: report.metrics.answerCount,
       duplicateScoreEffects: 0,
       answerKeyLeak: false,
       reconnectReplayComplete: synchronized.replayComplete,
@@ -476,6 +494,26 @@ async function main() {
         ),
         p95: percentile(
           participants.map(({ joinMs }) => joinMs),
+          0.95,
+        ),
+      },
+      socketConnection: {
+        p50: percentile(
+          participants.map(({ connectMs }) => connectMs),
+          0.5,
+        ),
+        p95: percentile(
+          participants.map(({ connectMs }) => connectMs),
+          0.95,
+        ),
+      },
+      joinAcknowledgement: {
+        p50: percentile(
+          participants.map(({ joinAcknowledgementMs }) => joinAcknowledgementMs),
+          0.5,
+        ),
+        p95: percentile(
+          participants.map(({ joinAcknowledgementMs }) => joinAcknowledgementMs),
           0.95,
         ),
       },
@@ -494,30 +532,39 @@ async function main() {
     },
   };
 
-  if (assertPerformance) {
-    assert.ok(results.latencyMs.join.p95 < 500, "Join p95 exceeded 500 ms");
-    assert.ok(
-      results.latencyMs.answerAcknowledgement.p95 < 250,
-      "Answer acknowledgement p95 exceeded 250 ms",
-    );
-    assert.ok(
-      results.latencyMs.answerAcknowledgement.p99 < 600,
-      "Answer acknowledgement p99 exceeded 600 ms",
-    );
-    assert.ok(
-      results.latencyMs.questionBroadcast.p95 < 500,
-      "Question broadcast p95 exceeded 500 ms",
-    );
-    assert.ok(results.latencyMs.reconnectSnapshot < 2_000, "Reconnect exceeded two seconds");
-    assert.ok(results.latencyMs.reportAvailable < 60_000, "Report exceeded 60 seconds");
-  }
-
   const serializedResults = `${JSON.stringify(results, null, 2)}\n`;
   if (outputPath) {
     await mkdir(dirname(outputPath), { recursive: true });
     await writeFile(outputPath, serializedResults, { encoding: "utf8", mode: 0o600 });
   }
   process.stdout.write(serializedResults);
+
+  if (assertPerformance) {
+    assert.ok(
+      results.latencyMs.join.p95 < 500,
+      `Join p95 ${results.latencyMs.join.p95.toFixed(1)} ms exceeded 500 ms`,
+    );
+    assert.ok(
+      results.latencyMs.answerAcknowledgement.p95 < 250,
+      `Answer acknowledgement p95 ${results.latencyMs.answerAcknowledgement.p95.toFixed(1)} ms exceeded 250 ms`,
+    );
+    assert.ok(
+      results.latencyMs.answerAcknowledgement.p99 < 600,
+      `Answer acknowledgement p99 ${results.latencyMs.answerAcknowledgement.p99.toFixed(1)} ms exceeded 600 ms`,
+    );
+    assert.ok(
+      results.latencyMs.questionBroadcast.p95 < 500,
+      `Question broadcast p95 ${results.latencyMs.questionBroadcast.p95.toFixed(1)} ms exceeded 500 ms`,
+    );
+    assert.ok(
+      results.latencyMs.reconnectSnapshot < 2_000,
+      `Reconnect ${results.latencyMs.reconnectSnapshot.toFixed(1)} ms exceeded two seconds`,
+    );
+    assert.ok(
+      results.latencyMs.reportAvailable < 60_000,
+      `Report availability ${results.latencyMs.reportAvailable.toFixed(1)} ms exceeded 60 seconds`,
+    );
+  }
 }
 
 void main()

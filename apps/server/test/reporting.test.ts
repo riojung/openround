@@ -270,4 +270,118 @@ describe("report CSV", () => {
     });
     expect(generated.evidenceNote).toContain("not be interpreted as proof");
   });
+
+  it("persists only privacy-safe question distributions with at least five respondents", () => {
+    const questionId = randomUUID();
+    const correctChoiceId = randomUUID();
+    const wrongChoiceId = randomUUID();
+    const roundId = randomUUID();
+    let state = createGameState({
+      sessionId: randomUUID(),
+      code: "7654321",
+      quiz: {
+        title: "Distribution evidence",
+        description: "",
+        questions: [
+          {
+            id: questionId,
+            type: "single_select",
+            prompt: "Choose one",
+            purpose: "diagnostic",
+            confidence: "off",
+            delivery: "main",
+            conceptKeys: [],
+            linkedRecheckQuestionId: null,
+            choices: [
+              { id: correctChoiceId, label: "Correct", isCorrect: true },
+              { id: wrongChoiceId, label: "Incorrect", isCorrect: false },
+            ],
+            timeLimitSeconds: 20,
+            basePoints: 1_000,
+            explanation: "",
+            mediaId: null,
+            mediaAlt: null,
+          },
+        ],
+      },
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "friendly_only",
+      },
+    });
+    const participantIds = Array.from({ length: 5 }, () => randomUUID());
+    for (const [index, participantId] of participantIds.entries()) {
+      state = addParticipant(state, {
+        id: participantId,
+        nickname: `Participant ${index + 1}`,
+        score: 0,
+        correctCount: 0,
+        acceptedResponseMs: 1_000,
+        connected: false,
+        kicked: false,
+      }).state;
+    }
+    const answers: EngineAnswer[] = participantIds.map((participantId, index) => ({
+      answerId: randomUUID(),
+      participantId,
+      roundId,
+      response: {
+        kind: "choice",
+        choiceIds: [index < 3 ? correctChoiceId : wrongChoiceId],
+      },
+      confidence: null,
+      choiceId: index < 3 ? correctChoiceId : wrongChoiceId,
+      acceptedAtMs: 2_000 + index,
+      responseMs: 1_000,
+      score: index < 3 ? 1_000 : 0,
+      correct: index < 3,
+      idempotencyKey: randomUUID(),
+    }));
+    const evidence = (selectedAnswers: EngineAnswer[]) => ({
+      answers: selectedAnswers,
+      rounds: [
+        {
+          id: roundId,
+          questionId,
+          position: 0,
+          kind: "main" as const,
+          sourceRoundId: null,
+          interventionId: null,
+          openedAtMs: 1_000,
+          deadlineMs: 21_000,
+          lockedAtMs: 3_000,
+        },
+      ],
+      interventions: [],
+      qna: { questions: 0, answered: 0, unresolved: 0 },
+      interactions: {
+        signalEvents: [],
+        chatMessages: [],
+        reactions: [],
+        reports: 0,
+        moderationActions: 0,
+      },
+    });
+
+    const report = generateReport(state, new Date("2026-10-01T00:00:00.000Z"), {
+      evidence: evidence(answers),
+    });
+    expect(report.questions[0]?.responseDistribution).toMatchObject({
+      kind: "choice",
+      respondents: 5,
+      totalSelections: 5,
+      buckets: [
+        { label: "Correct", count: 3, percent: 60 },
+        { label: "Incorrect", count: 2, percent: 40 },
+      ],
+    });
+
+    const smallReport = generateReport(state, new Date("2026-10-01T00:00:00.000Z"), {
+      evidence: evidence(answers.slice(0, 4)),
+    });
+    expect(smallReport.questions[0]?.responseDistribution).toBeUndefined();
+  });
 });

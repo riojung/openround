@@ -1,4 +1,4 @@
-import type { ProductEvent } from "@openround/contracts";
+import { ProductEventSchema, type ProductEvent } from "@openround/contracts";
 import type { RecoveryRehearsalScenarioId } from "@openround/rehearsal";
 import { apiFetch } from "../../lib/api";
 
@@ -11,29 +11,41 @@ export function rehearsalDurationBucket(elapsedMs: number): RehearsalDurationBuc
   return "over_15m";
 }
 
-export function buildRehearsalProductEvent(input: {
-  name: "rehearsal_started" | "rehearsal_completed";
-  scenario: RecoveryRehearsalScenarioId;
-  occurredAt: string;
-  elapsedMs?: number;
-}): ProductEvent {
-  return {
+type RehearsalProductEventInput =
+  | {
+      name: "rehearsal_started";
+      scenario: RecoveryRehearsalScenarioId;
+      occurredAt: string;
+    }
+  | {
+      name: "rehearsal_completed";
+      scenario: RecoveryRehearsalScenarioId;
+      occurredAt: string;
+      elapsedMs: number;
+    };
+
+export function buildRehearsalProductEvent(input: RehearsalProductEventInput): ProductEvent {
+  return ProductEventSchema.parse({
     name: input.name,
     occurredAt: input.occurredAt,
     dimensions: {
       scenario: input.scenario,
-      ...(input.name === "rehearsal_completed" && input.elapsedMs !== undefined
+      ...(input.name === "rehearsal_completed"
         ? { durationBucket: rehearsalDurationBucket(input.elapsedMs) }
         : {}),
     },
-  };
+  });
 }
 
-export function recordRehearsalProductEvent(input: {
-  name: "rehearsal_started" | "rehearsal_completed";
-  scenario: RecoveryRehearsalScenarioId;
-  elapsedMs?: number;
-}) {
+export function recordRehearsalProductEvent(
+  input:
+    | { name: "rehearsal_started"; scenario: RecoveryRehearsalScenarioId }
+    | {
+        name: "rehearsal_completed";
+        scenario: RecoveryRehearsalScenarioId;
+        elapsedMs: number;
+      },
+) {
   const event = buildRehearsalProductEvent({
     ...input,
     occurredAt: new Date().toISOString(),

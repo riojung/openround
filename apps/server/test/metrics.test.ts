@@ -42,6 +42,7 @@ describe("MetricsService", () => {
       expiredLiveSessions: 0,
       purgedSessions: 0,
       purgedAuditEvents: 2,
+      purgedProductEvents: 3,
       purgedMedia: 0,
       failedMedia: 0,
     });
@@ -49,6 +50,9 @@ describe("MetricsService", () => {
     const rendered = await metrics.render();
     expect(rendered).toContain(
       'openround_retention_records_total{resource="audit_event",outcome="deleted"} 2',
+    );
+    expect(rendered).toContain(
+      'openround_retention_records_total{resource="product_event",outcome="deleted"} 3',
     );
   });
 });

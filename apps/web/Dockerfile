@@ -5,10 +5,16 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.js
 COPY apps/web/package.json apps/web/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/experience/package.json packages/experience/package.json
+COPY packages/game-engine/package.json packages/game-engine/package.json
+COPY packages/insights/package.json packages/insights/package.json
+COPY packages/rehearsal/package.json packages/rehearsal/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps/web apps/web
 COPY packages/contracts packages/contracts
 COPY packages/experience packages/experience
+COPY packages/game-engine packages/game-engine
+COPY packages/insights packages/insights
+COPY packages/rehearsal packages/rehearsal
 ARG NEXT_PUBLIC_API_URL=""
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN pnpm --filter @openround/web build

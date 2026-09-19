@@ -27,6 +27,8 @@ import {
   FederatedIdentitySchema,
   OidcStartSchema,
   OidcStatusSchema,
+  JoinPreflightRequestSchema,
+  JoinPreflightResponseSchema,
   JoinRequestSchema,
   LtiDeepLinkSelectionSchema,
   LtiLaunchFormSchema,
@@ -46,6 +48,7 @@ import {
   ProductEventBatchSchema,
   ReportContextSchema,
   ReportSummaryPageSchema,
+  RoundFilterOptionsResponseSchema,
   SessionSummaryPageSchema,
   FollowupSummaryPageSchema,
   StarterIdSchema,
@@ -95,6 +98,7 @@ import { OidcError, type OidcService } from "./oidc-service.js";
 import { LtiError, type LtiService } from "./lti-service.js";
 import { InteractionError, type InteractionService } from "./interaction-service.js";
 import { instantiateStarter, starterSummaries } from "./starters.js";
+import type { ProductEventDispatcher } from "./product-events.js";
 
 const IdParamsSchema = z.object({ id: z.string().uuid() });
 const SessionMediaParamsSchema = z.object({ id: z.string().uuid(), mediaId: z.string().uuid() });
@@ -150,7 +154,10 @@ const ChatListQuerySchema = z.object({
   cursor: z.string().min(1).max(1_000).optional(),
   limit: z.coerce.number().int().min(1).max(50).default(30),
 });
-const QuizListQuerySchema = z.object({ archived: z.enum(["true", "false"]).optional() });
+const QuizListQuerySchema = z.object({
+  archived: z.enum(["true", "false"]).optional(),
+  summary: z.enum(["true", "false"]).optional(),
+});
 const InteractionTranscriptQuerySchema = z.object({
   audit: z.enum(["true", "false"]).default("false"),
 });
@@ -189,6 +196,7 @@ const ReportHistoryQuerySchema = z.object({
 const FollowupHistoryQuerySchema = z.object({
   ...HistoryQueryBase,
   status: z.enum(["scheduled", "open", "closed", "expired"]).optional(),
+  quizId: z.string().uuid().optional(),
 });
 
 function historyCursor(item: { createdAt: Date; cursorCreatedAt?: string; id: string }) {
@@ -333,6 +341,7 @@ export async function registerRoutes(
     storage: StorageService;
     retention: RetentionService;
     metrics: MetricsService;
+    productEvents: ProductEventDispatcher;
     readiness: () => Promise<void>;
     stripeClient?: Stripe | null;
   },
@@ -351,6 +360,7 @@ export async function registerRoutes(
     storage,
     retention,
     metrics,
+    productEvents,
   } = dependencies;
   const stripe =
     dependencies.stripeClient !== undefined
@@ -389,6 +399,8 @@ export async function registerRoutes(
       },
     });
   };
+  const uxBetaWorkspaceEnabled = (workspaceId: string) =>
+    config.FEATURE_UX_BETA && config.UX_BETA_WORKSPACE_ALLOWLIST.includes(workspaceId);
   const workspaceProductFeatures = async (workspaceId: string) => {
     const { effective } = await operationalFeatures();
     const allowlist = config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST;
@@ -399,7 +411,7 @@ export async function registerRoutes(
       roundExperiences: workspaceAllowed && effective.roundExperiences,
       audiencePulse: workspaceAllowed && effective.audiencePulse,
       roomChat: workspaceAllowed && effective.roomChat,
-      uxBeta: uxAllowed && config.FEATURE_UX_BETA,
+      uxBeta: uxBetaWorkspaceEnabled(workspaceId),
       recoveryRehearsal: uxAllowed && config.FEATURE_UX_BETA && config.FEATURE_RECOVERY_REHEARSAL,
     };
   };
@@ -674,24 +686,15 @@ export async function registerRoutes(
       const creator = await auth.requireCreator(request, reply);
       if (!creator) return;
       const input = ProductEventBatchSchema.parse(request.body);
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
-      const events = input.events.map((event) => ({
-        id: randomUUID(),
+      if (!uxBetaWorkspaceEnabled(creator.workspaceId)) {
+        return reply.code(202).send({ accepted: 0 });
+      }
+      const accepted = productEvents.enqueue({
         workspaceId: creator.workspaceId,
-        name: event.name,
-        occurredAt: event.occurredAt,
-        dimensions: {
-          ...event.dimensions,
-          segment: creator.segment,
-          betaVersion: "p0-2026" as const,
-        },
-        expiresAt,
-        createdAt: now,
-      }));
-      await repository.recordProductEvents(events);
-      for (const event of events) metrics.recordProductEvent(event);
-      return reply.code(202).send({ accepted: events.length });
+        segment: creator.segment,
+        events: input.events,
+      });
+      return reply.code(202).send({ accepted });
     },
   );
 
@@ -1375,9 +1378,10 @@ export async function registerRoutes(
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
     const query = QuizListQuerySchema.parse(request.query);
-    return {
-      quizzes: await repository.listQuizzes(creator.workspaceId, query.archived === "true"),
-    };
+    const quizzes = await repository.listQuizzes(creator.workspaceId, query.archived === "true");
+    return query.summary === "true"
+      ? RoundFilterOptionsResponseSchema.parse({ quizzes })
+      : { quizzes };
   });
 
   app.get("/v1/starters", async (request, reply) => {
@@ -1687,6 +1691,13 @@ export async function registerRoutes(
       requestId: request.id,
       metadata: { version: version.version, contentHash },
     });
+    if (uxBetaWorkspaceEnabled(creator.workspaceId)) {
+      productEvents.enqueue({
+        workspaceId: creator.workspaceId,
+        segment: creator.segment,
+        events: [{ name: "round_published" }],
+      });
+    }
     return { version };
   });
 
@@ -1885,6 +1896,16 @@ export async function registerRoutes(
       });
     return reply.code(204).send();
   });
+
+  app.get(
+    "/v1/sessions/join/preflight",
+    { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      reply.header("cache-control", "no-store");
+      const input = JoinPreflightRequestSchema.parse(request.query);
+      return JoinPreflightResponseSchema.parse(await sessions.preflightJoin(input));
+    },
+  );
 
   app.post(
     "/v1/sessions/join",
@@ -2179,14 +2200,20 @@ export async function registerRoutes(
     if (!creator) return;
     const { id } = IdParamsSchema.parse(request.params);
     const report = await repository.getReport(creator.workspaceId, id);
-    return report
-      ? {
-          report,
-          context: await reportContext(report),
-          entitlements: entitlementsFor(creator.plan, config),
-          followup: await followups.getForReport(creator.workspaceId, id),
-        }
-      : apiError(reply, 404, "NOT_FOUND", "Report not found", request.id);
+    if (!report) return apiError(reply, 404, "NOT_FOUND", "Report not found", request.id);
+    if (report.status === "ready" && uxBetaWorkspaceEnabled(creator.workspaceId)) {
+      productEvents.enqueue({
+        workspaceId: creator.workspaceId,
+        segment: creator.segment,
+        events: [{ name: "report_viewed" }],
+      });
+    }
+    return {
+      report,
+      context: await reportContext(report),
+      entitlements: entitlementsFor(creator.plan, config),
+      followup: await followups.getForReport(creator.workspaceId, id),
+    };
   });
 
   app.get("/v1/reports/:id/interactions", async (request, reply) => {
@@ -2358,6 +2385,7 @@ export async function registerRoutes(
           }
         : {}),
       ...(query.status ? { status: query.status } : {}),
+      ...(query.quizId ? { quizId: query.quizId } : {}),
       ...(query.from ? { from: new Date(query.from) } : {}),
       ...(query.to ? { to: new Date(query.to) } : {}),
       now: new Date(),

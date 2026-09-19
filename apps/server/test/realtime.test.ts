@@ -9,7 +9,11 @@ import {
 } from "@openround/game-engine";
 import { ConfigSchema } from "../src/config.js";
 import { MetricsService } from "../src/metrics.js";
-import { attachRealtime, snapshotSelector } from "../src/realtime.js";
+import {
+  attachRealtime,
+  isExpiredRealtimeStaffCredential,
+  snapshotSelector,
+} from "../src/realtime.js";
 import type { InteractionService } from "../src/interaction-service.js";
 import {
   SessionError,
@@ -31,6 +35,68 @@ describe("realtime authorization", () => {
         httpServer!.close((error) => (error ? reject(error) : resolve()));
       });
     }
+  });
+
+  it("treats adapter-normalized null staff expiry as non-expiring", () => {
+    expect(isExpiredRealtimeStaffCredential(null, 1_000)).toBe(false);
+    expect(isExpiredRealtimeStaffCredential(undefined, 1_000)).toBe(false);
+    expect(isExpiredRealtimeStaffCredential("999", 1_000)).toBe(false);
+    expect(isExpiredRealtimeStaffCredential(999, 1_000)).toBe(true);
+    expect(isExpiredRealtimeStaffCredential(1_001, 1_000)).toBe(false);
+  });
+
+  it("contains best-effort presence failures after a participant disconnects", async () => {
+    const sessionId = crypto.randomUUID();
+    const participantToken = "participant-token-long-enough";
+    const disconnect = vi
+      .fn()
+      .mockRejectedValue(new SessionError("CONFLICT", "Session coordination unavailable"));
+    const sessions = {
+      subscribe: vi.fn(() => vi.fn()),
+      subscribeAuxiliary: vi.fn(() => vi.fn()),
+      join: vi.fn().mockResolvedValue({
+        participantId: crypto.randomUUID(),
+        participantToken,
+        snapshot: { sessionId },
+      }),
+      disconnect,
+    } as unknown as SessionService;
+    httpServer = createServer();
+    await new Promise<void>((resolve) => httpServer!.listen(0, "127.0.0.1", resolve));
+    const address = httpServer.address();
+    if (!address || typeof address === "string") throw new Error("Test server did not bind a port");
+    const origin = `http://127.0.0.1:${address.port}`;
+    realtime = await attachRealtime(
+      httpServer,
+      sessions,
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        WEB_ORIGIN: origin,
+        PUBLIC_API_URL: origin,
+        LOG_LEVEL: "silent",
+      }),
+      new MetricsService(),
+    );
+    client = createClient(origin, {
+      transports: ["websocket"],
+      reconnection: false,
+      extraHeaders: { origin },
+    });
+    await new Promise<void>((resolve, reject) => {
+      client!.once("connect", resolve);
+      client!.once("connect_error", reject);
+    });
+    await new Promise<void>((resolve) => {
+      client!.emit("session.join", { code: "1234567", nickname: "Disconnect test" }, () =>
+        resolve(),
+      );
+    });
+
+    client.disconnect();
+
+    await vi.waitFor(() => expect(disconnect).toHaveBeenCalledWith(participantToken));
+    expect(httpServer.listening).toBe(true);
   });
 
   it("builds the complete private participant snapshot for a reveal broadcast", () => {
