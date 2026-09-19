@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { io, type Socket } from "socket.io-client";
+import { waitForReadyReport } from "../support/report-readiness.js";
 
 const baseUrl = (process.env.LOAD_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "");
 const mailpitUrl = (process.env.LOAD_MAILPIT_URL ?? "http://localhost:8025").replace(/\/$/, "");
@@ -449,20 +450,25 @@ async function main() {
   await command("reveal");
   const reportStartedAt = performance.now();
   await command("next");
-  const report = await api<{
-    report: { metrics: { participantCount: number; answerCount: number; accuracyPercent: number } };
-  }>(`/v1/sessions/${session.sessionId}/report`);
+  const report = await waitForReadyReport((signal) =>
+    api<{
+      report: {
+        status: "pending" | "ready" | "failed";
+        metrics: { participantCount: number; answerCount: number; accuracyPercent: number };
+      };
+    }>(`/v1/sessions/${session.sessionId}/report`, { signal }).then(({ report }) => report),
+  );
   const reportMs = performance.now() - reportStartedAt;
-  assert.equal(report.report.metrics.participantCount, clientCount);
-  assert.equal(report.report.metrics.answerCount, clientCount);
-  assert.equal(report.report.metrics.accuracyPercent, 100);
+  assert.equal(report.metrics.participantCount, clientCount);
+  assert.equal(report.metrics.answerCount, clientCount);
+  assert.equal(report.metrics.accuracyPercent, 100);
 
   const results = {
     runId,
     target: new URL(baseUrl).origin,
     clients: clientCount,
     correctness: {
-      acceptedAnswers: report.report.metrics.answerCount,
+      acceptedAnswers: report.metrics.answerCount,
       duplicateScoreEffects: 0,
       answerKeyLeak: false,
       reconnectReplayComplete: synchronized.replayComplete,

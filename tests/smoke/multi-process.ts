@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { io, type Socket } from "socket.io-client";
+import { waitForReadyReport } from "../support/report-readiness.js";
 
 const primaryUrl = (process.env.MULTI_WRITER_PRIMARY_URL ?? "http://127.0.0.1:4401").replace(
   /\/$/,
@@ -512,10 +513,17 @@ async function main() {
     synchronized.replay.map(({ seq }) => seq),
     Array.from({ length: synchronized.snapshot.seq }, (_, index) => index + 1),
   );
-  const report = await apiAt<{
-    report: { metrics: { participantCount: number; answerCount: number; accuracyPercent: number } };
-  }>(secondaryUrl, `/v1/sessions/${session.sessionId}/report`);
-  assert.deepEqual(report.report.metrics, {
+  const report = await waitForReadyReport((signal) =>
+    apiAt<{
+      report: {
+        status: "pending" | "ready" | "failed";
+        metrics: { participantCount: number; answerCount: number; accuracyPercent: number };
+      };
+    }>(secondaryUrl, `/v1/sessions/${session.sessionId}/report`, { signal }).then(
+      ({ report }) => report,
+    ),
+  );
+  assert.deepEqual(report.metrics, {
     participantCount: 12,
     completedCount: 12,
     answerCount: 12,
@@ -539,7 +547,7 @@ async function main() {
         conflictingCommands: "one_applied_one_stale",
         primaryProcessLoss: "secondary_completed_game",
         replayComplete: synchronized.replayComplete,
-        durableAnswers: report.report.metrics.answerCount,
+        durableAnswers: report.metrics.answerCount,
       },
       null,
       2,

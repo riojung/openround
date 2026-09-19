@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { waitForReadyReport } from "../support/report-readiness.js";
 
 const baseUrl = (process.env.SMOKE_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "");
 const mailpitUrl = (process.env.SMOKE_MAILPIT_URL ?? "http://localhost:8025").replace(/\/$/, "");
@@ -391,16 +392,20 @@ async function main() {
   await host("reveal");
   await host("next");
 
-  const { report } = await api<{
-    report: {
-      id: string;
-      generatedAt: string;
-      expiresAt: string;
-      metrics: { answerCount: number; accuracyPercent: number };
-    };
-  }>(`/v1/sessions/${session.sessionId}/report`);
+  const report = await waitForReadyReport((signal) =>
+    api<{
+      report: {
+        id: string;
+        status: "pending" | "ready" | "failed";
+        generatedAt: string | null;
+        expiresAt: string;
+        metrics: { answerCount: number; accuracyPercent: number };
+      };
+    }>(`/v1/sessions/${session.sessionId}/report`, { signal }).then(({ report }) => report),
+  );
   assert.equal(report.metrics.answerCount, 1);
   assert.equal(report.metrics.accuracyPercent, 100);
+  assert.ok(report.generatedAt);
   const retentionMs = new Date(report.expiresAt).getTime() - new Date(report.generatedAt).getTime();
   assert.ok(retentionMs >= 365 * 24 * 60 * 60_000 - 5_000);
   assert.ok(retentionMs <= 365 * 24 * 60 * 60_000 + 5_000);
