@@ -14,6 +14,10 @@ jobs:
   local-compose:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Keep AOF writes and restart recovery in scope while deferring background
+      # compaction outside this short, disposable latency measurement window.
+      VALKEY_AUTO_AOF_REWRITE_PERCENTAGE: "0"
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

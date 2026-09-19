@@ -9,7 +9,11 @@ import {
 } from "@openround/game-engine";
 import { ConfigSchema } from "../src/config.js";
 import { MetricsService } from "../src/metrics.js";
-import { attachRealtime, snapshotSelector } from "../src/realtime.js";
+import {
+  attachRealtime,
+  isExpiredRealtimeStaffCredential,
+  snapshotSelector,
+} from "../src/realtime.js";
 import type { InteractionService } from "../src/interaction-service.js";
 import {
   SessionError,
@@ -31,6 +35,14 @@ describe("realtime authorization", () => {
         httpServer!.close((error) => (error ? reject(error) : resolve()));
       });
     }
+  });
+
+  it("treats adapter-normalized null staff expiry as non-expiring", () => {
+    expect(isExpiredRealtimeStaffCredential(null, 1_000)).toBe(false);
+    expect(isExpiredRealtimeStaffCredential(undefined, 1_000)).toBe(false);
+    expect(isExpiredRealtimeStaffCredential("999", 1_000)).toBe(false);
+    expect(isExpiredRealtimeStaffCredential(999, 1_000)).toBe(true);
+    expect(isExpiredRealtimeStaffCredential(1_001, 1_000)).toBe(false);
   });
 
   it("builds the complete private participant snapshot for a reveal broadcast", () => {

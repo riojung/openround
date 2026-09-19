@@ -56,6 +56,7 @@ interface JoinedParticipant {
 let creatorCookie = "";
 let accountCreated = false;
 let primaryStopped = false;
+let smokeFailed = false;
 const sockets = new Set<Socket>();
 
 async function requestAt(endpoint: string, path: string, init: RequestInit = {}, bearer?: string) {
@@ -162,12 +163,22 @@ function waitForEvent(
   timeoutMs = 15_000,
 ) {
   return new Promise<Envelope>((resolve, reject) => {
+    let lastEnvelope: Envelope | null = null;
     const timeout = setTimeout(() => {
       socket.off(event, handler);
-      reject(new Error(`${event} broadcast timed out`));
+      reject(
+        new Error(
+          `${event} broadcast timed out${
+            lastEnvelope
+              ? ` (last snapshot version ${lastEnvelope.payload.snapshot.version}, answer count ${lastEnvelope.payload.snapshot.answerCount})`
+              : " (no matching event received)"
+          }`,
+        ),
+      );
     }, timeoutMs);
     const handler = (envelope: Envelope, acknowledge?: () => void) => {
       acknowledge?.();
+      lastEnvelope = envelope;
       if (!predicate(envelope)) return;
       clearTimeout(timeout);
       socket.off(event, handler);
@@ -557,6 +568,7 @@ async function main() {
 
 void main()
   .catch((error: unknown) => {
+    smokeFailed = true;
     process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
     process.exitCode = 1;
   })
@@ -574,8 +586,10 @@ void main()
         process.exitCode = 1;
       });
     }
-    await removeSecondary().catch((error: unknown) => {
-      process.stderr.write(`Secondary server cleanup failed: ${String(error)}\n`);
-      process.exitCode = 1;
-    });
+    if (!smokeFailed) {
+      await removeSecondary().catch((error: unknown) => {
+        process.stderr.write(`Secondary server cleanup failed: ${String(error)}\n`);
+        process.exitCode = 1;
+      });
+    }
   });

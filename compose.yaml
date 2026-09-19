@@ -19,7 +19,16 @@ services:
 
   valkey:
     image: valkey/valkey:8-alpine
-    command: ["valkey-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    command:
+      [
+        "valkey-server",
+        "--appendonly",
+        "yes",
+        "--auto-aof-rewrite-percentage",
+        "${VALKEY_AUTO_AOF_REWRITE_PERCENTAGE:-100}",
+        "--maxmemory-policy",
+        "noeviction",
+      ]
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
