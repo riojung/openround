@@ -710,7 +710,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         [firstAccepted.answer, secondAccepted.answer],
         gameState.version,
       ),
-    ).toHaveLength(2);
+    ).toEqual([firstAccepted.answer, secondAccepted.answer]);
     expect(await repository.exportAccount(first.userId)).toMatchObject({
       answers: [
         expect.objectContaining({

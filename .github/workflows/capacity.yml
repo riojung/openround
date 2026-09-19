@@ -42,6 +42,15 @@ jobs:
         run: |
           docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml build load
           docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml run --rm load
+        env:
+          # The hosted runner co-locates ten generator processes, PostgreSQL, and
+          # the server on variable shared hardware. Keep the controlled/target
+          # environment defaults at 250/600/500 ms. This co-located CI sample
+          # enforces the beta's one-second client-latency budget; strict release
+          # capacity evidence still comes from controlled or target hardware.
+          ANSWER_P95_LIMIT_MS: "1000"
+          ANSWER_P99_LIMIT_MS: "1000"
+          QUESTION_BROADCAST_P95_LIMIT_MS: "1000"
       - name: Capture Compose logs
         if: failure()
         run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml logs --no-color > capacity-failure.log

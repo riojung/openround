@@ -84,6 +84,10 @@
 - Join p95 is below 500 ms; answer acknowledgement p95 below 250 ms and p99 below 600 ms;
   acknowledged `question.open` client receipt p95 below 500 ms with a rehearsed timeout-rate
   alert; recovery below two seconds; report below 60 seconds.
+- The co-located GitHub-hosted aggregate job enforces the beta's one-second client-latency budget
+  because runner CPU and storage are variable. Only a controlled or target-environment run using
+  the default 250/600/500 ms answer-p95/answer-p99/question-p95 gates qualifies as release capacity
+  evidence.
 - Backup restore, Redis loss, realtime restart, Stripe replay, and failed-email exercises pass.
 - The shared-store two-writer integration suite and the two-container cross-process/process-loss
   smoke pass against the release image.

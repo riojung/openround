@@ -3834,10 +3834,16 @@ export class PostgresRepository implements Repository {
              WHERE participant.id = input.id AND participant.session_id = $3
              RETURNING participant.id
            )
-           SELECT persisted_answers.*,
+           SELECT
+             (SELECT count(*) FROM persisted_answers) AS answer_updates,
+             (SELECT count(*)
+                FROM persisted_answers AS persisted
+                JOIN answer_input AS input
+                  ON input.idempotency_key = persisted.idempotency_key
+                 AND input.id = persisted.id) AS matching_answer_updates,
              (SELECT count(*) FROM session_update) AS session_updates,
              (SELECT count(*) FROM participant_update) AS participant_updates
-           FROM persisted_answers`,
+           `,
           [
             JSON.stringify(
               answers.map((answer) => ({
@@ -3884,18 +3890,13 @@ export class PostgresRepository implements Repository {
         if (Number(result.rows[0]?.participant_updates ?? 0) !== expectedParticipantUpdates) {
           throw new Error("Not every answer participant was updated");
         }
-        const byIdempotencyKey = new Map(
-          result.rows.map((row) => [String(row.idempotency_key), mapAnswer(row)]),
-        );
-        const persisted = answers.map((answer) => {
-          const persisted = byIdempotencyKey.get(answer.idempotencyKey);
-          if (!persisted) throw new Error("A committed answer was not returned by PostgreSQL");
-          return persisted;
-        });
-        if (persisted.some((answer, index) => answer.answerId !== answers[index]?.answerId)) {
+        if (Number(result.rows[0]?.answer_updates ?? 0) !== answers.length) {
+          throw new Error("Not every committed answer was returned by PostgreSQL");
+        }
+        if (Number(result.rows[0]?.matching_answer_updates ?? 0) !== answers.length) {
           throw new Error("Answer state changed during persistence");
         }
-        return persisted;
+        return answers;
       },
       { workspaceId: session.workspaceId },
     );

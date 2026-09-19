@@ -147,7 +147,7 @@ describe("session service ordering", () => {
     });
     let activeCommits = 0;
     let maximumActiveCommits = 0;
-    const commits = Array.from({ length: 10 }, () =>
+    const commits = Array.from({ length: 11 }, () =>
       commitGate.withAnswerCommitSlot(async () => {
         activeCommits += 1;
         maximumActiveCommits = Math.max(maximumActiveCommits, activeCommits);
@@ -156,8 +156,8 @@ describe("session service ordering", () => {
       }),
     );
 
-    await vi.waitFor(() => expect(activeCommits).toBe(8));
-    expect(maximumActiveCommits).toBe(8);
+    await vi.waitFor(() => expect(activeCommits).toBe(10));
+    expect(maximumActiveCommits).toBe(10);
     releaseCommits();
     await Promise.all(commits);
     expect(activeCommits).toBe(0);
@@ -345,6 +345,7 @@ describe("session service ordering", () => {
     const { correctChoiceId, participantInputs, repository, service, sessionId, state } =
       await openQuestionFixture(3);
     const commitAnswers = vi.spyOn(repository, "commitAnswers");
+    const findAnswers = vi.spyOn(repository, "findAnswers");
 
     const first = service.answer({
       sessionId,
@@ -383,6 +384,7 @@ describe("session service ordering", () => {
     expect(commitAnswers).toHaveBeenCalledTimes(1);
     expect(commitAnswers.mock.calls[0]?.[1]).toHaveLength(3);
     expect(commitAnswers.mock.calls[0]?.[3]).toEqual({ roundEvidencePersisted: true });
+    expect(findAnswers).not.toHaveBeenCalled();
     service.close();
   });
 
@@ -710,6 +712,52 @@ describe("session service ordering", () => {
       accepted: false,
       duplicate: false,
       code: "ANSWER_INVALID",
+    });
+    expect(repository.answers).toHaveLength(1);
+    service.close();
+  });
+
+  it("returns a durable duplicate when a first-round answer is retried after finish", async () => {
+    const { correctChoiceId, hostToken, participantInputs, repository, service, sessionId, state } =
+      await openQuestionFixture(1);
+    const answerInput = {
+      sessionId,
+      participantToken: participantInputs[0]!.token,
+      roundId: state.roundId!,
+      choiceId: correctChoiceId,
+      idempotencyKey: "finished-first-round-retry",
+    };
+    const first = await service.answer(answerInput);
+    expect(first).toMatchObject({ accepted: true, duplicate: false });
+
+    let snapshot = await service.hostCommand({
+      sessionId,
+      hostToken,
+      commandId: randomUUID(),
+      expectedVersion: (await repository.getSessionById(sessionId))!.state.version,
+      action: "lock",
+    });
+    snapshot = await service.hostCommand({
+      sessionId,
+      hostToken,
+      commandId: randomUUID(),
+      expectedVersion: snapshot.version,
+      action: "reveal",
+    });
+    snapshot = await service.hostCommand({
+      sessionId,
+      hostToken,
+      commandId: randomUUID(),
+      expectedVersion: snapshot.version,
+      action: "next",
+    });
+    expect(snapshot).toMatchObject({ phase: "finished" });
+    expect((await repository.getSessionById(sessionId))?.state.answers).toEqual({});
+
+    await expect(service.answer(answerInput)).resolves.toMatchObject({
+      accepted: true,
+      answerId: first.answerId,
+      duplicate: true,
     });
     expect(repository.answers).toHaveLength(1);
     service.close();
