@@ -47,7 +47,11 @@ import {
 import { experienceThemeStyle } from "../../../lib/theme";
 import { clientUuid } from "../../../lib/uuid";
 import { createHostCommandController, type HostPhaseCommand } from "../../../lib/host-phase";
-import { getLegacyPhaseActions, getLegacyRecoveryActions } from "../../../lib/legacy-host-phase";
+import {
+  getLegacyPhaseActions,
+  getLegacyRecoveryActions,
+  type LegacyHostCommand,
+} from "../../../lib/legacy-host-phase";
 
 type Ack<T> = { data?: T; error?: { code: string; message: string } };
 
@@ -554,19 +558,24 @@ export default function HostPage() {
     }
   }
 
+  function sendHostPhaseCommand(item: HostPhaseCommand) {
+    command(item.action, {
+      ...(item.interventionType ? { interventionType: item.interventionType } : {}),
+      ...(item.recheckMode ? { recheckMode: item.recheckMode } : {}),
+    });
+  }
   const phaseController = snapshot
     ? createHostCommandController({
         getSnapshot: () => snapshot,
-        execute: (item) =>
-          command(item.action, {
-            ...(item.interventionType ? { interventionType: item.interventionType } : {}),
-            ...(item.recheckMode ? { recheckMode: item.recheckMode } : {}),
-          }),
+        execute: sendHostPhaseCommand,
       })
     : null;
   const phaseView = phaseController?.view() ?? null;
   function runPhaseCommand(item: HostPhaseCommand) {
     phaseController?.execute(item);
+  }
+  function runLegacyCommand(item: LegacyHostCommand) {
+    sendHostPhaseCommand(item);
   }
   const uxBeta = snapshot?.uxBeta === true;
   const legacyPhaseActions = snapshot ? getLegacyPhaseActions(snapshot) : [];
@@ -791,7 +800,7 @@ export default function HostPage() {
                         className={item.className}
                         disabled={commandPending}
                         key={`${item.action}:${item.interventionType ?? item.recheckMode ?? ""}`}
-                        onClick={() => runPhaseCommand(item)}
+                        onClick={() => runLegacyCommand(item)}
                         type="button"
                       >
                         {item.label}
@@ -815,7 +824,7 @@ export default function HostPage() {
                           (item.action === "start" && snapshot.participants.length === 0)
                         }
                         key={item.action}
-                        onClick={() => runPhaseCommand(item)}
+                        onClick={() => runLegacyCommand(item)}
                         type="button"
                       >
                         {item.label}
