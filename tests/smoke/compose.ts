@@ -8,6 +8,15 @@ const email = `compose-smoke-${Date.now()}@example.com`;
 let creatorCookie = "";
 let browserOrigin = process.env.SMOKE_ORIGIN?.replace(/\/$/, "") ?? "";
 
+type OperationalFeatureFlags = {
+  signups: boolean;
+  sessionCreation: boolean;
+  mediaUploads: boolean;
+  roundExperiences: boolean;
+  audiencePulse: boolean;
+  roomChat: boolean;
+};
+
 async function api<T>(path: string, init: RequestInit = {}, bearer?: string): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
@@ -88,9 +97,9 @@ async function main() {
   assert.equal(me.entitlements.brandTheme, true);
 
   const featureView = await api<{
-    configured: { signups: boolean; sessionCreation: boolean; mediaUploads: boolean };
-    runtime: { signups: boolean; sessionCreation: boolean; mediaUploads: boolean };
-    effective: { signups: boolean; sessionCreation: boolean; mediaUploads: boolean };
+    configured: OperationalFeatureFlags;
+    runtime: OperationalFeatureFlags;
+    effective: OperationalFeatureFlags;
   }>("/v1/admin/features", {}, adminToken);
   try {
     const paused = await api<typeof featureView>(
@@ -102,6 +111,7 @@ async function main() {
       adminToken,
     );
     assert.deepEqual(paused.effective, {
+      ...featureView.effective,
       signups: false,
       sessionCreation: false,
       mediaUploads: false,
