@@ -4105,56 +4105,103 @@ export class PostgresRepository implements Repository {
     };
   }
 
+  private async insertFollowup(
+    client: PoolClient,
+    input: FollowupRecord,
+    access: FollowupAccessRecord[],
+  ) {
+    await client.query(
+      `INSERT INTO followups
+         (id, workspace_id, purpose, source_quiz_version_id, source_session_id,
+          source_report_id, title, content, concept_keys, time_mode, generic_token_hash,
+          opens_at, closes_at, expires_at, closed_at, created_by, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+      [
+        input.id,
+        input.workspaceId,
+        input.purpose,
+        input.sourceQuizVersionId,
+        input.sourceSessionId,
+        input.sourceReportId,
+        input.title,
+        JSON.stringify(input.content),
+        input.conceptKeys,
+        input.timeMode,
+        input.genericTokenHash,
+        input.opensAt,
+        input.closesAt,
+        input.expiresAt,
+        input.closedAt,
+        input.createdBy,
+        input.createdAt,
+      ],
+    );
+    for (const item of access) {
+      await client.query(
+        `INSERT INTO followup_access_tokens
+           (id, workspace_id, followup_id, source_participant_id, kind, label, token_hash,
+            time_multiplier, expires_at, revoked_at, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          item.id,
+          item.workspaceId,
+          item.followupId,
+          item.sourceParticipantId,
+          item.kind,
+          item.label,
+          item.tokenHash,
+          item.timeMultiplier,
+          item.expiresAt,
+          item.revokedAt,
+          item.createdAt,
+        ],
+      );
+    }
+  }
+
   async createFollowup(input: FollowupRecord, access: FollowupAccessRecord[]) {
-    await this.transaction(
+    if (input.purpose !== "recovery") {
+      throw new TypeError("Practice assignments require atomic source validation");
+    }
+    await this.transaction((client) => this.insertFollowup(client, input, access), {
+      workspaceId: input.workspaceId,
+    });
+  }
+
+  async createPracticeAssignment(
+    sourceQuizId: string,
+    input: Extract<FollowupRecord, { purpose: "assignment" }>,
+    access: FollowupAccessRecord[],
+  ) {
+    return this.transaction(
       async (client) => {
-        await client.query(
-          `INSERT INTO followups
-             (id, workspace_id, purpose, source_quiz_version_id, source_session_id,
-              source_report_id, title, content, concept_keys, time_mode, generic_token_hash,
-              opens_at, closes_at, expires_at, closed_at, created_by, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
-          [
-            input.id,
-            input.workspaceId,
-            input.purpose,
-            input.sourceQuizVersionId,
-            input.sourceSessionId,
-            input.sourceReportId,
-            input.title,
-            JSON.stringify(input.content),
-            input.conceptKeys,
-            input.timeMode,
-            input.genericTokenHash,
-            input.opensAt,
-            input.closesAt,
-            input.expiresAt,
-            input.closedAt,
-            input.createdBy,
-            input.createdAt,
-          ],
+        const workspace = await client.query(
+          `SELECT id
+           FROM workspaces
+           WHERE id = $1
+           FOR KEY SHARE`,
+          [input.workspaceId],
         );
-        for (const item of access) {
-          await client.query(
-            `INSERT INTO followup_access_tokens
-               (id, workspace_id, followup_id, source_participant_id, kind, label, token_hash,
-                time_multiplier, expires_at, revoked_at, created_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-            [
-              item.id,
-              item.workspaceId,
-              item.followupId,
-              item.sourceParticipantId,
-              item.kind,
-              item.label,
-              item.tokenHash,
-              item.timeMultiplier,
-              item.expiresAt,
-              item.revokedAt,
-              item.createdAt,
-            ],
-          );
+        if (workspace.rowCount !== 1) return false;
+        const source = await client.query(
+          `/* create_practice_assignment */
+           SELECT status, current_version_id
+           FROM quizzes
+           WHERE workspace_id = $1
+             AND id = $2
+           FOR SHARE`,
+          [input.workspaceId, sourceQuizId],
+        );
+        const quiz = source.rows[0];
+        if (
+          !quiz ||
+          quiz.status !== "published" ||
+          quiz.current_version_id !== input.sourceQuizVersionId
+        ) {
+          return false;
         }
+        await this.insertFollowup(client, input, access);
+        return true;
       },
       { workspaceId: input.workspaceId },
     );

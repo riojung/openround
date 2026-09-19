@@ -2423,7 +2423,7 @@ export class MemoryRepository implements Repository {
     };
   }
 
-  async createFollowup(input: FollowupRecord, access: FollowupAccessRecord[]) {
+  private storeFollowup(input: FollowupRecord, access: FollowupAccessRecord[]) {
     if (this.followups.has(input.id)) throw new Error("Follow-up already exists");
     if (
       [...this.followups.values()].some((item) => item.genericTokenHash === input.genericTokenHash)
@@ -2477,6 +2477,31 @@ export class MemoryRepository implements Repository {
     for (const item of access) {
       this.followupAccess.set(item.tokenHash, structuredClone(item));
     }
+  }
+
+  async createFollowup(input: FollowupRecord, access: FollowupAccessRecord[]) {
+    if (input.purpose !== "recovery") {
+      throw new TypeError("Practice assignments require atomic source validation");
+    }
+    this.storeFollowup(input, access);
+  }
+
+  async createPracticeAssignment(
+    sourceQuizId: string,
+    input: Extract<FollowupRecord, { purpose: "assignment" }>,
+    access: FollowupAccessRecord[],
+  ) {
+    const quiz = this.quizzes.get(sourceQuizId);
+    if (
+      !quiz ||
+      quiz.workspaceId !== input.workspaceId ||
+      quiz.status !== "published" ||
+      quiz.currentVersionId !== input.sourceQuizVersionId
+    ) {
+      return false;
+    }
+    this.storeFollowup(input, access);
+    return true;
   }
 
   private assertFollowupAccess(followup: FollowupRecord, input: FollowupAccessRecord) {

@@ -101,22 +101,24 @@ describe("memory repository", () => {
     const expired = assignment(new Date(now.getTime() + 60 * 60_000));
     const retained = assignment(new Date(now.getTime() + 30 * 24 * 60 * 60_000));
     const personalTokenHash = randomUUID();
-    await repository.createFollowup(expired, [
-      {
-        id: randomUUID(),
-        workspaceId: owner.workspaceId,
-        followupId: expired.id,
-        sourceParticipantId: null,
-        kind: "assignment_personal",
-        label: "Learner 1",
-        tokenHash: personalTokenHash,
-        timeMultiplier: 1,
-        expiresAt: expired.closesAt,
-        revokedAt: null,
-        createdAt: now,
-      },
-    ]);
-    await repository.createFollowup(retained, []);
+    await expect(
+      repository.createPracticeAssignment(quizId, expired, [
+        {
+          id: randomUUID(),
+          workspaceId: owner.workspaceId,
+          followupId: expired.id,
+          sourceParticipantId: null,
+          kind: "assignment_personal",
+          label: "Learner 1",
+          tokenHash: personalTokenHash,
+          timeMultiplier: 1,
+          expiresAt: expired.closesAt,
+          revokedAt: null,
+          createdAt: now,
+        },
+      ]),
+    ).resolves.toBe(true);
+    await expect(repository.createPracticeAssignment(quizId, retained, [])).resolves.toBe(true);
     await repository.createOrGetFollowupAttempt({
       id: randomUUID(),
       workspaceId: owner.workspaceId,
@@ -219,11 +221,36 @@ describe("memory repository", () => {
       ),
     ).resolves.toBeNull();
     await expect(
-      repository.createFollowup(
+      repository.createPracticeAssignment(
+        quizId,
         { ...assignment(retained.expiresAt), conceptKeys: ["invalid"] },
         [],
       ),
     ).rejects.toThrow("cannot store recovery concepts");
+    await expect(repository.createFollowup(assignment(retained.expiresAt), [])).rejects.toThrow(
+      "require atomic source validation",
+    );
+    const nextVersion = await repository.publishQuiz({
+      ...version,
+      id: randomUUID(),
+      version: 2,
+      contentHash: randomUUID(),
+      publishedAt: new Date(now.getTime() + 1),
+    });
+    const staleSourceAssignment = assignment(retained.expiresAt);
+    await expect(
+      repository.createPracticeAssignment(quizId, staleSourceAssignment, []),
+    ).resolves.toBe(false);
+    expect(await repository.getFollowup(owner.workspaceId, staleSourceAssignment.id)).toBeNull();
+    const archivedSourceAssignment = {
+      ...assignment(retained.expiresAt),
+      sourceQuizVersionId: nextVersion.id,
+    };
+    await repository.archiveQuiz(owner.workspaceId, quizId, true);
+    await expect(
+      repository.createPracticeAssignment(quizId, archivedSourceAssignment, []),
+    ).resolves.toBe(false);
+    expect(await repository.getFollowup(owner.workspaceId, archivedSourceAssignment.id)).toBeNull();
 
     expect(
       await repository.purgeExpiredPracticeAssignments(new Date(expired.expiresAt.getTime() + 1)),

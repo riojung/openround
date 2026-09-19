@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ReportV2Schema, ReportV3Schema, type QuizDraft } from "@openround/contracts";
 import { MemoryRepository, type CreatorContext } from "@openround/db";
 import { createGameState } from "@openround/game-engine";
@@ -751,6 +751,39 @@ describe("self-paced follow-up", () => {
       code: "CONFLICT",
       message: "The published Round changed. Refresh before assigning practice",
     });
+    expect(repository.followups.size).toBe(0);
+  });
+
+  it("maps a source Round race at the atomic insert boundary to a conflict", async () => {
+    const { repository, service, creator, quizId, quizVersionId, now } = await assignmentFixture();
+    const getQuizVersion = repository.getQuizVersion.bind(repository);
+    const sourceLookup = vi
+      .spyOn(repository, "getQuizVersion")
+      .mockImplementationOnce(async (workspaceId, versionId) => {
+        const version = await getQuizVersion(workspaceId, versionId);
+        await repository.archiveQuiz(creator.workspaceId, quizId, true);
+        return version;
+      });
+
+    await expect(
+      service.createAssignment(
+        creator,
+        quizId,
+        {
+          sourceQuizVersionId: quizVersionId,
+          timeMode: "flex",
+          closesAt: new Date(now.getTime() + 24 * 60 * 60_000).toISOString(),
+          personalLabels: [],
+        },
+        30,
+        100,
+        now,
+      ),
+    ).rejects.toMatchObject<Partial<FollowupError>>({
+      code: "CONFLICT",
+      message: "The published Round changed. Refresh before assigning practice",
+    });
+    sourceLookup.mockRestore();
     expect(repository.followups.size).toBe(0);
   });
 });

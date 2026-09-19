@@ -213,7 +213,7 @@ export class FollowupService {
       );
     }
     const genericToken = opaqueToken();
-    const followup: FollowupRecord = {
+    const followup: Extract<FollowupRecord, { purpose: "recovery" }> = {
       id: randomUUID(),
       workspaceId: creator.workspaceId,
       purpose: "recovery",
@@ -334,7 +334,7 @@ export class FollowupService {
     }
 
     const genericToken = opaqueToken();
-    const followup: FollowupRecord = {
+    const followup: Extract<FollowupRecord, { purpose: "assignment" }> = {
       id: randomUUID(),
       workspaceId: creator.workspaceId,
       purpose: "assignment",
@@ -370,10 +370,17 @@ export class FollowupService {
       };
       return { access, token };
     });
-    await this.repository.createFollowup(
+    const created = await this.repository.createPracticeAssignment(
+      quizId,
       followup,
       personal.map((item) => item.access),
     );
+    if (!created) {
+      throw new FollowupError(
+        "CONFLICT",
+        "The published Round changed. Refresh before assigning practice",
+      );
+    }
     return {
       followup: view(followup),
       genericToken,

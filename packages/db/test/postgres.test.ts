@@ -1428,44 +1428,47 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const assignmentIds = [randomUUID(), randomUUID()];
     const assignmentPersonalTokenHash = randomUUID();
     for (const [index, assignmentId] of assignmentIds.entries()) {
-      await repository.createFollowup(
-        {
-          id: assignmentId,
-          workspaceId: first.workspaceId,
-          purpose: "assignment",
-          sourceQuizVersionId: firstVersion.id,
-          sourceSessionId: null,
-          sourceReportId: null,
-          title: `Database assignment ${index + 1}`,
-          content: versionContent,
-          conceptKeys: [],
-          timeMode: "flex",
-          genericTokenHash: randomUUID(),
-          opensAt: now,
-          closesAt: assignmentClosesAt,
-          expiresAt: assignmentExpiresAt,
-          closedAt: null,
-          createdBy: first.userId,
-          createdAt: new Date(now.getTime() + index + 1),
-        },
-        index === 0
-          ? [
-              {
-                id: randomUUID(),
-                workspaceId: first.workspaceId,
-                followupId: assignmentId,
-                sourceParticipantId: null,
-                kind: "assignment_personal",
-                label: "Independent learner",
-                tokenHash: assignmentPersonalTokenHash,
-                timeMultiplier: 1,
-                expiresAt: assignmentClosesAt,
-                revokedAt: null,
-                createdAt: now,
-              },
-            ]
-          : [],
-      );
+      await expect(
+        repository.createPracticeAssignment(
+          firstQuiz.id,
+          {
+            id: assignmentId,
+            workspaceId: first.workspaceId,
+            purpose: "assignment",
+            sourceQuizVersionId: firstVersion.id,
+            sourceSessionId: null,
+            sourceReportId: null,
+            title: `Database assignment ${index + 1}`,
+            content: versionContent,
+            conceptKeys: [],
+            timeMode: "flex",
+            genericTokenHash: randomUUID(),
+            opensAt: now,
+            closesAt: assignmentClosesAt,
+            expiresAt: assignmentExpiresAt,
+            closedAt: null,
+            createdBy: first.userId,
+            createdAt: new Date(now.getTime() + index + 1),
+          },
+          index === 0
+            ? [
+                {
+                  id: randomUUID(),
+                  workspaceId: first.workspaceId,
+                  followupId: assignmentId,
+                  sourceParticipantId: null,
+                  kind: "assignment_personal",
+                  label: "Independent learner",
+                  tokenHash: assignmentPersonalTokenHash,
+                  timeMultiplier: 1,
+                  expiresAt: assignmentClosesAt,
+                  revokedAt: null,
+                  createdAt: now,
+                },
+              ]
+            : [],
+        ),
+      ).resolves.toBe(true);
     }
     expect(
       await repository.listFollowupHistory(first.workspaceId, {
@@ -1583,6 +1586,9 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const closingClient = await runtimePool.connect();
     try {
       await closingClient.query("BEGIN");
+      const closingPid = Number(
+        (await closingClient.query("SELECT pg_backend_pid() AS pid")).rows[0]?.pid,
+      );
       await closingClient.query("SELECT set_config('app.workspace_id', $1, true)", [
         first.workspaceId,
       ]);
@@ -1608,9 +1614,10 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
              SELECT 1
              FROM pg_stat_activity
              WHERE pid <> pg_backend_pid()
-               AND query LIKE '%create_assignment_personal_access%'
                AND wait_event_type = 'Lock'
+               AND $1::integer = ANY(pg_blocking_pids(pid))
            ) AS waiting`,
+          [closingPid],
         );
         waitingOnClose = activity.rows[0]?.waiting === true;
         if (waitingOnClose) break;
@@ -1627,27 +1634,30 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     await expect(accessWhileClosing!).resolves.toBeNull();
     const elapsedAssignmentId = randomUUID();
     const elapsedClosesAt = new Date(now.getTime() + 1);
-    await repository.createFollowup(
-      {
-        id: elapsedAssignmentId,
-        workspaceId: first.workspaceId,
-        purpose: "assignment",
-        sourceQuizVersionId: firstVersion.id,
-        sourceSessionId: null,
-        sourceReportId: null,
-        title: "Elapsed assignment",
-        content: versionContent,
-        conceptKeys: [],
-        timeMode: "flex",
-        genericTokenHash: randomUUID(),
-        opensAt: now,
-        closesAt: elapsedClosesAt,
-        expiresAt: assignmentExpiresAt,
-        closedAt: null,
-        createdBy: first.userId,
-        createdAt: now,
-      },
-      [],
+    const elapsedAssignment = {
+      id: elapsedAssignmentId,
+      workspaceId: first.workspaceId,
+      purpose: "assignment" as const,
+      sourceQuizVersionId: firstVersion.id,
+      sourceSessionId: null,
+      sourceReportId: null,
+      title: "Elapsed assignment",
+      content: versionContent,
+      conceptKeys: [],
+      timeMode: "flex" as const,
+      genericTokenHash: randomUUID(),
+      opensAt: now,
+      closesAt: elapsedClosesAt,
+      expiresAt: assignmentExpiresAt,
+      closedAt: null,
+      createdBy: first.userId,
+      createdAt: now,
+    };
+    await expect(
+      repository.createPracticeAssignment(firstQuiz.id, elapsedAssignment, []),
+    ).resolves.toBe(true);
+    await expect(repository.createFollowup(elapsedAssignment, [])).rejects.toThrow(
+      "require atomic source validation",
     );
     await expect(
       repository.createAssignmentPersonalAccess(
@@ -1662,7 +1672,8 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       ),
     ).resolves.toBeNull();
     await expect(
-      repository.createFollowup(
+      repository.createPracticeAssignment(
+        firstQuiz.id,
         {
           id: randomUUID(),
           workspaceId: first.workspaceId,
@@ -1684,9 +1695,10 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         },
         [],
       ),
-    ).rejects.toMatchObject({ code: "23514" });
+    ).resolves.toBe(false);
     await expect(
-      repository.createFollowup(
+      repository.createPracticeAssignment(
+        firstQuiz.id,
         {
           id: randomUUID(),
           workspaceId: first.workspaceId,
@@ -1956,6 +1968,107 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       }),
     ).toBe(true);
     expect(await repository.getPlan(first.workspaceId)).toBe("pro");
+  });
+
+  it("rejects assignment creation when an in-flight archive wins the source Round lock", async () => {
+    const owner = await creator("assignment-source-race");
+    const now = new Date("2026-09-19T12:00:00.000Z");
+    const content = {
+      title: "Atomic assignment source",
+      description: "",
+      questions: [],
+    } satisfies QuizDraft;
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: content.title,
+      description: content.description,
+      status: "draft",
+      draft: content,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const version = await repository.publishQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      quizId: quiz.id,
+      version: 1,
+      content,
+      contentHash: randomUUID(),
+      publishedAt: now,
+    });
+    const followupId = randomUUID();
+    const assignment = {
+      id: followupId,
+      workspaceId: owner.workspaceId,
+      purpose: "assignment" as const,
+      sourceQuizVersionId: version.id,
+      sourceSessionId: null,
+      sourceReportId: null,
+      title: content.title,
+      content,
+      conceptKeys: [],
+      timeMode: "flex" as const,
+      genericTokenHash: randomUUID(),
+      opensAt: now,
+      closesAt: new Date(now.getTime() + 24 * 60 * 60_000),
+      expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+      closedAt: null,
+      createdBy: owner.userId,
+      createdAt: now,
+    };
+    const raceRepository = new PostgresRepository(runtimeUrl!);
+    await raceRepository.initialize();
+
+    let createWhileArchiving:
+      ReturnType<typeof raceRepository.createPracticeAssignment> | undefined;
+    const archivingClient = await runtimePool.connect();
+    try {
+      await archivingClient.query("BEGIN");
+      const archivingPid = Number(
+        (await archivingClient.query("SELECT pg_backend_pid() AS pid")).rows[0]?.pid,
+      );
+      await archivingClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        owner.workspaceId,
+      ]);
+      await archivingClient.query(
+        `UPDATE quizzes
+         SET status = 'archived', archived_at = now(), updated_at = now()
+         WHERE workspace_id = $1 AND id = $2`,
+        [owner.workspaceId, quiz.id],
+      );
+      createWhileArchiving = raceRepository.createPracticeAssignment(quiz.id, assignment, []);
+
+      let waitingOnSource = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const activity = await archivingClient.query(
+          `SELECT EXISTS (
+             SELECT 1
+             FROM pg_stat_activity
+             WHERE pid <> pg_backend_pid()
+               AND wait_event_type = 'Lock'
+               AND $1::integer = ANY(pg_blocking_pids(pid))
+           ) AS waiting`,
+          [archivingPid],
+        );
+        waitingOnSource = activity.rows[0]?.waiting === true;
+        if (waitingOnSource) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(waitingOnSource).toBe(true);
+      await archivingClient.query("COMMIT");
+    } catch (error) {
+      await archivingClient.query("ROLLBACK");
+      await raceRepository.close();
+      throw error;
+    } finally {
+      archivingClient.release();
+    }
+
+    await expect(createWhileArchiving!).resolves.toBe(false);
+    expect(await repository.getFollowup(owner.workspaceId, followupId)).toBeNull();
+    await raceRepository.close();
   });
 
   it("enforces the expanded bounded product-event name allowlist", async () => {

@@ -1112,7 +1112,15 @@ export interface Repository {
       now: Date;
     },
   ): Promise<HistoryPage<ReportHistoryRecord>>;
-  createFollowup(input: FollowupRecord, access: FollowupAccessRecord[]): Promise<void>;
+  createFollowup(
+    input: Extract<FollowupRecord, { purpose: "recovery" }>,
+    access: FollowupAccessRecord[],
+  ): Promise<void>;
+  createPracticeAssignment(
+    sourceQuizId: string,
+    input: Extract<FollowupRecord, { purpose: "assignment" }>,
+    access: FollowupAccessRecord[],
+  ): Promise<boolean>;
   getFollowup(workspaceId: string, followupId: string): Promise<FollowupRecord | null>;
   getFollowupProgress(
     workspaceId: string,
