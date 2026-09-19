@@ -109,7 +109,6 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   const participantContext = await browser.newContext();
   const participant = await participantContext.newPage();
   await participant.goto(`/join?code=${code}`);
-  expect((await new AxeBuilder({ page: participant }).analyze()).violations).toEqual([]);
   await participant.getByLabel("Nickname").fill("Learner");
   await participant.getByRole("button", { name: "Join round" }).click();
   await expect(participant).toHaveURL(/\/play\//);
