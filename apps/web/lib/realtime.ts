@@ -19,14 +19,24 @@ export function createAudienceRealtimeReceipt(
   const seenProjections = new Set<string>();
   const projectionOrder: string[] = [];
   return withRealtimeReceipt((envelope: AudienceEventEnvelope) => {
-    const projectionKey = `${envelope.audienceSeq}:${envelope.type}`;
-    if (
-      seen.has(envelope.eventId) ||
-      seenProjections.has(projectionKey) ||
-      envelope.audienceSeq < audienceSeq
-    )
-      return;
-    const gap = audienceSeq > 0 && envelope.audienceSeq > audienceSeq + 1;
+    const payload =
+      envelope.payload && typeof envelope.payload === "object" && !Array.isArray(envelope.payload)
+        ? (envelope.payload as Record<string, unknown>)
+        : null;
+    const summary =
+      payload?.summary && typeof payload.summary === "object" && !Array.isArray(payload.summary)
+        ? (payload.summary as Record<string, unknown>)
+        : null;
+    const summarySeq =
+      envelope.type === "audience.summary.updated" && typeof summary?.audienceSeq === "number"
+        ? summary.audienceSeq
+        : null;
+    const projectionKey = `${envelope.audienceSeq}:${envelope.type}:${summarySeq ?? ""}`;
+    if (seen.has(envelope.eventId) || seenProjections.has(projectionKey)) return;
+    const gap =
+      audienceSeq > 0 &&
+      (envelope.audienceSeq > audienceSeq + 1 ||
+        (envelope.type !== "audience.summary.updated" && envelope.audienceSeq < audienceSeq));
     audienceSeq = Math.max(audienceSeq, envelope.audienceSeq);
     seen.add(envelope.eventId);
     order.push(envelope.eventId);

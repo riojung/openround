@@ -46,6 +46,8 @@ interface Participant {
   socket: Socket;
   participantId: string;
   participantToken: string;
+  connectMs: number;
+  joinAcknowledgementMs: number;
   joinMs: number;
   answerId?: string;
   idempotencyKey?: string;
@@ -263,6 +265,7 @@ async function main() {
         const participantNumber = offset + index + 1;
         const startedAt = performance.now();
         const socket = await connectSocket();
+        const connectedAt = performance.now();
         const joined = await emitAck<{
           participantId: string;
           participantToken: string;
@@ -270,7 +273,14 @@ async function main() {
           code: session.code,
           nickname: `Load ${String(participantNumber).padStart(3, "0")}`,
         });
-        return { ...joined, socket, joinMs: performance.now() - startedAt };
+        const acknowledgedAt = performance.now();
+        return {
+          ...joined,
+          socket,
+          connectMs: connectedAt - startedAt,
+          joinAcknowledgementMs: acknowledgedAt - connectedAt,
+          joinMs: acknowledgedAt - startedAt,
+        };
       }),
     );
     participants.push(...batch);
@@ -485,6 +495,26 @@ async function main() {
           0.95,
         ),
       },
+      socketConnection: {
+        p50: percentile(
+          participants.map(({ connectMs }) => connectMs),
+          0.5,
+        ),
+        p95: percentile(
+          participants.map(({ connectMs }) => connectMs),
+          0.95,
+        ),
+      },
+      joinAcknowledgement: {
+        p50: percentile(
+          participants.map(({ joinAcknowledgementMs }) => joinAcknowledgementMs),
+          0.5,
+        ),
+        p95: percentile(
+          participants.map(({ joinAcknowledgementMs }) => joinAcknowledgementMs),
+          0.95,
+        ),
+      },
       answerAcknowledgement: {
         p50: percentile(answerMs, 0.5),
         p95: percentile(answerMs, 0.95),
@@ -500,30 +530,39 @@ async function main() {
     },
   };
 
-  if (assertPerformance) {
-    assert.ok(results.latencyMs.join.p95 < 500, "Join p95 exceeded 500 ms");
-    assert.ok(
-      results.latencyMs.answerAcknowledgement.p95 < 250,
-      "Answer acknowledgement p95 exceeded 250 ms",
-    );
-    assert.ok(
-      results.latencyMs.answerAcknowledgement.p99 < 600,
-      "Answer acknowledgement p99 exceeded 600 ms",
-    );
-    assert.ok(
-      results.latencyMs.questionBroadcast.p95 < 500,
-      "Question broadcast p95 exceeded 500 ms",
-    );
-    assert.ok(results.latencyMs.reconnectSnapshot < 2_000, "Reconnect exceeded two seconds");
-    assert.ok(results.latencyMs.reportAvailable < 60_000, "Report exceeded 60 seconds");
-  }
-
   const serializedResults = `${JSON.stringify(results, null, 2)}\n`;
   if (outputPath) {
     await mkdir(dirname(outputPath), { recursive: true });
     await writeFile(outputPath, serializedResults, { encoding: "utf8", mode: 0o600 });
   }
   process.stdout.write(serializedResults);
+
+  if (assertPerformance) {
+    assert.ok(
+      results.latencyMs.join.p95 < 500,
+      `Join p95 ${results.latencyMs.join.p95.toFixed(1)} ms exceeded 500 ms`,
+    );
+    assert.ok(
+      results.latencyMs.answerAcknowledgement.p95 < 250,
+      `Answer acknowledgement p95 ${results.latencyMs.answerAcknowledgement.p95.toFixed(1)} ms exceeded 250 ms`,
+    );
+    assert.ok(
+      results.latencyMs.answerAcknowledgement.p99 < 600,
+      `Answer acknowledgement p99 ${results.latencyMs.answerAcknowledgement.p99.toFixed(1)} ms exceeded 600 ms`,
+    );
+    assert.ok(
+      results.latencyMs.questionBroadcast.p95 < 500,
+      `Question broadcast p95 ${results.latencyMs.questionBroadcast.p95.toFixed(1)} ms exceeded 500 ms`,
+    );
+    assert.ok(
+      results.latencyMs.reconnectSnapshot < 2_000,
+      `Reconnect ${results.latencyMs.reconnectSnapshot.toFixed(1)} ms exceeded two seconds`,
+    );
+    assert.ok(
+      results.latencyMs.reportAvailable < 60_000,
+      `Report availability ${results.latencyMs.reportAvailable.toFixed(1)} ms exceeded 60 seconds`,
+    );
+  }
 }
 
 void main()

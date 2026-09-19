@@ -11,7 +11,11 @@ import type {
   SessionSnapshot,
 } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
-import { AudiencePanel, type AudienceRealtimeUpdate } from "../../../components/audience-panel";
+import {
+  AudiencePanel,
+  enqueueAudienceRealtimeUpdate,
+  type AudienceRealtimeBatch,
+} from "../../../components/audience-panel";
 import { ExperiencePreferences } from "../../../components/experience-preferences";
 import { Countdown } from "../../../components/countdown";
 import {
@@ -75,8 +79,13 @@ export default function HostPage() {
   const [mediaCredential, setMediaCredential] = useState("");
   const [qnaRevision, setQnaRevision] = useState(0);
   const [audienceSyncRevision, setAudienceSyncRevision] = useState(0);
-  const [audienceRealtimeUpdate, setAudienceRealtimeUpdate] =
-    useState<AudienceRealtimeUpdate | null>(null);
+  const [audienceRealtimeBatch, setAudienceRealtimeBatch] = useState<AudienceRealtimeBatch | null>(
+    null,
+  );
+  const audiencePanelKey = useMemo(
+    () => (mediaCredential ? `${sessionId}:moderator:${clientUuid()}` : `${sessionId}:moderator`),
+    [mediaCredential, sessionId],
+  );
   const [staffCredentials, setStaffCredentials] = useState<SessionStaffCredential[]>([]);
   const [cohostLabel, setCohostLabel] = useState("");
   const [cohostLink, setCohostLink] = useState("");
@@ -216,7 +225,9 @@ export default function HostPage() {
       );
       const qnaUpdate = withRealtimeReceipt(() => setQnaRevision((current) => current + 1));
       const audienceUpdate = createAudienceRealtimeReceipt((gap, envelope) => {
-        setAudienceRealtimeUpdate({ gap, envelope });
+        setAudienceRealtimeBatch((current) =>
+          enqueueAudienceRealtimeUpdate(current, { gap, envelope }),
+        );
         if (envelope.type.startsWith("qna.")) setQnaRevision((current) => current + 1);
       });
       socket.on("connect", () => {
@@ -935,8 +946,9 @@ export default function HostPage() {
               <>
                 {snapshot.phase !== "finished" ? (
                   <AudiencePanel
+                    key={audiencePanelKey}
                     onKick={(participantId) => command("kick", { participantId })}
-                    realtimeUpdate={audienceRealtimeUpdate}
+                    realtimeBatch={audienceRealtimeBatch}
                     role="moderator"
                     sessionId={sessionId}
                     syncRevision={audienceSyncRevision}
@@ -1108,8 +1120,9 @@ export default function HostPage() {
           >
             {snapshot.phase !== "finished" ? (
               <AudiencePanel
+                key={audiencePanelKey}
                 onKick={(participantId) => command("kick", { participantId })}
-                realtimeUpdate={audienceRealtimeUpdate}
+                realtimeBatch={audienceRealtimeBatch}
                 role="moderator"
                 sessionId={sessionId}
                 syncRevision={audienceSyncRevision}

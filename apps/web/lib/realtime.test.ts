@@ -66,4 +66,66 @@ describe("createAudienceRealtimeReceipt", () => {
 
     expect(types).toEqual(["chat.message.created", "audience.summary.updated"]);
   });
+
+  it("passes a newer aggregate payload even when its envelope arrives out of order", () => {
+    const received: Array<{ gap: boolean; type: string }> = [];
+    const receive = createAudienceRealtimeReceipt((gap, envelope) =>
+      received.push({ gap, type: envelope.type }),
+    );
+    const base = {
+      sessionId: "8dce12bc-efb8-4b9c-9a60-2cf8e846fc33",
+      schemaVersion: 1 as const,
+      serverTime: new Date().toISOString(),
+    };
+
+    receive({
+      ...base,
+      eventId: "4aa2080b-9b3d-466b-9449-b73953874bf6",
+      audienceSeq: 10,
+      type: "chat.message.created",
+      payload: {},
+    });
+    receive({
+      ...base,
+      eventId: "62b1ac87-dd67-442e-b449-84fb8b070015",
+      audienceSeq: 9,
+      type: "audience.summary.updated",
+      payload: { summary: { audienceSeq: 11 } },
+    });
+
+    expect(received).toEqual([
+      { gap: false, type: "chat.message.created" },
+      { gap: false, type: "audience.summary.updated" },
+    ]);
+  });
+
+  it("passes distinct chat projections that publish in reverse sequence order", () => {
+    const received: Array<{ audienceSeq: number; gap: boolean }> = [];
+    const receive = createAudienceRealtimeReceipt((gap, envelope) =>
+      received.push({ audienceSeq: envelope.audienceSeq, gap }),
+    );
+    const base = {
+      sessionId: "8dce12bc-efb8-4b9c-9a60-2cf8e846fc33",
+      schemaVersion: 1 as const,
+      serverTime: new Date().toISOString(),
+      type: "chat.message.created",
+      payload: {},
+    };
+
+    receive({
+      ...base,
+      eventId: "4aa2080b-9b3d-466b-9449-b73953874bf6",
+      audienceSeq: 11,
+    });
+    receive({
+      ...base,
+      eventId: "62b1ac87-dd67-442e-b449-84fb8b070015",
+      audienceSeq: 10,
+    });
+
+    expect(received).toEqual([
+      { audienceSeq: 11, gap: false },
+      { audienceSeq: 10, gap: true },
+    ]);
+  });
 });

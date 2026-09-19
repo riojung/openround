@@ -32,6 +32,7 @@ jobs:
           ASSERT_PERFORMANCE: "true"
           CLIENTS: "250"
           JOIN_BATCH_SIZE: "25"
+          LOAD_OUTPUT: capacity-single-session.json
           RESTART_SERVER: "true"
       - name: 1,000-client multi-session gate
         run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml run --rm load
@@ -42,7 +43,9 @@ jobs:
         if: failure()
         with:
           name: capacity-failure
-          path: capacity-failure.log
+          path: |
+            capacity-failure.log
+            capacity-single-session.json
           if-no-files-found: ignore
       - name: Stop disposable stack
         if: always()
