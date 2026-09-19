@@ -517,7 +517,12 @@ export async function attachRealtime(
     socket.on("disconnect", () => {
       metrics.socketDisconnected();
       const participantToken = socket.data.participantToken as string | undefined;
-      if (participantToken && !closing) void sessions.disconnect(participantToken);
+      if (participantToken && !closing) {
+        // Presence cleanup is best effort once the transport is already gone. A
+        // transient coordination failure must not become an unhandled rejection
+        // that terminates the realtime process.
+        void sessions.disconnect(participantToken).catch(() => undefined);
+      }
     });
   });
 

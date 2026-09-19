@@ -43,12 +43,17 @@ jobs:
       - name: Capture Compose logs
         if: failure()
         run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml logs --no-color > capacity-failure.log
+      - name: Capture server metrics
+        if: failure()
+        continue-on-error: true
+        run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml exec -T server wget -qO- http://127.0.0.1:4000/metrics > capacity-metrics.prom
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: capacity-failure
           path: |
             capacity-failure.log
+            capacity-metrics.prom
             capacity-single-session.json
           if-no-files-found: ignore
       - name: Stop disposable stack

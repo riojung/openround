@@ -1,4 +1,5 @@
 import { randomInt, randomUUID } from "node:crypto";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { SpanStatusCode, trace, type Attributes } from "@opentelemetry/api";
 import {
   canonicalizeResponse,
@@ -113,9 +114,11 @@ interface JoinBatch {
   timer: NodeJS.Timeout;
 }
 
-const answerBatchWindowMs = 10;
+// Keep the window below a perceptible interaction delay while allowing a burst
+// to reach one durable write even when the host is CPU-constrained.
+const answerBatchWindowMs = 50;
 const maximumAnswerBatchSize = 250;
-const joinBatchWindowMs = 10;
+const joinBatchWindowMs = 50;
 const maximumJoinBatchSize = 250;
 
 export class SessionError extends Error {
@@ -1003,7 +1006,9 @@ export class SessionService {
           }),
         });
       }
-      await Promise.resolve();
+      // Let Socket.IO flush the durable join acknowledgements before cache and
+      // audience fanout work starts on the same event-loop turn.
+      await yieldToEventLoop();
       const cacheUpdate = Promise.allSettled([
         this.cache.set(session.state, this.liveCacheTtlSeconds(session)),
         this.cache.appendEvents(
@@ -1285,7 +1290,9 @@ export class SessionService {
             occurredAt: new Date(answer.acceptedAtMs).toISOString(),
           })),
         ]);
-        await Promise.resolve();
+        // The answer is durable at this point. Yield to I/O so response receipts
+        // are not delayed by state serialization and a 250-socket publication.
+        await yieldToEventLoop();
         const cacheUpdate = Promise.allSettled([
           this.cache.set(session.state, this.liveCacheTtlSeconds(session)),
           this.cache.appendEvents(

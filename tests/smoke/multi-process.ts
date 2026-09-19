@@ -582,6 +582,7 @@ void main()
     }
     if (primaryStopped) {
       await setPrimaryRunning(true).catch((error: unknown) => {
+        smokeFailed = true;
         process.stderr.write(`Primary server restore failed: ${String(error)}\n`);
         process.exitCode = 1;
       });
