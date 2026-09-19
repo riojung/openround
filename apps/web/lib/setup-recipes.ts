@@ -61,3 +61,13 @@ export function resolveSetupRecipe(
 export function setupRecipeStorageKey(workspaceId: string) {
   return `openround:setup:v1:${workspaceId}`;
 }
+
+export function describeDiscussionRecipe(options: {
+  audiencePulseAvailable: boolean;
+  roomChatAvailable: boolean;
+}) {
+  const tools = options.audiencePulseAvailable ? "Pulse and Q&A" : "Q&A";
+  return `Private results with ${tools} available${
+    options.roomChatAvailable ? "; chat starts closed" : ""
+  }.`;
+}

@@ -12,6 +12,7 @@ import {
 import { ExperiencePreferences } from "../../../components/experience-preferences";
 import { Countdown } from "../../../components/countdown";
 import { JoinAccess } from "../../../components/join-access";
+import { ParticipantIdentity } from "../../../components/participant-avatar";
 import { QuestionMedia } from "../../../components/question-media";
 import { ResponseDistributionView } from "../../../components/response-distribution";
 import {
@@ -179,7 +180,12 @@ export default function PresenterPage() {
             <h2>{snapshot.participants.length} ready</h2>
             <ul className="roster" style={{ justifyContent: "center" }}>
               {snapshot.participants.map((participant) => (
-                <li key={participant.id}>{participant.nickname}</li>
+                <li key={participant.id}>
+                  <ParticipantIdentity
+                    avatarId={participant.avatarId}
+                    nickname={participant.nickname}
+                  />
+                </li>
               ))}
             </ul>
           </section>
@@ -257,7 +263,11 @@ export default function PresenterPage() {
               <ol style={{ fontSize: "1.4rem", lineHeight: 1.8 }}>
                 {snapshot.participants.slice(0, 5).map((participant) => (
                   <li key={participant.id}>
-                    {participant.nickname} · {participant.score}
+                    <ParticipantIdentity
+                      avatarId={participant.avatarId}
+                      nickname={participant.nickname}
+                    />{" "}
+                    · {participant.score}
                   </li>
                 ))}
               </ol>

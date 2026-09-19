@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { QuizDraft, Report } from "@openround/contracts";
 import { MemoryRepository, type ParticipantRecord, type StoredSession } from "@openround/db";
-import { addParticipant, applyHostCommand, createGameState } from "@openround/game-engine";
+import {
+  addParticipant,
+  applyHostCommand,
+  avatarIdForSeed,
+  createGameState,
+} from "@openround/game-engine";
 import { MemorySessionCache } from "../src/cache.js";
 import { ConfigSchema } from "../src/config.js";
 import { MetricsService } from "../src/metrics.js";
@@ -254,6 +259,70 @@ describe("session service ordering", () => {
     expect(new Set(joined.map(({ participantId }) => participantId)).size).toBe(20);
     expect(sessionLookup).toHaveBeenCalledTimes(1);
     expect(policyLookup).toHaveBeenCalledTimes(1);
+    service.close();
+  });
+
+  it("persists selected and deterministic fallback avatars across reconnect", async () => {
+    const repository = new MemoryRepository();
+    const service = new SessionService(
+      repository,
+      new MemorySessionCache(),
+      config,
+      new MetricsService(),
+    );
+    const { quiz } = quizFixture();
+    const hostToken = "avatar-host-token-long-enough";
+    const state = createGameState({
+      sessionId: randomUUID(),
+      code: "1122334",
+      quiz,
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    await repository.createSession(storedSession({ state, hostToken }));
+
+    const selected = await service.join({
+      code: state.code,
+      nickname: "Selected avatar",
+      avatarId: "owl",
+    });
+    expect(
+      selected.snapshot.participants.find(({ id }) => id === selected.participantId),
+    ).toMatchObject({ avatarId: "owl" });
+
+    const fallback = await service.join({ code: state.code, nickname: "Fallback avatar" });
+    const expectedFallback = avatarIdForSeed(fallback.participantId);
+    expect(
+      fallback.snapshot.participants.find(({ id }) => id === fallback.participantId),
+    ).toMatchObject({ avatarId: expectedFallback });
+
+    const resumed = await service.join({
+      code: state.code,
+      resumeToken: fallback.participantToken,
+      avatarId: "fox",
+    });
+    expect(
+      resumed.snapshot.participants.find(({ id }) => id === fallback.participantId),
+    ).toMatchObject({ avatarId: expectedFallback });
+    expect(
+      (
+        await service.snapshot({
+          sessionId: state.sessionId,
+          hostToken,
+          role: "host",
+        })
+      ).participants,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: selected.participantId, avatarId: "owl" }),
+        expect.objectContaining({ id: fallback.participantId, avatarId: expectedFallback }),
+      ]),
+    );
     service.close();
   });
 

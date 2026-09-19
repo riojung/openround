@@ -6,7 +6,7 @@ import {
   type ReportV3,
 } from "@openround/contracts";
 import type { SessionEvidence } from "@openround/db";
-import { responseDistributionFor, type GameState } from "@openround/game-engine";
+import { avatarIdForSeed, responseDistributionFor, type GameState } from "@openround/game-engine";
 
 const evidenceNote =
   "Recovery is evidence from this session and should not be interpreted as proof of long-term learning.";
@@ -355,6 +355,7 @@ export function generateReport(
     participants: participants.map((participant) => ({
       participantId: participant.id,
       nickname: participant.nickname,
+      avatarId: participant.avatarId ?? avatarIdForSeed(participant.id),
       score: participant.score,
       correctCount: participant.correctCount,
       answerCount: answers.filter((answer) => answer.participantId === participant.id).length,

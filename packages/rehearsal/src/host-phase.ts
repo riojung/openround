@@ -14,6 +14,17 @@ export interface HostPhaseView {
   suggestionKind: "action" | "guidance" | "none";
 }
 
+export interface HostCommandController<TResult> {
+  view(): HostPhaseView;
+  execute(command: HostPhaseCommand): TResult;
+}
+
+export class IllegalHostPhaseCommandError extends Error {
+  constructor() {
+    super("That host action is not legal in the current phase.");
+  }
+}
+
 function continueCommand(snapshot: SessionSnapshot): HostPhaseCommand {
   return {
     action: "next",
@@ -193,4 +204,28 @@ export function isLegalHostPhaseCommand(view: HostPhaseView, command: HostPhaseC
     (view.primary && sameHostPhaseCommand(view.primary, command)) ||
     view.secondary.some((candidate) => sameHostPhaseCommand(candidate, command)),
   );
+}
+
+/**
+ * Keeps phase derivation and command legality independent from the command transport.
+ * Live sessions provide a Socket.IO executor; Recovery Rehearsal provides an in-memory executor.
+ */
+export function createHostCommandController<TResult>(options: {
+  getSnapshot: () => SessionSnapshot;
+  execute: (command: HostPhaseCommand, snapshot: SessionSnapshot) => TResult;
+  onIllegal?: (command: HostPhaseCommand, snapshot: SessionSnapshot) => never;
+}): HostCommandController<TResult> {
+  return {
+    view() {
+      return getHostPhaseView(options.getSnapshot());
+    },
+    execute(command) {
+      const snapshot = options.getSnapshot();
+      if (!isLegalHostPhaseCommand(getHostPhaseView(snapshot), command)) {
+        if (options.onIllegal) return options.onIllegal(command, snapshot);
+        throw new IllegalHostPhaseCommandError();
+      }
+      return options.execute(command, snapshot);
+    },
+  };
 }

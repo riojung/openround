@@ -23,6 +23,7 @@ import {
   type SessionStaffCredentialRecord,
   type StoredSession,
 } from "@openround/db";
+import { avatarIdForSeed } from "@openround/game-engine";
 import { cleanPlainText, hashToken, safeHashEqual } from "./security.js";
 import type { SessionService } from "./session-service.js";
 import type { MetricsService } from "./metrics.js";
@@ -936,6 +937,7 @@ export class InteractionService {
       return {
         participantId: participant.id,
         nickname: participant.nickname,
+        avatarId: participant.avatarId ?? avatarIdForSeed(participant.id),
         connected: participant.connected,
         answered: currentAnswers.has(participant.id),
         currentSignal: signal?.signal ?? null,

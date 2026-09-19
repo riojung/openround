@@ -687,9 +687,23 @@ export const SessionPhaseSchema = z.enum([
 ]);
 export type SessionPhase = z.infer<typeof SessionPhaseSchema>;
 
+export const AVATAR_IDS = [
+  "comet",
+  "fox",
+  "owl",
+  "otter",
+  "panda",
+  "robot",
+  "rocket",
+  "star",
+] as const;
+export const AvatarIdSchema = z.enum(AVATAR_IDS);
+export type AvatarId = z.infer<typeof AvatarIdSchema>;
+
 export const ParticipantViewSchema = z.object({
   id: z.string().uuid(),
   nickname: z.string(),
+  avatarId: AvatarIdSchema.optional(),
   score: z.number().int(),
   connected: z.boolean(),
   rank: z.number().int().positive().nullable(),
@@ -931,6 +945,7 @@ export const JoinRequestSchema = z.object({
     .trim()
     .regex(/^\d{7}$/),
   nickname: z.string().trim().min(1).max(32).optional(),
+  avatarId: AvatarIdSchema.optional(),
   resumeToken: z.string().min(20).max(1_000).optional(),
 });
 export type JoinRequest = z.infer<typeof JoinRequestSchema>;
@@ -1411,6 +1426,7 @@ export const SignalCountsSchema = z.object({
 export const ParticipantInteractionViewSchema = z.object({
   participantId: z.string().uuid(),
   nickname: z.string(),
+  avatarId: AvatarIdSchema.optional(),
   connected: z.boolean(),
   answered: z.boolean(),
   currentSignal: AudienceSignalSchema.nullable(),
@@ -1885,6 +1901,7 @@ const ReportQuestionSchema = z.object({
 const ReportParticipantSchema = z.object({
   participantId: z.string().uuid(),
   nickname: z.string(),
+  avatarId: AvatarIdSchema.optional(),
   score: z.number().int(),
   correctCount: z.number().int().nonnegative(),
   answerCount: z.number().int().nonnegative(),

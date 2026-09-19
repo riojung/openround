@@ -16,6 +16,7 @@ import { Brand } from "../../../../components/brand";
 import { ExperiencePicker } from "../../../../components/experience-picker";
 import { apiFetch, humanError } from "../../../../lib/api";
 import {
+  describeDiscussionRecipe,
   resolveSetupRecipe,
   setupRecipeStorageKey,
   type SetupRecipe,
@@ -80,6 +81,10 @@ export default function HostSetupPage() {
   const [experiencePreset, setExperiencePreset] = useState<ExperiencePresetId>("focus");
   const [presenterSoundEnabled, setPresenterSoundEnabled] = useState(false);
   const [roundExperiencesAvailable, setRoundExperiencesAvailable] = useState(false);
+  const [audienceTools, setAudienceTools] = useState({
+    audiencePulseAvailable: false,
+    roomChatAvailable: false,
+  });
   const [uxBeta, setUxBeta] = useState(false);
   const [creator, setCreator] = useState<Creator | null>(null);
   const [recipe, setRecipe] = useState<SetupRecipe | "custom">("recovery");
@@ -111,6 +116,10 @@ export default function HostSetupPage() {
         setEntitlements(account.entitlements);
         setCreator(account.creator);
         setRoundExperiencesAvailable(account.productFeatures.roundExperiences);
+        setAudienceTools({
+          audiencePulseAvailable: account.productFeatures.audiencePulse,
+          roomChatAvailable: account.productFeatures.roomChat,
+        });
         setUxBeta(account.productFeatures.uxBeta);
         const defaults = defaultsFor(account.creator, account.entitlements);
         if (!account.productFeatures.uxBeta) {
@@ -320,9 +329,7 @@ export default function HostSetupPage() {
                     type="button"
                   >
                     <strong>Open discussion</strong>
-                    <span>
-                      Private results with Pulse and Q&amp;A available; chat starts closed.
-                    </span>
+                    <span>{describeDiscussionRecipe(audienceTools)}</span>
                   </button>
                 </div>
               </section>

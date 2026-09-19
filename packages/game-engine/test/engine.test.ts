@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { QuizDraft } from "@openround/contracts";
+import { AVATAR_IDS, type QuizDraft } from "@openround/contracts";
 import { describe, expect, it } from "vitest";
 import {
   acceptAnswer,
   addParticipant,
   applyHostCommand,
+  avatarIdForSeed,
   calculateScore,
   createGameState,
   EngineError,
@@ -89,6 +90,42 @@ function participant(id = randomUUID()) {
 }
 
 describe("game engine", () => {
+  it("normalizes deterministic fallback avatars and preserves explicit selections", () => {
+    const { state } = fixture();
+    const fallbackParticipant = participant("00000000-0000-4000-8000-000000000001");
+    const joinedWithFallback = addParticipant(state, fallbackParticipant);
+    const fallbackAvatar = avatarIdForSeed(fallbackParticipant.id);
+
+    expect(AVATAR_IDS).toContain(fallbackAvatar);
+    expect(joinedWithFallback.state.participants[fallbackParticipant.id]?.avatarId).toBe(
+      fallbackAvatar,
+    );
+    expect(leaderboard(joinedWithFallback.state)[0]?.avatarId).toBe(fallbackAvatar);
+
+    const upgradedCurrentState = upgradeGameState({
+      ...state,
+      participants: { [fallbackParticipant.id]: fallbackParticipant },
+    });
+    expect(upgradedCurrentState.stateSchemaVersion).toBe(4);
+    expect(upgradedCurrentState.participants[fallbackParticipant.id]?.avatarId).toBe(
+      fallbackAvatar,
+    );
+
+    const explicitParticipant = {
+      ...participant(),
+      nickname: "Fox learner",
+      avatarId: "fox" as const,
+    };
+    const joinedExplicitly = addParticipant(joinedWithFallback.state, explicitParticipant);
+    expect(joinedExplicitly.state.participants[explicitParticipant.id]?.avatarId).toBe("fox");
+    expect(
+      snapshotForRole(joinedExplicitly.state, {
+        role: "participant",
+        participantId: explicitParticipant.id,
+      }).participants.find(({ id }) => id === explicitParticipant.id),
+    ).toMatchObject({ avatarId: "fox" });
+  });
+
   it("uses the independently specified scoring formula at its boundaries", () => {
     expect(
       calculateScore({
@@ -621,6 +658,7 @@ describe("game engine", () => {
     const withViewer = addParticipant(privateState, {
       id: viewerId,
       nickname: "Viewer",
+      avatarId: "fox",
       score: 800,
       correctCount: 1,
       acceptedResponseMs: 2_000,
@@ -630,6 +668,7 @@ describe("game engine", () => {
     const withOther = addParticipant(withViewer.state, {
       id: otherId,
       nickname: "Secret name",
+      avatarId: "owl",
       score: 1_000,
       correctCount: 1,
       acceptedResponseMs: 1_000,
@@ -643,6 +682,7 @@ describe("game engine", () => {
     });
     expect(snapshot.participants.find(({ id }) => id === viewerId)).toMatchObject({
       nickname: "Viewer",
+      avatarId: "fox",
       score: 800,
       rank: 2,
     });
@@ -651,6 +691,12 @@ describe("game engine", () => {
       score: 0,
       rank: null,
     });
+    expect(snapshot.participants.find(({ id }) => id === otherId)?.avatarId).toBeUndefined();
+    expect(
+      snapshotForRole(withOther.state, { role: "host" }).participants.find(
+        ({ id }) => id === otherId,
+      ),
+    ).toMatchObject({ nickname: "Secret name", avatarId: "owl" });
   });
 
   it("maintains monotonic version and sequence invariants across arbitrary command sequences", () => {
@@ -1006,12 +1052,14 @@ describe("game engine", () => {
   it("upgrades a persisted P0 state without losing accepted answers", () => {
     const { state, correctId } = fixture();
     const answerId = randomUUID();
+    const participantId = randomUUID();
     const legacy = structuredClone(state) as unknown as Record<string, unknown>;
     delete legacy.stateSchemaVersion;
     delete legacy.roundKind;
     delete legacy.sourceRoundId;
     delete legacy.intervention;
     delete legacy.interventionReturnPhase;
+    legacy.participants = { [participantId]: participant(participantId) };
     legacy.answers = {
       [answerId]: {
         answerId,
@@ -1037,5 +1085,6 @@ describe("game engine", () => {
       response: { kind: "choice", choiceIds: [correctId] },
       confidence: null,
     });
+    expect(upgraded.participants[participantId]?.avatarId).toBe(avatarIdForSeed(participantId));
   });
 });

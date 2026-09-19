@@ -24,6 +24,7 @@ import {
   RecoveryCompass,
 } from "../../../components/host-command-center";
 import { JoinAccess } from "../../../components/join-access";
+import { ParticipantIdentity } from "../../../components/participant-avatar";
 import { QuestionMedia } from "../../../components/question-media";
 import { ResponseDistributionView } from "../../../components/response-distribution";
 import { QnaPanel } from "../../../components/qna-panel";
@@ -45,7 +46,7 @@ import {
 } from "../../../lib/realtime-mutation-recovery";
 import { experienceThemeStyle } from "../../../lib/theme";
 import { clientUuid } from "../../../lib/uuid";
-import { getHostPhaseView, type HostPhaseCommand } from "../../../lib/host-phase";
+import { createHostCommandController, type HostPhaseCommand } from "../../../lib/host-phase";
 import { getLegacyPhaseActions, getLegacyRecoveryActions } from "../../../lib/legacy-host-phase";
 
 type Ack<T> = { data?: T; error?: { code: string; message: string } };
@@ -553,14 +554,20 @@ export default function HostPage() {
     }
   }
 
+  const phaseController = snapshot
+    ? createHostCommandController({
+        getSnapshot: () => snapshot,
+        execute: (item) =>
+          command(item.action, {
+            ...(item.interventionType ? { interventionType: item.interventionType } : {}),
+            ...(item.recheckMode ? { recheckMode: item.recheckMode } : {}),
+          }),
+      })
+    : null;
+  const phaseView = phaseController?.view() ?? null;
   function runPhaseCommand(item: HostPhaseCommand) {
-    command(item.action, {
-      ...(item.interventionType ? { interventionType: item.interventionType } : {}),
-      ...(item.recheckMode ? { recheckMode: item.recheckMode } : {}),
-    });
+    phaseController?.execute(item);
   }
-
-  const phaseView = snapshot ? getHostPhaseView(snapshot) : null;
   const uxBeta = snapshot?.uxBeta === true;
   const legacyPhaseActions = snapshot ? getLegacyPhaseActions(snapshot) : [];
   const legacyRecoveryActions = snapshot ? getLegacyRecoveryActions(snapshot) : [];
@@ -675,7 +682,10 @@ export default function HostPage() {
                       {snapshot.participants.map((participant) => (
                         <li key={participant.id}>
                           <span>
-                            {participant.nickname}
+                            <ParticipantIdentity
+                              avatarId={participant.avatarId}
+                              nickname={participant.nickname}
+                            />
                             {participant.connected ? "" : " · offline"}
                           </span>
                           <button
@@ -840,7 +850,13 @@ export default function HostPage() {
                   <ol style={{ paddingLeft: 24, lineHeight: 1.8 }}>
                     {snapshot.participants.slice(0, 5).map((participant) => (
                       <li key={participant.id}>
-                        <strong>{participant.nickname}</strong> · {participant.score}
+                        <strong>
+                          <ParticipantIdentity
+                            avatarId={participant.avatarId}
+                            nickname={participant.nickname}
+                          />
+                        </strong>{" "}
+                        · {participant.score}
                       </li>
                     ))}
                   </ol>

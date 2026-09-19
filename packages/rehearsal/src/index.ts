@@ -21,15 +21,19 @@ import {
 } from "@openround/game-engine";
 import { deriveCheckpointInsight } from "@openround/insights";
 import {
+  createHostCommandController,
   getHostPhaseView,
   isLegalHostPhaseCommand,
   sameHostPhaseCommand,
   type HostPhaseCommand,
 } from "./host-phase";
 export {
+  createHostCommandController,
   getHostPhaseView,
+  IllegalHostPhaseCommandError,
   isLegalHostPhaseCommand,
   sameHostPhaseCommand,
+  type HostCommandController,
   type HostPhaseCommand,
   type HostPhaseView,
 } from "./host-phase";
@@ -804,14 +808,25 @@ export function createRecoveryRehearsalController(
     },
     apply(stepIndex, command) {
       const safeIndex = clamp(stepIndex);
-      const expected = plan.steps[safeIndex]?.command;
-      if (!expected || !sameHostPhaseCommand(expected, command)) {
-        throw new RecoveryRehearsalError(
-          "ILLEGAL_REHEARSAL_ACTION",
-          "That action is not part of this guided rehearsal step.",
-        );
-      }
-      return clamp(safeIndex + 1);
+      const step = plan.steps[safeIndex]!;
+      return createHostCommandController({
+        getSnapshot: () => step.snapshot,
+        execute: (candidate) => {
+          if (!step.command || !sameHostPhaseCommand(step.command, candidate)) {
+            throw new RecoveryRehearsalError(
+              "ILLEGAL_REHEARSAL_ACTION",
+              "That action is not part of this guided rehearsal step.",
+            );
+          }
+          return clamp(safeIndex + 1);
+        },
+        onIllegal: () => {
+          throw new RecoveryRehearsalError(
+            "ILLEGAL_REHEARSAL_ACTION",
+            "That action is not part of this guided rehearsal step.",
+          );
+        },
+      }).execute(command);
     },
   };
 }

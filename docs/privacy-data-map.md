@@ -9,6 +9,7 @@ This engineering inventory is not a legal opinion. Confirm purposes, legal basis
 | Checkpoint content/versions | Authoring and frozen live delivery                                            |                                          Account life | Workspace home region                                                       | Workspace/account deletion                              |
 | Image objects and metadata  | Instructional question media                                                  |                         Account life; quarantine 24 h | Workspace home region                                                       | Account deletion or quarantine cleanup                  |
 | Participant nickname        | Room identification                                                           |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
+| Participant avatar ID       | Session-scoped visual identification from a fixed allowlist                   |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
 | Answers, scores, timestamps | Correctness, recovery, reports                                                |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
 | Confidence/interventions    | Recovery diagnosis and evidence                                               |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
 | Pulse signals/events        | In-room pacing/help context                                                   |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
@@ -45,6 +46,16 @@ cohosts can see the session alias attached to a current signal for live facilita
 participant views receive signal totals only after five unique signalers and never receive the
 mapping. Logs and metric labels must not contain message bodies, aliases, or signal-to-participant
 mappings.
+
+Avatar IDs are cosmetic identifiers from the fixed `comet`, `fox`, `owl`, `otter`, `panda`,
+`robot`, `rocket`, and `star` allowlist; the join path accepts no uploaded image or free-form avatar
+metadata. When an older client omits the field, the server derives a deterministic allowlisted ID
+from the generated session participant UUID. The resolved ID is retained in the canonical live
+session snapshot and authorized report participant detail for the same session/report retention
+window. It is not copied into a normalized participant avatar column because live state is the
+canonical source for reconnect, audience, and reporting, and no independent avatar query exists.
+Host, presenter, and moderator projections may receive session avatars. A participant projection
+in private-result mode retains only that participant's own avatar and suppresses everyone else's.
 
 Live session access and report retention are separate clocks. Host and participant credentials
 stop working when the 24-hour live window ends; the session tree remains inaccessible to guests

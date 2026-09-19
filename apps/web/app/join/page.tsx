@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
-import type { JoinPreflightResponse, JoinResponse } from "@openround/contracts";
+import type { AvatarId, JoinPreflightResponse, JoinResponse } from "@openround/contracts";
 import { Brand } from "../../components/brand";
+import { AvatarPicker } from "../../components/participant-avatar";
 import { apiFetch, humanError } from "../../lib/api";
 import {
   beginJoinPreflight,
@@ -22,6 +23,7 @@ function JoinForm() {
     (searchParams.get("code") ?? "").replace(/\D/g, "").slice(0, 7),
   );
   const [nickname, setNickname] = useState("");
+  const [avatarId, setAvatarId] = useState<AvatarId>("comet");
   const [preflight, setPreflight] = useState(idleJoinPreflightState);
   const preflightRequestId = useRef(0);
   const [busy, setBusy] = useState(false);
@@ -77,6 +79,7 @@ function JoinForm() {
         method: "POST",
         body: JSON.stringify({
           code,
+          avatarId,
           ...(requestedNickname ? { nickname: requestedNickname } : {}),
         }),
       });
@@ -132,6 +135,7 @@ function JoinForm() {
             A privacy-friendly nickname will be assigned when you join.
           </p>
         )}
+        <AvatarPicker disabled={busy} onChange={setAvatarId} value={avatarId} />
         {preflight.code === code && preflight.status === "checking" ? (
           <p className="muted" role="status">
             Checking room name settings…

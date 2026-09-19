@@ -109,11 +109,14 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   const participantContext = await browser.newContext();
   const participant = await participantContext.newPage();
   await participant.goto(`/join?code=${code}`);
+  expect((await new AxeBuilder({ page: participant }).analyze()).violations).toEqual([]);
   await participant.getByLabel("Nickname").fill("Learner");
   await participant.getByRole("button", { name: "Join round" }).click();
   await expect(participant).toHaveURL(/\/play\//);
   await expect(participant.locator(".live-shell")).toHaveAttribute("data-pattern", "grid");
+  await expect(participant.getByRole("img", { name: "Comet avatar" })).toBeVisible();
   await expect(creator.getByText(/Bright|Calm|Curious|Kind|Quick|Sunny/)).toBeVisible();
+  await expect(creator.getByRole("img", { name: "Comet avatar" })).toBeVisible();
 
   await participant.getByRole("button", { name: "Show an example" }).click();
   await expect(creator.locator(".participant-pulse-table tbody tr").first()).toContainText(
@@ -141,6 +144,7 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await creator.getByRole("button", { name: "Presenter view" }).click();
   const pulsePresenter = await pulsePresenterPagePromise;
   await expect(pulsePresenter.locator(".live-shell")).toHaveAttribute("data-pattern", "grid");
+  await expect(pulsePresenter.getByRole("img", { name: "Comet avatar" })).toBeVisible();
   await expect(pulsePresenter.getByText("Could we see a practical example?")).toBeVisible();
   await closePresenter(pulsePresenter);
 

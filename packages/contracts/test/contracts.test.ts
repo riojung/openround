@@ -2,11 +2,14 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   AnswerSubmitSchema,
+  AVATAR_IDS,
+  AvatarIdSchema,
   BrandThemeSchema,
   canonicalizeResponse,
   EntitlementsSchema,
   FollowupSummarySchema,
   HostCommandSchema,
+  JoinRequestSchema,
   normalizeDecimalString,
   OperationalFeaturesUpdateSchema,
   ProductEventBatchSchema,
@@ -22,6 +25,33 @@ import {
 } from "../src/index.js";
 
 describe("public contracts", () => {
+  it("keeps avatar selection allowlisted and backward compatible", () => {
+    expect(AVATAR_IDS).toEqual([
+      "comet",
+      "fox",
+      "owl",
+      "otter",
+      "panda",
+      "robot",
+      "rocket",
+      "star",
+    ]);
+    expect(AvatarIdSchema.parse("otter")).toBe("otter");
+    expect(
+      JoinRequestSchema.parse({ code: "1234567", nickname: "Legacy learner" }),
+    ).not.toHaveProperty("avatarId");
+    expect(
+      JoinRequestSchema.parse({ code: "1234567", nickname: "Learner", avatarId: "fox" }),
+    ).toMatchObject({ avatarId: "fox" });
+    expect(
+      JoinRequestSchema.safeParse({
+        code: "1234567",
+        nickname: "Learner",
+        avatarId: "dragon",
+      }).success,
+    ).toBe(false);
+  });
+
   it("allows a development inbox hint without requiring it in hosted deployments", () => {
     const base = {
       publicWebUrl: "http://localhost:8080",
