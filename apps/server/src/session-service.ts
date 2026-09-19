@@ -843,7 +843,38 @@ export class SessionService {
       };
     }
 
-    const stored = await this.repository.getSessionByCode(input.code);
+    return this.queueJoin(input.code, input);
+  }
+
+  private queueJoin(code: string, input: JoinRequest) {
+    return new Promise<JoinResponse>((resolve, reject) => {
+      let batch = this.joinBatches.get(code);
+      if (!batch) {
+        const items: PendingJoin[] = [];
+        const timer = setTimeout(() => this.dispatchJoinBatch(code, items), joinBatchWindowMs);
+        batch = { items, timer };
+        this.joinBatches.set(code, batch);
+      }
+      batch.items.push({ input, resolve, reject });
+      if (batch.items.length >= maximumJoinBatchSize) {
+        clearTimeout(batch.timer);
+        this.dispatchJoinBatch(code, batch.items);
+      }
+    });
+  }
+
+  private dispatchJoinBatch(code: string, items: PendingJoin[]) {
+    const current = this.joinBatches.get(code);
+    if (!current || current.items !== items) return;
+    clearTimeout(current.timer);
+    this.joinBatches.delete(code);
+    void this.processJoinBatch(code, items).catch((error: unknown) => {
+      for (const item of items) item.reject(error);
+    });
+  }
+
+  private async processJoinBatch(code: string, items: PendingJoin[]) {
+    const stored = await this.repository.getSessionByCode(code);
     if (!stored) throw new SessionError("INVALID_CODE", "Check the code and try again");
     const institutionPolicy = await this.repository.getInstitutionPolicy(stored.workspaceId);
     if (institutionPolicy.identityRequirement === "institution") {
@@ -852,39 +883,9 @@ export class SessionService {
         "This workspace requires institution identity; anonymous code entry is disabled",
       );
     }
-    return this.queueJoin(stored.id, input);
-  }
 
-  private queueJoin(sessionId: string, input: JoinRequest) {
-    return new Promise<JoinResponse>((resolve, reject) => {
-      let batch = this.joinBatches.get(sessionId);
-      if (!batch) {
-        const items: PendingJoin[] = [];
-        const timer = setTimeout(() => this.dispatchJoinBatch(sessionId, items), joinBatchWindowMs);
-        batch = { items, timer };
-        this.joinBatches.set(sessionId, batch);
-      }
-      batch.items.push({ input, resolve, reject });
-      if (batch.items.length >= maximumJoinBatchSize) {
-        clearTimeout(batch.timer);
-        this.dispatchJoinBatch(sessionId, batch.items);
-      }
-    });
-  }
-
-  private dispatchJoinBatch(sessionId: string, items: PendingJoin[]) {
-    const current = this.joinBatches.get(sessionId);
-    if (!current || current.items !== items) return;
-    clearTimeout(current.timer);
-    this.joinBatches.delete(sessionId);
-    void this.processJoinBatch(sessionId, items).catch((error: unknown) => {
-      for (const item of items) item.reject(error);
-    });
-  }
-
-  private async processJoinBatch(sessionId: string, items: PendingJoin[]) {
-    await this.mutate(sessionId, "join", async () => {
-      const session = await this.loadSessionForMutation(sessionId);
+    await this.mutate(stored.id, "join", async () => {
+      const session = await this.loadSessionForMutation(stored.id);
       if (!session) throw new SessionError("INVALID_CODE", "Session is no longer available");
       const priorState = session.state;
       if (

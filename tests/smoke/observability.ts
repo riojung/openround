@@ -5,6 +5,13 @@ const grafanaUrl = (process.env.GRAFANA_URL ?? "http://127.0.0.1:3001").replace(
 const grafanaUser = process.env.OPENROUND_GRAFANA_USER ?? "admin";
 const grafanaPassword = process.env.OPENROUND_GRAFANA_PASSWORD ?? "openround-local-change-me";
 
+function materializeGrafanaBuiltIns(expression: string) {
+  return expression
+    .replaceAll("$__rate_interval", "1m")
+    .replaceAll("$__interval", "1m")
+    .replaceAll("$__range", "1h");
+}
+
 async function waitFor(url: string, init: RequestInit = {}, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   let lastStatus = 0;
@@ -102,10 +109,15 @@ async function main() {
   );
   assert.ok(dashboardQueries.length >= 10);
   for (const expression of dashboardQueries) {
+    const executableExpression = materializeGrafanaBuiltIns(expression);
     const response = await fetch(
-      `${prometheusUrl}/api/v1/query?query=${encodeURIComponent(expression)}`,
+      `${prometheusUrl}/api/v1/query?query=${encodeURIComponent(executableExpression)}`,
     );
-    assert.equal(response.status, 200, `Dashboard query failed to parse: ${expression}`);
+    assert.equal(
+      response.status,
+      200,
+      `Dashboard query failed to parse: ${expression} (materialized as ${executableExpression})`,
+    );
     assert.equal(
       ((await response.json()) as { status: string }).status,
       "success",

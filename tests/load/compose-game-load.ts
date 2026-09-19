@@ -460,13 +460,15 @@ async function main() {
   await command("reveal");
   const reportStartedAt = performance.now();
   await command("next");
-  const report = await waitForReadyReport((signal) =>
-    api<{
-      report: {
-        status: "pending" | "ready" | "failed";
-        metrics: { participantCount: number; answerCount: number; accuracyPercent: number };
-      };
-    }>(`/v1/sessions/${session.sessionId}/report`, { signal }).then(({ report }) => report),
+  const report = await waitForReadyReport(
+    (signal) =>
+      api<{
+        report: {
+          status: "pending" | "ready" | "failed";
+          metrics: { participantCount: number; answerCount: number; accuracyPercent: number };
+        };
+      }>(`/v1/sessions/${session.sessionId}/report`, { signal }).then(({ report }) => report),
+    { timeoutMs: 60_000 },
   );
   const reportMs = performance.now() - reportStartedAt;
   assert.equal(report.metrics.participantCount, clientCount);

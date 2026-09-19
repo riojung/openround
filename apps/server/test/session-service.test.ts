@@ -106,10 +106,60 @@ describe("session service ordering", () => {
       k12Enabled: false,
       updatedAt: new Date(),
     });
+    const sessionLookup = vi.spyOn(repository, "getSessionByCode");
+    const policyLookup = vi.spyOn(repository, "getInstitutionPolicy");
 
-    await expect(
-      service.join({ code: "7654321", nickname: "Anonymous learner" }),
-    ).rejects.toMatchObject({ code: "INSTITUTION_AUTH_REQUIRED" });
+    const results = await Promise.allSettled(
+      Array.from({ length: 5 }, (_, index) =>
+        service.join({ code: "7654321", nickname: `Anonymous learner ${index + 1}` }),
+      ),
+    );
+
+    expect(results).toHaveLength(5);
+    for (const result of results) {
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") {
+        expect(result.reason).toMatchObject({ code: "INSTITUTION_AUTH_REQUIRED" });
+      }
+    }
+    expect(sessionLookup).toHaveBeenCalledTimes(1);
+    expect(policyLookup).toHaveBeenCalledTimes(1);
+    expect(repository.participants.size).toBe(0);
+    service.close();
+  });
+
+  it("coalesces session and policy lookups for concurrent code joins", async () => {
+    const repository = new MemoryRepository();
+    const cache = new MemorySessionCache();
+    const service = new SessionService(repository, cache, config, new MetricsService());
+    const { quiz } = quizFixture();
+    const state = createGameState({
+      sessionId: randomUUID(),
+      code: "8765432",
+      quiz,
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    await repository.createSession(
+      storedSession({ state, hostToken: "host-token-long-enough-for-test" }),
+    );
+    const sessionLookup = vi.spyOn(repository, "getSessionByCode");
+    const policyLookup = vi.spyOn(repository, "getInstitutionPolicy");
+
+    const joined = await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        service.join({ code: "8765432", nickname: `Learner ${index + 1}` }),
+      ),
+    );
+
+    expect(new Set(joined.map(({ participantId }) => participantId)).size).toBe(20);
+    expect(sessionLookup).toHaveBeenCalledTimes(1);
+    expect(policyLookup).toHaveBeenCalledTimes(1);
     service.close();
   });
 
