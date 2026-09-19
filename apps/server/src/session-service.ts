@@ -8,6 +8,8 @@ import {
   type EventEnvelope,
   type ExperiencePresetId,
   type HostCommand,
+  type JoinPreflightRequest,
+  type JoinPreflightResponse,
   type JoinRequest,
   type JoinResponse,
   type Report,
@@ -56,6 +58,7 @@ import {
 import { createPendingReport } from "./reporting.js";
 import type { MetricsService } from "./metrics.js";
 import { entitlementsFor, retentionExpiry } from "./entitlements.js";
+import { ProductEventDispatcher, type ProductEventInput } from "./product-events.js";
 
 export interface SessionMutation {
   state: GameState;
@@ -148,6 +151,7 @@ export class SessionService {
   private readonly auxiliaryListeners = new Set<AuxiliaryListener>();
   private readonly audienceListeners = new Set<AudienceListener>();
   private readonly tracer = trace.getTracer("openround-game-service");
+  private readonly productEvents: ProductEventDispatcher;
   private closing = false;
 
   constructor(
@@ -155,12 +159,43 @@ export class SessionService {
     private readonly cache: SessionCache,
     private readonly config: AppConfig,
     private readonly metrics: MetricsService,
-  ) {}
+    productEvents?: ProductEventDispatcher,
+  ) {
+    this.productEvents = productEvents ?? new ProductEventDispatcher(repository, metrics);
+  }
 
   private uxBetaEnabled(workspaceId: string) {
     return (
       this.config.FEATURE_UX_BETA && this.config.UX_BETA_WORKSPACE_ALLOWLIST.includes(workspaceId)
     );
+  }
+
+  private recordSessionProductEvents(
+    workspaceId: string,
+    events: ProductEventInput[],
+    segment?: CreatorContext["segment"],
+  ) {
+    if (!this.uxBetaEnabled(workspaceId) || events.length === 0) return;
+    this.productEvents.enqueue({
+      workspaceId,
+      events,
+      ...(segment ? { segment } : {}),
+    });
+  }
+
+  private lifecycleProductEvents(events: EngineEvent[], occurredAt = new Date()) {
+    return events.flatMap((event): ProductEventInput[] => {
+      switch (event.type) {
+        case "question.locked":
+          return [{ name: "question_locked", occurredAt: occurredAt.toISOString() }];
+        case "checkpoint.insight":
+          return [{ name: "insight_shown", occurredAt: occurredAt.toISOString() }];
+        case "recheck.open":
+          return [{ name: "recheck_opened", occurredAt: occurredAt.toISOString() }];
+        default:
+          return [];
+      }
+    });
   }
 
   subscribe(listener: MutationListener) {
@@ -624,6 +659,10 @@ export class SessionService {
       });
       session.state = result.state;
       await this.save(session, result.events, result.state.version - 1);
+      this.recordSessionProductEvents(
+        session.workspaceId,
+        this.lifecycleProductEvents(result.events, new Date(deadlineMs)),
+      );
       await this.publish({ state: session.state, events: result.events });
     });
   }
@@ -720,6 +759,11 @@ export class SessionService {
         await this.cache.set(session.state, ttlMs / 1_000).catch(() => undefined);
         this.active.set(session.id, session);
         this.metrics.setActiveSessions(this.active.size);
+        this.recordSessionProductEvents(
+          session.workspaceId,
+          [{ name: "host_setup_completed", occurredAt: now.toISOString() }],
+          creator.segment,
+        );
         return {
           sessionId,
           code,
@@ -736,6 +780,33 @@ export class SessionService {
       }
     }
     throw new SessionError("CONFLICT", "Could not reserve a session code");
+  }
+
+  async preflightJoin(input: JoinPreflightRequest): Promise<JoinPreflightResponse> {
+    const unavailable = () =>
+      new SessionError(
+        "INVALID_CODE",
+        "This round is not accepting joins. Check the code or ask the facilitator",
+      );
+    const stored = await this.repository.getSessionByCode(input.code);
+    if (!stored || stored.expiresAt.getTime() <= Date.now()) throw unavailable();
+
+    const state = upgradeGameState(stored.state);
+    const institutionPolicy = await this.repository.getInstitutionPolicy(stored.workspaceId);
+    const participantCount = Object.values(state.participants).filter(
+      (participant) => !participant.kicked,
+    ).length;
+    if (
+      institutionPolicy.identityRequirement === "institution" ||
+      state.phase === "finished" ||
+      state.lobbyLocked ||
+      (!state.settings.allowLateJoin && state.phase !== "lobby") ||
+      participantCount >= state.settings.audienceLimit
+    ) {
+      throw unavailable();
+    }
+
+    return { nicknamePolicy: state.settings.nicknamePolicy };
   }
 
   async join(input: JoinRequest): Promise<JoinResponse> {
@@ -914,6 +985,13 @@ export class SessionService {
       for (const { participant } of accepted) {
         this.participantCredentials.set(participant.tokenHash, participant);
       }
+      this.recordSessionProductEvents(
+        session.workspaceId,
+        accepted.map(({ participant }) => ({
+          name: "participant_joined",
+          occurredAt: participant.joinedAt.toISOString(),
+        })),
+      );
       for (const { item, participant, participantToken } of accepted) {
         item.resolve({
           participantId: participant.id,
@@ -1155,6 +1233,14 @@ export class SessionService {
       }
 
       if (newAnswers.length > 0) {
+        const previouslyAnsweredParticipantIds = this.uxBetaEnabled(session.workspaceId)
+          ? await this.repository
+              .findParticipantIdsWithAnswers(session.workspaceId, session.id, [
+                ...new Set(newAnswers.map((answer) => answer.participantId)),
+              ])
+              .then((participantIds) => new Set(participantIds))
+              .catch(() => null)
+          : null;
         session.state = nextState;
         session.updatedAt = new Date();
         try {
@@ -1178,7 +1264,26 @@ export class SessionService {
         this.active.set(session.id, session);
         this.metrics.setActiveSessions(this.active.size);
         this.metrics.recordAnswerBatch(newAnswers.length);
+        const firstAnswers = previouslyAnsweredParticipantIds
+          ? [
+              ...new Map(
+                newAnswers
+                  .filter((answer) => !previouslyAnsweredParticipantIds.has(answer.participantId))
+                  .map((answer) => [answer.participantId, answer]),
+              ).values(),
+            ]
+          : [];
         for (const { item, acknowledgement } of outcomes) item.resolve(acknowledgement);
+        this.recordSessionProductEvents(session.workspaceId, [
+          ...firstAnswers.map((answer): ProductEventInput => ({
+            name: "first_answer_submitted",
+            occurredAt: new Date(answer.acceptedAtMs).toISOString(),
+          })),
+          ...newAnswers.map((answer): ProductEventInput => ({
+            name: "response_saved_acknowledged",
+            occurredAt: new Date(answer.acceptedAtMs).toISOString(),
+          })),
+        ]);
         await Promise.resolve();
         const cacheUpdate = Promise.allSettled([
           this.cache.set(session.state, this.liveCacheTtlSeconds(session)),
@@ -1261,6 +1366,17 @@ export class SessionService {
                 this.metrics.setActiveSessions(this.active.size);
                 throw error;
               }
+              this.recordSessionProductEvents(session.workspaceId, [
+                ...this.lifecycleProductEvents(result.events, commandTime),
+                ...(input.action === "intervention.start"
+                  ? [
+                      {
+                        name: "intervention_started" as const,
+                        occurredAt: commandTime.toISOString(),
+                      },
+                    ]
+                  : []),
+              ]);
               await this.publish({
                 state: session.state,
                 events: result.events,

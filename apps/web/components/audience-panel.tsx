@@ -161,6 +161,7 @@ export function AudiencePanel({
   sessionId,
   token,
   role,
+  view = "all",
   syncRevision,
   realtimeUpdate,
   onKick,
@@ -168,6 +169,7 @@ export function AudiencePanel({
   sessionId: string;
   token: string;
   role: "moderator" | "participant" | "presenter";
+  view?: "all" | "participants" | "pulse" | "chat";
   syncRevision: number;
   realtimeUpdate: AudienceRealtimeUpdate | null;
   onKick?: (participantId: string) => void;
@@ -354,6 +356,9 @@ export function AudiencePanel({
     if (participantFilter === "muted") return Boolean(participant.mutedUntil || participant.banned);
     return true;
   });
+  const showParticipants = view === "all" || view === "participants";
+  const showPulse = view === "all" || view === "pulse";
+  const showChat = view === "all" || view === "chat";
 
   if (!data) {
     return (
@@ -367,8 +372,22 @@ export function AudiencePanel({
     <section className="panel audience-panel" aria-label="Audience interaction">
       <div className="audience-panel-heading">
         <div>
-          <p className="eyebrow">Audience Pulse</p>
-          <h2>Room signals and conversation</h2>
+          <p className="eyebrow">
+            {view === "participants"
+              ? "Participants"
+              : view === "chat"
+                ? "Room chat"
+                : "Audience Pulse"}
+          </p>
+          <h2>
+            {view === "participants"
+              ? "Participant activity"
+              : view === "pulse"
+                ? "Room signals"
+                : view === "chat"
+                  ? "Conversation"
+                  : "Room signals and conversation"}
+          </h2>
         </div>
         <span className="status-pill">Live · {data.summary.connectedParticipants} connected</span>
       </div>
@@ -380,122 +399,150 @@ export function AudiencePanel({
 
       {role === "moderator" ? (
         <>
-          <div className="interaction-settings" aria-label="Audience interaction settings">
-            <label className="checkbox-field">
-              <input
-                checked={data.settings.signalsEnabled}
-                disabled={busy || !data.capabilities.audiencePulse}
-                onChange={(event) => void updateSettings({ signalsEnabled: event.target.checked })}
-                type="checkbox"
-              />
-              Audience Pulse
-            </label>
-            <label className="checkbox-field">
-              <input
-                checked={data.settings.chatEnabled}
-                disabled={busy || !data.capabilities.roomChat}
-                onChange={(event) => void updateSettings({ chatEnabled: event.target.checked })}
-                type="checkbox"
-              />
-              Room chat
-            </label>
-            <label className="field compact-field">
-              <span>Chat names</span>
-              <select
-                className="select"
-                disabled={busy || !data.capabilities.roomChat}
-                onChange={(event) =>
-                  void updateSettings({
-                    chatIdentityMode: event.target.value as InteractionSettings["chatIdentityMode"],
-                  })
-                }
-                value={data.settings.chatIdentityMode}
-              >
-                <option value="alias_public">Show session aliases</option>
-                <option value="alias_private">Anonymous to the room</option>
-              </select>
-            </label>
-            <label className="field compact-field">
-              <span>Slow mode</span>
-              <select
-                className="select"
-                disabled={busy || !data.capabilities.roomChat}
-                onChange={(event) =>
-                  void updateSettings({
-                    slowModeSeconds: Number(
-                      event.target.value,
-                    ) as InteractionSettings["slowModeSeconds"],
-                  })
-                }
-                value={data.settings.slowModeSeconds}
-              >
-                <option value={0}>Off</option>
-                <option value={5}>5 seconds</option>
-                <option value={15}>15 seconds</option>
-                <option value={30}>30 seconds</option>
-              </select>
-            </label>
-            <label className="field compact-field">
-              <span>Presenter feed</span>
-              <select
-                className="select"
-                disabled={busy || !data.capabilities.roomChat}
-                onChange={(event) =>
-                  void updateSettings({
-                    presenterFeedMode: event.target
-                      .value as InteractionSettings["presenterFeedMode"],
-                  })
-                }
-                value={data.settings.presenterFeedMode}
-              >
-                <option value="off">Off</option>
-                <option value="pinned">Pinned only</option>
-                <option value="live">Live feed</option>
-              </select>
-            </label>
-          </div>
+          {showPulse || showChat ? (
+            <div className="interaction-settings" aria-label="Audience interaction settings">
+              {showPulse ? (
+                <label className="checkbox-field">
+                  <input
+                    checked={data.settings.signalsEnabled}
+                    disabled={busy || !data.capabilities.audiencePulse}
+                    onChange={(event) =>
+                      void updateSettings({ signalsEnabled: event.target.checked })
+                    }
+                    type="checkbox"
+                  />
+                  Audience Pulse
+                </label>
+              ) : null}
+              {showChat ? (
+                <>
+                  <label className="checkbox-field">
+                    <input
+                      checked={data.settings.chatEnabled}
+                      disabled={busy || !data.capabilities.roomChat}
+                      onChange={(event) =>
+                        void updateSettings({ chatEnabled: event.target.checked })
+                      }
+                      type="checkbox"
+                    />
+                    Room chat
+                  </label>
+                  <label className="field compact-field">
+                    <span>Chat names</span>
+                    <select
+                      className="select"
+                      disabled={busy || !data.capabilities.roomChat}
+                      onChange={(event) =>
+                        void updateSettings({
+                          chatIdentityMode: event.target
+                            .value as InteractionSettings["chatIdentityMode"],
+                        })
+                      }
+                      value={data.settings.chatIdentityMode}
+                    >
+                      <option value="alias_public">Show session aliases</option>
+                      <option value="alias_private">Anonymous to the room</option>
+                    </select>
+                  </label>
+                  <label className="field compact-field">
+                    <span>Slow mode</span>
+                    <select
+                      className="select"
+                      disabled={busy || !data.capabilities.roomChat}
+                      onChange={(event) =>
+                        void updateSettings({
+                          slowModeSeconds: Number(
+                            event.target.value,
+                          ) as InteractionSettings["slowModeSeconds"],
+                        })
+                      }
+                      value={data.settings.slowModeSeconds}
+                    >
+                      <option value={0}>Off</option>
+                      <option value={5}>5 seconds</option>
+                      <option value={15}>15 seconds</option>
+                      <option value={30}>30 seconds</option>
+                    </select>
+                  </label>
+                  <label className="field compact-field">
+                    <span>Presenter feed</span>
+                    <select
+                      className="select"
+                      disabled={busy || !data.capabilities.roomChat}
+                      onChange={(event) =>
+                        void updateSettings({
+                          presenterFeedMode: event.target
+                            .value as InteractionSettings["presenterFeedMode"],
+                        })
+                      }
+                      value={data.settings.presenterFeedMode}
+                    >
+                      <option value="off">Off</option>
+                      <option value="pinned">Pinned only</option>
+                      <option value="live">Live feed</option>
+                    </select>
+                  </label>
+                </>
+              ) : null}
+            </div>
+          ) : null}
 
-          {!data.capabilities.audiencePulse || !data.capabilities.roomChat ? (
+          {(showPulse && !data.capabilities.audiencePulse) ||
+          (showChat && !data.capabilities.roomChat) ? (
             <p className="notice">
-              {!data.capabilities.audiencePulse
+              {showPulse && !data.capabilities.audiencePulse
                 ? "Audience Pulse is not enabled for this workspace. "
                 : ""}
-              {!data.capabilities.roomChat ? "Room chat is not enabled for this workspace." : ""}
+              {showChat && !data.capabilities.roomChat
+                ? "Room chat is not enabled for this workspace."
+                : ""}
             </p>
           ) : null}
 
           <div className="audience-metrics">
-            <div className="metric">
-              <strong>{data.summary.connectedParticipants}</strong>
-              <span>connected</span>
-            </div>
-            <div className="metric">
-              <strong>{data.summary.disconnectedParticipants}</strong>
-              <span>disconnected</span>
-            </div>
-            <div className="metric">
-              <strong>{data.summary.answeredParticipants}</strong>
-              <span>answered</span>
-            </div>
-            <div className="metric">
-              <strong>{data.summary.uniqueSignalers}</strong>
-              <span>signaled</span>
-            </div>
-            <div className="metric">
-              <strong>{data.summary.signalsLastMinute}</strong>
-              <span>signals / min</span>
-            </div>
-            <div className="metric">
-              <strong>{data.summary.messagesLastMinute}</strong>
-              <span>messages / min</span>
-            </div>
-            <div className="metric">
-              <strong>{data.summary.uniqueChatContributors}</strong>
-              <span>contributors</span>
-            </div>
+            {showParticipants ? (
+              <>
+                <div className="metric">
+                  <strong>{data.summary.connectedParticipants}</strong>
+                  <span>connected</span>
+                </div>
+                <div className="metric">
+                  <strong>{data.summary.disconnectedParticipants}</strong>
+                  <span>disconnected</span>
+                </div>
+                <div className="metric">
+                  <strong>{data.summary.answeredParticipants}</strong>
+                  <span>answered</span>
+                </div>
+              </>
+            ) : null}
+            {showPulse ? (
+              <>
+                <div className="metric">
+                  <strong>{data.summary.uniqueSignalers}</strong>
+                  <span>signaled</span>
+                </div>
+                <div className="metric">
+                  <strong>{data.summary.signalsLastMinute}</strong>
+                  <span>signals / min</span>
+                </div>
+              </>
+            ) : null}
+            {showChat ? (
+              <>
+                <div className="metric">
+                  <strong>{data.summary.messagesLastMinute}</strong>
+                  <span>messages / min</span>
+                </div>
+                <div className="metric">
+                  <strong>{data.summary.uniqueChatContributors}</strong>
+                  <span>contributors</span>
+                </div>
+              </>
+            ) : null}
           </div>
         </>
-      ) : data.settings.signalsEnabled && role === "participant" ? (
+      ) : showPulse && data.settings.signalsEnabled && role === "participant" ? (
         <div className="pulse-compose">
           <p>
             <strong>How is this landing?</strong>
@@ -525,7 +572,7 @@ export function AudiencePanel({
         </div>
       ) : null}
 
-      {data.summary.signalCounts ? (
+      {showPulse && data.summary.signalCounts ? (
         <div className="pulse-distribution" aria-label="Current pulse distribution">
           {signalOptions.map((option) => {
             const count = data.summary.signalCounts?.[option.id] ?? 0;
@@ -543,13 +590,13 @@ export function AudiencePanel({
             );
           })}
         </div>
-      ) : data.summary.uniqueSignalers > 0 ? (
+      ) : showPulse && data.summary.uniqueSignalers > 0 ? (
         <p className="muted">
           Aggregate Pulse appears after five people signal to protect individual privacy.
         </p>
       ) : null}
 
-      {role === "moderator" && data.summary.participants ? (
+      {showParticipants && role === "moderator" && data.summary.participants ? (
         <div className="participant-pulse-table">
           <div className="toolbar">
             <strong>Participant activity</strong>
@@ -653,126 +700,134 @@ export function AudiencePanel({
         </div>
       ) : null}
 
-      <div className="chat-section">
-        <div className="chat-heading">
-          <div>
-            <p className="eyebrow">Room chat</p>
-            <h3>{data.settings.chatEnabled ? "Conversation is open" : "Conversation is closed"}</h3>
-          </div>
-          {role === "moderator" ? (
-            <span className="muted">
-              {data.summary.reportedCount} reports · {data.summary.moderationCount} moderated
-            </span>
-          ) : null}
-        </div>
-        {data.settings.chatEnabled && role !== "presenter" ? (
-          <form className="chat-compose" onSubmit={sendMessage}>
-            {replyTo ? (
-              <div className="chat-replying">
-                Replying to {replyTo.author.displayName}
-                <button onClick={() => setReplyTo(null)} type="button">
-                  Cancel
-                </button>
-              </div>
+      {showChat ? (
+        <div className="chat-section">
+          <div className="chat-heading">
+            <div>
+              <p className="eyebrow">Room chat</p>
+              <h3>
+                {data.settings.chatEnabled ? "Conversation is open" : "Conversation is closed"}
+              </h3>
+            </div>
+            {role === "moderator" ? (
+              <span className="muted">
+                {data.summary.reportedCount} reports · {data.summary.moderationCount} moderated
+              </span>
             ) : null}
-            <label className="sr-only" htmlFor={`chat-message-${role}`}>
-              Chat message
-            </label>
-            <input
-              className="input"
-              id={`chat-message-${role}`}
-              maxLength={500}
-              onChange={(event) => setMessage(event.target.value)}
-              placeholder="Write a plain-text message…"
-              value={message}
-            />
-            <button className="button" disabled={busy || !message.trim()} type="submit">
-              Send
-            </button>
-          </form>
-        ) : null}
-        <ol className="chat-list" aria-label="Room messages">
-          {data.chat.messages.map((item) => (
-            <li className="chat-message" data-removed={item.status === "removed"} key={item.id}>
-              <div className="chat-message-meta">
-                <span>
-                  <strong>{item.author.displayName}</strong>
-                  {item.author.kind === "staff" ? " · facilitator" : ""}
-                </span>
-                {item.pinned ? <span className="status-pill">Pinned</span> : null}
-              </div>
-              <p>{item.body}</p>
-              {item.status !== "removed" ? (
-                <div className="chat-actions">
-                  {role === "participant"
-                    ? reactionOptions.map((reaction) => (
-                        <button
-                          aria-label={`${reaction.label}: ${item.reactions[reaction.id]}`}
-                          aria-pressed={item.myReaction === reaction.id}
-                          className="reaction-button"
-                          disabled={busy}
-                          key={reaction.id}
-                          onClick={() =>
-                            void react(item.id, reaction.id, item.myReaction === reaction.id)
-                          }
-                          type="button"
-                        >
-                          <span aria-hidden="true">{reaction.icon}</span>{" "}
-                          {item.reactions[reaction.id] || ""}
-                        </button>
-                      ))
-                    : reactionOptions
-                        .filter((reaction) => item.reactions[reaction.id] > 0)
-                        .map((reaction) => (
-                          <span className="reaction-count" key={reaction.id}>
-                            <span aria-hidden="true">{reaction.icon}</span>{" "}
-                            {item.reactions[reaction.id]}
-                          </span>
-                        ))}
-                  {role !== "presenter" && !item.replyToMessageId ? (
-                    <button className="text-button" onClick={() => setReplyTo(item)} type="button">
-                      Reply
-                    </button>
-                  ) : null}
-                  {role === "participant" && !item.author.mine ? (
-                    <button
-                      className="text-button"
-                      disabled={busy || reportedMessages.has(item.id)}
-                      onClick={() => void reportMessage(item.id)}
-                      type="button"
-                    >
-                      {reportedMessages.has(item.id) ? "Reported" : "Report"}
-                    </button>
-                  ) : null}
-                  {role === "moderator" ? (
-                    <>
-                      <button
-                        className="text-button"
-                        disabled={busy}
-                        onClick={() => void moderateMessage(item.id, { pinned: !item.pinned })}
-                        type="button"
-                      >
-                        {item.pinned ? "Unpin" : "Pin"}
-                      </button>
-                      <button
-                        className="danger-link"
-                        disabled={busy}
-                        onClick={() => void moderateMessage(item.id, { status: "removed" })}
-                        type="button"
-                      >
-                        Remove
-                      </button>
-                    </>
-                  ) : null}
+          </div>
+          {data.settings.chatEnabled && role !== "presenter" ? (
+            <form className="chat-compose" onSubmit={sendMessage}>
+              {replyTo ? (
+                <div className="chat-replying">
+                  Replying to {replyTo.author.displayName}
+                  <button onClick={() => setReplyTo(null)} type="button">
+                    Cancel
+                  </button>
                 </div>
               ) : null}
-            </li>
-          ))}
-        </ol>
-        {data.chat.messages.length === 0 ? (
-          <p className="qna-empty">No room messages yet.</p>
-        ) : null}
-      </div>
+              <label className="sr-only" htmlFor={`chat-message-${role}`}>
+                Chat message
+              </label>
+              <input
+                className="input"
+                id={`chat-message-${role}`}
+                maxLength={500}
+                onChange={(event) => setMessage(event.target.value)}
+                placeholder="Write a plain-text message…"
+                value={message}
+              />
+              <button className="button" disabled={busy || !message.trim()} type="submit">
+                Send
+              </button>
+            </form>
+          ) : null}
+          <ol className="chat-list" aria-label="Room messages">
+            {data.chat.messages.map((item) => (
+              <li className="chat-message" data-removed={item.status === "removed"} key={item.id}>
+                <div className="chat-message-meta">
+                  <span>
+                    <strong>{item.author.displayName}</strong>
+                    {item.author.kind === "staff" ? " · facilitator" : ""}
+                  </span>
+                  {item.pinned ? <span className="status-pill">Pinned</span> : null}
+                </div>
+                <p>{item.body}</p>
+                {item.status !== "removed" ? (
+                  <div className="chat-actions">
+                    {role === "participant"
+                      ? reactionOptions.map((reaction) => (
+                          <button
+                            aria-label={`${reaction.label}: ${item.reactions[reaction.id]}`}
+                            aria-pressed={item.myReaction === reaction.id}
+                            className="reaction-button"
+                            disabled={busy}
+                            key={reaction.id}
+                            onClick={() =>
+                              void react(item.id, reaction.id, item.myReaction === reaction.id)
+                            }
+                            type="button"
+                          >
+                            <span aria-hidden="true">{reaction.icon}</span>{" "}
+                            {item.reactions[reaction.id] || ""}
+                          </button>
+                        ))
+                      : reactionOptions
+                          .filter((reaction) => item.reactions[reaction.id] > 0)
+                          .map((reaction) => (
+                            <span className="reaction-count" key={reaction.id}>
+                              <span aria-hidden="true">{reaction.icon}</span>{" "}
+                              {item.reactions[reaction.id]}
+                            </span>
+                          ))}
+                    {role !== "presenter" && !item.replyToMessageId ? (
+                      <button
+                        className="text-button"
+                        onClick={() => setReplyTo(item)}
+                        type="button"
+                      >
+                        Reply
+                      </button>
+                    ) : null}
+                    {role === "participant" && !item.author.mine ? (
+                      <button
+                        className="text-button"
+                        disabled={busy || reportedMessages.has(item.id)}
+                        onClick={() => void reportMessage(item.id)}
+                        type="button"
+                      >
+                        {reportedMessages.has(item.id) ? "Reported" : "Report"}
+                      </button>
+                    ) : null}
+                    {role === "moderator" ? (
+                      <>
+                        <button
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() => void moderateMessage(item.id, { pinned: !item.pinned })}
+                          type="button"
+                        >
+                          {item.pinned ? "Unpin" : "Pin"}
+                        </button>
+                        <button
+                          className="danger-link"
+                          disabled={busy}
+                          onClick={() => void moderateMessage(item.id, { status: "removed" })}
+                          type="button"
+                        >
+                          Remove
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+          {data.chat.messages.length === 0 ? (
+            <p className="qna-empty">No room messages yet.</p>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

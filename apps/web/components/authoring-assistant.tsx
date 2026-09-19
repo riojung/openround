@@ -78,6 +78,7 @@ export function AuthoringAssistant({
   const [busy, setBusy] = useState(false);
   const [applyingId, setApplyingId] = useState("");
   const [error, setError] = useState("");
+  const [expanded, setExpanded] = useState(plain);
   const mounted = useRef(true);
 
   const refresh = useCallback(async () => {
@@ -168,7 +169,11 @@ export function AuthoringAssistant({
     : "Loading authoring availability…";
 
   return (
-    <details className={plain ? "authoring-assistant" : "panel authoring-assistant"}>
+    <details
+      className={plain ? "authoring-assistant" : "panel authoring-assistant"}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+      open={expanded}
+    >
       <summary>
         Draft {terminology === "round" ? "questions" : "checkpoints"} from a trusted source
       </summary>

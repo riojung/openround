@@ -167,5 +167,6 @@ describe("host phase view", () => {
       }),
     );
     expect(view.primary).toMatchObject({ action: "recheck.open", recheckMode: "linked" });
+    expect(view.suggestionKind).toBe("none");
   });
 });

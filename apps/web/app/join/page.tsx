@@ -2,10 +2,18 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState, type FormEvent } from "react";
-import type { JoinResponse } from "@openround/contracts";
+import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
+import type { JoinPreflightResponse, JoinResponse } from "@openround/contracts";
 import { Brand } from "../../components/brand";
 import { apiFetch, humanError } from "../../lib/api";
+import {
+  beginJoinPreflight,
+  completeJoinPreflight,
+  failJoinPreflight,
+  idleJoinPreflightState,
+  nicknameForJoin,
+  shouldCollectJoinNickname,
+} from "../../lib/join-preflight";
 
 function JoinForm() {
   const searchParams = useSearchParams();
@@ -14,17 +22,63 @@ function JoinForm() {
     (searchParams.get("code") ?? "").replace(/\D/g, "").slice(0, 7),
   );
   const [nickname, setNickname] = useState("");
+  const [preflight, setPreflight] = useState(idleJoinPreflightState);
+  const preflightRequestId = useRef(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const collectNickname = shouldCollectJoinNickname(preflight, code);
+
+  useEffect(() => {
+    const requestId = ++preflightRequestId.current;
+    if (code.length !== 7) {
+      setPreflight(idleJoinPreflightState);
+      return;
+    }
+
+    const controller = new AbortController();
+    setPreflight(beginJoinPreflight(code, requestId));
+    const timer = window.setTimeout(() => {
+      void apiFetch<JoinPreflightResponse>(
+        `/v1/sessions/join/preflight?${new URLSearchParams({ code })}`,
+        { signal: controller.signal },
+      )
+        .then((response) => {
+          setPreflight((current) => completeJoinPreflight(current, requestId, response));
+        })
+        .catch((caught) => {
+          if (controller.signal.aborted) return;
+          setPreflight((current) =>
+            failJoinPreflight(
+              current,
+              requestId,
+              `${humanError(caught)}. You can still try joining.`,
+            ),
+          );
+        });
+    }, 150);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [code]);
+
+  useEffect(() => {
+    if (!collectNickname) setNickname("");
+  }, [collectNickname]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError("");
     try {
+      const requestedNickname = nicknameForJoin(preflight, code, nickname);
       const joined = await apiFetch<JoinResponse>("/v1/sessions/join", {
         method: "POST",
-        body: JSON.stringify({ code, nickname: nickname || undefined }),
+        body: JSON.stringify({
+          code,
+          ...(requestedNickname ? { nickname: requestedNickname } : {}),
+        }),
       });
       sessionStorage.setItem(
         `openround:participant:${joined.snapshot.sessionId}`,
@@ -60,18 +114,34 @@ function JoinForm() {
             value={code}
           />
         </div>
-        <div className="field">
-          <label htmlFor="nickname">Nickname</label>
-          <input
-            autoComplete="nickname"
-            className="input"
-            id="nickname"
-            maxLength={32}
-            onChange={(event) => setNickname(event.target.value)}
-            placeholder="A name for this round"
-            value={nickname}
-          />
-        </div>
+        {collectNickname ? (
+          <div className="field">
+            <label htmlFor="nickname">Nickname</label>
+            <input
+              autoComplete="nickname"
+              className="input"
+              id="nickname"
+              maxLength={32}
+              onChange={(event) => setNickname(event.target.value)}
+              placeholder="A name for this round"
+              value={nickname}
+            />
+          </div>
+        ) : (
+          <p className="notice" data-testid="friendly-alias-notice" role="status">
+            A privacy-friendly nickname will be assigned when you join.
+          </p>
+        )}
+        {preflight.code === code && preflight.status === "checking" ? (
+          <p className="muted" role="status">
+            Checking room name settings…
+          </p>
+        ) : null}
+        {preflight.code === code && preflight.status === "failed" ? (
+          <p className="notice" role="status">
+            {preflight.message}
+          </p>
+        ) : null}
         {error ? (
           <p className="error" role="alert">
             {error}

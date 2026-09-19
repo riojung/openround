@@ -426,6 +426,14 @@
   margin: 0;
 }
 
+.libraryDisplayControls {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.8rem;
+}
+
 .archivedToggle {
   display: inline-flex;
   min-height: 46px;
@@ -434,6 +442,35 @@
   color: #486581;
   font-size: 0.88rem;
   font-weight: 700;
+}
+
+.viewToggle {
+  display: inline-flex;
+  border: 1px solid #c5d3dc;
+  border-radius: 0.75rem;
+  background: #ffffff;
+  padding: 0.2rem;
+}
+
+.viewToggle button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 0.55rem;
+  background: transparent;
+  color: #486581;
+  cursor: pointer;
+  font-weight: 800;
+  padding: 0 0.85rem;
+}
+
+.viewToggle button[aria-pressed="true"] {
+  background: #dff3f1;
+  color: #055d5f;
+}
+
+.viewToggle button:focus-visible {
+  outline: 3px solid #f5b700;
+  outline-offset: 2px;
 }
 
 .folderManager {
@@ -499,6 +536,12 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.roundList {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .roundCard {
   position: relative;
   display: flex;
@@ -520,11 +563,64 @@
   letter-spacing: -0.03em;
 }
 
+.roundMain {
+  display: grid;
+  min-width: 0;
+  gap: 0.75rem;
+}
+
+.roundFacts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+}
+
 .updatedAt,
 .questionCount,
+.lastHosted,
 .roundDescription {
   color: #627d98;
   font-size: 0.8rem;
+}
+
+.lastHosted,
+.betaRoundCard .questionCount {
+  margin: 0;
+}
+
+.betaRoundCard .primaryActions {
+  margin-top: auto;
+}
+
+.roundList .betaRoundCard {
+  display: grid;
+  min-height: 0;
+  align-items: start;
+  grid-template-areas:
+    "topline actions"
+    "main actions"
+    "organization organization";
+  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+}
+
+.roundList .betaRoundCard > .cardTopline {
+  grid-area: topline;
+}
+
+.roundList .betaRoundCard > .roundMain {
+  grid-area: main;
+}
+
+.roundList .betaRoundCard > .primaryActions {
+  grid-area: actions;
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
+.roundList .betaRoundCard > .organizationForm {
+  grid-area: organization;
 }
 
 .roundDescription {
@@ -642,6 +738,11 @@
     grid-template-columns: 1fr 1fr;
   }
 
+  .libraryDisplayControls {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+  }
+
   .archivedToggle {
     grid-column: 1 / -1;
   }
@@ -674,6 +775,22 @@
   .libraryToolbar,
   .roundGrid {
     grid-template-columns: 1fr;
+  }
+
+  .libraryDisplayControls {
+    grid-column: auto;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .roundList .betaRoundCard {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .roundList .betaRoundCard > .primaryActions {
+    justify-content: flex-start;
   }
 
   .archivedToggle {

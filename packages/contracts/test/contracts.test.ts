@@ -5,15 +5,18 @@ import {
   BrandThemeSchema,
   canonicalizeResponse,
   EntitlementsSchema,
+  FollowupSummarySchema,
   HostCommandSchema,
   normalizeDecimalString,
   OperationalFeaturesUpdateSchema,
   ProductEventBatchSchema,
+  ProductEventNameSchema,
   PublicFeaturesSchema,
   QuizContentSchema,
   QuizDraftSchema,
   QuestionSchema,
   ResponseDistributionSchema,
+  RoundFilterOptionsResponseSchema,
   SessionSnapshotSchema,
   SyncRequestSchema,
 } from "../src/index.js";
@@ -80,7 +83,93 @@ describe("public contracts", () => {
     ).toBeNull();
   });
 
+  it("identifies the source Round in follow-up history summaries", () => {
+    const quizId = randomUUID();
+    expect(
+      FollowupSummarySchema.parse({
+        id: randomUUID(),
+        sourceSessionId: randomUUID(),
+        sourceReportId: randomUUID(),
+        quizId,
+        title: "Practice follow-up",
+        status: "open",
+        conceptKeys: ["core-model"],
+        checkpointCount: 1,
+        attemptCount: 0,
+        completedAttemptCount: 0,
+        opensAt: "2026-09-18T12:00:00.000Z",
+        closesAt: "2026-09-19T12:00:00.000Z",
+        expiresAt: "2026-10-18T12:00:00.000Z",
+        createdAt: "2026-09-18T12:00:00.000Z",
+      }),
+    ).toMatchObject({ quizId });
+  });
+
+  it("keeps history Round filter options summary-only", () => {
+    const option = RoundFilterOptionsResponseSchema.parse({
+      quizzes: [
+        {
+          id: randomUUID(),
+          title: "Summary-only Round",
+          draft: { questions: [{ answer: "must not survive parsing" }] },
+        },
+      ],
+    }).quizzes[0]!;
+
+    expect(Object.keys(option).sort()).toEqual(["id", "title"]);
+  });
+
   it("keeps beta telemetry dimensions bounded and distribution samples staff-safe", () => {
+    expect(ProductEventNameSchema.options).toEqual([
+      "creation_started",
+      "creation_completed",
+      "round_published",
+      "setup_recipe_selected",
+      "host_setup_completed",
+      "participant_joined",
+      "first_answer_submitted",
+      "response_saved_acknowledged",
+      "question_locked",
+      "insight_shown",
+      "intervention_started",
+      "recheck_opened",
+      "report_viewed",
+      "followup_shared",
+      "rehearsal_started",
+      "rehearsal_completed",
+    ]);
+    expect(
+      ProductEventBatchSchema.safeParse({
+        events: ProductEventNameSchema.options.map((name) => ({
+          name,
+          occurredAt: new Date().toISOString(),
+          dimensions:
+            name === "creation_started" || name === "creation_completed"
+              ? { creationPath: "starter" }
+              : name === "setup_recipe_selected"
+                ? { recipe: "recovery" }
+                : name === "rehearsal_started"
+                  ? { scenario: "split_room" }
+                  : name === "rehearsal_completed"
+                    ? { scenario: "split_room", durationBucket: "1_to_5m" }
+                    : {},
+        })),
+      }).success,
+    ).toBe(true);
+    for (const event of [
+      { name: "creation_started", dimensions: {} },
+      { name: "creation_completed", dimensions: {} },
+      { name: "setup_recipe_selected", dimensions: {} },
+      { name: "rehearsal_started", dimensions: {} },
+      { name: "rehearsal_completed", dimensions: { scenario: "split_room" } },
+      { name: "rehearsal_completed", dimensions: { durationBucket: "1_to_5m" } },
+    ]) {
+      expect(
+        ProductEventBatchSchema.safeParse({
+          events: [{ ...event, occurredAt: new Date().toISOString() }],
+        }).success,
+      ).toBe(false);
+    }
     expect(
       ProductEventBatchSchema.safeParse({
         events: [

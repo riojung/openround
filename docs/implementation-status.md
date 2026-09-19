@@ -6,24 +6,34 @@ does not turn calendar, demand, legal, research, provider, certification, or pro
 gates into software claims. `OpenRound` is a working identity pending independent name and
 trademark review.
 
-## 2026 P0 UX beta backend foundation
+## 2026 P0 UX beta implementation
 
-The current branch contains the additive backend/contracts/storage foundation for the allowlisted
-UX beta. Both beta flags default off; repository presence is not a launch claim. The global
-`FEATURE_UX_BETA` ceiling and explicit `UX_BETA_WORKSPACE_ALLOWLIST` membership resolve per
-workspace; an empty allowlist fails closed. Session snapshots carry that result to unauthenticated
-participant surfaces. Recovery Rehearsal additionally has its own
-`FEATURE_RECOVERY_REHEARSAL` kill switch.
+The current branch contains the gated creator workspace, authoring, setup, live host, participant,
+report, history, and Recovery Rehearsal experience plus its additive contracts and storage. Both
+beta flags default off; repository presence is not a launch claim. The global `FEATURE_UX_BETA`
+ceiling and explicit `UX_BETA_WORKSPACE_ALLOWLIST` membership resolve per workspace; an empty
+allowlist fails closed. Session snapshots carry that result to unauthenticated participant
+surfaces. Recovery Rehearsal additionally has its own `FEATURE_RECOVERY_REHEARSAL` kill switch.
 
-| Area             | Repository status                                                                                                                                                                            | Still required before beta exit                                                                            |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Creation         | Six immutable, versioned first-party starters; owner/editor instantiation creates ordinary drafts with fresh Round/question/choice IDs and valid linked rechecks                             | Timed unassisted creation trials, starter-content review, and source/import journey evidence               |
-| History          | Tenant-scoped cursor pages for Sessions, Results, and Practice Follow-ups; opaque validated cursors; durable answer counts; report context; summary-only DTOs                                | Production-copy index/latency evidence, responsive/accessibility verification, and result-discovery trials |
-| Secure recovery  | Four-hour-or-session-expiry creator control passes; one active pass per creator/session; atomic replacement, audit, revocation, rate limit, tenant/session scope, and no-store response      | Multi-browser/browser-close rehearsal, penetration review, and production revocation monitoring            |
-| Entitlements     | `cohosting` is false on Hosted Free and true on Pro, Team, and Community; only shareable cohost creation is gated, while presenter and creator-resume credentials remain core                | Billing-plan acceptance tests against production configuration and packaging validation                    |
-| Evidence privacy | Additive post-lock staff distributions with a five-response minimum; participant suppression; respondent-based multi-select percentages; numeric totals only                                 | Independent privacy/accessibility review and observed small-sample comprehension                           |
-| Telemetry        | Batches of at most 20 schema-allowlisted events, bounded categorical dimensions, no actor/object/content fields, 30-day raw retention, retention-worker purge, and bounded Prometheus labels | Approved notice/legal basis, hosted metrics retention configuration, and allowlisted pilot monitoring      |
-| Compatibility    | Migration 014 is additive; persisted `quiz`/checkpoint contracts and existing routes remain; ready Report V2 and V3 can create follow-ups                                                    | Production backup/migration/forward-repair rehearsal and clean-host PostgreSQL verification                |
+| Area                    | Repository status                                                                                                                                                                                                                                                                                                                                                                                                | Still required before beta exit                                                                                       |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Workspace and creation  | Creator-only Rounds, Sessions, Results, Templates, and Workspace destinations preserve `/dashboard`; `/create` supports starter, source, import, and blank starts; six immutable first-party starters instantiate ordinary drafts with fresh Round/question/choice IDs and valid linked rechecks                                                                                                                 | Timed unassisted creation trials, starter-content review, and source/import journey evidence                          |
+| Authoring and setup     | Stable-ID editor navigation, response-type insertion, progressive diagnostic disclosures, paired rechecks, participant preview, serialized autosave/publish fencing, one-step structural undo, and entitlement-capped Recovery, Friendly competition, and Open discussion recipes are implemented                                                                                                                | Facilitator usability observation, representative source-corpus review, and browser/device accessibility verification |
+| Live facilitation       | A shared phase model drives legal actions, the center stage, evidence-explaining Recovery Compass, phase-aware command bar, room-readiness strip, and separate Participants/Pulse/Q&A/Chat drawer; command acknowledgement timeouts reconcile against authoritative state before retry                                                                                                                           | Observed facilitator action-finding trials, hosted reconnect/process-loss evidence, and manual assistive-tech review  |
+| Participant response    | All six response types use explicit Submit, required confidence receives focus, authoritative acknowledgement/snapshot state restores a durable receipt, and answering remains independent from the closed interaction tray; join preflight suppresses unnecessary nickname entry without mutating the room                                                                                                      | First-response usability trials, physical-device/network coverage, and hosted acknowledgement-latency evidence        |
+| History and library     | Tenant-scoped cursor pages for Sessions, Results, and Practice Follow-ups support status/Round/date filters and summary-only DTOs; Round cards expose tenant-scoped last-hosted dates plus an accessible persisted list/grid preference                                                                                                                                                                          | Production-copy index/latency evidence, responsive/accessibility verification, and result-discovery trials            |
+| Recovery Story          | The report first viewport explains recovered and unresolved evidence, intervention history, confidence contradictions, sample strength, and next action; accessible text-backed distributions are persisted only at the five-response staff threshold, while exports, retention, and deletion stay in Manage data                                                                                                | Observed report-comprehension trials, independent privacy/accessibility review, and report-latency evidence           |
+| Recovery Rehearsal      | The read-only in-memory route shares the host phase model/components and deterministically supports low participation, split room, and confident misconception scenarios, authored recheck/revote recovery, synthetic labelling, and bounded start/completion telemetry without creating durable session/report/participant/follow-up records                                                                    | Pilot completion/comprehension evidence and independent verification of the no-persistence boundary                   |
+| Secure recovery         | Four-hour-or-session-expiry creator control passes; one active pass per creator/session; atomic replacement, audit, revocation, rate limit, tenant/session scope, and no-store response                                                                                                                                                                                                                          | Multi-browser/browser-close rehearsal, penetration review, and production revocation monitoring                       |
+| Entitlements            | `cohosting` is false on Hosted Free and true on Pro, Team, and Community; only shareable cohost creation is gated, while presenter and creator-resume credentials remain core                                                                                                                                                                                                                                    | Billing-plan acceptance tests against production configuration and packaging validation                               |
+| Evidence privacy        | Additive post-lock staff distributions have a five-response minimum; participant payloads suppress them; multi-select percentages use respondents and numeric distributions contain correct/incorrect totals only                                                                                                                                                                                                | Independent privacy/accessibility review and observed small-sample comprehension                                      |
+| Telemetry               | Bounded creation→publish→room→join→answer/save→lock/insight→intervention/recheck→report/share and rehearsal events; no actor/object/content fields; fail-closed beta ingestion; 30-day raw retention with observable purge counts; bounded Prometheus labels and Grafana funnel panels                                                                                                                           | Approved notice/legal basis, hosted metrics retention configuration, and allowlisted pilot monitoring                 |
+| Compatibility and build | Migrations 014–016 are additive; persisted `quiz`/checkpoint contracts, routes, storage keys, authentication, realtime event names, and versioned records remain compatible; ready Report V2 and V3 can create follow-ups; a CI/local Docker-context guard checks that image builds include every transitive workspace manifest and source tree before install/build, and the corrected web image builds locally | Green clean-host PR/main CI plus production backup/migration/forward-repair rehearsal                                 |
+
+The release ledger intentionally keeps source/main CI, Canadian staging, privacy/legal approval,
+design-partner observation, manual VoiceOver/NVDA and physical-device coverage, target-region
+load/soak/failover, real-provider source-corpus evaluation, and provider-originated Stripe
+rehearsal pending. Local automation does not satisfy those gates.
 
 ## Themed Experiences and Audience Interaction
 
@@ -100,17 +110,21 @@ contrast, heading, and narrow-screen report-table defects. The pull request and 
 must still pass independently. Repository and local-network correctness are not substitutes for
 the external phase evidence above.
 
-On 2026-09-18, the P0 beta changes passed 15 contract tests, 17 game-engine tests, 10 Recovery
-Rehearsal tests, 75 web tests, and 107 server tests (with one environment-dependent server test
-skipped). The complete database suite then
-passed all 14 tests against a fresh disposable PostgreSQL 17 instance, including migration 014,
-tenant isolation, durable history counts, and session-scoped credential revocation. Strict type
-checks, lint, and database/server production builds also passed. Clean-host CI remains authoritative
-before promotion.
+On 2026-09-18, the current P0 beta package run passed 20 contract tests, 17 game-engine tests,
+10 Recovery Rehearsal tests, 97 web tests, 118 server tests, 14 database memory/migration tests,
+four insight tests, and three experience tests. One multi-writer server test and seven PostgreSQL
+tests are environment-gated in the default run. The seven PostgreSQL tests separately passed
+against a fresh disposable PostgreSQL 17 instance through migrations 014–016, including forced RLS,
+tenant isolation, exact keyset cursors, last-hosted aggregation, durable history counts, and
+session-scoped credential revocation. The nine-test allowlisted beta browser journey passed, as did
+the feature-off fallback coverage in desktop Chromium, mobile Chromium, and mobile WebKit. Local
+Firefox could not start because its installed Playwright profile is invalid; clean-host CI remains
+authoritative before promotion.
 
-- `pnpm check`: formatting, lint, strict type checks, 243 passing unit/integration tests, and
-  production builds for all eight workspace packages on the current branch. Five PostgreSQL tests
-  and one multi-writer test are intentionally environment-gated in this default command.
+- `pnpm check`: formatting, a transitive workspace-dependency Docker-context guard, lint, strict
+  type checks, package tests, and production builds for all eight workspace packages. The current
+  package run has 283 passing tests; seven PostgreSQL tests and one multi-writer test are
+  intentionally environment-gated in the default command.
 - PostgreSQL integration: one production-like test covering forced RLS, unscoped and
   cross-workspace denial, media isolation/deletion, enriched account export, atomic billing event
   ordering, consent, immutable versions, audited operational-feature persistence, PostgreSQL

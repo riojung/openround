@@ -2444,6 +2444,30 @@ html[data-openround-motion="reduced"] *::after {
   min-width: min(260px, 100%);
 }
 
+.participant-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+}
+
+.participant-progress li {
+  border: 1px solid color-mix(in srgb, var(--experience-text) 22%, transparent);
+  border-radius: 999px;
+  color: var(--experience-muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+  padding: 6px 10px;
+}
+
+.participant-progress li[aria-current="step"] {
+  background: var(--experience-surface-strong);
+  border-color: var(--experience-primary);
+  color: var(--experience-text);
+}
+
 .audience-tray {
   border-top: 1px solid color-mix(in srgb, var(--experience-text) 20%, transparent);
   margin-top: 22px;

@@ -9,6 +9,7 @@ import { ExperiencePreferences } from "../../../components/experience-preference
 import { Countdown } from "../../../components/countdown";
 import { JoinAccess } from "../../../components/join-access";
 import { QuestionMedia } from "../../../components/question-media";
+import { ResponseDistributionView } from "../../../components/response-distribution";
 import {
   audienceContextKey,
   createAudienceRealtimeReceipt,
@@ -236,6 +237,9 @@ export default function PresenterPage() {
               </p>
             ) : null}
             {snapshot.explanation ? <p className="notice">{snapshot.explanation}</p> : null}
+            {snapshot.uxBeta === true && snapshot.responseDistribution ? (
+              <ResponseDistributionView distribution={snapshot.responseDistribution} />
+            ) : null}
             {snapshot.phase === "leaderboard" &&
             snapshot.settings.resultVisibility === "leaderboard" ? (
               <ol style={{ fontSize: "1.4rem", lineHeight: 1.8 }}>

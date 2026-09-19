@@ -2,29 +2,29 @@
 
 This engineering inventory is not a legal opinion. Confirm purposes, legal basis, processor location, notices, and contracts before production.
 
-| Data                        | Purpose                              |                                     Default retention | Location rule                                                               | Deletion                                                |
-| --------------------------- | ------------------------------------ | ----------------------------------------------------: | --------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Creator email and session   | Account access and support           |                         Account life; session 30 days | Workspace home region                                                       | Account deletion anonymizes email and revokes sessions  |
-| Policy consent and version  | Evidence of creator acknowledgement  |                              Policy/legal requirement | Workspace home region                                                       | Counsel-approved retention/anonymization procedure      |
-| Checkpoint content/versions | Authoring and frozen live delivery   |                                          Account life | Workspace home region                                                       | Workspace/account deletion                              |
-| Image objects and metadata  | Instructional question media         |                         Account life; quarantine 24 h | Workspace home region                                                       | Account deletion or quarantine cleanup                  |
-| Participant nickname        | Room identification                  |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
-| Answers, scores, timestamps | Correctness, recovery, reports       |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
-| Confidence/interventions    | Recovery diagnosis and evidence      |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
-| Pulse signals/events        | In-room pacing/help context          |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
-| Chat/reactions/reports      | Room conversation and safety         |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge, moderation, or early deletion            |
-| Mutes/bans/moderation       | Audience safety and accountability   |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
-| Q&A, replies, votes         | Audience voice and moderation        |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge, moderation, or early deletion            |
-| Follow-up attempts/answers  | Accountless unresolved-concept work  |                       Source-session retention window | Session home region                                                         | Source session purge, revocation, or early deletion     |
-| Authoring source/job        | Create cited review-only drafts      | 30/365 days; source cleared after terminal processing | Workspace home region; configured provider receives bounded source sections | Job retention or account deletion                       |
-| External creator identity   | Explicit institution sign-in/linking |                            Account or membership life | Workspace home region; identity provider processes its own authentication   | Creator unlink, membership removal, or account deletion |
-| LTI registration/launch     | Instructor launch and Deep Linking   |           Registration life; launches are short-lived | Workspace home region; registered LMS receives the signed response          | Operator disable, launch expiry, or workspace deletion  |
-| Opaque token hashes         | Resume and authorization             |                        Live use 24 h; purge with data | Session home region                                                         | Session purge                                           |
-| Creator-resume token hash   | Secure recovery of an active room    |             At most 4 h and never past session expiry | Session home region                                                         | Replacement, explicit revocation, or session purge      |
-| Bounded beta product events | Measure creation/rehearsal adoption  |                                               30 days | Workspace home region                                                       | Scheduled retention purge or workspace deletion         |
-| Security metadata           | Abuse prevention and incident review |                                        30 days target | Primary region                                                              | Scheduled purge                                         |
-| Audit records               | Sensitive-operation accountability   |              365 days by default, operator-configured | Workspace home region                                                       | Scheduled purge plus workspace deletion                 |
-| Stripe identifiers/status   | Entitlement reconciliation           |                            Contract/legal requirement | Provider plus application region                                            | Provider and application workflow                       |
+| Data                        | Purpose                                                                       |                                     Default retention | Location rule                                                               | Deletion                                                |
+| --------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------: | --------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Creator email and session   | Account access and support                                                    |                         Account life; session 30 days | Workspace home region                                                       | Account deletion anonymizes email and revokes sessions  |
+| Policy consent and version  | Evidence of creator acknowledgement                                           |                              Policy/legal requirement | Workspace home region                                                       | Counsel-approved retention/anonymization procedure      |
+| Checkpoint content/versions | Authoring and frozen live delivery                                            |                                          Account life | Workspace home region                                                       | Workspace/account deletion                              |
+| Image objects and metadata  | Instructional question media                                                  |                         Account life; quarantine 24 h | Workspace home region                                                       | Account deletion or quarantine cleanup                  |
+| Participant nickname        | Room identification                                                           |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
+| Answers, scores, timestamps | Correctness, recovery, reports                                                |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
+| Confidence/interventions    | Recovery diagnosis and evidence                                               |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
+| Pulse signals/events        | In-room pacing/help context                                                   |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
+| Chat/reactions/reports      | Room conversation and safety                                                  |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge, moderation, or early deletion            |
+| Mutes/bans/moderation       | Audience safety and accountability                                            |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge or early deletion                         |
+| Q&A, replies, votes         | Audience voice and moderation                                                 |                            Free 30 days; Pro 365 days | Session home region                                                         | Session purge, moderation, or early deletion            |
+| Follow-up attempts/answers  | Accountless unresolved-concept work                                           |                       Source-session retention window | Session home region                                                         | Source session purge, revocation, or early deletion     |
+| Authoring source/job        | Create cited review-only drafts                                               | 30/365 days; source cleared after terminal processing | Workspace home region; configured provider receives bounded source sections | Job retention or account deletion                       |
+| External creator identity   | Explicit institution sign-in/linking                                          |                            Account or membership life | Workspace home region; identity provider processes its own authentication   | Creator unlink, membership removal, or account deletion |
+| LTI registration/launch     | Instructor launch and Deep Linking                                            |           Registration life; launches are short-lived | Workspace home region; registered LMS receives the signed response          | Operator disable, launch expiry, or workspace deletion  |
+| Opaque token hashes         | Resume and authorization                                                      |                        Live use 24 h; purge with data | Session home region                                                         | Session purge                                           |
+| Creator-resume token hash   | Secure recovery of an active room                                             |             At most 4 h and never past session expiry | Session home region                                                         | Replacement, explicit revocation, or session purge      |
+| Bounded beta product events | Measure the creation, live recovery, report, follow-up, and rehearsal funnels |                                               30 days | Workspace home region                                                       | Scheduled retention purge or workspace deletion         |
+| Security metadata           | Abuse prevention and incident review                                          |                                        30 days target | Primary region                                                              | Scheduled purge                                         |
+| Audit records               | Sensitive-operation accountability                                            |              365 days by default, operator-configured | Workspace home region                                                       | Scheduled purge plus workspace deletion                 |
+| Stripe identifiers/status   | Entitlement reconciliation                                                    |                            Contract/legal requirement | Provider plus application region                                            | Provider and application workflow                       |
 
 Account export includes authoring source text and uploaded-source bytes while a job still needs
 them, because it is the creator's private account export. Ordinary authoring API views never return
@@ -62,14 +62,19 @@ only these bounded categorical dimensions: creation path, setup recipe, rehearsa
 workspace segment, beta version, and duration bucket. The server supplies the segment and beta
 version. The event table has no actor ID or product-object ID and cannot store content, answers,
 aliases, source text, or free-form metadata. Raw rows are purged at 30 days by the scheduled
-retention worker. The Prometheus counter uses the same bounded label vocabulary and follows the
-operator's separately configured metrics retention.
+retention worker. Its result, structured completion log, and bounded retention counter expose only
+the number purged. The Prometheus product counter uses the same bounded label vocabulary and
+follows the operator's separately configured metrics retention. Participant join and answer
+milestones are anonymous counts: they do not contain participant IDs, aliases, responses, room
+codes, or Round/report identifiers. A follow-up share milestone is recorded only after an explicit
+copy or link-download action.
 
 Live response distributions are derived projections rather than separately persisted answer
-copies. They are absent before lock/reveal, when fewer than five people answered, and from every
-participant snapshot. Choice/rating evidence contains only aggregate buckets; multi-select
-percentages use respondents as the denominator; numeric evidence contains only correct and
-incorrect totals.
+copies. A ready report may retain the same aggregate projection inside its existing retention
+window. Distributions are absent before lock/reveal, when fewer than five people answered, and
+from every participant snapshot. Choice/rating evidence contains only aggregate buckets;
+multi-select percentages use respondents as the denominator; numeric evidence contains only
+correct and incorrect totals.
 
 Never collect participant birth date, phone, precise location, advertising ID, biometric
 information, social graph, or marketing consent in the guest experience. Never place participant,

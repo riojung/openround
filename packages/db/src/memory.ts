@@ -488,13 +488,35 @@ export class MemoryRepository implements Repository {
   }
 
   async listQuizzes(workspaceId: string, includeArchived = false) {
+    const quizIdByVersionId = new Map(
+      [...this.versions.values()]
+        .filter((version) => version.workspaceId === workspaceId)
+        .map((version) => [version.id, version.quizId]),
+    );
+    const lastHostedAtByQuizId = new Map<string, Date>();
+    for (const session of this.sessions.values()) {
+      if (session.workspaceId !== workspaceId) continue;
+      const quizId = quizIdByVersionId.get(session.quizVersionId);
+      if (!quizId) continue;
+      const current = lastHostedAtByQuizId.get(quizId);
+      if (!current || session.createdAt > current) {
+        lastHostedAtByQuizId.set(quizId, session.createdAt);
+      }
+    }
     return [...this.quizzes.values()]
       .filter(
         (quiz) =>
           quiz.workspaceId === workspaceId && (includeArchived || quiz.status !== "archived"),
       )
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-      .map((quiz) => structuredClone(quiz));
+      .sort(
+        (left, right) =>
+          right.updatedAt.getTime() - left.updatedAt.getTime() ||
+          (left.id === right.id ? 0 : left.id < right.id ? 1 : -1),
+      )
+      .map((quiz) => ({
+        ...structuredClone(quiz),
+        lastHostedAt: structuredClone(lastHostedAtByQuizId.get(quiz.id) ?? null),
+      }));
   }
 
   async listFolders(workspaceId: string) {
@@ -2118,6 +2140,26 @@ export class MemoryRepository implements Repository {
       .map(([, answer]) => structuredClone(answer));
   }
 
+  async findParticipantIdsWithAnswers(
+    workspaceId: string,
+    sessionId: string,
+    participantIds: string[],
+  ) {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.workspaceId !== workspaceId || participantIds.length === 0) return [];
+    const requested = new Set(participantIds);
+    return [
+      ...new Set(
+        [...this.answers.entries()]
+          .filter(
+            ([key, answer]) =>
+              key.startsWith(`${sessionId}:`) && requested.has(answer.participantId),
+          )
+          .map(([, answer]) => answer.participantId),
+      ),
+    ];
+  }
+
   async createMediaAsset(input: MediaAssetRecord) {
     this.mediaAssets.set(input.id, structuredClone(input));
     return structuredClone(input);
@@ -2411,6 +2453,7 @@ export class MemoryRepository implements Repository {
       cursor?: HistoryCursor;
       limit: number;
       status?: FollowupHistoryRecord["status"];
+      quizId?: string;
       from?: Date;
       to?: Date;
       now: Date;
@@ -2418,7 +2461,10 @@ export class MemoryRepository implements Repository {
   ) {
     const records = [...this.followups.values()]
       .filter((followup) => followup.workspaceId === workspaceId)
-      .map((followup): FollowupHistoryRecord => {
+      .flatMap((followup): FollowupHistoryRecord[] => {
+        const session = this.sessions.get(followup.sourceSessionId);
+        const version = session ? this.versions.get(session.quizVersionId) : undefined;
+        if (!version || (options.quizId && version.quizId !== options.quizId)) return [];
         const attempts = [...this.followupAttempts.values()].filter(
           (attempt) => attempt.followupId === followup.id,
         );
@@ -2430,22 +2476,25 @@ export class MemoryRepository implements Repository {
               : followup.opensAt > options.now
                 ? "scheduled"
                 : "open";
-        return {
-          id: followup.id,
-          sourceSessionId: followup.sourceSessionId,
-          sourceReportId: followup.sourceReportId,
-          title: followup.title,
-          status,
-          conceptKeys: [...followup.conceptKeys],
-          checkpointCount: followup.content.questions.length,
-          attemptCount: attempts.length,
-          completedAttemptCount: attempts.filter((attempt) => attempt.status === "completed")
-            .length,
-          opensAt: new Date(followup.opensAt),
-          closesAt: new Date(followup.closesAt),
-          expiresAt: new Date(followup.expiresAt),
-          createdAt: new Date(followup.createdAt),
-        };
+        return [
+          {
+            id: followup.id,
+            sourceSessionId: followup.sourceSessionId,
+            sourceReportId: followup.sourceReportId,
+            quizId: version.quizId,
+            title: followup.title,
+            status,
+            conceptKeys: [...followup.conceptKeys],
+            checkpointCount: followup.content.questions.length,
+            attemptCount: attempts.length,
+            completedAttemptCount: attempts.filter((attempt) => attempt.status === "completed")
+              .length,
+            opensAt: new Date(followup.opensAt),
+            closesAt: new Date(followup.closesAt),
+            expiresAt: new Date(followup.expiresAt),
+            createdAt: new Date(followup.createdAt),
+          },
+        ];
       })
       .filter((item) => !options.status || item.status === options.status)
       .filter((item) => !options.from || item.createdAt.getTime() >= options.from.getTime())

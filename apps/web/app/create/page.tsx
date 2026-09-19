@@ -33,7 +33,7 @@ const starts = [
   {
     href: "#blank",
     title: "Start blank",
-    description: "Name the Round, choose the first response type, and begin writing.",
+    description: "Choose the first response type, then name the Round now or in the editor.",
   },
 ];
 
@@ -53,7 +53,7 @@ function CreateContent() {
     try {
       const response = await apiFetch<{ quiz: { id: string } }>("/v1/quizzes", {
         method: "POST",
-        body: JSON.stringify({ title, description: "" }),
+        body: JSON.stringify({ title: title.trim() || "Untitled Round", description: "" }),
       });
       recordCreationEvent("creation_completed", "blank");
       router.push(`/quiz/${response.quiz.id}?insert=${questionType}`);
@@ -135,17 +135,6 @@ function CreateContent() {
           </div>
         </div>
         <form className={styles.blankForm} onSubmit={createBlank}>
-          <label className="field">
-            <span>Round title</span>
-            <input
-              className="input"
-              maxLength={160}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Friday knowledge check"
-              required
-              value={title}
-            />
-          </label>
           <fieldset>
             <legend>First response type</legend>
             <div className={styles.typeGrid}>
@@ -166,6 +155,16 @@ function CreateContent() {
               ))}
             </div>
           </fieldset>
+          <label className="field">
+            <span>Round title (optional for now)</span>
+            <input
+              className="input"
+              maxLength={160}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="You can name the Round in the editor"
+              value={title}
+            />
+          </label>
           {error ? (
             <p className="error" role="alert">
               {error}

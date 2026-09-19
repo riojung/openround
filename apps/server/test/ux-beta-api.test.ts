@@ -159,6 +159,17 @@ describe("P0 beta creator APIs", () => {
     expect(firstQuiz.draft.questions[0]!.linkedRecheckQuestionId).toBe(
       firstQuiz.draft.questions[1]!.id,
     );
+    const roundOptions = await app.inject({
+      method: "GET",
+      url: "/v1/quizzes?archived=true&summary=true",
+      headers: { cookie: signedIn.cookie },
+    });
+    expect(roundOptions.statusCode).toBe(200);
+    const firstRoundOption = roundOptions
+      .json<{ quizzes: Array<{ id: string; title: string }> }>()
+      .quizzes.find((round) => round.id === firstQuiz.id);
+    expect(firstRoundOption).toEqual({ id: firstQuiz.id, title: "Misconception check" });
+    expect(roundOptions.body).not.toContain("questions");
   });
 
   it("preserves exact database timestamps in session and follow-up cursors", async () => {
@@ -243,6 +254,7 @@ describe("P0 beta creator APIs", () => {
                 id: followupId,
                 sourceSessionId: sessionId,
                 sourceReportId: randomUUID(),
+                quizId: randomUUID(),
                 title: "Exact follow-up cursor",
                 status: "open",
                 conceptKeys: [],
@@ -360,6 +372,33 @@ describe("P0 beta creator APIs", () => {
     );
     const firstSession = firstSessionResponse.json<{ sessionId: string }>();
     const secondSession = secondSessionResponse.json<{ sessionId: string }>();
+    const listedRoundsResponse = await app.inject({
+      method: "GET",
+      url: "/v1/quizzes",
+      headers: { cookie },
+    });
+    expect(listedRoundsResponse.statusCode).toBe(200);
+    const listedRound = listedRoundsResponse
+      .json<{
+        quizzes: Array<{
+          id: string;
+          lastHostedAt: string | null;
+          sessionId?: string;
+          sessionIds?: string[];
+          roomCode?: string;
+        }>;
+      }>()
+      .quizzes.find((item) => item.id === quiz.id);
+    const expectedLastHostedAt = [firstSession.sessionId, secondSession.sessionId]
+      .map((sessionId) => repository.sessions.get(sessionId)!.createdAt)
+      .sort((left, right) => right.getTime() - left.getTime())[0]!;
+    expect(listedRound).toMatchObject({
+      id: quiz.id,
+      lastHostedAt: expectedLastHostedAt.toISOString(),
+    });
+    expect(listedRound).not.toHaveProperty("sessionId");
+    expect(listedRound).not.toHaveProperty("sessionIds");
+    expect(listedRound).not.toHaveProperty("roomCode");
     const durableAnswerId = randomUUID();
     const durableChoiceId = randomUUID();
     await repository.persistAnswer(workspaceId, firstSession.sessionId, {
@@ -560,7 +599,11 @@ describe("P0 beta creator APIs", () => {
     });
     expect(telemetry.statusCode).toBe(202);
     expect(telemetry.json()).toEqual({ accepted: 1 });
-    expect(repository.productEvents[0]).toMatchObject({
+    await built.productEvents.drain();
+    const creationStartedEvent = repository.productEvents.find(
+      (event) => event.name === "creation_started",
+    );
+    expect(creationStartedEvent).toMatchObject({
       workspaceId,
       name: "creation_started",
       dimensions: {
@@ -569,9 +612,7 @@ describe("P0 beta creator APIs", () => {
         betaVersion: "p0-2026",
       },
     });
-    expect(JSON.stringify(repository.productEvents[0])).not.toContain(
-      signedIn.creator.creator.userId,
-    );
+    expect(JSON.stringify(creationStartedEvent)).not.toContain(signedIn.creator.creator.userId);
     const rejectedTelemetry = await app.inject({
       method: "POST",
       url: "/v1/product-events",
@@ -587,6 +628,21 @@ describe("P0 beta creator APIs", () => {
       },
     });
     expect(rejectedTelemetry.statusCode).toBe(400);
+    const meaninglessRehearsalCompletion = await app.inject({
+      method: "POST",
+      url: "/v1/product-events",
+      headers: { cookie },
+      payload: {
+        events: [
+          {
+            name: "rehearsal_completed",
+            occurredAt: new Date().toISOString(),
+            dimensions: {},
+          },
+        ],
+      },
+    });
+    expect(meaninglessRehearsalCompletion.statusCode).toBe(400);
 
     const session = await repository.getSessionById(firstSession.sessionId);
     expect(session).not.toBeNull();
@@ -693,6 +749,7 @@ describe("P0 beta creator APIs", () => {
         {
           id: followupId,
           sourceReportId: reportId,
+          quizId: quiz.id,
           status: "open",
           attemptCount: 0,
           completedAttemptCount: 0,
@@ -700,6 +757,27 @@ describe("P0 beta creator APIs", () => {
       ],
       nextCursor: null,
     });
+    const followupCreatedAt = followups.json<{ items: Array<{ createdAt: string }> }>().items[0]!
+      .createdAt;
+    const filteredFollowups = await app.inject({
+      method: "GET",
+      url: `/v1/followups?${new URLSearchParams({
+        status: "open",
+        quizId: quiz.id,
+        from: new Date(new Date(followupCreatedAt).getTime() - 1).toISOString(),
+        to: new Date(new Date(followupCreatedAt).getTime() + 1).toISOString(),
+      })}`,
+      headers: { cookie },
+    });
+    expect(filteredFollowups.json()).toMatchObject({
+      items: [{ id: followupId, quizId: quiz.id, status: "open" }],
+    });
+    const otherRoundFollowups = await app.inject({
+      method: "GET",
+      url: `/v1/followups?quizId=${randomUUID()}`,
+      headers: { cookie },
+    });
+    expect(otherRoundFollowups.json()).toMatchObject({ items: [], nextCursor: null });
 
     const outsider = await signIn(app, "outside-history@example.com");
     for (const url of ["/v1/sessions", "/v1/reports", "/v1/followups"]) {

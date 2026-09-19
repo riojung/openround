@@ -21,6 +21,7 @@ import {
 } from "../../../components/host-command-center";
 import { JoinAccess } from "../../../components/join-access";
 import { QuestionMedia } from "../../../components/question-media";
+import { ResponseDistributionView } from "../../../components/response-distribution";
 import { QnaPanel } from "../../../components/qna-panel";
 import { apiFetch, humanError } from "../../../lib/api";
 import {
@@ -33,12 +34,20 @@ import {
   createRealtimeClient,
   withRealtimeReceipt,
 } from "../../../lib/realtime";
+import {
+  createAckRecoveryController,
+  HOST_ACK_CHECKING_MESSAGE,
+  HOST_ACK_TIMEOUT_MESSAGE,
+} from "../../../lib/realtime-mutation-recovery";
 import { experienceThemeStyle } from "../../../lib/theme";
 import { clientUuid } from "../../../lib/uuid";
 import { getHostPhaseView, type HostPhaseCommand } from "../../../lib/host-phase";
 import { getLegacyPhaseActions, getLegacyRecoveryActions } from "../../../lib/legacy-host-phase";
 
 type Ack<T> = { data?: T; error?: { code: string; message: string } };
+
+const ACK_TIMEOUT_MS = 10_000;
+const SYNC_GRACE_MS = 5_000;
 
 function hostCredential(sessionId: string) {
   const storageKey = hostCredentialStorageKey(sessionId);
@@ -50,50 +59,6 @@ function hostCredential(sessionId: string) {
     return cohostToken;
   }
   return sessionStorage.getItem(storageKey);
-}
-
-function ResponseDistributionView({
-  distribution,
-}: {
-  distribution: NonNullable<SessionSnapshot["responseDistribution"]>;
-}) {
-  if (distribution.kind === "numeric") {
-    const correctPercent = Math.round((distribution.correct / distribution.respondents) * 100);
-    return (
-      <section aria-label="Post-lock response distribution" className="distribution-card">
-        <strong>Post-lock distribution</strong>
-        <p>
-          {distribution.correct} correct · {distribution.incorrect} incorrect · {correctPercent}%
-          correct
-        </p>
-      </section>
-    );
-  }
-
-  return (
-    <section aria-label="Post-lock response distribution" className="distribution-card">
-      <strong>Post-lock distribution</strong>
-      <p className="muted">
-        {distribution.respondents} respondents
-        {distribution.kind === "choice" && distribution.percentBasis === "respondents"
-          ? " · percentages are percent of respondents and may total over 100%"
-          : ""}
-      </p>
-      <ul className="distribution-list">
-        {distribution.buckets.map((bucket) => (
-          <li key={bucket.value}>
-            <span>{bucket.label}</span>
-            <span aria-hidden="true" className="distribution-track">
-              <span style={{ width: `${bucket.percent}%` }} />
-            </span>
-            <strong>
-              {bucket.count} · {bucket.percent}%
-            </strong>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
 }
 
 export default function HostPage() {
@@ -120,13 +85,36 @@ export default function HostPage() {
   const [staffManagementAvailable, setStaffManagementAvailable] = useState(false);
   const [cohostingAvailable, setCohostingAvailable] = useState(false);
   const [audienceOpen, setAudienceOpen] = useState(false);
-  const [audienceTab, setAudienceTab] = useState<"audience" | "qna">("audience");
+  const [audienceTab, setAudienceTab] = useState<"participants" | "pulse" | "qna" | "chat">(
+    "participants",
+  );
   const audienceButtonRef = useRef<HTMLButtonElement>(null);
   const audienceDrawerRef = useRef<HTMLDivElement>(null);
   const audienceCloseRef = useRef<HTMLButtonElement>(null);
+  const syncHostRef = useRef<() => void>(() => undefined);
+  const commandRecoveryRef = useRef<ReturnType<typeof createAckRecoveryController<null>> | null>(
+    null,
+  );
   const recoverHostCredentialRef = useRef<
     ((error: NonNullable<Ack<unknown>["error"]>, rejectedToken: string) => Promise<boolean>) | null
   >(null);
+
+  if (!commandRecoveryRef.current) {
+    commandRecoveryRef.current = createAckRecoveryController({
+      acknowledgementTimeoutMs: ACK_TIMEOUT_MS,
+      reconciliationTimeoutMs: SYNC_GRACE_MS,
+      onPendingChange: setCommandPending,
+      onReconciliationRequested: () => {
+        setError(HOST_ACK_CHECKING_MESSAGE);
+        syncHostRef.current();
+      },
+      onExpired: () => setError(HOST_ACK_TIMEOUT_MESSAGE),
+    });
+  }
+
+  function clearPendingCommand(commandId?: string) {
+    return Boolean(commandRecoveryRef.current?.settle(commandId));
+  }
 
   useEffect(() => {
     snapshotRef.current = snapshot;
@@ -208,7 +196,7 @@ export default function HostPage() {
             }
             if (response.data) {
               recovery.succeeded();
-              setError("");
+              if (!commandRecoveryRef.current?.current()) setError("");
               setSnapshot(response.data.snapshot);
             }
           },
@@ -224,7 +212,6 @@ export default function HostPage() {
           }
           setSnapshot(envelope.payload.snapshot);
           if (envelope.payload.reportId) setReportId(envelope.payload.reportId);
-          setCommandPending(false);
         },
       );
       const qnaUpdate = withRealtimeReceipt(() => setQnaRevision((current) => current + 1));
@@ -234,7 +221,7 @@ export default function HostPage() {
       });
       socket.on("connect", () => {
         setConnected(true);
-        setError("");
+        if (!commandRecoveryRef.current?.current()) setError("");
         setAudienceSyncRevision((current) => current + 1);
         sync();
       });
@@ -274,6 +261,7 @@ export default function HostPage() {
         "audience.event",
       ])
         socket.on(event, audienceUpdate);
+      syncHostRef.current = sync;
       socket.connect();
     };
 
@@ -290,6 +278,8 @@ export default function HostPage() {
 
     return () => {
       disposed = true;
+      commandRecoveryRef.current?.dispose();
+      syncHostRef.current = () => undefined;
       if (recoverHostCredentialRef.current === recoverHostCredential) {
         recoverHostCredentialRef.current = null;
       }
@@ -376,22 +366,27 @@ export default function HostPage() {
     } = {},
   ) {
     if (!snapshot || commandPending) return;
+    if (!connected) {
+      setError("Wait for the connection to recover before using host controls.");
+      return;
+    }
     const hostToken = sessionStorage.getItem(`openround:host:${sessionId}`);
     if (!hostToken) return;
-    setCommandPending(true);
     setError("");
+    const commandId = clientUuid();
+    if (!commandRecoveryRef.current?.begin(commandId, null)) return;
     socket.emit(
       "host.command",
       {
         sessionId,
         hostToken,
-        commandId: clientUuid(),
+        commandId,
         expectedVersion: snapshot.version,
         action,
         ...options,
       },
       (response: Ack<{ snapshot: SessionSnapshot }>) => {
-        setCommandPending(false);
+        if (!clearPendingCommand(commandId)) return;
         if (response.error) {
           if (response.error.code === "UNAUTHORIZED" && recoverHostCredentialRef.current) {
             void recoverHostCredentialRef.current(response.error, hostToken);
@@ -405,7 +400,12 @@ export default function HostPage() {
               if (sync.data) setSnapshot(sync.data.snapshot);
             },
           );
-        } else if (response.data) setSnapshot(response.data.snapshot);
+        } else if (response.data) {
+          setSnapshot(response.data.snapshot);
+        } else {
+          setError(HOST_ACK_TIMEOUT_MESSAGE);
+          syncHostRef.current();
+        }
       },
     );
   }
@@ -1046,7 +1046,10 @@ export default function HostPage() {
             onKeyDown={(event) => {
               if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
               event.preventDefault();
-              const next = audienceTab === "audience" ? "qna" : "audience";
+              const tabs = ["participants", "pulse", "qna", "chat"] as const;
+              const currentIndex = tabs.indexOf(audienceTab);
+              const direction = event.key === "ArrowRight" ? 1 : -1;
+              const next = tabs[(currentIndex + direction + tabs.length) % tabs.length]!;
               setAudienceTab(next);
               document.getElementById(`audience-tab-${next}`)?.focus();
             }}
@@ -1054,14 +1057,25 @@ export default function HostPage() {
           >
             <button
               aria-controls="host-audience-panel"
-              aria-selected={audienceTab === "audience"}
-              id="audience-tab-audience"
-              onClick={() => setAudienceTab("audience")}
+              aria-selected={audienceTab === "participants"}
+              id="audience-tab-participants"
+              onClick={() => setAudienceTab("participants")}
               role="tab"
-              tabIndex={audienceTab === "audience" ? 0 : -1}
+              tabIndex={audienceTab === "participants" ? 0 : -1}
               type="button"
             >
-              Participants, Pulse &amp; Chat
+              Participants ({snapshot.participants.length})
+            </button>
+            <button
+              aria-controls="host-audience-panel"
+              aria-selected={audienceTab === "pulse"}
+              id="audience-tab-pulse"
+              onClick={() => setAudienceTab("pulse")}
+              role="tab"
+              tabIndex={audienceTab === "pulse" ? 0 : -1}
+              type="button"
+            >
+              Pulse
             </button>
             <button
               aria-controls="host-qna-panel"
@@ -1074,10 +1088,21 @@ export default function HostPage() {
             >
               Q&amp;A
             </button>
+            <button
+              aria-controls="host-audience-panel"
+              aria-selected={audienceTab === "chat"}
+              id="audience-tab-chat"
+              onClick={() => setAudienceTab("chat")}
+              role="tab"
+              tabIndex={audienceTab === "chat" ? 0 : -1}
+              type="button"
+            >
+              Chat
+            </button>
           </div>
           <div
-            aria-labelledby="audience-tab-audience"
-            hidden={audienceTab !== "audience"}
+            aria-labelledby={`audience-tab-${audienceTab}`}
+            hidden={audienceTab === "qna"}
             id="host-audience-panel"
             role="tabpanel"
           >
@@ -1089,6 +1114,7 @@ export default function HostPage() {
                 sessionId={sessionId}
                 syncRevision={audienceSyncRevision}
                 token={mediaCredential}
+                view={audienceTab === "qna" ? "participants" : audienceTab}
               />
             ) : (
               <p className="muted">Audience controls close when the round finishes.</p>

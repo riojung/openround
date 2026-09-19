@@ -61,6 +61,7 @@ import type {
   QnaQuestionRecord,
   QnaReplyRecord,
   QnaSettingsRecord,
+  QuizListRecord,
   QuizRecord,
   QuizVersionRecord,
   ReportJob,
@@ -93,6 +94,13 @@ function mapQuiz(row: QueryResultRow): QuizRecord {
     tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
     createdAt: date(row.created_at),
     updatedAt: date(row.updated_at),
+  };
+}
+
+function mapQuizListRecord(row: QueryResultRow): QuizListRecord {
+  return {
+    ...mapQuiz(row),
+    lastHostedAt: row.last_hosted_at == null ? null : date(row.last_hosted_at),
   };
 }
 
@@ -427,6 +435,7 @@ function mapFollowupHistory(row: QueryResultRow, now: Date): FollowupHistoryReco
     id: String(row.id),
     sourceSessionId: String(row.source_session_id),
     sourceReportId: String(row.source_report_id),
+    quizId: String(row.quiz_id),
     title: String(row.title),
     status,
     conceptKeys: Array.isArray(row.concept_keys) ? row.concept_keys.map(String) : [],
@@ -1342,10 +1351,23 @@ export class PostgresRepository implements Repository {
   async listQuizzes(workspaceId: string, includeArchived = false) {
     const result = await this.workspaceQuery(
       workspaceId,
-      `SELECT * FROM quizzes WHERE workspace_id = $1 AND ($2 OR status <> 'archived') ORDER BY updated_at DESC`,
+      `SELECT quiz.*, hosted.last_hosted_at
+       FROM quizzes AS quiz
+       LEFT JOIN (
+         SELECT version.quiz_id, max(session.created_at) AS last_hosted_at
+         FROM quiz_versions AS version
+         JOIN game_sessions AS session
+           ON session.quiz_version_id = version.id
+          AND session.workspace_id = $1
+          AND session.deleted_at IS NULL
+         WHERE version.workspace_id = $1
+         GROUP BY version.quiz_id
+       ) AS hosted ON hosted.quiz_id = quiz.id
+       WHERE quiz.workspace_id = $1 AND ($2 OR quiz.status <> 'archived')
+       ORDER BY quiz.updated_at DESC, quiz.id DESC`,
       [workspaceId, includeArchived],
     );
-    return result.rows.map(mapQuiz);
+    return result.rows.map(mapQuizListRecord);
   }
 
   async listFolders(workspaceId: string) {
@@ -3639,6 +3661,24 @@ export class PostgresRepository implements Repository {
     return result.rows.map(mapAnswer);
   }
 
+  async findParticipantIdsWithAnswers(
+    workspaceId: string,
+    sessionId: string,
+    participantIds: string[],
+  ) {
+    if (participantIds.length === 0) return [];
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT DISTINCT participant_id::text AS participant_id
+       FROM answers
+       WHERE workspace_id = $1 AND session_id = $2
+         AND participant_id = ANY($3::uuid[])
+       ORDER BY participant_id::text`,
+      [workspaceId, sessionId, participantIds],
+    );
+    return result.rows.map((row) => String(row.participant_id));
+  }
+
   async createMediaAsset(input: MediaAssetRecord) {
     const result = await this.workspaceQuery(
       input.workspaceId,
@@ -4111,6 +4151,7 @@ export class PostgresRepository implements Repository {
       cursor?: HistoryCursor;
       limit: number;
       status?: FollowupHistoryRecord["status"];
+      quizId?: string;
       from?: Date;
       to?: Date;
       now: Date;
@@ -4119,6 +4160,7 @@ export class PostgresRepository implements Repository {
     const result = await this.workspaceQuery(
       workspaceId,
       `SELECT followups.*,
+              quiz_versions.quiz_id,
               to_char(
                 followups.created_at AT TIME ZONE 'UTC',
                 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
@@ -4128,30 +4170,40 @@ export class PostgresRepository implements Repository {
                 WHERE followup_attempts.status = 'completed'
               )::integer AS completed_attempt_count
        FROM followups
-       LEFT JOIN followup_attempts ON followup_attempts.followup_id = followups.id
+       JOIN game_sessions
+         ON game_sessions.id = followups.source_session_id
+        AND game_sessions.workspace_id = followups.workspace_id
+       JOIN quiz_versions
+         ON quiz_versions.id = game_sessions.quiz_version_id
+        AND quiz_versions.workspace_id = followups.workspace_id
+       LEFT JOIN followup_attempts
+         ON followup_attempts.followup_id = followups.id
+        AND followup_attempts.workspace_id = followups.workspace_id
        WHERE followups.workspace_id = $1
          AND ($2::timestamptz IS NULL OR (followups.created_at, followups.id) < ($2, $3::uuid))
-         AND ($4::timestamptz IS NULL OR followups.created_at >= $4)
-         AND ($5::timestamptz IS NULL OR followups.created_at <= $5)
+         AND ($4::uuid IS NULL OR quiz_versions.quiz_id = $4)
+         AND ($5::timestamptz IS NULL OR followups.created_at >= $5)
+         AND ($6::timestamptz IS NULL OR followups.created_at <= $6)
          AND (
-           $6::text IS NULL
-           OR ($6 = 'expired' AND followups.expires_at <= $7)
-           OR ($6 = 'closed' AND followups.expires_at > $7
-               AND (followups.closed_at IS NOT NULL OR followups.closes_at <= $7))
-           OR ($6 = 'scheduled' AND followups.expires_at > $7
-               AND followups.closed_at IS NULL AND followups.closes_at > $7
-               AND followups.opens_at > $7)
-           OR ($6 = 'open' AND followups.expires_at > $7
-               AND followups.closed_at IS NULL AND followups.closes_at > $7
-               AND followups.opens_at <= $7)
+           $7::text IS NULL
+           OR ($7 = 'expired' AND followups.expires_at <= $8)
+           OR ($7 = 'closed' AND followups.expires_at > $8
+               AND (followups.closed_at IS NOT NULL OR followups.closes_at <= $8))
+           OR ($7 = 'scheduled' AND followups.expires_at > $8
+               AND followups.closed_at IS NULL AND followups.closes_at > $8
+               AND followups.opens_at > $8)
+           OR ($7 = 'open' AND followups.expires_at > $8
+               AND followups.closed_at IS NULL AND followups.closes_at > $8
+               AND followups.opens_at <= $8)
          )
-       GROUP BY followups.id
+       GROUP BY followups.id, quiz_versions.quiz_id
        ORDER BY followups.created_at DESC, followups.id DESC
-       LIMIT $8`,
+       LIMIT $9`,
       [
         workspaceId,
         options.cursor?.cursorCreatedAt ?? options.cursor?.createdAt ?? null,
         options.cursor?.id ?? null,
+        options.quizId ?? null,
         options.from ?? null,
         options.to ?? null,
         options.status ?? null,
@@ -4771,26 +4823,33 @@ export class PostgresRepository implements Repository {
     if (events.some((event) => event.workspaceId !== workspaceId)) {
       throw new Error("Product event batches cannot span workspaces");
     }
-    await this.transaction(
-      async (client) => {
-        for (const event of events) {
-          await client.query(
-            `INSERT INTO product_events
-               (id, workspace_id, event_name, dimensions, occurred_at, expires_at, created_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-            [
-              event.id,
-              event.workspaceId,
-              event.name,
-              JSON.stringify(event.dimensions),
-              new Date(event.occurredAt),
-              event.expiresAt,
-              event.createdAt,
-            ],
-          );
-        }
-      },
-      { workspaceId },
+    await this.workspaceQuery(
+      workspaceId,
+      `INSERT INTO product_events
+         (id, workspace_id, event_name, dimensions, occurred_at, expires_at, created_at)
+       SELECT input.id, $1, input.event_name, input.dimensions,
+              input.occurred_at, input.expires_at, input.created_at
+       FROM jsonb_to_recordset($2::jsonb) AS input(
+         id uuid,
+         event_name text,
+         dimensions jsonb,
+         occurred_at timestamptz,
+         expires_at timestamptz,
+         created_at timestamptz
+       )`,
+      [
+        workspaceId,
+        JSON.stringify(
+          events.map((event) => ({
+            id: event.id,
+            event_name: event.name,
+            dimensions: event.dimensions,
+            occurred_at: event.occurredAt,
+            expires_at: event.expiresAt.toISOString(),
+            created_at: event.createdAt.toISOString(),
+          })),
+        ),
+      ],
     );
   }
 

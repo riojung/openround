@@ -7,6 +7,7 @@ const betaWorkspaceId = "00000000-0000-4000-8000-00000000b001";
 export default defineConfig({
   testDir: "./tests/beta-e2e",
   fullyParallel: false,
+  workers: 1,
   expect: { timeout: 10_000 },
   timeout: 60_000,
   retries: process.env.CI ? 1 : 0,
@@ -20,7 +21,21 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
-  projects: [{ name: "chromium-beta", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium-beta",
+      grepInvert: /@mobile/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "chromium-beta-mobile",
+      grep: /@mobile/,
+      use: {
+        ...devices["Pixel 5"],
+        viewport: { width: 390, height: 844 },
+      },
+    },
+  ],
   webServer: [
     {
       command: `NODE_ENV=test PORT=${betaE2eApiPort} ALLOW_IN_MEMORY=true COMMUNITY_MODE=false WEB_ORIGIN=http://127.0.0.1:${betaE2eWebPort} PUBLIC_API_URL=http://127.0.0.1:${betaE2eApiPort} FEATURE_UX_BETA=true FEATURE_RECOVERY_REHEARSAL=true UX_BETA_WORKSPACE_ALLOWLIST=${betaWorkspaceId} TEST_INITIAL_WORKSPACE_ID=${betaWorkspaceId} LOG_LEVEL=silent pnpm --filter @openround/server dev`,

@@ -3,9 +3,17 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
-import type { Entitlements, Followup, Report, ReportV2, ReportV3 } from "@openround/contracts";
+import type {
+  Entitlements,
+  Followup,
+  Report,
+  ReportV2,
+  ReportV3,
+  ResponseDistribution,
+} from "@openround/contracts";
 import { Brand } from "../../../components/brand";
 import { RecoveryStorySummary } from "../../../components/recovery-story";
+import { recordFollowupShared } from "../../../components/workspace/product-events";
 import { API_URL, apiFetch, humanError } from "../../../lib/api";
 import { deriveRecoverySummary } from "../../../lib/report-summary";
 
@@ -16,7 +24,7 @@ interface ReportContext {
   sessionUpdatedAt: string;
 }
 
-type ReportTab = "evidence" | "questions" | "participants" | "interactions";
+type ReportTab = "evidence" | "questions" | "participants" | "interactions" | "manage";
 
 function RecoveryStory({ report }: { report: ReportV2 | ReportV3 }) {
   const summary = deriveRecoverySummary(report);
@@ -33,6 +41,8 @@ function RecoveryStory({ report }: { report: ReportV2 | ReportV3 }) {
         denominator: summary.denominator,
         recoveryPercent: summary.recoveryPercent,
         initialAccuracyPercent: report.initialAccuracy.percent,
+        initialCorrect: report.initialAccuracy.correct,
+        initialResponses: report.initialAccuracy.responses,
         evidenceLabel,
         unresolvedCount: summary.unresolved.length,
         unresolvedNarrative: summary.topUnresolved
@@ -52,6 +62,37 @@ function RecoveryStory({ report }: { report: ReportV2 | ReportV3 }) {
         evidenceNote: report.evidenceNote,
       }}
     />
+  );
+}
+
+function ReportDistribution({
+  distribution,
+  responses,
+}: {
+  distribution?: ResponseDistribution;
+  responses: number;
+}) {
+  if (!distribution) {
+    return responses < 5 ? "Hidden below five responses" : "Not available";
+  }
+  if (distribution.kind === "numeric") {
+    return `${distribution.correct} correct · ${distribution.incorrect} incorrect`;
+  }
+  return (
+    <details>
+      <summary>{distribution.respondents} respondents</summary>
+      <ul>
+        {distribution.buckets.map((bucket) => (
+          <li key={bucket.value}>
+            {bucket.label}: {bucket.count} ({bucket.percent}%
+            {distribution.kind === "choice" && distribution.percentBasis === "respondents"
+              ? " of respondents"
+              : ""}
+            )
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -363,6 +404,7 @@ function FollowupBuilder({
   const [latestPass, setLatestPass] = useState<FollowupAccessView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [shareStatus, setShareStatus] = useState("");
 
   useEffect(() => {
     if (!followup) return;
@@ -481,8 +523,21 @@ function FollowupBuilder({
     link.download = `openround-followup-${created.followup.id}-links.csv`;
     document.body.append(link);
     link.click();
+    recordFollowupShared();
+    setShareStatus("Follow-up links downloaded.");
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  async function copyGenericLink() {
+    if (!created) return;
+    try {
+      await navigator.clipboard.writeText(created.genericUrl);
+      recordFollowupShared();
+      setShareStatus("Generic follow-up link copied.");
+    } catch {
+      setError("Copy was blocked. Select and copy the link instead.");
+    }
   }
 
   if (!unresolved.length) return null;
@@ -521,7 +576,7 @@ function FollowupBuilder({
                   <input className="input" readOnly value={created.genericUrl} />
                   <button
                     className="button-quiet small-button"
-                    onClick={() => void navigator.clipboard.writeText(created.genericUrl)}
+                    onClick={() => void copyGenericLink()}
                     type="button"
                   >
                     Copy
@@ -531,6 +586,11 @@ function FollowupBuilder({
               <button className="button-quiet small-button" onClick={downloadLinks} type="button">
                 Download all links as CSV
               </button>
+              {shareStatus ? (
+                <p aria-live="polite" className="success" role="status">
+                  {shareStatus}
+                </p>
+              ) : null}
             </div>
           ) : (
             <p className="notice">
@@ -755,6 +815,7 @@ export default function ReportPage() {
       : []),
     { id: "questions", label: "Questions" },
     { id: "participants", label: "Participants" },
+    ...(uxBeta ? [{ id: "manage" as const, label: "Manage data" }] : []),
   ];
   const selectedTab = detailTabs.some((tab) => tab.id === activeTab)
     ? activeTab
@@ -810,7 +871,7 @@ export default function ReportPage() {
               </p>
             ) : null}
           </div>
-          {report?.status === "ready" && entitlements?.csvExport ? (
+          {!uxBeta && report?.status === "ready" && entitlements?.csvExport ? (
             <div className="button-row">
               <a className="button" href={`${API_URL}/v1/reports/${id}.csv`}>
                 Download CSV
@@ -819,7 +880,7 @@ export default function ReportPage() {
                 Download JSON
               </a>
             </div>
-          ) : report && entitlements ? (
+          ) : !uxBeta && report && entitlements ? (
             <Link className="button-quiet" href="/pricing">
               CSV export requires Pro
             </Link>
@@ -888,14 +949,6 @@ export default function ReportPage() {
                 report={evidence}
                 uxBeta={uxBeta}
               />
-            ) : null}
-            {uxBeta ? (
-              <p className="notice" style={{ marginBottom: 26 }}>
-                This report&apos;s stored retention deadline is{" "}
-                {new Date(report.expiresAt).toLocaleDateString()}. The current{" "}
-                {entitlements?.plan ?? "account"} plan defaults to{" "}
-                {entitlements?.reportRetentionDays ?? ""} days. You can delete it sooner below.
-              </p>
             ) : null}
             {uxBeta ? (
               <nav className="report-tabs" aria-label="Report details" role="tablist">
@@ -971,6 +1024,7 @@ export default function ReportPage() {
                         <th>Responses</th>
                         <th>Correct</th>
                         <th>Accuracy</th>
+                        {uxBeta ? <th>Distribution</th> : null}
                         <th>Follow-up</th>
                       </tr>
                     </thead>
@@ -981,6 +1035,14 @@ export default function ReportPage() {
                           <td>{question.responses}</td>
                           <td>{question.correct}</td>
                           <td>{question.accuracyPercent}%</td>
+                          {uxBeta ? (
+                            <td>
+                              <ReportDistribution
+                                distribution={question.responseDistribution}
+                                responses={question.responses}
+                              />
+                            </td>
+                          ) : null}
                           <td>{question.difficult ? "Review" : "On track"}</td>
                         </tr>
                       ))}
@@ -1029,20 +1091,63 @@ export default function ReportPage() {
                 </div>
               </section>
             ) : null}
-            <section className="panel danger-panel">
-              <h2 style={{ fontSize: "1.5rem" }}>Delete session data</h2>
-              <p className="muted">
-                Permanently remove this session, its participant records, answers, and report.
-              </p>
-              <button
-                className="button-danger"
-                disabled={deleting}
-                onClick={() => void deleteSession()}
-                type="button"
-              >
-                {deleting ? "Deleting…" : "Delete session and report"}
-              </button>
-            </section>
+            {uxBeta && selectedTab === "manage" ? (
+              <div aria-labelledby="report-tab-manage" id="report-panel-manage" role="tabpanel">
+                <section className="panel" style={{ marginBottom: 26 }}>
+                  <h2 style={{ fontSize: "1.5rem" }}>Export report data</h2>
+                  {entitlements?.csvExport ? (
+                    <div className="button-row">
+                      <a className="button" href={`${API_URL}/v1/reports/${id}.csv`}>
+                        Download CSV
+                      </a>
+                      <a className="button-quiet" href={`${API_URL}/v1/reports/${id}.json`}>
+                        Download JSON
+                      </a>
+                    </div>
+                  ) : entitlements ? (
+                    <Link className="button-quiet" href="/pricing">
+                      CSV export requires Pro
+                    </Link>
+                  ) : null}
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    This report&apos;s stored retention deadline is{" "}
+                    {new Date(report.expiresAt).toLocaleDateString()}. The current{" "}
+                    {entitlements?.plan ?? "account"} plan defaults to{" "}
+                    {entitlements?.reportRetentionDays ?? ""} days.
+                  </p>
+                </section>
+                <section className="panel danger-panel">
+                  <h2 style={{ fontSize: "1.5rem" }}>Delete session data</h2>
+                  <p className="muted">
+                    Permanently remove this session, its participant records, answers, and report.
+                  </p>
+                  <button
+                    className="button-danger"
+                    disabled={deleting}
+                    onClick={() => void deleteSession()}
+                    type="button"
+                  >
+                    {deleting ? "Deleting…" : "Delete session and report"}
+                  </button>
+                </section>
+              </div>
+            ) : null}
+            {!uxBeta ? (
+              <section className="panel danger-panel">
+                <h2 style={{ fontSize: "1.5rem" }}>Delete session data</h2>
+                <p className="muted">
+                  Permanently remove this session, its participant records, answers, and report.
+                </p>
+                <button
+                  className="button-danger"
+                  disabled={deleting}
+                  onClick={() => void deleteSession()}
+                  type="button"
+                >
+                  {deleting ? "Deleting…" : "Delete session and report"}
+                </button>
+              </section>
+            ) : null}
           </>
         ) : null}
       </main>

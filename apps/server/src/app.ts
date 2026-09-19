@@ -32,6 +32,7 @@ import { ReportWorker } from "./report-worker.js";
 import { RetentionService } from "./retention.js";
 import { SessionService } from "./session-service.js";
 import { StorageService } from "./storage.js";
+import { ProductEventDispatcher } from "./product-events.js";
 
 export async function buildApp(
   config: AppConfig,
@@ -190,7 +191,13 @@ export async function buildApp(
       ? overrides.ltiJwtAdapter
       : ltiJwtAdapterFromConfig(config);
   const lti = new LtiService(repository, config, ltiJwtAdapter);
-  const sessions = new SessionService(repository, cache, config, metrics);
+  const productEvents = new ProductEventDispatcher(repository, metrics, (error) => {
+    app.log.warn(
+      { errorType: error instanceof Error ? error.name : "unknown" },
+      "product event persistence failed",
+    );
+  });
+  const sessions = new SessionService(repository, cache, config, metrics, productEvents);
   const interactions = new InteractionService(repository, sessions, config, metrics);
   const qna = new QnaService(repository, sessions, interactions);
   const audienceOutboxWorker = new AudienceOutboxWorker(repository, interactions, metrics);
@@ -271,12 +278,14 @@ export async function buildApp(
     storage,
     retention,
     metrics,
+    productEvents,
     readiness,
     stripeClient: overrides.stripe,
   });
 
   app.addHook("onClose", async () => {
     sessions.close();
+    await productEvents.close();
     await cache.close();
     await repository.close();
   });
@@ -298,5 +307,6 @@ export async function buildApp(
     retention,
     reportWorker,
     metrics,
+    productEvents,
   };
 }

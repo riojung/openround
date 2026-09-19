@@ -91,6 +91,22 @@ describe("host command center", () => {
     );
     expect(lockedMarkup).toContain("Try peer discussion");
 
+    const afterIntervention = snapshot("question_reveal");
+    afterIntervention.intervention = {
+      id: "00000000-0000-4000-8000-000000000003",
+      type: "peer_discussion",
+      sourceRoundId: "00000000-0000-4000-8000-000000000002",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      finishedAt: "2026-01-01T00:01:00.000Z",
+    };
+    const afterInterventionView = getHostPhaseView(afterIntervention);
+    const afterInterventionMarkup = renderToStaticMarkup(
+      <RecoveryCompass phaseView={afterInterventionView} snapshot={afterIntervention} />,
+    );
+    expect(afterInterventionView.primary?.action).toBe("recheck.open");
+    expect(afterInterventionView.suggestionKind).toBe("none");
+    expect(afterInterventionMarkup).not.toContain("Try peer discussion");
+
     const guidanceOnly = snapshot("question_locked");
     guidanceOnly.insight!.recommendation = {
       code: "low_participation",

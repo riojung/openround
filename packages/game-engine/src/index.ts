@@ -306,13 +306,11 @@ function isChoiceQuestion(
   return ["single_select", "true_false", "multi_select", "poll"].includes(question.type);
 }
 
-function distributionFor(
-  state: GameState,
+export function responseDistributionFor(
   question: QuestionDraft | undefined,
+  answers: ReadonlyArray<Pick<EngineAnswer, "response" | "correct">>,
 ): ResponseDistribution | undefined {
-  if (!question || !state.roundId) return undefined;
-  const answers = Object.values(state.answers).filter((answer) => answer.roundId === state.roundId);
-  if (answers.length < 5) return undefined;
+  if (!question || answers.length < 5) return undefined;
   const percent = (count: number) => Math.round((count / answers.length) * 10_000) / 100;
   if (isChoiceQuestion(question)) {
     const counts = new Map<string, number>();
@@ -360,6 +358,17 @@ function distributionFor(
     correct,
     incorrect: answers.length - correct,
   };
+}
+
+function distributionFor(
+  state: GameState,
+  question: QuestionDraft | undefined,
+): ResponseDistribution | undefined {
+  if (!state.roundId) return undefined;
+  return responseDistributionFor(
+    question,
+    Object.values(state.answers).filter((answer) => answer.roundId === state.roundId),
+  );
 }
 
 function nextMainQuestionIndex(quiz: QuizDraft, afterIndex: number) {

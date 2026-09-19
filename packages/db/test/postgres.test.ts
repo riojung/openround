@@ -5,7 +5,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
-import type { AuthoringDraft, QuizDraft, Report } from "@openround/contracts";
+import {
+  ProductEventNameSchema,
+  type AuthoringDraft,
+  type QuizDraft,
+  type Report,
+} from "@openround/contracts";
 import {
   acceptAnswer,
   addParticipant,
@@ -66,6 +71,8 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 12, name: "interaction_feature_flags" },
       { version: 13, name: "close_finished_interactions" },
       { version: 14, name: "ux_beta_foundation" },
+      { version: 15, name: "product_event_funnel" },
+      { version: 16, name: "round_last_hosted_indexes" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -75,7 +82,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("14");
+    expect(bootstrapped.rows[0]?.count).toBe("16");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -470,6 +477,17 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       createdAt: now,
       updatedAt: now,
     });
+    const tiedFirstQuiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: first.workspaceId,
+      title: "Tied first workspace quiz",
+      description: "",
+      status: "draft",
+      draft: { title: "Tied first workspace quiz", description: "", questions: [] },
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
     const secondQuiz = await repository.createQuiz({
       id: randomUUID(),
       workspaceId: second.workspaceId,
@@ -493,9 +511,9 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       createdAt: now,
     });
 
-    expect((await repository.listQuizzes(first.workspaceId)).map((quiz) => quiz.id)).toEqual([
-      firstQuiz.id,
-    ]);
+    expect((await repository.listQuizzes(first.workspaceId)).map((quiz) => quiz.id)).toEqual(
+      [firstQuiz.id, tiedFirstQuiz.id].sort((left, right) => right.localeCompare(left)),
+    );
     expect((await repository.listQuizzes(second.workspaceId)).map((quiz) => quiz.id)).toEqual([
       secondQuiz.id,
     ]);
@@ -630,6 +648,15 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       updatedAt: now,
     };
     await repository.createSession(persistedSession);
+    expect(await repository.listQuizzes(first.workspaceId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: firstQuiz.id, lastHostedAt: now }),
+        expect.objectContaining({ id: tiedFirstQuiz.id, lastHostedAt: null }),
+      ]),
+    );
+    expect(await repository.listQuizzes(second.workspaceId)).toEqual([
+      expect.objectContaining({ id: secondQuiz.id, lastHostedAt: null }),
+    ]);
     const duplicateCodeSession = structuredClone(persistedSession);
     duplicateCodeSession.id = randomUUID();
     duplicateCodeSession.state.sessionId = duplicateCodeSession.id;
@@ -1273,6 +1300,32 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         items: [expect.objectContaining({ followupId, followupStatus: "open" })],
       },
     );
+    expect(
+      await repository.listFollowupHistory(first.workspaceId, {
+        limit: 10,
+        status: "open",
+        quizId: firstQuiz.id,
+        from: new Date(now.getTime() - 1),
+        to: new Date(now.getTime() + 1),
+        now,
+      }),
+    ).toMatchObject({
+      items: [expect.objectContaining({ id: followupId, quizId: firstQuiz.id, status: "open" })],
+    });
+    expect(
+      await repository.listFollowupHistory(first.workspaceId, {
+        limit: 10,
+        quizId: tiedFirstQuiz.id,
+        now,
+      }),
+    ).toMatchObject({ items: [] });
+    expect(
+      await repository.listFollowupHistory(second.workspaceId, {
+        limit: 10,
+        quizId: firstQuiz.id,
+        now,
+      }),
+    ).toMatchObject({ items: [] });
     expect(await repository.getFollowup(second.workspaceId, followupId)).toBeNull();
     expect(await repository.getFollowupByReport(first.workspaceId, report.id)).toMatchObject({
       id: followupId,
@@ -1419,7 +1472,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       await client.query("SELECT set_config('app.workspace_id', $1, true)", [first.workspaceId]);
       expect(
         (await client.query("SELECT array_agg(id ORDER BY id) AS ids FROM quizzes")).rows[0]?.ids,
-      ).toEqual([firstQuiz.id]);
+      ).toEqual([firstQuiz.id, tiedFirstQuiz.id].sort());
       expect(
         (await client.query("SELECT count(*)::integer AS count FROM qna_questions")).rows[0]?.count,
       ).toBe(1);
@@ -1522,6 +1575,47 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       }),
     ).toBe(true);
     expect(await repository.getPlan(first.workspaceId)).toBe("pro");
+  });
+
+  it("enforces the expanded bounded product-event name allowlist", async () => {
+    const owner = await creator("product-event-funnel");
+    const now = new Date("2026-09-18T12:00:00.000Z");
+    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
+    await repository.recordProductEvents(
+      ProductEventNameSchema.options.map((name) => ({
+        id: randomUUID(),
+        workspaceId: owner.workspaceId,
+        name,
+        occurredAt: now.toISOString(),
+        dimensions: { betaVersion: "p0-2026" as const },
+        expiresAt,
+        createdAt: now,
+      })),
+    );
+
+    const client = await runtimePool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+      const stored = await client.query<{ event_name: string }>(
+        "SELECT event_name FROM product_events WHERE workspace_id = $1 ORDER BY event_name",
+        [owner.workspaceId],
+      );
+      expect(stored.rows.map((row) => row.event_name)).toEqual(
+        [...ProductEventNameSchema.options].sort(),
+      );
+      await expect(
+        client.query(
+          `INSERT INTO product_events
+             (id, workspace_id, event_name, dimensions, occurred_at, expires_at, created_at)
+           VALUES ($1,$2,'content_opened',$3,$4,$5,$4)`,
+          [randomUUID(), owner.workspaceId, JSON.stringify({}), now, expiresAt],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
   });
 
   it("cascades product events when an owner account deletes its workspace", async () => {

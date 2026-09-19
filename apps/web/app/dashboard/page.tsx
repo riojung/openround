@@ -9,8 +9,15 @@ import { Brand } from "../../components/brand";
 import { CheckpointSetImport } from "../../components/checkpoint-set-import";
 import { API_URL, apiFetch, humanError } from "../../lib/api";
 import { dashboardMessage } from "../../components/workspace/workspace-model";
+import { RoundLibraryViewToggle } from "../../components/workspace/round-library-view-toggle";
 import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
+import {
+  DEFAULT_ROUND_LIBRARY_VIEW,
+  readRoundLibraryView,
+  type RoundLibraryView,
+  writeRoundLibraryView,
+} from "../../lib/round-library-view";
 import styles from "../../components/workspace/workspace-content.module.css";
 
 interface Creator {
@@ -32,6 +39,7 @@ interface QuizRecord {
   folderId: string | null;
   tags: string[];
   updatedAt: string;
+  lastHostedAt: string | null;
 }
 
 interface FolderRecord {
@@ -680,6 +688,16 @@ function BetaDashboard() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
+  const [libraryViewState, setLibraryViewState] = useState<{
+    workspaceId: string;
+    view: RoundLibraryView;
+  }>({ workspaceId: "", view: DEFAULT_ROUND_LIBRARY_VIEW });
+
+  const workspaceId = creator?.workspaceId ?? "";
+  const libraryView =
+    libraryViewState.workspaceId === workspaceId
+      ? libraryViewState.view
+      : DEFAULT_ROUND_LIBRARY_VIEW;
 
   const refresh = useCallback(
     async (includeArchived: boolean) => {
@@ -706,6 +724,20 @@ function BetaDashboard() {
     setLoading(true);
     void refresh(showArchived);
   }, [refresh, showArchived]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    setLibraryViewState({
+      workspaceId,
+      view: readRoundLibraryView(window.localStorage, workspaceId),
+    });
+  }, [workspaceId]);
+
+  function setLibraryView(view: RoundLibraryView) {
+    if (!workspaceId) return;
+    setLibraryViewState({ workspaceId, view });
+    writeRoundLibraryView(window.localStorage, workspaceId, view);
+  }
 
   async function duplicate(quizId: string) {
     setBusyId(quizId);
@@ -929,14 +961,17 @@ function BetaDashboard() {
             ))}
           </select>
         </label>
-        <label className={styles.archivedToggle}>
-          <input
-            checked={showArchived}
-            onChange={(event) => setShowArchived(event.target.checked)}
-            type="checkbox"
-          />
-          Include archived
-        </label>
+        <div className={styles.libraryDisplayControls}>
+          <label className={styles.archivedToggle}>
+            <input
+              checked={showArchived}
+              onChange={(event) => setShowArchived(event.target.checked)}
+              type="checkbox"
+            />
+            Include archived
+          </label>
+          <RoundLibraryViewToggle onChange={setLibraryView} value={libraryView} />
+        </div>
       </section>
 
       {canEdit ? (
@@ -1032,12 +1067,16 @@ function BetaDashboard() {
         </div>
       ) : null}
 
-      <section className={styles.roundGrid} aria-label="Round library">
+      <section
+        className={libraryView === "grid" ? styles.roundGrid : styles.roundList}
+        aria-label="Round library"
+        data-view={libraryView}
+      >
         {visibleQuizzes.map((quiz) => {
           const archived = quiz.status === "archived";
           const canHost = canEdit && Boolean(quiz.currentVersionId) && !archived;
           return (
-            <article className={styles.roundCard} key={quiz.id}>
+            <article className={`${styles.roundCard} ${styles.betaRoundCard}`} key={quiz.id}>
               <div className={styles.cardTopline}>
                 <span
                   className={styles.status}
@@ -1049,29 +1088,41 @@ function BetaDashboard() {
                   Updated {new Date(quiz.updatedAt).toLocaleDateString("en-CA")}
                 </span>
               </div>
-              <div>
+              <div className={styles.roundMain}>
                 <h2>{quiz.title}</h2>
                 {quiz.description ? (
                   <p className={styles.roundDescription}>{quiz.description}</p>
                 ) : null}
-              </div>
-              {quiz.folderId || quiz.tags.length ? (
-                <div className={styles.conceptList}>
-                  {quiz.folderId ? (
-                    <span className={styles.subtlePill}>
-                      {folders.find((folder) => folder.id === quiz.folderId)?.name ?? "Folder"}
-                    </span>
-                  ) : null}
-                  {quiz.tags.map((tag) => (
-                    <span className={styles.subtlePill} key={tag}>
-                      {tag}
-                    </span>
-                  ))}
+                {quiz.folderId || quiz.tags.length ? (
+                  <div className={styles.conceptList}>
+                    {quiz.folderId ? (
+                      <span className={styles.subtlePill}>
+                        {folders.find((folder) => folder.id === quiz.folderId)?.name ?? "Folder"}
+                      </span>
+                    ) : null}
+                    {quiz.tags.map((tag) => (
+                      <span className={styles.subtlePill} key={tag}>
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                <div className={styles.roundFacts}>
+                  <p className={styles.questionCount}>
+                    {quiz.draft.questions.length} question
+                    {quiz.draft.questions.length === 1 ? "" : "s"}
+                  </p>
+                  <p className={styles.lastHosted}>
+                    {quiz.lastHostedAt ? (
+                      <time dateTime={quiz.lastHostedAt}>
+                        Last hosted {new Date(quiz.lastHostedAt).toLocaleDateString("en-CA")}
+                      </time>
+                    ) : (
+                      "Not hosted yet"
+                    )}
+                  </p>
                 </div>
-              ) : null}
-              <p className={styles.questionCount}>
-                {quiz.draft.questions.length} question{quiz.draft.questions.length === 1 ? "" : "s"}
-              </p>
+              </div>
               <div className={styles.primaryActions}>
                 {canHost ? (
                   <Link className="button small-button" href={`/host/setup/${quiz.id}`}>

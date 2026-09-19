@@ -6,6 +6,7 @@ export interface RetentionResult {
   expiredLiveSessions: number;
   purgedSessions: number;
   purgedAuditEvents: number;
+  purgedProductEvents: number;
   purgedMedia: number;
   failedMedia: number;
 }
@@ -31,7 +32,7 @@ export class RetentionService {
     const purgedSessions = purgedSessionIds.length;
     const auditCutoff = new Date(now.getTime() - this.auditRetentionDays * 24 * 60 * 60 * 1_000);
     const purgedAuditEvents = await this.repository.purgeAuditEvents(auditCutoff);
-    await this.repository.purgeProductEvents(now);
+    const purgedProductEvents = await this.repository.purgeProductEvents(now);
     const cutoff = new Date(now.getTime() - this.quarantineRetentionHours * 60 * 60 * 1_000);
     const staleMedia = await this.repository.listStaleMedia(cutoff, 100);
     if (!this.storage.configured) {
@@ -39,6 +40,7 @@ export class RetentionService {
         expiredLiveSessions,
         purgedSessions,
         purgedAuditEvents,
+        purgedProductEvents,
         purgedMedia: 0,
         failedMedia: staleMedia.length,
       };
@@ -60,6 +62,7 @@ export class RetentionService {
       expiredLiveSessions,
       purgedSessions,
       purgedAuditEvents,
+      purgedProductEvents,
       purgedMedia,
       failedMedia,
     };

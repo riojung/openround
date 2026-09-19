@@ -25,12 +25,29 @@ import {
 import { experienceThemeStyle } from "../../../lib/theme";
 import { clientUuid } from "../../../lib/uuid";
 import {
+  participantProgressStage,
   participantResponseControlsDisabled,
   participantResponseView,
   type LocalResponseReceipt,
 } from "../../../lib/participant-response";
+import {
+  createAckRecoveryController,
+  PARTICIPANT_ACK_CHECKING_MESSAGE,
+  PARTICIPANT_ACK_TIMEOUT_MESSAGE,
+  participantSubmissionRecovery,
+  type AckRecoveryController,
+} from "../../../lib/realtime-mutation-recovery";
 
 type Ack<T> = { data?: T; error?: { code: string; message: string } };
+type ParticipantSubmission = {
+  idempotencyKey: string;
+  roundId: string;
+  response: ResponsePayload;
+  confidence: ConfidenceValue | null;
+};
+
+const ACK_TIMEOUT_MS = 10_000;
+const SYNC_GRACE_MS = 5_000;
 
 export default function PlayerPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -42,6 +59,9 @@ export default function PlayerPage() {
   const [submitting, setSubmitting] = useState(false);
   const [acknowledged, setAcknowledged] = useState<AnswerAck | null>(null);
   const [localReceipt, setLocalReceipt] = useState<LocalResponseReceipt | null>(null);
+  const [retryableSubmission, setRetryableSubmission] = useState<ParticipantSubmission | null>(
+    null,
+  );
   const [mediaCredential, setMediaCredential] = useState("");
   const [selectedChoiceIds, setSelectedChoiceIds] = useState<string[]>([]);
   const [numericValue, setNumericValue] = useState("");
@@ -52,14 +72,66 @@ export default function PlayerPage() {
   const [audienceRealtimeUpdate, setAudienceRealtimeUpdate] =
     useState<AudienceRealtimeUpdate | null>(null);
   const confidenceRef = useRef<HTMLFieldSetElement>(null);
+  const syncParticipantRef = useRef<() => void>(() => undefined);
+  const submissionRecoveryRef = useRef<AckRecoveryController<ParticipantSubmission> | null>(null);
+
+  if (!submissionRecoveryRef.current) {
+    submissionRecoveryRef.current = createAckRecoveryController({
+      acknowledgementTimeoutMs: ACK_TIMEOUT_MS,
+      reconciliationTimeoutMs: SYNC_GRACE_MS,
+      onPendingChange: setSubmitting,
+      onReconciliationRequested: () => {
+        setError(PARTICIPANT_ACK_CHECKING_MESSAGE);
+        syncParticipantRef.current();
+      },
+      onExpired: ({ context }) => {
+        const current = snapshotRef.current;
+        if (current?.roundId === context.roundId && current.phase === "question_open") {
+          setRetryableSubmission(context);
+          setError(PARTICIPANT_ACK_TIMEOUT_MESSAGE);
+        } else {
+          setRetryableSubmission(null);
+          setLocalReceipt(null);
+          setError("OpenRound could not confirm that response before the question closed.");
+        }
+      },
+    });
+  }
+
+  function clearPendingSubmission(idempotencyKey?: string) {
+    return Boolean(submissionRecoveryRef.current?.settle(idempotencyKey));
+  }
 
   function resetResponse() {
+    clearPendingSubmission();
     setAcknowledged(null);
     setLocalReceipt(null);
+    setRetryableSubmission(null);
     setSelectedChoiceIds([]);
     setNumericValue("");
     setRatingValue(null);
     setConfidence(null);
+    setError("");
+  }
+
+  function reconcilePendingSubmission(nextSnapshot: SessionSnapshot) {
+    const pending = submissionRecoveryRef.current?.current();
+    if (!pending) {
+      if (nextSnapshot.myResponse) {
+        setRetryableSubmission(null);
+        setError((current) =>
+          current === PARTICIPANT_ACK_TIMEOUT_MESSAGE ||
+          current === PARTICIPANT_ACK_CHECKING_MESSAGE
+            ? ""
+            : current,
+        );
+      }
+      return;
+    }
+    const resolution = participantSubmissionRecovery(pending.context.roundId, nextSnapshot);
+    if (resolution !== "saved") return;
+    if (!clearPendingSubmission(pending.id)) return;
+    setRetryableSubmission(null);
     setError("");
   }
 
@@ -86,20 +158,25 @@ export default function PlayerPage() {
         (response: Ack<{ snapshot: SessionSnapshot }>) => {
           if (response.error) setError(response.error.message);
           if (response.data) {
-            if (response.data.snapshot.roundId !== snapshotRef.current?.roundId) resetResponse();
-            setSnapshot(response.data.snapshot);
+            const nextSnapshot = response.data.snapshot;
+            if (nextSnapshot.roundId !== snapshotRef.current?.roundId) resetResponse();
+            else reconcilePendingSubmission(nextSnapshot);
+            setSnapshot(nextSnapshot);
           }
         },
       );
     };
+    syncParticipantRef.current = sync;
     const update = withRealtimeReceipt((envelope: EventEnvelope<{ snapshot: SessionSnapshot }>) => {
       if (
         audienceContextKey(envelope.payload.snapshot) !== audienceContextKey(snapshotRef.current)
       ) {
         setAudienceSyncRevision((current) => current + 1);
       }
-      setSnapshot(envelope.payload.snapshot);
-      if (envelope.payload.snapshot.roundId !== snapshotRef.current?.roundId) resetResponse();
+      const nextSnapshot = envelope.payload.snapshot;
+      if (nextSnapshot.roundId !== snapshotRef.current?.roundId) resetResponse();
+      else reconcilePendingSubmission(nextSnapshot);
+      setSnapshot(nextSnapshot);
     });
     const qnaUpdate = withRealtimeReceipt(() => setQnaRevision((current) => current + 1));
     const audienceUpdate = createAudienceRealtimeReceipt((gap, envelope) => {
@@ -108,7 +185,11 @@ export default function PlayerPage() {
     });
     socket.on("connect", () => {
       setConnected(true);
-      setError("");
+      setError((current) =>
+        current === PARTICIPANT_ACK_TIMEOUT_MESSAGE || current === PARTICIPANT_ACK_CHECKING_MESSAGE
+          ? current
+          : "",
+      );
       setAudienceSyncRevision((current) => current + 1);
       sync();
     });
@@ -148,45 +229,49 @@ export default function PlayerPage() {
       socket.on(event, audienceUpdate);
     socket.connect();
     return () => {
+      submissionRecoveryRef.current?.dispose();
+      syncParticipantRef.current = () => undefined;
       socket.removeAllListeners();
       socket.disconnect();
     };
   }, [sessionId, socket]);
 
-  function submitResponse(response: ResponsePayload, selectedConfidence = confidence) {
-    if (!snapshot?.roundId || acknowledged?.accepted || snapshot.myResponse || submitting) return;
-    if (snapshot.question?.confidence === "required" && selectedConfidence === null) {
-      setError("Choose how sure you are before submitting your response.");
-      confidenceRef.current?.focus();
+  function sendSubmission(submission: ParticipantSubmission) {
+    if (!connected) {
+      setError("Wait for the connection to recover before submitting your response.");
       return;
     }
     const participantToken = sessionStorage.getItem(`openround:participant:${sessionId}`);
     if (!participantToken) return;
+    const attemptId = clientUuid();
+    if (!submissionRecoveryRef.current?.begin(attemptId, submission)) return;
     setError("");
     setAcknowledged(null);
-    setLocalReceipt({ response, confidence: selectedConfidence ?? null });
-    setSubmitting(true);
-    const idempotencyKey = `${sessionId}:${snapshot.roundId}:${clientUuid()}`;
+    setRetryableSubmission(null);
+    setLocalReceipt({ response: submission.response, confidence: submission.confidence });
     socket.emit(
       "answer.submit",
       {
         sessionId,
-        roundId: snapshot.roundId,
-        response,
-        confidence: selectedConfidence ?? undefined,
+        roundId: submission.roundId,
+        response: submission.response,
+        confidence: submission.confidence ?? undefined,
         participantToken,
-        idempotencyKey,
+        idempotencyKey: submission.idempotencyKey,
       },
       (response: Ack<AnswerAck>) => {
-        setSubmitting(false);
+        if (!clearPendingSubmission(attemptId)) return;
         if (response.error) {
+          setRetryableSubmission(null);
           setLocalReceipt(null);
           setError(response.error.message);
         } else if (response.data) {
           setAcknowledged(response.data);
           if (response.data.accepted) {
+            setRetryableSubmission(null);
             setError("");
           } else {
+            setRetryableSubmission(null);
             setLocalReceipt(null);
             setError(
               response.data.code === "ANSWER_LATE"
@@ -195,11 +280,43 @@ export default function PlayerPage() {
             );
           }
         } else {
-          setLocalReceipt(null);
-          setError("The server did not confirm that response. Try submitting again.");
+          setRetryableSubmission(submission);
+          setError(PARTICIPANT_ACK_TIMEOUT_MESSAGE);
         }
       },
     );
+  }
+
+  function submitResponse(response: ResponsePayload, selectedConfidence = confidence) {
+    if (
+      !snapshot?.roundId ||
+      acknowledged?.accepted ||
+      snapshot.myResponse ||
+      submitting ||
+      retryableSubmission
+    )
+      return;
+    if (snapshot.question?.confidence === "required" && selectedConfidence === null) {
+      setError("Choose how sure you are before submitting your response.");
+      confidenceRef.current?.focus();
+      return;
+    }
+    sendSubmission({
+      idempotencyKey: `${sessionId}:${snapshot.roundId}:${clientUuid()}`,
+      roundId: snapshot.roundId,
+      response,
+      confidence: selectedConfidence ?? null,
+    });
+  }
+
+  function retrySubmission() {
+    if (!retryableSubmission || submitting || snapshot?.myResponse) return;
+    if (snapshot?.roundId !== retryableSubmission.roundId || snapshot.phase !== "question_open") {
+      resetResponse();
+      setError("That question is no longer accepting responses.");
+      return;
+    }
+    sendSubmission(retryableSubmission);
   }
 
   function chooseChoice(choiceId: string) {
@@ -209,7 +326,8 @@ export default function PlayerPage() {
       snapshot.phase !== "question_open" ||
       acknowledged?.accepted ||
       snapshot.myResponse ||
-      submitting
+      submitting ||
+      retryableSubmission
     )
       return;
     if (question.type === "multi_select") {
@@ -278,19 +396,51 @@ export default function PlayerPage() {
     acknowledged,
     localReceipt,
   );
-  const displayedChoiceIds = durableResponse.choiceIds.length
-    ? durableResponse.choiceIds
-    : selectedChoiceIds;
+  const retryResponse = retryableSubmission?.response;
+  const retryChoiceIds =
+    retryResponse?.kind === "choice" || retryResponse?.kind === "poll"
+      ? retryResponse.choiceIds
+      : [];
+  const displayedChoiceIds = retryableSubmission
+    ? retryChoiceIds
+    : durableResponse.choiceIds.length
+      ? durableResponse.choiceIds
+      : selectedChoiceIds;
   const responseSaved = durableResponse.saved;
-  const displayedNumericValue = durableResponse.saved ? durableResponse.numericValue : numericValue;
-  const displayedRatingValue = durableResponse.saved ? durableResponse.ratingValue : ratingValue;
-  const displayedConfidence = durableResponse.confidence ?? confidence;
+  const displayedNumericValue = retryableSubmission
+    ? retryResponse?.kind === "numeric"
+      ? retryResponse.value
+      : ""
+    : durableResponse.saved
+      ? durableResponse.numericValue
+      : numericValue;
+  const displayedRatingValue = retryableSubmission
+    ? retryResponse?.kind === "rating"
+      ? retryResponse.value
+      : null
+    : durableResponse.saved
+      ? durableResponse.ratingValue
+      : ratingValue;
+  const displayedConfidence = retryableSubmission
+    ? retryableSubmission.confidence
+    : (durableResponse.confidence ?? confidence);
   const responseControlsDisabled = participantResponseControlsDisabled({
     questionOpen: snapshot?.phase === "question_open",
     saved: responseSaved,
-    submitting,
+    submitting: submitting || Boolean(retryableSubmission),
   });
   const uxBeta = snapshot?.uxBeta === true;
+  const progressStage =
+    snapshot && uxBeta ? participantProgressStage(snapshot, responseSaved) : null;
+  const progressSteps = [
+    ["waiting", "Waiting"],
+    ["answering", "Answering"],
+    ["saved", "Saved"],
+    ["discussing", "Discussing"],
+    ["reviewing", "Reviewing"],
+    ["rechecking", "Rechecking"],
+    ["complete", "Complete"],
+  ] as const;
   const legacyNeedsSubmit = Boolean(
     snapshot?.question &&
     (snapshot.question.type === "multi_select" ||
@@ -325,6 +475,15 @@ export default function PlayerPage() {
         </div>
       </header>
       <main className="shell live-stage">
+        {progressStage ? (
+          <ol aria-label="Round progress" className="participant-progress">
+            {progressSteps.map(([stage, label]) => (
+              <li aria-current={progressStage === stage ? "step" : undefined} key={stage}>
+                {label}
+              </li>
+            ))}
+          </ol>
+        ) : null}
         <p aria-atomic="true" aria-live="polite" className="sr-only">
           {snapshot?.phase === "question_open"
             ? `${uxBeta ? "Question" : "Checkpoint"} open: ${snapshot.question?.prompt ?? (uxBeta ? "new question" : "new checkpoint")}`
@@ -504,15 +663,30 @@ export default function PlayerPage() {
             ) : null}
             {snapshot.phase === "question_open" &&
             !responseSaved &&
-            (uxBeta || legacyNeedsSubmit) ? (
-              uxBeta ? (
+            (uxBeta || legacyNeedsSubmit || retryableSubmission) ? (
+              retryableSubmission ? (
+                <div className="participant-submit-bar" data-testid="response-status">
+                  <p className="muted">
+                    Your original response is unchanged. Retry uses the same save request so it
+                    cannot create a second answer.
+                  </p>
+                  <button
+                    className="button"
+                    disabled={submitting || !connected}
+                    onClick={retrySubmission}
+                    type="button"
+                  >
+                    {submitting ? "Saving…" : "Retry saving response"}
+                  </button>
+                </div>
+              ) : uxBeta ? (
                 <div className="participant-submit-bar" data-testid="response-status">
                   <p className="muted">
                     Review your response before submitting. It cannot be changed.
                   </p>
                   <button
                     className="button"
-                    disabled={submitting}
+                    disabled={submitting || !connected}
                     onClick={submitSelectedResponse}
                     type="button"
                   >
