@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 const sessionCount = Number(process.env.SESSIONS ?? "10");
 const clientsPerSession = Number(process.env.CLIENTS_PER_SESSION ?? "100");
@@ -9,6 +11,7 @@ const answerP95LimitMs = Number(process.env.ANSWER_P95_LIMIT_MS ?? "250");
 const answerP99LimitMs = Number(process.env.ANSWER_P99_LIMIT_MS ?? "600");
 const questionBroadcastP95LimitMs = Number(process.env.QUESTION_BROADCAST_P95_LIMIT_MS ?? "500");
 const assertPerformance = process.env.ASSERT_PERFORMANCE === "true";
+const outputPath = process.env.LOAD_OUTPUT?.trim();
 
 if (!Number.isInteger(sessionCount) || sessionCount < 1 || sessionCount > 20) {
   throw new Error("SESSIONS must be an integer between 1 and 20");
@@ -70,6 +73,9 @@ function runSession(index: number, startAtMs: number, answerAtMs: number) {
           // still reports the complete worst-session result.
           ASSERT_PERFORMANCE: "false",
           RESTART_SERVER: "false",
+          // The wrapper exclusively owns its aggregate evidence path. Child processes write
+          // results to stdout so concurrent sessions cannot race on the same artifact file.
+          LOAD_OUTPUT: "",
           LOAD_RUN_ID: `aggregate-${index + 1}`,
           START_AT_MS: String(startAtMs),
           ANSWER_AT_MS: String(answerAtMs),
@@ -167,7 +173,12 @@ async function main() {
     },
   };
 
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  const serializedResult = `${JSON.stringify(result, null, 2)}\n`;
+  process.stdout.write(serializedResult);
+  if (outputPath) {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, serializedResult, { encoding: "utf8", mode: 0o600 });
+  }
   if (assertPerformance) {
     assert.ok(result.worstSessionLatencyMs.joinP95 < 500, "Join p95 exceeded 500 ms");
     assert.ok(

@@ -22,13 +22,27 @@ async function joinParticipant(browser: Browser, code: string) {
   await page.goto(`/join?code=${code}`);
   await expect(page.getByTestId("friendly-alias-notice")).toBeVisible();
   await expect(page.getByLabel("Nickname")).toHaveCount(0);
+  const defaultAvatar = page.getByRole("radio", { name: "Comet", exact: true });
+  await expect(defaultAvatar).toBeChecked();
+  const target = await page.getByTestId("avatar-option-comet").boundingBox();
+  expect(target?.width).toBeGreaterThanOrEqual(44);
+  expect(target?.height).toBeGreaterThanOrEqual(44);
+  await defaultAvatar.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("radio", { name: "Fox", exact: true })).toBeChecked();
+  await page
+    .getByTestId("avatar-option-owl")
+    .getByText("Owl", { exact: true })
+    .click({ timeout: 10_000 });
+  await expect(page.getByRole("radio", { name: "Owl", exact: true })).toBeChecked();
   const joinRequest = page.waitForRequest(
     (request) =>
       request.method() === "POST" && new URL(request.url()).pathname === "/v1/sessions/join",
   );
   await page.getByRole("button", { name: "Join round" }).click();
-  expect((await joinRequest).postDataJSON()).toEqual({ code });
+  expect((await joinRequest).postDataJSON()).toEqual({ code, avatarId: "owl" });
   await expect(page).toHaveURL(/\/play\//);
+  await expect(page.getByRole("img", { name: "Owl avatar" })).toBeVisible();
   return { context, page };
 }
 
@@ -119,21 +133,17 @@ test("direct beta pages fail closed when product features are missing", async ({
 
 test("viewer template access remains read-only", async ({ page }) => {
   await signIn(page, betaEmail);
-  await page.route(
-    "**/v1/auth/me",
-    async (route) => {
-      const response = await route.fetch();
-      const account = (await response.json()) as {
-        creator: Record<string, unknown>;
-        [key: string]: unknown;
-      };
-      await route.fulfill({
-        response,
-        json: { ...account, creator: { ...account.creator, role: "viewer" } },
-      });
-    },
-    { times: 1 },
-  );
+  await page.route("**/v1/auth/me", async (route) => {
+    const response = await route.fetch();
+    const account = (await response.json()) as {
+      creator: Record<string, unknown>;
+      [key: string]: unknown;
+    };
+    await route.fulfill({
+      response,
+      json: { ...account, creator: { ...account.creator, role: "viewer" } },
+    });
+  });
 
   await page.goto("/templates");
   await expect(page.getByRole("heading", { name: "Templates" })).toBeVisible();
@@ -148,8 +158,8 @@ test("starter rehearsal completes privately with bounded telemetry", async ({ pa
   const beforeReports = await page.request.get(`${apiUrl}/v1/reports`);
   expect(beforeSessions.ok()).toBeTruthy();
   expect(beforeReports.ok()).toBeTruthy();
-  expect((await beforeSessions.json()).items).toHaveLength(0);
-  expect((await beforeReports.json()).items).toHaveLength(0);
+  const sessionsBeforeRehearsal = (await beforeSessions.json()).items;
+  const reportsBeforeRehearsal = (await beforeReports.json()).items;
 
   await page.goto("/create");
   const starterCard = page.getByRole("article").filter({
@@ -222,8 +232,8 @@ test("starter rehearsal completes privately with bounded telemetry", async ({ pa
   const afterReports = await page.request.get(`${apiUrl}/v1/reports`);
   expect(afterSessions.ok()).toBeTruthy();
   expect(afterReports.ok()).toBeTruthy();
-  expect((await afterSessions.json()).items).toHaveLength(0);
-  expect((await afterReports.json()).items).toHaveLength(0);
+  expect((await afterSessions.json()).items).toEqual(sessionsBeforeRehearsal);
+  expect((await afterReports.json()).items).toEqual(reportsBeforeRehearsal);
 
   const metrics = await page.request.get(`${apiUrl}/metrics`);
   expect(metrics.ok()).toBeTruthy();
@@ -333,7 +343,14 @@ test("creator and participants complete a beta Recovery loop through report", as
     },
   });
   expect(sessionResponse.status()).toBe(201);
-  const session = (await sessionResponse.json()) as { sessionId: string; code: string };
+  const session = (await sessionResponse.json()) as {
+    sessionId: string;
+    code: string;
+    hostToken: string;
+  };
+  await page.evaluate(({ sessionId, hostToken }) => {
+    sessionStorage.setItem(`openround:host:${sessionId}`, hostToken);
+  }, session);
 
   const participants: Array<{ context: BrowserContext; page: Page }> = [];
   try {
@@ -345,6 +362,11 @@ test("creator and participants complete a beta Recovery loop through report", as
     await expect(
       page.locator(".room-readiness span").filter({ hasText: "joined" }).getByText("5"),
     ).toBeVisible();
+    await expect(
+      page
+        .getByRole("list", { name: "Participant roster" })
+        .getByRole("img", { name: "Owl avatar" }),
+    ).toHaveCount(5);
 
     await page.getByRole("button", { name: "Start round" }).click();
     await Promise.all(
@@ -520,7 +542,14 @@ test("every remaining response type requires explicit Submit before it is saved"
     },
   });
   expect(sessionResponse.status()).toBe(201);
-  const session = (await sessionResponse.json()) as { sessionId: string; code: string };
+  const session = (await sessionResponse.json()) as {
+    sessionId: string;
+    code: string;
+    hostToken: string;
+  };
+  await page.evaluate(({ sessionId, hostToken }) => {
+    sessionStorage.setItem(`openround:host:${sessionId}`, hostToken);
+  }, session);
 
   const participant = await joinParticipant(browser, session.code);
   try {

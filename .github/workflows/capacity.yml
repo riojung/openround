@@ -41,7 +41,7 @@ jobs:
       - name: 1,000-client multi-session gate
         run: |
           docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml build load
-          docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml run --rm load
+          docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml run --rm -T --user "$(id -u):$(id -g)" --volume "$PWD:/evidence" --env LOAD_OUTPUT=/evidence/capacity-aggregate.json load
         env:
           # The hosted runner co-locates ten generator processes, PostgreSQL, and
           # the server on variable shared hardware. Keep the controlled/target
@@ -55,18 +55,20 @@ jobs:
         if: failure()
         run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml logs --no-color > capacity-failure.log
       - name: Capture server metrics
-        if: failure()
+        if: always()
         continue-on-error: true
         run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml exec -T server wget -qO- http://127.0.0.1:4000/metrics > capacity-metrics.prom
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
-          name: capacity-failure
+          name: capacity-evidence-${{ github.run_id }}
           path: |
             capacity-failure.log
+            capacity-aggregate.json
             capacity-metrics.prom
             capacity-single-session.json
           if-no-files-found: ignore
+          retention-days: 30
       - name: Stop disposable stack
         if: always()
         run: docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml down --volumes

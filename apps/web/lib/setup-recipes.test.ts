@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { SessionSettings } from "@openround/contracts";
-import { resolveSetupRecipe, setupRecipeStorageKey } from "./setup-recipes";
+import {
+  describeDiscussionRecipe,
+  resolveSetupRecipe,
+  setupRecipeStorageKey,
+} from "./setup-recipes";
 
 const current: SessionSettings = {
   audienceLimit: 80,
@@ -57,5 +61,14 @@ describe("setup recipes", () => {
       }).settings.nicknamePolicy,
     ).toBe("custom");
     expect(setupRecipeStorageKey("workspace-id")).toBe("openround:setup:v1:workspace-id");
+  });
+
+  it("describes only the discussion tools enabled for the workspace", () => {
+    expect(
+      describeDiscussionRecipe({ audiencePulseAvailable: true, roomChatAvailable: true }),
+    ).toBe("Private results with Pulse and Q&A available; chat starts closed.");
+    expect(
+      describeDiscussionRecipe({ audiencePulseAvailable: false, roomChatAvailable: false }),
+    ).toBe("Private results with Q&A available.");
   });
 });

@@ -205,7 +205,7 @@ cursor pagination, sanitization, kick/ban integration, retention, export, and de
 
 Open the home join form, `/join`, a direct link, or the QR code.
 
-1. Enter the seven-digit code and, when enabled, a nickname.
+1. Enter the seven-digit code, choose a session avatar, and, when enabled, enter a nickname.
 2. Wait in the lobby until a checkpoint opens.
 3. Submit the displayed response format: one choice, an exact set of choices, a decimal value, a
    rating, or a poll selection.
@@ -213,6 +213,14 @@ Open the home join form, `/join`, a direct link, or the QR code.
 5. Wait for the durable saved acknowledgement. Retrying the same submission cannot create a
    second score effect.
 6. After reveal, review private correctness, explanation, and choice feedback when available.
+
+Session avatars come from a fixed set: Comet, Fox, Owl, Otter, Panda, Robot, Rocket, and Star.
+They are cosmetic, contain no uploaded or free-form profile data, and are not learner accounts.
+Older clients and direct API callers may omit the avatar; the server then chooses a stable avatar
+from the participant's session ID. The resolved choice is saved with the live session, so refresh
+and reconnect keep it. Hosts and presenters can use avatars with nicknames to follow the room, and
+authorized reports retain them with participant detail. When results are private, a participant
+can see their own avatar but not another participant's avatar.
 
 No persistent learner identity is created. The resume credential lives in that browser tab's
 session storage. Refreshing the same tab can recover state; another browser normally joins as a

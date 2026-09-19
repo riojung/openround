@@ -28,10 +28,23 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
     {
+      name: "firefox-beta",
+      grepInvert: /@mobile/,
+      use: { ...devices["Desktop Firefox"] },
+    },
+    {
       name: "chromium-beta-mobile",
       grep: /@mobile/,
       use: {
         ...devices["Pixel 5"],
+        viewport: { width: 390, height: 844 },
+      },
+    },
+    {
+      name: "webkit-beta-mobile",
+      grep: /@mobile/,
+      use: {
+        ...devices["iPhone 15"],
         viewport: { width: 390, height: 844 },
       },
     },

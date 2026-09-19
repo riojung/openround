@@ -372,14 +372,23 @@ describe("creator to report journey", () => {
       ).statusCode,
     ).toBe(404);
 
+    const invalidAvatar = await app.inject({
+      method: "POST",
+      url: "/v1/sessions/join",
+      payload: { code: session.code, nickname: "Invalid avatar", avatarId: "dragon" },
+    });
+    expect(invalidAvatar.statusCode).toBe(400);
+    expect(invalidAvatar.json()).toMatchObject({ error: { code: "VALIDATION_ERROR" } });
+
     const joined = await app.inject({
       method: "POST",
       url: "/v1/sessions/join",
-      payload: { code: session.code, nickname: "Ignored in friendly mode" },
+      payload: { code: session.code, nickname: "Ignored in friendly mode", avatarId: "robot" },
     });
     expect(joined.statusCode).toBe(201);
     const participant = joined.json<{ participantToken: string; snapshot: SessionSnapshot }>();
     expect(participant.snapshot.participants[0]?.nickname).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
+    expect(participant.snapshot.participants[0]?.avatarId).toBe("robot");
     expect(participant.snapshot.experienceTheme).toMatchObject({
       preset: { id: "focus", version: 1 },
       category: "general",
@@ -513,6 +522,7 @@ describe("creator to report journey", () => {
       participants: [
         {
           nickname: participant.snapshot.participants[0]!.nickname,
+          avatarId: "robot",
           currentSignal: "need_example",
           chatMessageCount: 1,
         },

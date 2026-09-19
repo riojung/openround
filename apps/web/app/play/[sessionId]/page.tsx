@@ -18,6 +18,7 @@ import {
 } from "../../../components/audience-panel";
 import { ExperiencePreferences } from "../../../components/experience-preferences";
 import { Countdown } from "../../../components/countdown";
+import { ParticipantAvatar, ParticipantIdentity } from "../../../components/participant-avatar";
 import { QuestionMedia } from "../../../components/question-media";
 import { QnaPanel } from "../../../components/qna-panel";
 import {
@@ -525,7 +526,12 @@ export default function PlayerPage() {
         {snapshot?.phase === "lobby" ? (
           <section className="live-card">
             <p className="eyebrow">You are in</p>
-            <h1 style={{ fontSize: "clamp(2.6rem, 10vw, 5rem)" }}>{myRow?.nickname ?? "Ready"}</h1>
+            <div className="participant-hero-identity">
+              <ParticipantAvatar avatarId={myRow?.avatarId} size="large" />
+              <h1 style={{ fontSize: "clamp(2.6rem, 10vw, 5rem)" }}>
+                {myRow?.nickname ?? "Ready"}
+              </h1>
+            </div>
             <p className="lead">The facilitator will start when everyone is ready.</p>
             <p className="muted">
               {snapshot.participants.length} participant
@@ -742,6 +748,15 @@ export default function PlayerPage() {
           <section className="live-card">
             <p className="eyebrow">Round complete</p>
             <h1>Thanks for taking part.</h1>
+            {myRow ? (
+              <p>
+                <ParticipantIdentity
+                  avatarId={myRow.avatarId}
+                  nickname={myRow.nickname}
+                  size="medium"
+                />
+              </p>
+            ) : null}
             <p className="lead">Your final score is {myRow?.score ?? 0}.</p>
           </section>
         ) : null}

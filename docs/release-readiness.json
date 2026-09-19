@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-17",
+  "updatedAt": "2026-09-19",
   "releaseTarget": "canadian-beta",
   "gates": [
     {
@@ -8,10 +8,13 @@
       "name": "Source, database, browser, and security CI",
       "owner": "engineering",
       "requiredFor": ["canadian-beta", "canadian-ga"],
-      "status": "pending",
+      "status": "complete",
       "criterion": "Main passes checks, PostgreSQL isolation, browser coverage, dependency review, secret scanning, SBOM generation, and CodeQL.",
-      "evidence": [],
-      "nextAction": "Merge this workflow change only after its pull-request CI and security jobs pass, then link the green main run."
+      "evidence": [
+        "https://github.com/riojung/openround/actions/runs/35427208968",
+        "https://github.com/riojung/openround/actions/runs/35427208975",
+        "https://github.com/riojung/openround/actions/runs/35427208998"
+      ]
     },
     {
       "id": "local-production-smoke",
@@ -20,7 +23,10 @@
       "requiredFor": ["canadian-beta", "canadian-ga"],
       "status": "complete",
       "criterion": "The containerized production profile passes media, observability, multi-writer, backup/restore, restart, and 100-client correctness checks.",
-      "evidence": ["https://github.com/riojung/openround/actions/runs/35181158243"]
+      "evidence": [
+        "https://github.com/riojung/openround/actions/runs/35181158243",
+        "https://github.com/riojung/openround/actions/runs/35427208998"
+      ]
     },
     {
       "id": "canada-staging",

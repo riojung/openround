@@ -53,19 +53,27 @@ jobs:
           ASSERT_PERFORMANCE: "true"
           CLIENTS: "100"
           JOIN_BATCH_SIZE: "20"
+          LOAD_OUTPUT: artifacts/readiness/production-smoke-load.json
           RESTART_SERVER: "true"
       - name: Capture Compose logs
         if: failure()
         run: docker compose -f compose.yaml -f compose.media.yaml -f compose.test.yaml -f compose.multiwriter.yaml -f compose.observability.yaml --profile observability logs --no-color > compose-failure.log
+      - name: Capture server metrics
+        if: always()
+        continue-on-error: true
+        run: docker compose -f compose.yaml -f compose.media.yaml -f compose.test.yaml -f compose.multiwriter.yaml -f compose.observability.yaml --profile observability exec -T server wget -qO- http://127.0.0.1:4000/metrics > production-smoke-metrics.prom
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
-          name: production-smoke-failure
+          name: production-smoke-evidence-${{ github.run_id }}
           path: |
+            artifacts/readiness/production-smoke-load.json
             compose-failure.log
+            production-smoke-metrics.prom
             playwright-report/
             test-results/
           if-no-files-found: ignore
+          retention-days: 30
       - name: Stop disposable stack
         if: always()
         run: docker compose -f compose.yaml -f compose.media.yaml -f compose.test.yaml -f compose.multiwriter.yaml -f compose.observability.yaml --profile observability down --volumes

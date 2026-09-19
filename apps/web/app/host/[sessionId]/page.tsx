@@ -24,6 +24,7 @@ import {
   RecoveryCompass,
 } from "../../../components/host-command-center";
 import { JoinAccess } from "../../../components/join-access";
+import { ParticipantIdentity } from "../../../components/participant-avatar";
 import { QuestionMedia } from "../../../components/question-media";
 import { ResponseDistributionView } from "../../../components/response-distribution";
 import { QnaPanel } from "../../../components/qna-panel";
@@ -45,8 +46,12 @@ import {
 } from "../../../lib/realtime-mutation-recovery";
 import { experienceThemeStyle } from "../../../lib/theme";
 import { clientUuid } from "../../../lib/uuid";
-import { getHostPhaseView, type HostPhaseCommand } from "../../../lib/host-phase";
-import { getLegacyPhaseActions, getLegacyRecoveryActions } from "../../../lib/legacy-host-phase";
+import { createHostCommandController, type HostPhaseCommand } from "../../../lib/host-phase";
+import {
+  getLegacyPhaseActions,
+  getLegacyRecoveryActions,
+  type LegacyHostCommand,
+} from "../../../lib/legacy-host-phase";
 
 type Ack<T> = { data?: T; error?: { code: string; message: string } };
 
@@ -553,14 +558,25 @@ export default function HostPage() {
     }
   }
 
-  function runPhaseCommand(item: HostPhaseCommand) {
+  function sendHostPhaseCommand(item: HostPhaseCommand) {
     command(item.action, {
       ...(item.interventionType ? { interventionType: item.interventionType } : {}),
       ...(item.recheckMode ? { recheckMode: item.recheckMode } : {}),
     });
   }
-
-  const phaseView = snapshot ? getHostPhaseView(snapshot) : null;
+  const phaseController = snapshot
+    ? createHostCommandController({
+        getSnapshot: () => snapshot,
+        execute: sendHostPhaseCommand,
+      })
+    : null;
+  const phaseView = phaseController?.view() ?? null;
+  function runPhaseCommand(item: HostPhaseCommand) {
+    phaseController?.execute(item);
+  }
+  function runLegacyCommand(item: LegacyHostCommand) {
+    sendHostPhaseCommand(item);
+  }
   const uxBeta = snapshot?.uxBeta === true;
   const legacyPhaseActions = snapshot ? getLegacyPhaseActions(snapshot) : [];
   const legacyRecoveryActions = snapshot ? getLegacyRecoveryActions(snapshot) : [];
@@ -675,7 +691,10 @@ export default function HostPage() {
                       {snapshot.participants.map((participant) => (
                         <li key={participant.id}>
                           <span>
-                            {participant.nickname}
+                            <ParticipantIdentity
+                              avatarId={participant.avatarId}
+                              nickname={participant.nickname}
+                            />
                             {participant.connected ? "" : " · offline"}
                           </span>
                           <button
@@ -781,7 +800,7 @@ export default function HostPage() {
                         className={item.className}
                         disabled={commandPending}
                         key={`${item.action}:${item.interventionType ?? item.recheckMode ?? ""}`}
-                        onClick={() => runPhaseCommand(item)}
+                        onClick={() => runLegacyCommand(item)}
                         type="button"
                       >
                         {item.label}
@@ -805,7 +824,7 @@ export default function HostPage() {
                           (item.action === "start" && snapshot.participants.length === 0)
                         }
                         key={item.action}
-                        onClick={() => runPhaseCommand(item)}
+                        onClick={() => runLegacyCommand(item)}
                         type="button"
                       >
                         {item.label}
@@ -840,7 +859,13 @@ export default function HostPage() {
                   <ol style={{ paddingLeft: 24, lineHeight: 1.8 }}>
                     {snapshot.participants.slice(0, 5).map((participant) => (
                       <li key={participant.id}>
-                        <strong>{participant.nickname}</strong> · {participant.score}
+                        <strong>
+                          <ParticipantIdentity
+                            avatarId={participant.avatarId}
+                            nickname={participant.nickname}
+                          />
+                        </strong>{" "}
+                        · {participant.score}
                       </li>
                     ))}
                   </ol>

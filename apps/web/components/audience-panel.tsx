@@ -16,6 +16,7 @@ import {
 } from "@openround/contracts";
 import { apiFetch, humanError } from "../lib/api";
 import { clientUuid } from "../lib/uuid";
+import { ParticipantIdentity } from "./participant-avatar";
 
 const signalOptions: Array<{ id: AudienceSignal; label: string; icon: string }> = [
   { id: "got_it", label: "Got it", icon: "✓" },
@@ -1002,7 +1003,12 @@ export function AudiencePanel({
               <tbody>
                 {participants.map((participant) => (
                   <tr key={participant.participantId}>
-                    <td>{participant.nickname}</td>
+                    <td>
+                      <ParticipantIdentity
+                        avatarId={participant.avatarId}
+                        nickname={participant.nickname}
+                      />
+                    </td>
                     <td>
                       {participant.connected ? "Connected" : "Offline"} ·{" "}
                       {participant.answered ? "answered" : "waiting"}

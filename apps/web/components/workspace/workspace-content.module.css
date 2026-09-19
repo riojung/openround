@@ -23,7 +23,7 @@
 .muted,
 .starterCard p,
 .emptyState p {
-  color: #627d98;
+  color: #486581;
   line-height: 1.55;
 }
 
@@ -75,7 +75,7 @@
 
 .startCard p {
   margin: 0;
-  color: #627d98;
+  color: #486581;
   line-height: 1.5;
 }
 
@@ -170,7 +170,7 @@
   align-items: flex-start;
   flex-direction: column;
   margin: 1rem 0;
-  color: #627d98;
+  color: #486581;
   font-size: 0.78rem;
 }
 
@@ -231,7 +231,7 @@
 }
 
 .typeChoice span small {
-  color: #627d98;
+  color: #486581;
   line-height: 1.35;
 }
 
@@ -317,7 +317,7 @@
 }
 
 .metric span {
-  color: #627d98;
+  color: #486581;
   font-size: 0.74rem;
 }
 
@@ -351,7 +351,7 @@
 .tabActive {
   align-items: center;
   border-bottom: 3px solid transparent;
-  color: #627d98;
+  color: #486581;
   display: inline-flex;
   font-weight: 800;
   min-height: 44px;
@@ -371,7 +371,7 @@
 }
 
 .summaryLine {
-  color: #627d98;
+  color: #486581;
   font-size: 0.86rem;
 }
 
@@ -581,7 +581,7 @@
 .questionCount,
 .lastHosted,
 .roundDescription {
-  color: #627d98;
+  color: #486581;
   font-size: 0.8rem;
 }
 
@@ -716,7 +716,7 @@
   display: grid;
   min-height: 100vh;
   place-items: center;
-  color: #627d98;
+  color: #486581;
   margin: 0;
 }
 

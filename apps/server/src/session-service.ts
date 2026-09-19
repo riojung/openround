@@ -37,6 +37,7 @@ import {
   acceptAnswer,
   addParticipant,
   applyHostCommand,
+  avatarIdForSeed,
   EngineError,
   setParticipantConnection,
   snapshotForRole,
@@ -962,8 +963,9 @@ export class SessionService {
           normalizedNames.add(uniqueNickname.toLocaleLowerCase("en-CA"));
 
           const participantToken = opaqueToken();
+          const participantId = randomUUID();
           const participant: ParticipantRecord = {
-            id: randomUUID(),
+            id: participantId,
             sessionId: session.id,
             nickname: uniqueNickname,
             tokenHash: hashToken(participantToken),
@@ -973,6 +975,7 @@ export class SessionService {
           const result = addParticipant(nextState, {
             id: participant.id,
             nickname: participant.nickname,
+            avatarId: item.input.avatarId ?? avatarIdForSeed(participantId),
             score: 0,
             correctCount: 0,
             acceptedResponseMs: 0,

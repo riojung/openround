@@ -115,6 +115,7 @@ describe("report CSV", () => {
       state = addParticipant(state, {
         id,
         nickname,
+        avatarId: id === firstParticipantId ? "otter" : "robot",
         score: id === secondParticipantId ? 1_000 : 0,
         correctCount: id === secondParticipantId ? 1 : 0,
         acceptedResponseMs: 1_000,
@@ -269,6 +270,12 @@ describe("report CSV", () => {
       },
     });
     expect(generated.evidenceNote).toContain("not be interpreted as proof");
+    expect(generated.participants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ participantId: firstParticipantId, avatarId: "otter" }),
+        expect.objectContaining({ participantId: secondParticipantId, avatarId: "robot" }),
+      ]),
+    );
   });
 
   it("persists only privacy-safe question distributions with at least five respondents", () => {

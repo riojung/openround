@@ -2,6 +2,7 @@ import { SessionSnapshotSchema, type QuestionDraft, type QuizDraft } from "@open
 import { describe, expect, it } from "vitest";
 import {
   buildRecoveryRehearsal,
+  createHostCommandController,
   createRecoveryRehearsalController,
   getHostPhaseView,
   isLegalHostPhaseCommand,
@@ -356,6 +357,26 @@ describe("deterministic guided scenarios", () => {
       first.participants.every((participant) => participant.label.startsWith("Synthetic ")),
     ).toBe(true);
     expect(first.debrief.syntheticDataNote).toContain("never saved");
+  });
+
+  it("uses one transport-neutral legality gate for live and in-memory commands", () => {
+    const plan = buildRecoveryRehearsal({
+      quiz: quiz([confidentSourceQuestion()]),
+      scenarioId: "confident_misconception",
+    });
+    const openStep = plan.steps.find((step) => step.id === "question_open")!;
+    const executed: string[] = [];
+    const controller = createHostCommandController({
+      getSnapshot: () => openStep.snapshot,
+      execute: (command) => executed.push(command.action),
+    });
+
+    expect(controller.view().phaseLabel).toBe("Question open");
+    controller.execute({ action: "lock", label: "Lock answers" });
+    expect(executed).toEqual(["lock"]);
+    expect(() => controller.execute({ action: "reveal", label: "Reveal answer" })).toThrowError(
+      "That host action is not legal in the current phase.",
+    );
   });
 
   it("throws a stable eligibility error instead of starting an invalid simulation", () => {

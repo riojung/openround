@@ -86,8 +86,13 @@ test("feature-off creator remains on the legacy dashboard", async ({ page }, tes
     await page.getByRole("button", { name: "Start round" }).click();
     await expect(participant.getByText("Checkpoint 1 of 1")).toBeVisible();
     await page.getByRole("button", { name: "Lock answers" }).click();
+    await page.getByRole("button", { name: "Reopen as revote" }).click();
+    await expect(page.getByTestId("host-session")).toHaveAttribute("data-phase", "question_open");
+    await page.getByRole("button", { name: "Lock answers" }).click();
     await page.getByRole("button", { name: "Reveal answer" }).click();
-    await page.getByRole("button", { name: "Finish round" }).click();
+    await page.getByRole("button", { name: "Show standings" }).click();
+    await expect(page.getByTestId("host-session")).toHaveAttribute("data-phase", "leaderboard");
+    await page.getByRole("button", { name: "Continue after recheck" }).click();
     await expect(page.getByText("Results are ready.")).toBeVisible();
     await page.getByRole("link", { name: "Open report" }).click();
 

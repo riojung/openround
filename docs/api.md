@@ -172,6 +172,16 @@ cleanup.
 - Presenter/embed policy issuance under the session routes
 - `GET /v1/embed/policies/{sessionId}/{policyKey}`
 
+`POST /v1/sessions/join` accepts an optional `JoinRequest.avatarId` from the fixed, content-free
+allowlist `comet`, `fox`, `owl`, `otter`, `panda`, `robot`, `rocket`, and `star`. Omitting it keeps
+older clients compatible: after allocating the participant UUID, the server deterministically
+selects one of the same valid IDs. An unrecognized value fails request validation. The selected or
+fallback ID is stored in canonical game state and survives refresh/reconnect; a reconnect cannot
+replace it. Participant, staff-audience, and report DTOs expose `avatarId` additively so legacy
+payloads remain readable. Host and presenter snapshots, moderator audience views, and authorized
+reports may show session avatars. In private-result participant snapshots, only the requesting
+participant's avatar remains visible; every other participant's avatar is suppressed.
+
 Host commands carry `commandId` and `expectedVersion`. Recovery actions include
 `intervention.start`, `intervention.finish`, and `recheck.open`; the engine validates when peer
 discussion, explain/example/break, linked recheck, or revote is legal. A dedicated presenter or

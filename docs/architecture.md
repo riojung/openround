@@ -329,8 +329,26 @@ only; public aggregate counts remain null below five unique signalers.
 4. It reserves a seven-digit code in Redis with the session ID as owner.
 5. It inserts the session in PostgreSQL; the partial unique index on active codes is the final collision backstop.
 6. It returns the host credential once and stores only its hash.
-7. Guest joins are admitted in a short deterministic per-session batch. Capacity, lobby state, nickname policy, and uniqueness are evaluated against one evolving state.
-8. Participant rows and the final session snapshot commit atomically. Each accepted guest receives a resume credential whose hash is persisted.
+7. Guest joins are admitted in a short deterministic per-session batch. Capacity, lobby state,
+   nickname policy, avatar allowlist, and uniqueness are evaluated against one evolving state.
+   Once the participant UUID is allocated, an omitted avatar receives a deterministic fallback
+   from the same fixed allowlist.
+8. Participant rows and the final session snapshot commit atomically. The selected or fallback
+   avatar is stored in canonical game state, and each accepted guest receives a resume credential
+   whose hash is persisted.
+
+`JoinRequest.avatarId` is optional for backward compatibility and accepts only `comet`, `fox`,
+`owl`, `otter`, `panda`, `robot`, `rocket`, or `star`. Existing state schema v4 snapshots without
+the additive field are normalized deterministically when loaded, while newer snapshots preserve
+the chosen value through reconnect, host/presenter projection, moderator audience summaries, and
+report generation. Reconnect authenticates the existing participant and cannot change its avatar.
+
+There is intentionally no normalized participant avatar column. The canonical session snapshot is
+already committed atomically with participant credential/status rows and supplies live,
+reconnect, audience, and report projections. Duplicating the avatar in the participant table would
+require a backfill and dual-write consistency without supporting a current independent query.
+Introduce a column only if a later feature must query avatars without loading canonical session
+state.
 
 The host and presenter derive a prefilled `/join?code=...` URL from the configured public web URL
 or the browser's reachable non-loopback origin. The QR code is only another encoding of that URL;
@@ -381,6 +399,10 @@ After the database commit, Redis receives the current snapshot and a pipelined s
 ### Reconnect and replay
 
 Clients send their last observed sequence in `sync.request`. If the bounded Redis journal contains a contiguous suffix, the service can return replay metadata and the latest role-filtered view. It always provides an authoritative snapshot so clients can recover from a missing range, process restart, or cache loss.
+
+That authoritative snapshot also restores the participant's session avatar. Host and presenter
+projections may show every participant avatar, while a private-result participant projection keeps
+the requesting participant's avatar and suppresses avatars belonging to everyone else.
 
 Intentional realtime-process shutdown avoids converting every attached guest into a durable disconnect mutation. Ordinary network disconnects still update presence through the guarded session queue.
 
@@ -437,7 +459,8 @@ text is never accepted.
 - Published quiz versions are immutable, and running sessions retain their frozen version.
 - Open-checkpoint payloads omit correctness, explanation, misconception metadata, source
   citations, distributions, and score outcome.
-- Participant snapshots reveal only that participant's private result in private-result mode.
+- Participant snapshots reveal only that participant's private result in private-result mode and
+  suppress other participants' avatars while preserving the requesting participant's own avatar.
 - Ties resolve by correct-answer count, aggregate accepted response time, then stable participant ID.
 
 Speed scoring for a correct response is:

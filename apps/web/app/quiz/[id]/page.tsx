@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ChoiceDraft,
   Entitlements,
@@ -13,6 +13,14 @@ import type {
   RoundCategory,
 } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
+import { DeliveryScoring } from "../../../components/editor/delivery-scoring";
+import { DiagnosticDetails } from "../../../components/editor/diagnostic-details";
+import { MediaEditor } from "../../../components/editor/media-editor";
+import { ParticipantPreview } from "../../../components/editor/participant-preview";
+import { editorTypeLabel } from "../../../components/editor/question-labels";
+import { QuestionNavigator } from "../../../components/editor/question-navigator";
+import { ResponseEditor } from "../../../components/editor/response-editor";
+import { isChoiceQuestion, type ChoiceQuestionDraft } from "../../../components/editor/types";
 import { ExperiencePicker } from "../../../components/experience-picker";
 import { apiFetch, humanError } from "../../../lib/api";
 import { useEditorController } from "../../../lib/editor-controller";
@@ -31,39 +39,6 @@ interface DraftGuidance {
   resolution: string;
   questionIndex?: number;
 }
-
-type ChoiceQuestionDraft = Extract<
-  QuestionDraft,
-  { type: "single_select" | "true_false" | "multi_select" | "poll" }
->;
-
-function isChoiceQuestion(question: QuestionDraft): question is ChoiceQuestionDraft {
-  return ["single_select", "true_false", "multi_select", "poll"].includes(question.type);
-}
-
-function responseTypeLabel(type: QuestionType) {
-  return {
-    single_select: "Single select",
-    true_false: "True or false",
-    multi_select: "Multiple select",
-    numeric: "Numeric response",
-    rating: "Rating",
-    poll: "Poll",
-  }[type];
-}
-
-function editorTypeLabel(type: QuestionType, uxBeta: boolean) {
-  return !uxBeta && type === "numeric" ? "Numeric" : responseTypeLabel(type);
-}
-
-const responseTypeGuidance: Record<QuestionType, string> = {
-  single_select: "Use when one answer best reveals understanding or a misconception.",
-  true_false: "Use for a fast check of one precise claim.",
-  multi_select: "Use when learners need to identify every valid option.",
-  numeric: "Use for calculations or measurements with an optional tolerance and unit.",
-  rating: "Use for an unscored confidence, sentiment, or reflection scale.",
-  poll: "Use for an unscored preference or discussion opener.",
-};
 
 function readableList(values: number[]) {
   if (values.length === 1) return String(values[0]);
@@ -210,62 +185,6 @@ function newQuestion(type: QuestionType): QuestionDraft {
     return { ...common, type, min: 1, max: 5, minLabel: "Low", maxLabel: "High" };
   }
   return { ...common, type, choices: newChoices(type) };
-}
-
-function ParticipantPreview({ question }: { question: QuestionDraft }) {
-  return (
-    <div className="participant-preview" aria-label="Participant preview">
-      <p className="eyebrow">Participant view</p>
-      <h3>{question.prompt || "Your question will appear here"}</h3>
-      {isChoiceQuestion(question) ? (
-        <div className="preview-options">
-          {question.choices.map((choice, index) => (
-            <span className="preview-option" key={choice.id}>
-              {choice.label || `Choice ${index + 1}`}
-            </span>
-          ))}
-        </div>
-      ) : question.type === "numeric" ? (
-        <input className="input" disabled placeholder="Enter a number" />
-      ) : (
-        <div className="preview-options">
-          {Array.from({ length: question.max - question.min + 1 }, (_, index) => (
-            <span className="preview-rating" key={question.min + index}>
-              {question.min + index}
-            </span>
-          ))}
-        </div>
-      )}
-      {question.confidence !== "off" && question.type !== "poll" && question.type !== "rating" ? (
-        <p className="muted">Confidence will be requested before Submit.</p>
-      ) : null}
-      <button className="button" disabled type="button">
-        Submit answer
-      </button>
-    </div>
-  );
-}
-
-function BetaDisclosure({
-  enabled,
-  className,
-  id,
-  summary,
-  children,
-}: {
-  enabled: boolean;
-  className?: string;
-  id?: string;
-  summary: string;
-  children: ReactNode;
-}) {
-  if (!enabled) return <>{children}</>;
-  return (
-    <details className={className} id={id}>
-      <summary>{summary}</summary>
-      {children}
-    </details>
-  );
 }
 
 export default function QuizEditorPage() {
@@ -829,77 +748,15 @@ export default function QuizEditorPage() {
               )}
             </section>
             <div className="editor-layout">
-              <aside className="panel">
-                <h2 style={{ fontSize: "1.4rem" }}>{uxBeta ? "Questions" : "Checkpoints"}</h2>
-                <div className="question-list">
-                  {draft.questions.map((item, index) => (
-                    <button
-                      aria-current={item.id === selectedQuestionId}
-                      className="question-tab"
-                      key={item.id}
-                      onClick={() => setSelectedQuestionId(item.id)}
-                      type="button"
-                    >
-                      <strong>{index + 1}.</strong>{" "}
-                      {item.prompt || (uxBeta ? "Untitled question" : "Untitled checkpoint")}
-                      {(item.delivery ?? "main") === "recheck" ? " · recheck" : ""}
-                    </button>
-                  ))}
-                </div>
-                {uxBeta ? (
-                  <div className="insert-menu" style={{ marginTop: 16 }}>
-                    <label className="field" htmlFor="insert-question-type">
-                      <span>Insert</span>
-                      <select
-                        aria-describedby="insert-question-guidance"
-                        className="select"
-                        id="insert-question-type"
-                        onChange={(event) => setInsertType(event.target.value as QuestionType)}
-                        value={insertType}
-                      >
-                        <option value="single_select">Single select</option>
-                        <option value="true_false">True or false</option>
-                        <option value="multi_select">Multiple select</option>
-                        <option value="numeric">Numeric response</option>
-                        <option value="rating">Rating</option>
-                        <option value="poll">Poll</option>
-                      </select>
-                    </label>
-                    <p className="muted" id="insert-question-guidance">
-                      {responseTypeGuidance[insertType]}
-                    </p>
-                    <button
-                      className="button small-button"
-                      onClick={() => addQuestion(insertType)}
-                      type="button"
-                    >
-                      Add question
-                    </button>
-                  </div>
-                ) : (
-                  <div className="button-row" style={{ marginTop: 16 }}>
-                    {(
-                      [
-                        "single_select",
-                        "true_false",
-                        "multi_select",
-                        "numeric",
-                        "rating",
-                        "poll",
-                      ] as QuestionType[]
-                    ).map((type) => (
-                      <button
-                        className="button-quiet small-button"
-                        key={type}
-                        onClick={() => addQuestion(type)}
-                        type="button"
-                      >
-                        {editorTypeLabel(type, false)}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </aside>
+              <QuestionNavigator
+                draft={draft}
+                insertType={insertType}
+                onAddQuestion={addQuestion}
+                onInsertTypeChange={setInsertType}
+                onSelectQuestion={setSelectedQuestionId}
+                selectedQuestionId={selectedQuestionId}
+                uxBeta={uxBeta}
+              />
               <section
                 className="panel"
                 aria-label={uxBeta ? "Selected question editor" : "Selected checkpoint editor"}
@@ -983,491 +840,36 @@ export default function QuizEditorPage() {
                         </div>
                       </div>
                     ) : null}
-                    <BetaDisclosure
-                      className="editor-disclosure"
-                      enabled={uxBeta}
-                      id="question-diagnostic-details"
-                      summary="Diagnostic details and recheck link"
-                    >
-                      <div className="toolbar">
-                        <label className="field" style={{ flex: "1 1 180px" }}>
-                          <span>Purpose</span>
-                          <select
-                            className="select"
-                            onChange={(event) =>
-                              updateQuestion((item) => ({
-                                ...item,
-                                purpose: event.target.value as
-                                  "diagnostic" | "practice" | "opinion",
-                              }))
-                            }
-                            value={
-                              question.purpose ??
-                              (question.type === "poll" || question.type === "rating"
-                                ? "opinion"
-                                : "diagnostic")
-                            }
-                          >
-                            <option value="diagnostic">Diagnostic</option>
-                            <option value="practice">Practice</option>
-                            <option value="opinion">Opinion</option>
-                          </select>
-                        </label>
-                        <label className="field" style={{ flex: "1 1 180px" }}>
-                          <span>Confidence prompt</span>
-                          <select
-                            className="select"
-                            disabled={question.type === "poll" || question.type === "rating"}
-                            onChange={(event) =>
-                              updateQuestion((item) => ({
-                                ...item,
-                                confidence: event.target.value as "off" | "optional" | "required",
-                              }))
-                            }
-                            value={question.confidence ?? "off"}
-                          >
-                            <option value="off">Off</option>
-                            <option value="optional">Optional</option>
-                            <option value="required">Required</option>
-                          </select>
-                        </label>
-                        <label className="field" style={{ flex: "2 1 280px" }}>
-                          <span>Concept keys</span>
-                          <input
-                            className="input"
-                            onChange={(event) =>
-                              updateQuestion((item) => ({
-                                ...item,
-                                conceptKeys: event.target.value
-                                  .split(",")
-                                  .map((value) => value.trim())
-                                  .filter(Boolean),
-                              }))
-                            }
-                            placeholder="fractions, rate-vs-total"
-                            value={(question.conceptKeys ?? []).join(", ")}
-                          />
-                          <small className="muted">
-                            Comma-separated keys using letters, numbers, dots, dashes, or
-                            underscores.
-                          </small>
-                        </label>
-                      </div>
-                      {(question.delivery ?? "main") === "main" &&
-                      question.type !== "poll" &&
-                      question.type !== "rating" ? (
-                        <label className="field">
-                          <span>{uxBeta ? "Paired recheck question" : "Linked recheck"}</span>
-                          <select
-                            className="select"
-                            onChange={(event) =>
-                              updateQuestion((item) => ({
-                                ...item,
-                                linkedRecheckQuestionId: event.target.value || null,
-                              }))
-                            }
-                            value={question.linkedRecheckQuestionId ?? ""}
-                          >
-                            <option value="">
-                              {uxBeta ? "No paired recheck" : "No linked recheck"}
-                            </option>
-                            {draft.questions
-                              .filter(
-                                (candidate) =>
-                                  candidate.id !== question.id &&
-                                  (candidate.delivery ?? "main") === "recheck",
-                              )
-                              .map((candidate) => (
-                                <option key={candidate.id} value={candidate.id}>
-                                  {candidate.prompt ||
-                                    `Untitled ${responseTypeLabel(candidate.type)}`}
-                                </option>
-                              ))}
-                          </select>
-                        </label>
-                      ) : null}
-                    </BetaDisclosure>
-                    <div className="media-editor">
-                      <div className="field" style={{ marginBottom: 0 }}>
-                        <label htmlFor="media-alt">Optional instructional image</label>
-                        <input
-                          className="input"
-                          id="media-alt"
-                          maxLength={300}
-                          onChange={(event) =>
-                            updateQuestion((item) => ({
-                              ...item,
-                              mediaAlt: event.target.value || null,
-                            }))
-                          }
-                          placeholder="Describe what the image teaches"
-                          value={question.mediaAlt ?? ""}
-                        />
-                        <label className={uxBeta ? undefined : "sr-only"} htmlFor="media-upload">
-                          Choose instructional image
-                        </label>
-                        <input
-                          accept="image/jpeg,image/png,image/webp"
-                          aria-describedby="media-help"
-                          disabled={!mediaUploadsEnabled || mediaState !== "idle"}
-                          id="media-upload"
-                          onChange={(event) => {
-                            void uploadQuestionImage(event.target.files?.[0] ?? null);
-                            event.currentTarget.value = "";
-                          }}
-                          type="file"
-                        />
-                        <small className="muted" id="media-help">
-                          {mediaUploadsEnabled
-                            ? "JPEG, PNG, or WebP up to 10 MB. Images are quarantined and scanned before use."
-                            : "New image uploads are disabled until this operator configures malware scanning."}
-                        </small>
-                        {mediaState !== "idle" ? (
-                          <span className="notice" role="status">
-                            {mediaState === "uploading"
-                              ? "Uploading to quarantine…"
-                              : "Checking image safety…"}
-                          </span>
-                        ) : null}
-                      </div>
-                      {mediaPreviewUrl ? (
-                        <div>
-                          <img
-                            alt={question.mediaAlt ?? ""}
-                            className="question-media"
-                            height={360}
-                            src={mediaPreviewUrl}
-                            width={640}
-                          />
-                          <button
-                            className="danger-link"
-                            onClick={() => {
-                              applyQuestionStructuralChange(
-                                { ...question, mediaId: null, mediaAlt: null },
-                                "Image removed.",
-                              );
-                              setMediaPreviewUrl("");
-                            }}
-                            type="button"
-                          >
-                            Remove image
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                    {isChoiceQuestion(question) ? (
-                      <>
-                        <fieldset style={{ border: 0, margin: 0, padding: 0 }}>
-                          <legend className="field-label" style={{ marginBottom: 10 }}>
-                            {question.type === "poll"
-                              ? "Poll choices"
-                              : "Choices and correct answer"}
-                          </legend>
-                          {question.choices.map((choice, index) => (
-                            <div className="choice-row" key={choice.id}>
-                              {question.type !== "poll" ? (
-                                <input
-                                  aria-label={`Mark choice ${index + 1} correct`}
-                                  checked={choice.isCorrect}
-                                  className="choice-correct"
-                                  name={
-                                    question.type === "multi_select"
-                                      ? `correct-choice-${choice.id}`
-                                      : "correct-choice"
-                                  }
-                                  onChange={() =>
-                                    updateChoiceQuestion((item) => ({
-                                      ...item,
-                                      choices: item.choices.map((candidate) => ({
-                                        ...candidate,
-                                        isCorrect:
-                                          item.type === "multi_select"
-                                            ? candidate.id === choice.id
-                                              ? !candidate.isCorrect
-                                              : candidate.isCorrect
-                                            : candidate.id === choice.id,
-                                      })),
-                                    }))
-                                  }
-                                  type={question.type === "multi_select" ? "checkbox" : "radio"}
-                                />
-                              ) : null}
-                              <div style={{ flex: 1 }}>
-                                <input
-                                  aria-label={`Choice ${index + 1}`}
-                                  aria-invalid={!choice.label.trim()}
-                                  className="input"
-                                  disabled={question.type === "true_false"}
-                                  maxLength={180}
-                                  onChange={(event) =>
-                                    updateChoiceQuestion((item) => ({
-                                      ...item,
-                                      choices: item.choices.map((candidate) =>
-                                        candidate.id === choice.id
-                                          ? { ...candidate, label: event.target.value }
-                                          : candidate,
-                                      ),
-                                    }))
-                                  }
-                                  value={choice.label}
-                                />
-                                {question.type !== "poll" ? (
-                                  <BetaDisclosure
-                                    className="choice-diagnostics"
-                                    enabled={uxBeta}
-                                    summary="Diagnostic rationale and feedback"
-                                  >
-                                    <div className="toolbar" style={{ marginTop: 8 }}>
-                                      <input
-                                        aria-label={`Misconception tag for choice ${index + 1}`}
-                                        className="input"
-                                        maxLength={64}
-                                        onChange={(event) =>
-                                          updateChoiceQuestion((item) => ({
-                                            ...item,
-                                            choices: item.choices.map((candidate) =>
-                                              candidate.id === choice.id
-                                                ? {
-                                                    ...candidate,
-                                                    misconceptionKey: event.target.value || null,
-                                                  }
-                                                : candidate,
-                                            ),
-                                          }))
-                                        }
-                                        placeholder="Misconception tag, such as unit-confusion"
-                                        value={choice.misconceptionKey ?? ""}
-                                      />
-                                      <input
-                                        aria-label={`Why someone might choose choice ${index + 1}`}
-                                        className="input"
-                                        maxLength={500}
-                                        onChange={(event) =>
-                                          updateChoiceQuestion((item) => ({
-                                            ...item,
-                                            choices: item.choices.map((candidate) =>
-                                              candidate.id === choice.id
-                                                ? { ...candidate, feedback: event.target.value }
-                                                : candidate,
-                                            ),
-                                          }))
-                                        }
-                                        placeholder="Why might someone choose this?"
-                                        value={choice.feedback ?? ""}
-                                      />
-                                    </div>
-                                  </BetaDisclosure>
-                                ) : null}
-                              </div>
-                              {question.type !== "true_false" && question.choices.length > 2 ? (
-                                <button
-                                  className="danger-link"
-                                  onClick={() =>
-                                    applyQuestionStructuralChange(
-                                      {
-                                        ...question,
-                                        choices: question.choices.filter(
-                                          (candidate) => candidate.id !== choice.id,
-                                        ),
-                                      },
-                                      "Choice removed.",
-                                    )
-                                  }
-                                  type="button"
-                                >
-                                  Remove
-                                </button>
-                              ) : null}
-                            </div>
-                          ))}
-                        </fieldset>
-                        {question.type !== "true_false" && question.choices.length < 6 ? (
-                          <button
-                            className="button-quiet small-button"
-                            onClick={() =>
-                              updateChoiceQuestion((item) => ({
-                                ...item,
-                                choices: [
-                                  ...item.choices,
-                                  { id: clientUuid(), label: "", isCorrect: false },
-                                ],
-                              }))
-                            }
-                            type="button"
-                          >
-                            Add choice
-                          </button>
-                        ) : null}
-                      </>
-                    ) : question.type === "numeric" ? (
-                      <div className="toolbar">
-                        <label className="field" style={{ flex: "1 1 180px" }}>
-                          <span>Correct value</span>
-                          <input
-                            className="input"
-                            inputMode="decimal"
-                            onChange={(event) =>
-                              updateQuestion((item) =>
-                                item.type === "numeric"
-                                  ? { ...item, correctValue: event.target.value }
-                                  : item,
-                              )
-                            }
-                            value={question.correctValue}
-                          />
-                        </label>
-                        <label className="field" style={{ flex: "1 1 180px" }}>
-                          <span>Absolute tolerance</span>
-                          <input
-                            className="input"
-                            inputMode="decimal"
-                            onChange={(event) =>
-                              updateQuestion((item) =>
-                                item.type === "numeric"
-                                  ? { ...item, tolerance: event.target.value }
-                                  : item,
-                              )
-                            }
-                            value={question.tolerance}
-                          />
-                        </label>
-                        <label className="field" style={{ flex: "1 1 180px" }}>
-                          <span>Optional unit</span>
-                          <input
-                            className="input"
-                            maxLength={32}
-                            onChange={(event) =>
-                              updateQuestion((item) =>
-                                item.type === "numeric"
-                                  ? { ...item, unit: event.target.value || null }
-                                  : item,
-                              )
-                            }
-                            value={question.unit ?? ""}
-                          />
-                        </label>
-                      </div>
-                    ) : (
-                      <div className="toolbar">
-                        <label className="field" style={{ flex: "1 1 120px" }}>
-                          <span>Minimum</span>
-                          <select
-                            className="select"
-                            onChange={(event) =>
-                              updateQuestion((item) =>
-                                item.type === "rating"
-                                  ? { ...item, min: Number(event.target.value) }
-                                  : item,
-                              )
-                            }
-                            value={question.min}
-                          >
-                            {[1, 2, 3, 4].map((value) => (
-                              <option key={value}>{value}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="field" style={{ flex: "1 1 120px" }}>
-                          <span>Maximum</span>
-                          <select
-                            className="select"
-                            onChange={(event) =>
-                              updateQuestion((item) =>
-                                item.type === "rating"
-                                  ? { ...item, max: Number(event.target.value) }
-                                  : item,
-                              )
-                            }
-                            value={question.max}
-                          >
-                            {[5, 6, 7, 8, 9, 10].map((value) => (
-                              <option key={value}>{value}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="field" style={{ flex: "1 1 180px" }}>
-                          <span>Minimum label</span>
-                          <input
-                            className="input"
-                            onChange={(event) =>
-                              updateQuestion((item) =>
-                                item.type === "rating"
-                                  ? { ...item, minLabel: event.target.value }
-                                  : item,
-                              )
-                            }
-                            value={question.minLabel}
-                          />
-                        </label>
-                        <label className="field" style={{ flex: "1 1 180px" }}>
-                          <span>Maximum label</span>
-                          <input
-                            className="input"
-                            onChange={(event) =>
-                              updateQuestion((item) =>
-                                item.type === "rating"
-                                  ? { ...item, maxLabel: event.target.value }
-                                  : item,
-                              )
-                            }
-                            value={question.maxLabel}
-                          />
-                        </label>
-                      </div>
-                    )}
-                    <div className="toolbar" style={{ marginTop: 22 }}>
-                      <label className="field" style={{ flex: "1 1 180px", marginBottom: 0 }}>
-                        <span>Time limit</span>
-                        <select
-                          className="select"
-                          onChange={(event) =>
-                            updateQuestion((item) => ({
-                              ...item,
-                              timeLimitSeconds: Number(event.target.value),
-                            }))
-                          }
-                          value={question.timeLimitSeconds}
-                        >
-                          {[5, 10, 20, 30, 60, 90, 120, 300].map((seconds) => (
-                            <option key={seconds} value={seconds}>
-                              {seconds} seconds
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="field" style={{ flex: "1 1 180px", marginBottom: 0 }}>
-                        <span>Base points</span>
-                        <select
-                          className="select"
-                          disabled={question.type === "poll" || question.type === "rating"}
-                          onChange={(event) =>
-                            updateQuestion((item) => ({
-                              ...item,
-                              basePoints: Number(event.target.value),
-                            }))
-                          }
-                          value={question.basePoints}
-                        >
-                          {[0, 500, 1000, 2000].map((points) => (
-                            <option key={points} value={points}>
-                              {points}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                    <div className="field" style={{ marginTop: 22 }}>
-                      <label htmlFor="explanation">Explanation after reveal</label>
-                      <textarea
-                        className="textarea"
-                        id="explanation"
-                        maxLength={1000}
-                        onChange={(event) =>
-                          updateQuestion((item) => ({ ...item, explanation: event.target.value }))
-                        }
-                        value={question.explanation}
-                      />
-                    </div>
+                    <DiagnosticDetails
+                      onUpdateQuestion={updateQuestion}
+                      question={question}
+                      questions={draft.questions}
+                      uxBeta={uxBeta}
+                    />
+                    <MediaEditor
+                      mediaPreviewUrl={mediaPreviewUrl}
+                      mediaState={mediaState}
+                      mediaUploadsEnabled={mediaUploadsEnabled}
+                      onRemoveImage={() => {
+                        applyQuestionStructuralChange(
+                          { ...question, mediaId: null, mediaAlt: null },
+                          "Image removed.",
+                        );
+                        setMediaPreviewUrl("");
+                      }}
+                      onUpdateQuestion={updateQuestion}
+                      onUploadImage={(file) => void uploadQuestionImage(file)}
+                      question={question}
+                      uxBeta={uxBeta}
+                    />
+                    <ResponseEditor
+                      onStructuralChange={applyQuestionStructuralChange}
+                      onUpdateChoiceQuestion={updateChoiceQuestion}
+                      onUpdateQuestion={updateQuestion}
+                      question={question}
+                      uxBeta={uxBeta}
+                    />
+                    <DeliveryScoring onUpdateQuestion={updateQuestion} question={question} />
                     {question.sourceCitations?.length ? (
                       <details className="notice source-citations">
                         <summary>Source evidence for this generated draft</summary>

@@ -1,10 +1,13 @@
 import {
+  AvatarIdSchema,
+  AVATAR_IDS,
   canonicalizeResponse,
   normalizeDecimalString,
   questionConfidence,
   questionDelivery,
   questionPurpose,
   type BrandTheme,
+  type AvatarId,
   type ConfidenceValue,
   type ExperienceThemeSnapshot,
   type HostAction,
@@ -25,14 +28,40 @@ import { deriveCheckpointInsight } from "@openround/insights";
 
 export const CURRENT_GAME_STATE_SCHEMA_VERSION = 4;
 
+/** Browser-safe stable fallback used for legacy and avatar-less participants. */
+export function avatarIdForSeed(seed: string): AvatarId {
+  let hash = 2_166_136_261;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash ^= seed.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return AVATAR_IDS[(hash >>> 0) % AVATAR_IDS.length]!;
+}
+
 export interface EngineParticipant {
   id: string;
   nickname: string;
+  /** Optional for pre-avatar persisted state. New joins are normalized before persistence. */
+  avatarId?: AvatarId;
   score: number;
   correctCount: number;
   acceptedResponseMs: number;
   connected: boolean;
   kicked: boolean;
+}
+
+function participantsWithAvatars(
+  participants: Record<string, EngineParticipant> | undefined,
+): Record<string, EngineParticipant> {
+  const source = participants ?? {};
+  let normalized = source;
+  for (const [id, participant] of Object.entries(source)) {
+    const parsedAvatar = AvatarIdSchema.safeParse(participant.avatarId);
+    if (parsedAvatar.success) continue;
+    if (normalized === source) normalized = { ...source };
+    normalized[id] = { ...participant, avatarId: avatarIdForSeed(participant.id || id) };
+  }
+  return normalized;
 }
 
 export interface EngineAnswer {
@@ -184,7 +213,10 @@ export function upgradeGameState(input: GameState): GameState {
       `Game state schema ${legacy.stateSchemaVersion} is newer than supported schema ${CURRENT_GAME_STATE_SCHEMA_VERSION}`,
     );
   }
-  if (legacy.stateSchemaVersion === CURRENT_GAME_STATE_SCHEMA_VERSION) return legacy;
+  const participants = participantsWithAvatars(legacy.participants);
+  if (legacy.stateSchemaVersion === CURRENT_GAME_STATE_SCHEMA_VERSION) {
+    return participants === legacy.participants ? legacy : { ...legacy, participants };
+  }
   const category = legacy.quiz.category ?? "general";
   const presetId = legacy.quiz.experiencePreset?.id;
   return {
@@ -200,6 +232,7 @@ export function upgradeGameState(input: GameState): GameState {
     experienceTheme:
       legacy.experienceTheme ??
       resolveExperienceTheme({ category, presetId, brandTheme: legacy.brandTheme }),
+    participants,
     answers: Object.fromEntries(
       Object.entries(legacy.answers ?? {}).map(([id, answer]) => [id, legacyAnswer(answer)]),
     ),
@@ -716,12 +749,16 @@ export function addParticipant(state: GameState, participant: EngineParticipant)
   state = upgradeGameState(state);
   if (state.lobbyLocked) throw new EngineError("SESSION_LOCKED", "The lobby is locked");
   const existing = state.participants[participant.id];
+  const normalizedParticipant = {
+    ...participant,
+    avatarId: participant.avatarId ?? avatarIdForSeed(participant.id),
+  };
   return nextState(
     state,
     {
       participants: {
         ...state.participants,
-        [participant.id]: existing ? { ...existing, connected: true } : participant,
+        [participant.id]: existing ? { ...existing, connected: true } : normalizedParticipant,
       },
     },
     ["lobby.updated"],
@@ -933,6 +970,7 @@ export function leaderboard(state: GameState): ParticipantView[] {
   return sorted.map((participant, index) => ({
     id: participant.id,
     nickname: participant.nickname,
+    avatarId: participant.avatarId ?? avatarIdForSeed(participant.id),
     score: participant.score,
     connected: participant.connected,
     rank: index + 1,
@@ -1001,6 +1039,12 @@ export function snapshotForRole(
     state.questionIndex === null ? undefined : state.quiz.questions[state.questionIndex];
   const visibleParticipants = leaderboard(state).map((participant) => ({
     ...participant,
+    avatarId:
+      state.settings.resultVisibility === "private" &&
+      options.role === "participant" &&
+      participant.id !== options.participantId
+        ? undefined
+        : participant.avatarId,
     nickname:
       state.settings.resultVisibility === "private" && options.role === "participant"
         ? participant.id === options.participantId
