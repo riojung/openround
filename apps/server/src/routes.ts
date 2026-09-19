@@ -12,6 +12,8 @@ import {
   CreateAuthoringJobSchema,
   CreateChatMessageSchema,
   CreateFollowupSchema,
+  CreatePracticeAssignmentSchema,
+  CreateAssignmentPersonalPassSchema,
   CreateAccommodationPassSchema,
   CreateWorkspaceInvitationSchema,
   CreateQuizSchema,
@@ -401,6 +403,8 @@ export async function registerRoutes(
   };
   const uxBetaWorkspaceEnabled = (workspaceId: string) =>
     config.FEATURE_UX_BETA && config.UX_BETA_WORKSPACE_ALLOWLIST.includes(workspaceId);
+  const practiceAssignmentsWorkspaceEnabled = (workspaceId: string) =>
+    uxBetaWorkspaceEnabled(workspaceId) && config.FEATURE_PRACTICE_ASSIGNMENTS;
   const workspaceProductFeatures = async (workspaceId: string) => {
     const { effective } = await operationalFeatures();
     const allowlist = config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST;
@@ -413,6 +417,7 @@ export async function registerRoutes(
       roomChat: workspaceAllowed && effective.roomChat,
       uxBeta: uxBetaWorkspaceEnabled(workspaceId),
       recoveryRehearsal: uxAllowed && config.FEATURE_UX_BETA && config.FEATURE_RECOVERY_REHEARSAL,
+      practiceAssignments: practiceAssignmentsWorkspaceEnabled(workspaceId),
     };
   };
   const requireWorkspaceRole = (
@@ -603,6 +608,7 @@ export async function registerRoutes(
       roomChat: effective.roomChat,
       uxBeta: config.FEATURE_UX_BETA,
       recoveryRehearsal: config.FEATURE_UX_BETA && config.FEATURE_RECOVERY_REHEARSAL,
+      practiceAssignments: config.FEATURE_UX_BETA && config.FEATURE_PRACTICE_ASSIGNMENTS,
     });
   });
 
@@ -2327,6 +2333,73 @@ export async function registerRoutes(
       .send(JSON.stringify(report, null, 2));
   });
 
+  app.post("/v1/quizzes/:id/practice-assignments", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    if (!practiceAssignmentsWorkspaceEnabled(creator.workspaceId)) {
+      return apiError(
+        reply,
+        404,
+        "NOT_FOUND",
+        "Practice assignments are not available",
+        request.id,
+      );
+    }
+    const entitlements = entitlementsFor(creator.plan, config);
+    if (!entitlements.followups) {
+      return apiError(
+        reply,
+        402,
+        "ENTITLEMENT_LIMIT",
+        "Practice assignments are available on the Pro plan",
+        request.id,
+      );
+    }
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = CreatePracticeAssignmentSchema.parse(request.body);
+    const created = await followups.createAssignment(
+      creator,
+      id,
+      input,
+      entitlements.reportRetentionDays,
+      entitlements.maxParticipants,
+    );
+    const link = (token: string) =>
+      `${config.WEB_ORIGIN}/followup/${created.followup.id}#token=${encodeURIComponent(token)}`;
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "practice_assignment.create",
+      targetType: "practice_assignment",
+      targetId: created.followup.id,
+      requestId: request.id,
+      metadata: {
+        sourceQuizId: id,
+        sourceQuizVersionId: created.followup.sourceQuizVersionId,
+        personalPasses: created.personalAccess.length,
+        timeMode: created.followup.timeMode,
+      },
+    });
+    productEvents.enqueue({
+      workspaceId: creator.workspaceId,
+      segment: creator.segment,
+      events: [{ name: "practice_assignment_created" }],
+    });
+    return reply
+      .header("cache-control", "private, no-store")
+      .header("pragma", "no-cache")
+      .code(201)
+      .send({
+        followup: created.followup,
+        genericUrl: link(created.genericToken),
+        personalAccess: created.personalAccess.map((access) => ({
+          ...access,
+          url: link(access.token),
+        })),
+      });
+  });
+
   app.post("/v1/reports/:id/followups", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
@@ -2359,14 +2432,18 @@ export async function registerRoutes(
         timeMode: created.followup.timeMode,
       },
     });
-    return reply.code(201).send({
-      followup: created.followup,
-      genericUrl: link(created.genericToken),
-      personalAccess: created.personalAccess.map((access) => ({
-        ...access,
-        url: link(access.token!),
-      })),
-    });
+    return reply
+      .header("cache-control", "private, no-store")
+      .header("pragma", "no-cache")
+      .code(201)
+      .send({
+        followup: created.followup,
+        genericUrl: link(created.genericToken),
+        personalAccess: created.personalAccess.map((access) => ({
+          ...access,
+          url: link(access.token!),
+        })),
+      });
   });
 
   app.get("/v1/followups", async (request, reply) => {
@@ -2407,7 +2484,59 @@ export async function registerRoutes(
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
     const { id } = FollowupParamsSchema.parse(request.params);
-    return followups.getForCreator(creator.workspaceId, id);
+    const detail = await followups.getForCreator(creator.workspaceId, id);
+    return reply
+      .header("cache-control", "private, no-store")
+      .header("pragma", "no-cache")
+      .send(detail);
+  });
+
+  app.post("/v1/followups/:id/personal-passes", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    if (!practiceAssignmentsWorkspaceEnabled(creator.workspaceId)) {
+      return apiError(
+        reply,
+        404,
+        "NOT_FOUND",
+        "Practice assignments are not available",
+        request.id,
+      );
+    }
+    const entitlements = entitlementsFor(creator.plan, config);
+    if (!entitlements.followups) {
+      return apiError(
+        reply,
+        402,
+        "ENTITLEMENT_LIMIT",
+        "Practice assignments are available on the Pro plan",
+        request.id,
+      );
+    }
+    const { id } = FollowupParamsSchema.parse(request.params);
+    const input = CreateAssignmentPersonalPassSchema.parse(request.body);
+    const created = await followups.createAssignmentPersonalPass(
+      creator,
+      id,
+      input.label,
+      entitlements.maxParticipants,
+    );
+    const url = `${config.WEB_ORIGIN}/followup/${id}#token=${encodeURIComponent(created.access.token!)}`;
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "practice_assignment.personal_pass.create",
+      targetType: "followup_access_token",
+      targetId: created.access.id,
+      requestId: request.id,
+      metadata: { followupId: id },
+    });
+    return reply
+      .header("cache-control", "private, no-store")
+      .header("pragma", "no-cache")
+      .code(201)
+      .send({ access: { ...created.access, url } });
   });
 
   app.post("/v1/followups/:id/accommodation-passes", async (request, reply) => {
@@ -2427,7 +2556,11 @@ export async function registerRoutes(
       requestId: request.id,
       metadata: { followupId: id, timeMultiplier: created.access.timeMultiplier },
     });
-    return reply.code(201).send({ access: { ...created.access, url } });
+    return reply
+      .header("cache-control", "private, no-store")
+      .header("pragma", "no-cache")
+      .code(201)
+      .send({ access: { ...created.access, url } });
   });
 
   app.delete("/v1/followups/:id/access/:accessId", async (request, reply) => {

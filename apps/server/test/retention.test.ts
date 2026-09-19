@@ -50,6 +50,7 @@ describe("retention service", () => {
     await expect(retention.run(now)).resolves.toEqual({
       expiredLiveSessions: 0,
       purgedSessions: 0,
+      purgedPracticeAssignments: 0,
       purgedAuditEvents: 0,
       purgedProductEvents: 0,
       purgedMedia: 2,
@@ -134,6 +135,7 @@ describe("retention service", () => {
     await expect(retention.run(now)).resolves.toEqual({
       expiredLiveSessions: 1,
       purgedSessions: 0,
+      purgedPracticeAssignments: 0,
       purgedAuditEvents: 0,
       purgedProductEvents: 0,
       purgedMedia: 0,
@@ -146,6 +148,7 @@ describe("retention service", () => {
     await expect(retention.run(new Date(retentionExpiresAt.getTime() + 1))).resolves.toEqual({
       expiredLiveSessions: 0,
       purgedSessions: 1,
+      purgedPracticeAssignments: 0,
       purgedAuditEvents: 0,
       purgedProductEvents: 0,
       purgedMedia: 0,
@@ -192,6 +195,27 @@ describe("retention service", () => {
     expect(result.purgedAuditEvents).toBe(1);
     expect(repository.audits).toHaveLength(1);
     expect(repository.audits[0]!.action).toBe("checkpoint.published");
+  });
+
+  it("reports standalone practice purged outside the session tree", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date("2026-09-19T12:00:00.000Z");
+    let purgeBoundary: Date | undefined;
+    repository.purgeExpiredPracticeAssignments = async (boundary) => {
+      purgeBoundary = boundary;
+      return 2;
+    };
+    const retention = new RetentionService(
+      repository,
+      { configured: true, deleteAsset: async () => undefined },
+      24,
+    );
+
+    const result = await retention.run(now);
+
+    expect(purgeBoundary).toEqual(now);
+    expect(result.purgedPracticeAssignments).toBe(2);
+    expect(result.purgedSessions).toBe(0);
   });
 
   it("purges privacy-safe product events at their 30-day expiry", async () => {

@@ -2,9 +2,268 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { Report } from "@openround/contracts";
 import { createGameState } from "@openround/game-engine";
-import { MemoryRepository, PublishedQuizLimitError, SessionNotActiveError } from "../src/index.js";
+import {
+  FollowupAccessLimitError,
+  MemoryRepository,
+  PublishedQuizLimitError,
+  SessionNotActiveError,
+} from "../src/index.js";
 
 describe("memory repository", () => {
+  it("applies an initial plan only to the deterministic in-memory workspace", async () => {
+    const workspaceId = randomUUID();
+    const repository = new MemoryRepository({
+      initialWorkspaceId: workspaceId,
+      initialPlan: "pro",
+    });
+    const now = new Date("2026-09-19T12:00:00.000Z");
+
+    const consume = async (email: string) => {
+      const tokenHash = randomUUID();
+      await repository.createMagicToken({
+        id: randomUUID(),
+        email,
+        segment: "education",
+        tokenHash,
+        policyVersion: "test-v1",
+        expiresAt: new Date(now.getTime() + 60_000),
+        consumedAt: null,
+      });
+      return repository.consumeMagicToken(tokenHash, now);
+    };
+
+    await expect(consume("initial-plan@example.com")).resolves.toMatchObject({
+      workspaceId,
+      plan: "pro",
+    });
+    await expect(consume("next-workspace@example.com")).resolves.toMatchObject({ plan: "free" });
+  });
+
+  it("stores standalone practice assignments by immutable source version and purges their tree", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date("2026-09-18T12:00:00.000Z");
+    const magicTokenHash = randomUUID();
+    await repository.createMagicToken({
+      id: randomUUID(),
+      email: "assignment-owner@example.com",
+      segment: "education",
+      tokenHash: magicTokenHash,
+      policyVersion: "test-v1",
+      expiresAt: new Date(now.getTime() + 60_000),
+      consumedAt: null,
+    });
+    const owner = (await repository.consumeMagicToken(magicTokenHash, now))!;
+    const quizId = randomUUID();
+    const content = {
+      title: "Independent practice",
+      description: "",
+      questions: [],
+    };
+    await repository.createQuiz({
+      id: quizId,
+      workspaceId: owner.workspaceId,
+      title: content.title,
+      description: content.description,
+      status: "draft",
+      draft: content,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const version = await repository.publishQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      quizId,
+      version: 1,
+      content,
+      contentHash: randomUUID(),
+      publishedAt: now,
+    });
+    const assignment = (expiresAt: Date) => ({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      purpose: "assignment" as const,
+      sourceQuizVersionId: version.id,
+      sourceSessionId: null,
+      sourceReportId: null,
+      title: "Independent practice",
+      content,
+      conceptKeys: [],
+      timeMode: "flex" as const,
+      genericTokenHash: randomUUID(),
+      opensAt: now,
+      closesAt: new Date(expiresAt.getTime() - 60_000),
+      expiresAt,
+      closedAt: null,
+      createdBy: owner.userId,
+      createdAt: now,
+    });
+    const expired = assignment(new Date(now.getTime() + 60 * 60_000));
+    const retained = assignment(new Date(now.getTime() + 30 * 24 * 60 * 60_000));
+    const personalTokenHash = randomUUID();
+    await expect(
+      repository.createPracticeAssignment(quizId, expired, [
+        {
+          id: randomUUID(),
+          workspaceId: owner.workspaceId,
+          followupId: expired.id,
+          sourceParticipantId: null,
+          kind: "assignment_personal",
+          label: "Learner 1",
+          tokenHash: personalTokenHash,
+          timeMultiplier: 1,
+          expiresAt: expired.closesAt,
+          revokedAt: null,
+          createdAt: now,
+        },
+      ]),
+    ).resolves.toBe(true);
+    await expect(repository.createPracticeAssignment(quizId, retained, [])).resolves.toBe(true);
+    await repository.createOrGetFollowupAttempt({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      followupId: expired.id,
+      accessTokenId: null,
+      sourceParticipantId: null,
+      attemptTokenHash: randomUUID(),
+      status: "completed",
+      phase: "completed",
+      currentIndex: 0,
+      version: 1,
+      timeMultiplier: 1,
+      questionOpenedAt: now,
+      deadlineAt: null,
+      completedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const history = await repository.listFollowupHistory(owner.workspaceId, {
+      limit: 10,
+      quizId,
+      now,
+    });
+    expect(history.items).toHaveLength(2);
+    expect(history.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: expired.id,
+          purpose: "assignment",
+          sourceQuizVersionId: version.id,
+          sourceSessionId: null,
+          sourceReportId: null,
+        }),
+        expect.objectContaining({ id: retained.id, purpose: "assignment" }),
+      ]),
+    );
+    expect(
+      await repository.getFollowupAccessByToken(expired.id, personalTokenHash, now),
+    ).toMatchObject({ kind: "assignment_personal" });
+    expect(await repository.getFollowupProgress(owner.workspaceId, expired.id)).toEqual({
+      attemptCount: 1,
+      completedAttemptCount: 1,
+    });
+    expect(await repository.getFollowupProgress(randomUUID(), expired.id)).toBeNull();
+    const retainedAccess = {
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      followupId: retained.id,
+      sourceParticipantId: null,
+      kind: "assignment_personal" as const,
+      label: "Learner 2",
+      tokenHash: randomUUID(),
+      timeMultiplier: 1 as const,
+      expiresAt: retained.closesAt,
+      revokedAt: null,
+      createdAt: now,
+    };
+    await expect(
+      repository.createAssignmentPersonalAccess(
+        { ...retainedAccess, kind: "accommodation", timeMultiplier: 1.5 },
+        1,
+      ),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      repository.createAssignmentPersonalAccess(retainedAccess, 1),
+    ).resolves.toMatchObject({ id: retainedAccess.id });
+    expect(
+      await repository.revokeFollowupAccess(owner.workspaceId, retained.id, retainedAccess.id, now),
+    ).toBe(true);
+    await expect(
+      repository.createAssignmentPersonalAccess(
+        { ...retainedAccess, id: randomUUID(), tokenHash: randomUUID(), revokedAt: null },
+        1,
+      ),
+    ).rejects.toBeInstanceOf(FollowupAccessLimitError);
+    await expect(
+      repository.createAssignmentPersonalAccess(
+        { ...retainedAccess, workspaceId: randomUUID(), id: randomUUID(), tokenHash: randomUUID() },
+        1,
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      repository.createAssignmentPersonalAccess(
+        {
+          ...retainedAccess,
+          followupId: expired.id,
+          id: randomUUID(),
+          tokenHash: randomUUID(),
+          createdAt: expired.closesAt,
+        },
+        100,
+      ),
+    ).resolves.toBeNull();
+    await repository.closeFollowup(owner.workspaceId, retained.id, now);
+    await expect(
+      repository.createAssignmentPersonalAccess(
+        { ...retainedAccess, id: randomUUID(), tokenHash: randomUUID() },
+        100,
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      repository.createPracticeAssignment(
+        quizId,
+        { ...assignment(retained.expiresAt), conceptKeys: ["invalid"] },
+        [],
+      ),
+    ).rejects.toThrow("cannot store recovery concepts");
+    await expect(repository.createFollowup(assignment(retained.expiresAt), [])).rejects.toThrow(
+      "require atomic source validation",
+    );
+    const nextVersion = await repository.publishQuiz({
+      ...version,
+      id: randomUUID(),
+      version: 2,
+      contentHash: randomUUID(),
+      publishedAt: new Date(now.getTime() + 1),
+    });
+    const staleSourceAssignment = assignment(retained.expiresAt);
+    await expect(
+      repository.createPracticeAssignment(quizId, staleSourceAssignment, []),
+    ).resolves.toBe(false);
+    expect(await repository.getFollowup(owner.workspaceId, staleSourceAssignment.id)).toBeNull();
+    const archivedSourceAssignment = {
+      ...assignment(retained.expiresAt),
+      sourceQuizVersionId: nextVersion.id,
+    };
+    await repository.archiveQuiz(owner.workspaceId, quizId, true);
+    await expect(
+      repository.createPracticeAssignment(quizId, archivedSourceAssignment, []),
+    ).resolves.toBe(false);
+    expect(await repository.getFollowup(owner.workspaceId, archivedSourceAssignment.id)).toBeNull();
+
+    expect(
+      await repository.purgeExpiredPracticeAssignments(new Date(expired.expiresAt.getTime() + 1)),
+    ).toBe(1);
+    expect(await repository.getFollowup(owner.workspaceId, expired.id)).toBeNull();
+    expect(repository.followupAccess.size).toBe(1);
+    expect(await repository.getFollowup(owner.workspaceId, retained.id)).not.toBeNull();
+
+    await repository.deleteAccount(owner.userId);
+    expect(repository.followups.size).toBe(0);
+    expect(repository.followupAccess.size).toBe(0);
+  });
+
   it("retains only allowlisted product event fields until their expiry", async () => {
     const repository = new MemoryRepository();
     const now = new Date("2026-09-18T12:00:00.000Z");
@@ -198,11 +457,13 @@ describe("memory repository", () => {
       {
         id: followupId,
         workspaceId,
+        purpose: "recovery",
+        sourceQuizVersionId: version.id,
         sourceSessionId: sessionId,
         sourceReportId: report.id,
         title: "Lifecycle follow-up",
         content,
-        conceptKeys: [],
+        conceptKeys: ["lifecycle"],
         timeMode: "flex",
         genericTokenHash: randomUUID(),
         opensAt,

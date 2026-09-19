@@ -86,6 +86,7 @@ export const PublicFeaturesSchema = z.object({
   roomChat: z.boolean(),
   uxBeta: z.boolean().default(false),
   recoveryRehearsal: z.boolean().default(false),
+  practiceAssignments: z.boolean().default(false),
 });
 export type PublicFeatures = z.infer<typeof PublicFeaturesSchema>;
 
@@ -1710,6 +1711,8 @@ const RecoverySummarySchema = z.object({
 
 export const FollowupHistoryStatusSchema = z.enum(["scheduled", "open", "closed", "expired"]);
 export type FollowupHistoryStatus = z.infer<typeof FollowupHistoryStatusSchema>;
+export const FollowupPurposeSchema = z.enum(["recovery", "assignment"]);
+export type FollowupPurpose = z.infer<typeof FollowupPurposeSchema>;
 
 export const ReportSummarySchema = z.object({
   id: z.string().uuid(),
@@ -1730,10 +1733,9 @@ export const ReportSummarySchema = z.object({
 });
 export type ReportSummary = z.infer<typeof ReportSummarySchema>;
 
-export const FollowupSummarySchema = z.object({
+const FollowupSummaryBaseSchema = z.object({
   id: z.string().uuid(),
-  sourceSessionId: z.string().uuid(),
-  sourceReportId: z.string().uuid(),
+  sourceQuizVersionId: z.string().uuid(),
   quizId: z.string().uuid(),
   title: z.string().min(1).max(160),
   status: FollowupHistoryStatusSchema,
@@ -1746,6 +1748,20 @@ export const FollowupSummarySchema = z.object({
   expiresAt: z.string().datetime(),
   createdAt: z.string().datetime(),
 });
+export const FollowupSummarySchema = z.discriminatedUnion("purpose", [
+  FollowupSummaryBaseSchema.extend({
+    purpose: z.literal("recovery"),
+    sourceSessionId: z.string().uuid(),
+    sourceReportId: z.string().uuid(),
+    conceptKeys: z.array(ConceptKeySchema).min(1).max(12),
+  }),
+  FollowupSummaryBaseSchema.extend({
+    purpose: z.literal("assignment"),
+    sourceSessionId: z.null(),
+    sourceReportId: z.null(),
+    conceptKeys: z.array(ConceptKeySchema).length(0),
+  }),
+]);
 export type FollowupSummary = z.infer<typeof FollowupSummarySchema>;
 
 export const SessionSummaryPageSchema = z.object({
@@ -1787,6 +1803,8 @@ export const ProductEventNameSchema = z.enum([
   "recheck_opened",
   "report_viewed",
   "followup_shared",
+  "practice_assignment_created",
+  "practice_assignment_shared",
   "rehearsal_started",
   "rehearsal_completed",
 ]);
@@ -2062,10 +2080,43 @@ export const CreateFollowupSchema = z
   });
 export type CreateFollowup = z.infer<typeof CreateFollowupSchema>;
 
-export const FollowupSchema = z.object({
+const PracticeRecipientLabelSchema = z.string().trim().min(1).max(80);
+
+export const CreatePracticeAssignmentSchema = z
+  .object({
+    sourceQuizVersionId: z.string().uuid(),
+    title: z.string().trim().min(1).max(160).optional(),
+    timeMode: FollowupTimeModeSchema.default("flex"),
+    opensAt: z.string().datetime().optional(),
+    closesAt: z.string().datetime(),
+    personalLabels: z.array(PracticeRecipientLabelSchema).max(250).default([]),
+  })
+  .superRefine((input, context) => {
+    if (input.opensAt && new Date(input.opensAt) >= new Date(input.closesAt)) {
+      context.addIssue({
+        code: "custom",
+        path: ["closesAt"],
+        message: "The assignment close time must be after its open time",
+      });
+    }
+    const seen = new Set<string>();
+    for (const [index, label] of input.personalLabels.entries()) {
+      const key = label.toLocaleLowerCase();
+      if (seen.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: ["personalLabels", index],
+          message: "Personal link labels must be unique",
+        });
+      }
+      seen.add(key);
+    }
+  });
+export type CreatePracticeAssignment = z.infer<typeof CreatePracticeAssignmentSchema>;
+
+const FollowupBaseSchema = z.object({
   id: z.string().uuid(),
-  sourceSessionId: z.string().uuid(),
-  sourceReportId: z.string().uuid(),
+  sourceQuizVersionId: z.string().uuid(),
   title: z.string(),
   conceptKeys: z.array(ConceptKeySchema),
   checkpointCount: z.number().int().positive(),
@@ -2076,9 +2127,35 @@ export const FollowupSchema = z.object({
   closedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
 });
+export const FollowupSchema = z.discriminatedUnion("purpose", [
+  FollowupBaseSchema.extend({
+    purpose: z.literal("recovery"),
+    sourceSessionId: z.string().uuid(),
+    sourceReportId: z.string().uuid(),
+    conceptKeys: z.array(ConceptKeySchema).min(1).max(12),
+  }),
+  FollowupBaseSchema.extend({
+    purpose: z.literal("assignment"),
+    sourceSessionId: z.null(),
+    sourceReportId: z.null(),
+    conceptKeys: z.array(ConceptKeySchema).length(0),
+  }),
+]);
 export type Followup = z.infer<typeof FollowupSchema>;
 
-export const FollowupAccessKindSchema = z.enum(["personal", "accommodation"]);
+export const FollowupContextSchema = z.object({
+  quizId: z.string().uuid(),
+  quizTitle: z.string().min(1).max(160),
+  version: z.number().int().positive(),
+  publishedAt: z.string().datetime(),
+});
+export type FollowupContext = z.infer<typeof FollowupContextSchema>;
+
+export const FollowupAccessKindSchema = z.enum([
+  "personal",
+  "assignment_personal",
+  "accommodation",
+]);
 export const TimeMultiplierSchema = z.union([z.literal(1), z.literal(1.5), z.literal(2)]);
 export type TimeMultiplier = z.infer<typeof TimeMultiplierSchema>;
 
@@ -2100,6 +2177,10 @@ export const CreateAccommodationPassSchema = z.object({
   timeMultiplier: z.union([z.literal(1.5), z.literal(2)]),
 });
 
+export const CreateAssignmentPersonalPassSchema = z.object({
+  label: PracticeRecipientLabelSchema,
+});
+
 export const StartFollowupSchema = z.object({
   attemptToken: z.string().min(32).max(1_000).optional(),
 });
@@ -2113,6 +2194,7 @@ export type FollowupAnswerSubmit = z.infer<typeof FollowupAnswerSubmitSchema>;
 
 export const FollowupSnapshotSchema = z.object({
   mode: z.literal("followup"),
+  purpose: FollowupPurposeSchema,
   followupId: z.string().uuid(),
   attemptId: z.string().uuid(),
   version: z.number().int().nonnegative(),

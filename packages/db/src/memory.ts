@@ -1,6 +1,7 @@
 import type { EngineAnswer } from "@openround/game-engine";
 import {
   AudienceStoreError,
+  FollowupAccessLimitError,
   FollowupVersionConflictError,
   PublishedQuizLimitError,
   SessionCodeConflictError,
@@ -90,6 +91,7 @@ interface MemoryWorkspace {
 
 export class MemoryRepository implements Repository {
   private nextInitialWorkspaceId: string | undefined;
+  private nextInitialPlan: Plan | undefined;
   readonly magicTokens = new Map<string, MagicTokenRecord>();
   readonly creatorSessions = new Map<
     string,
@@ -170,8 +172,9 @@ export class MemoryRepository implements Repository {
     updatedAt: null,
   };
 
-  constructor(options: { initialWorkspaceId?: string } = {}) {
+  constructor(options: { initialWorkspaceId?: string; initialPlan?: Plan } = {}) {
     this.nextInitialWorkspaceId = options.initialWorkspaceId;
+    this.nextInitialPlan = options.initialPlan;
   }
 
   async initialize() {}
@@ -209,22 +212,24 @@ export class MemoryRepository implements Repository {
     let user = [...this.users.values()].find((candidate) => candidate.email === token.email);
     if (!user) {
       const userId = crypto.randomUUID();
-      const workspaceId =
-        this.nextInitialWorkspaceId && !this.workspaces.has(this.nextInitialWorkspaceId)
-          ? this.nextInitialWorkspaceId
-          : crypto.randomUUID();
+      const usesInitialWorkspace = Boolean(
+        this.nextInitialWorkspaceId && !this.workspaces.has(this.nextInitialWorkspaceId),
+      );
+      const workspaceId = usesInitialWorkspace ? this.nextInitialWorkspaceId! : crypto.randomUUID();
+      const plan = usesInitialWorkspace ? (this.nextInitialPlan ?? "free") : "free";
       this.nextInitialWorkspaceId = undefined;
+      this.nextInitialPlan = undefined;
       user = {
         userId,
         workspaceId,
         email: token.email,
         segment: token.segment,
         role: "owner",
-        plan: "free",
+        plan,
         deletedAt: null,
       };
       this.users.set(userId, user);
-      this.plans.set(user.workspaceId, "free");
+      this.plans.set(user.workspaceId, plan);
       this.workspaces.set(user.workspaceId, {
         id: user.workspaceId,
         name: `${token.email.split("@")[0]}'s workspace`,
@@ -2418,31 +2423,139 @@ export class MemoryRepository implements Repository {
     };
   }
 
-  async createFollowup(input: FollowupRecord, access: FollowupAccessRecord[]) {
+  private storeFollowup(input: FollowupRecord, access: FollowupAccessRecord[]) {
     if (this.followups.has(input.id)) throw new Error("Follow-up already exists");
-    if ([...this.followups.values()].some((item) => item.sourceReportId === input.sourceReportId)) {
+    if (
+      [...this.followups.values()].some((item) => item.genericTokenHash === input.genericTokenHash)
+    ) {
+      throw new Error("Duplicate follow-up token");
+    }
+    if (
+      input.purpose === "recovery" &&
+      [...this.followups.values()].some(
+        (item) => item.purpose === "recovery" && item.sourceReportId === input.sourceReportId,
+      )
+    ) {
       throw new Error("A follow-up already exists for this report");
     }
-    const session = this.sessions.get(input.sourceSessionId);
-    const report = this.reports.get(input.sourceReportId);
-    if (
-      !session ||
-      session.workspaceId !== input.workspaceId ||
-      !report ||
-      report.sessionId !== input.sourceSessionId
-    ) {
-      throw new Error("Follow-up source does not exist");
+    const version = this.versions.get(input.sourceQuizVersionId);
+    if (!version || version.workspaceId !== input.workspaceId) {
+      throw new Error("Follow-up source version does not exist");
+    }
+    if (input.purpose === "recovery") {
+      const session = this.sessions.get(input.sourceSessionId);
+      const report = this.reports.get(input.sourceReportId);
+      if (
+        !session ||
+        session.workspaceId !== input.workspaceId ||
+        session.quizVersionId !== input.sourceQuizVersionId ||
+        !report ||
+        report.sessionId !== input.sourceSessionId
+      ) {
+        throw new Error("Follow-up source does not exist");
+      }
+      if (input.conceptKeys.length < 1 || input.conceptKeys.length > 12) {
+        throw new Error("Recovery follow-ups require concepts");
+      }
+    } else {
+      if (input.sourceSessionId !== null || input.sourceReportId !== null) {
+        throw new Error("Practice assignments cannot reference a session or report");
+      }
+      if (input.conceptKeys.length !== 0) {
+        throw new Error("Practice assignments cannot store recovery concepts");
+      }
+    }
+    const accessTokenHashes = new Set<string>();
+    for (const item of access) {
+      if (this.followupAccess.has(item.tokenHash) || accessTokenHashes.has(item.tokenHash)) {
+        throw new Error("Duplicate follow-up token");
+      }
+      accessTokenHashes.add(item.tokenHash);
+      this.assertFollowupAccess(input, item);
     }
     this.followups.set(input.id, structuredClone(input));
     for (const item of access) {
-      if (this.followupAccess.has(item.tokenHash)) throw new Error("Duplicate follow-up token");
       this.followupAccess.set(item.tokenHash, structuredClone(item));
+    }
+  }
+
+  async createFollowup(input: FollowupRecord, access: FollowupAccessRecord[]) {
+    if (input.purpose !== "recovery") {
+      throw new TypeError("Practice assignments require atomic source validation");
+    }
+    this.storeFollowup(input, access);
+  }
+
+  async createPracticeAssignment(
+    sourceQuizId: string,
+    input: Extract<FollowupRecord, { purpose: "assignment" }>,
+    access: FollowupAccessRecord[],
+  ) {
+    const quiz = this.quizzes.get(sourceQuizId);
+    if (
+      !quiz ||
+      quiz.workspaceId !== input.workspaceId ||
+      quiz.status !== "published" ||
+      quiz.currentVersionId !== input.sourceQuizVersionId
+    ) {
+      return false;
+    }
+    this.storeFollowup(input, access);
+    return true;
+  }
+
+  private assertFollowupAccess(followup: FollowupRecord, input: FollowupAccessRecord) {
+    if (input.workspaceId !== followup.workspaceId || input.followupId !== followup.id) {
+      throw new Error("Follow-up access must belong to the follow-up workspace");
+    }
+    if (input.kind === "personal") {
+      const participant = [...this.participants.values()].find(
+        (candidate) => candidate.id === input.sourceParticipantId,
+      );
+      if (
+        followup.purpose !== "recovery" ||
+        !participant ||
+        participant.sessionId !== followup.sourceSessionId ||
+        input.timeMultiplier !== 1
+      ) {
+        throw new Error("Follow-up participant must belong to the source session");
+      }
+      return;
+    }
+    if (input.kind === "assignment_personal") {
+      if (
+        followup.purpose !== "assignment" ||
+        input.sourceParticipantId !== null ||
+        input.timeMultiplier !== 1 ||
+        input.label.length < 1 ||
+        input.label.length > 80
+      ) {
+        throw new Error("Assignment personal access is invalid");
+      }
+      return;
+    }
+    if (
+      input.sourceParticipantId !== null ||
+      (input.timeMultiplier !== 1.5 && input.timeMultiplier !== 2)
+    ) {
+      throw new Error("Accommodation access is invalid");
     }
   }
 
   async getFollowup(workspaceId: string, followupId: string) {
     const followup = this.followups.get(followupId);
     return followup?.workspaceId === workspaceId ? structuredClone(followup) : null;
+  }
+
+  async getFollowupProgress(workspaceId: string, followupId: string) {
+    if ((await this.getFollowup(workspaceId, followupId)) === null) return null;
+    const attempts = [...this.followupAttempts.values()].filter(
+      (attempt) => attempt.followupId === followupId,
+    );
+    return {
+      attemptCount: attempts.length,
+      completedAttemptCount: attempts.filter((attempt) => attempt.status === "completed").length,
+    };
   }
 
   async getFollowupByReport(workspaceId: string, reportId: string) {
@@ -2467,8 +2580,7 @@ export class MemoryRepository implements Repository {
     const records = [...this.followups.values()]
       .filter((followup) => followup.workspaceId === workspaceId)
       .flatMap((followup): FollowupHistoryRecord[] => {
-        const session = this.sessions.get(followup.sourceSessionId);
-        const version = session ? this.versions.get(session.quizVersionId) : undefined;
+        const version = this.versions.get(followup.sourceQuizVersionId);
         if (!version || (options.quizId && version.quizId !== options.quizId)) return [];
         const attempts = [...this.followupAttempts.values()].filter(
           (attempt) => attempt.followupId === followup.id,
@@ -2481,12 +2593,24 @@ export class MemoryRepository implements Repository {
               : followup.opensAt > options.now
                 ? "scheduled"
                 : "open";
+        const source =
+          followup.purpose === "assignment"
+            ? ({
+                purpose: "assignment" as const,
+                sourceSessionId: null,
+                sourceReportId: null,
+              } as const)
+            : ({
+                purpose: "recovery" as const,
+                sourceSessionId: followup.sourceSessionId,
+                sourceReportId: followup.sourceReportId,
+              } as const);
         return [
           {
             id: followup.id,
-            sourceSessionId: followup.sourceSessionId,
-            sourceReportId: followup.sourceReportId,
+            ...source,
             quizId: version.quizId,
+            sourceQuizVersionId: followup.sourceQuizVersionId,
             title: followup.title,
             status,
             conceptKeys: [...followup.conceptKeys],
@@ -2549,6 +2673,42 @@ export class MemoryRepository implements Repository {
       throw new Error("Follow-up not found");
     }
     if (this.followupAccess.has(input.tokenHash)) throw new Error("Duplicate follow-up token");
+    this.assertFollowupAccess(followup, input);
+    this.followupAccess.set(input.tokenHash, structuredClone(input));
+    return structuredClone(input);
+  }
+
+  async createAssignmentPersonalAccess(input: FollowupAccessRecord, maximumLinks: number) {
+    if (
+      input.kind !== "assignment_personal" ||
+      input.sourceParticipantId !== null ||
+      input.timeMultiplier !== 1 ||
+      input.label.length < 1 ||
+      input.label.length > 80
+    ) {
+      throw new TypeError("Assignment personal access is invalid");
+    }
+    if (!Number.isSafeInteger(maximumLinks) || maximumLinks < 0) {
+      throw new RangeError("Maximum personal links must be a non-negative safe integer");
+    }
+    const followup = this.followups.get(input.followupId);
+    if (
+      !followup ||
+      followup.workspaceId !== input.workspaceId ||
+      followup.purpose !== "assignment" ||
+      followup.closedAt !== null ||
+      followup.closesAt <= input.createdAt
+    ) {
+      return null;
+    }
+    const count = [...this.followupAccess.values()].filter(
+      (access) => access.followupId === input.followupId && access.kind === "assignment_personal",
+    ).length;
+    if (count >= maximumLinks) {
+      throw new FollowupAccessLimitError(input.followupId, maximumLinks);
+    }
+    if (this.followupAccess.has(input.tokenHash)) throw new Error("Duplicate follow-up token");
+    this.assertFollowupAccess(followup, input);
     this.followupAccess.set(input.tokenHash, structuredClone(input));
     return structuredClone(input);
   }
@@ -2998,6 +3158,9 @@ export class MemoryRepository implements Repository {
     for (const [id, version] of this.versions) {
       if (ownedWorkspaceIds.has(version.workspaceId)) this.versions.delete(id);
     }
+    for (const [id, followup] of this.followups) {
+      if (ownedWorkspaceIds.has(followup.workspaceId)) this.deleteFollowupTree(id);
+    }
     const deletedSessionIds = new Set<string>();
     for (const [id, session] of this.sessions) {
       if (ownedWorkspaceIds.has(session.workspaceId)) {
@@ -3096,6 +3259,17 @@ export class MemoryRepository implements Repository {
     }
     for (const [id, launch] of this.ltiLaunches) {
       if (launch.expiresAt <= now) this.ltiLaunches.delete(id);
+    }
+    return purged;
+  }
+
+  async purgeExpiredPracticeAssignments(now: Date) {
+    let purged = 0;
+    for (const [id, followup] of this.followups) {
+      if (followup.purpose === "assignment" && followup.expiresAt <= now) {
+        this.deleteFollowupTree(id);
+        purged += 1;
+      }
     }
     return purged;
   }

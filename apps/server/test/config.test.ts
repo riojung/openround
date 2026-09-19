@@ -56,8 +56,39 @@ describe("production configuration", () => {
         NODE_ENV: "test",
         ALLOW_IN_MEMORY: "true",
         TEST_INITIAL_WORKSPACE_ID: workspaceId,
+        TEST_INITIAL_PLAN: "pro",
       }).TEST_INITIAL_WORKSPACE_ID,
     ).toBe(workspaceId);
+    expect(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        TEST_INITIAL_WORKSPACE_ID: workspaceId,
+        TEST_INITIAL_PLAN: "pro",
+      }).TEST_INITIAL_PLAN,
+    ).toBe("pro");
+    expect(() =>
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        TEST_INITIAL_PLAN: "pro",
+      }),
+    ).toThrow(/TEST_INITIAL_WORKSPACE_ID is required/);
+    expect(() =>
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://app:secret@database.internal/openround",
+        TEST_INITIAL_WORKSPACE_ID: workspaceId,
+        TEST_INITIAL_PLAN: "pro",
+      }),
+    ).toThrow(/only with the in-memory repository/);
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        TEST_INITIAL_WORKSPACE_ID: workspaceId,
+        TEST_INITIAL_PLAN: "pro",
+      }),
+    ).toThrow(/allowed only when NODE_ENV=test/);
   });
 
   it("bounds operator-configured audit retention", () => {

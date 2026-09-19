@@ -304,7 +304,7 @@ function ReportList({ rounds }: { rounds: RoundFilterOption[] }) {
   );
 }
 
-function FollowupList({ rounds }: { rounds: RoundFilterOption[] }) {
+function PracticeList({ rounds }: { rounds: RoundFilterOption[] }) {
   const [status, setStatus] = useState<FollowupStatusFilter>("all");
   const [quizId, setQuizId] = useState("all");
   const [fromDate, setFromDate] = useState("");
@@ -403,9 +403,9 @@ function FollowupList({ rounds }: { rounds: RoundFilterOption[] }) {
         quizId={quizId}
         rounds={rounds}
         status={status}
-        statusLabel="Follow-up status"
+        statusLabel="Practice status"
         statusOptions={[
-          { value: "all", label: "All follow-ups" },
+          { value: "all", label: "All practice" },
           { value: "scheduled", label: "Scheduled" },
           { value: "open", label: "Open" },
           { value: "closed", label: "Closed" },
@@ -420,20 +420,20 @@ function FollowupList({ rounds }: { rounds: RoundFilterOption[] }) {
       ) : null}
       {loading ? (
         <p className={styles.muted} role="status">
-          Loading practice follow-ups…
+          Loading practice…
         </p>
       ) : null}
       {!loading && !followups.length && !error ? (
         <div className={styles.emptyState}>
-          <h2>No practice follow-ups yet</h2>
+          <h2>No practice yet</h2>
           <p>
             {status === "all" && quizId === "all" && !fromDate && !toDate
-              ? "Create one from a ready Recovery Story to reinforce unresolved concepts."
-              : "No practice follow-ups match these filters."}
+              ? "Assign a published Round or create a Recovery follow-up from a ready result."
+              : "No practice matches these filters."}
           </p>
         </div>
       ) : null}
-      <section className={styles.list} aria-label="Practice follow-ups">
+      <section className={styles.list} aria-label="Practice assignments and follow-ups">
         {followups.map((followup) => (
           <article className={styles.listCard} key={followup.id}>
             <div className={styles.rowTopline}>
@@ -447,9 +447,14 @@ function FollowupList({ rounds }: { rounds: RoundFilterOption[] }) {
                   Retained until {formatCompactDate(followup.expiresAt)}
                 </p>
               </div>
-              <span className={styles.status} data-tone={followup.status}>
-                {followup.status}
-              </span>
+              <div className={styles.conceptList}>
+                <span className={styles.subtlePill}>
+                  {followup.purpose === "assignment" ? "Assignment" : "Recovery follow-up"}
+                </span>
+                <span className={styles.status} data-tone={followup.status}>
+                  {followup.status}
+                </span>
+              </div>
             </div>
             <div className={styles.metricGrid}>
               <div className={styles.metric}>
@@ -479,12 +484,17 @@ function FollowupList({ rounds }: { rounds: RoundFilterOption[] }) {
               </div>
             ) : null}
             <div className={styles.listCardActions}>
-              <Link
-                className="button-quiet small-button"
-                href={`/report/${followup.sourceReportId}`}
-              >
-                View source result
+              <Link className="button small-button" href={`/practice/${followup.id}`}>
+                Manage practice
               </Link>
+              {followup.sourceReportId ? (
+                <Link
+                  className="button-quiet small-button"
+                  href={`/report/${followup.sourceReportId}`}
+                >
+                  View source result
+                </Link>
+              ) : null}
             </div>
           </article>
         ))}
@@ -492,7 +502,7 @@ function FollowupList({ rounds }: { rounds: RoundFilterOption[] }) {
       {nextCursor ? (
         <div className={styles.loadMore}>
           <button className="button-quiet" disabled={loadingMore} onClick={() => void more()}>
-            {loadingMore ? "Loading…" : "Load more follow-ups"}
+            {loadingMore ? "Loading…" : "Load more practice"}
           </button>
         </div>
       ) : null}
@@ -519,7 +529,7 @@ function ResultsContent() {
 
   return (
     <>
-      <nav className={styles.tabList} aria-label="Result views">
+      <nav className={styles.tabList} aria-label="Evidence views">
         <Link
           aria-current={view === "results" ? "page" : undefined}
           className={view === "results" ? styles.tabActive : styles.tab}
@@ -532,10 +542,10 @@ function ResultsContent() {
           className={view === "practice" ? styles.tabActive : styles.tab}
           href="/results?view=practice"
         >
-          Practice follow-ups
+          Practice
         </Link>
       </nav>
-      {view === "practice" ? <FollowupList rounds={rounds} /> : <ReportList rounds={rounds} />}
+      {view === "practice" ? <PracticeList rounds={rounds} /> : <ReportList rounds={rounds} />}
     </>
   );
 }
@@ -544,7 +554,7 @@ export default function ResultsPage() {
   return (
     <WorkspaceProvider>
       <WorkspaceShell
-        description="Find what recovered, what remains unresolved, and the next action for every completed session."
+        description="Review Recovery evidence and track assigned or report-based practice."
         eyebrow="Evidence"
         title="Results"
       >

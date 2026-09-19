@@ -5,6 +5,7 @@ import type { MetricsService } from "./metrics.js";
 export interface RetentionResult {
   expiredLiveSessions: number;
   purgedSessions: number;
+  purgedPracticeAssignments: number;
   purgedAuditEvents: number;
   purgedProductEvents: number;
   purgedMedia: number;
@@ -24,6 +25,7 @@ export class RetentionService {
   async run(now = new Date()): Promise<RetentionResult> {
     const expiredLiveSessionIds = await this.repository.expireLiveSessions(now);
     const purgedSessionIds = await this.repository.purgeExpired(now);
+    const purgedPracticeAssignments = await this.repository.purgeExpiredPracticeAssignments(now);
     const invalidatedSessionIds = [...new Set([...expiredLiveSessionIds, ...purgedSessionIds])];
     if (invalidatedSessionIds.length > 0) {
       await this.onSessionsPurged?.(invalidatedSessionIds);
@@ -39,6 +41,7 @@ export class RetentionService {
       const result = {
         expiredLiveSessions,
         purgedSessions,
+        purgedPracticeAssignments,
         purgedAuditEvents,
         purgedProductEvents,
         purgedMedia: 0,
@@ -61,6 +64,7 @@ export class RetentionService {
     const result = {
       expiredLiveSessions,
       purgedSessions,
+      purgedPracticeAssignments,
       purgedAuditEvents,
       purgedProductEvents,
       purgedMedia,

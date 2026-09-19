@@ -25,7 +25,11 @@ async function signIn(target: FastifyInstance, email: string) {
     creator: me.json<{
       creator: { userId: string; workspaceId: string };
       entitlements: { cohosting: boolean };
-      productFeatures: { uxBeta: boolean; recoveryRehearsal: boolean };
+      productFeatures: {
+        uxBeta: boolean;
+        recoveryRehearsal: boolean;
+        practiceAssignments: boolean;
+      };
     }>(),
   };
 }
@@ -47,6 +51,7 @@ describe("P0 beta creator APIs", () => {
         PUBLIC_API_URL: "http://localhost:4000",
         FEATURE_UX_BETA: "true",
         FEATURE_RECOVERY_REHEARSAL: "true",
+        FEATURE_PRACTICE_ASSIGNMENTS: "true",
         LOG_LEVEL: "silent",
       }),
       { repository, cache: new MemorySessionCache() },
@@ -56,6 +61,7 @@ describe("P0 beta creator APIs", () => {
     expect(signedIn.creator.productFeatures).toMatchObject({
       uxBeta: false,
       recoveryRehearsal: false,
+      practiceAssignments: false,
     });
     const starter = await app.inject({
       method: "POST",
@@ -67,6 +73,19 @@ describe("P0 beta creator APIs", () => {
       method: "POST",
       url: `/v1/quizzes/${quizId}/publish`,
       headers: { cookie: signedIn.cookie },
+    });
+    const assignment = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/practice-assignments`,
+      headers: { cookie: signedIn.cookie },
+      payload: {
+        closesAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
+        personalLabels: [],
+      },
+    });
+    expect(assignment.statusCode).toBe(404);
+    expect(assignment.json()).toMatchObject({
+      error: { code: "NOT_FOUND", message: "Practice assignments are not available" },
     });
     const session = await app.inject({
       method: "POST",
@@ -99,6 +118,7 @@ describe("P0 beta creator APIs", () => {
         PUBLIC_API_URL: "http://localhost:4000",
         FEATURE_UX_BETA: "true",
         FEATURE_RECOVERY_REHEARSAL: "true",
+        FEATURE_PRACTICE_ASSIGNMENTS: "true",
         UX_BETA_WORKSPACE_ALLOWLIST: workspaceId,
         LOG_LEVEL: "silent",
       }),
@@ -111,9 +131,14 @@ describe("P0 beta creator APIs", () => {
     expect(signedIn.creator.productFeatures).toMatchObject({
       uxBeta: true,
       recoveryRehearsal: true,
+      practiceAssignments: true,
     });
     const publicFeatures = await app.inject({ method: "GET", url: "/v1/features" });
-    expect(publicFeatures.json()).toMatchObject({ uxBeta: true, recoveryRehearsal: true });
+    expect(publicFeatures.json()).toMatchObject({
+      uxBeta: true,
+      recoveryRehearsal: true,
+      practiceAssignments: true,
+    });
 
     const listed = await app.inject({
       method: "GET",
@@ -170,6 +195,223 @@ describe("P0 beta creator APIs", () => {
       .quizzes.find((round) => round.id === firstQuiz.id);
     expect(firstRoundOption).toEqual({ id: firstQuiz.id, title: "Misconception check" });
     expect(roundOptions.body).not.toContain("questions");
+  });
+
+  it("creates and manages standalone practice with one-time private links", async () => {
+    const workspaceId = randomUUID();
+    const repository = new MemoryRepository({ initialWorkspaceId: workspaceId });
+    const config = ConfigSchema.parse({
+      NODE_ENV: "test",
+      ALLOW_IN_MEMORY: "true",
+      COMMUNITY_MODE: "false",
+      WEB_ORIGIN: "http://localhost:3000",
+      PUBLIC_API_URL: "http://localhost:4000",
+      FEATURE_UX_BETA: "true",
+      FEATURE_PRACTICE_ASSIGNMENTS: "true",
+      UX_BETA_WORKSPACE_ALLOWLIST: workspaceId,
+      LOG_LEVEL: "silent",
+    });
+    const built = await buildApp(config, { repository, cache: new MemorySessionCache() });
+    app = built.app;
+    const signedIn = await signIn(app, "practice-assignment@example.com");
+    const starter = await app.inject({
+      method: "POST",
+      url: "/v1/starters/misconception-check/use",
+      headers: { cookie: signedIn.cookie },
+    });
+    const quizId = starter.json<{ quiz: { id: string } }>().quiz.id;
+    const published = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/publish`,
+      headers: { cookie: signedIn.cookie },
+    });
+    expect(published.statusCode).toBe(200);
+    const firstPublishedVersionId = published.json<{ version: { id: string } }>().version.id;
+    const freeAttempt = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/practice-assignments`,
+      headers: { cookie: signedIn.cookie },
+      payload: {
+        sourceQuizVersionId: firstPublishedVersionId,
+        closesAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
+        personalLabels: [],
+      },
+    });
+    expect(freeAttempt.statusCode).toBe(402);
+    expect(freeAttempt.json()).toMatchObject({ error: { code: "ENTITLEMENT_LIMIT" } });
+    await repository.setPlan(workspaceId, "pro");
+
+    const republished = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/publish`,
+      headers: { cookie: signedIn.cookie },
+    });
+    expect(republished.statusCode).toBe(200);
+    const currentPublishedVersionId = republished.json<{ version: { id: string } }>().version.id;
+    const stale = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/practice-assignments`,
+      headers: { cookie: signedIn.cookie },
+      payload: {
+        sourceQuizVersionId: firstPublishedVersionId,
+        closesAt: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+        personalLabels: [],
+      },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({
+      error: {
+        code: "CONFLICT",
+        message: "The published Round changed. Refresh before assigning practice",
+      },
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/practice-assignments`,
+      headers: { cookie: signedIn.cookie },
+      payload: {
+        sourceQuizVersionId: currentPublishedVersionId,
+        title: "Controls practice",
+        timeMode: "flex",
+        closesAt: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+        personalLabels: ["Learner A", "Learner B"],
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.headers["cache-control"]).toBe("private, no-store");
+    const creation = created.json<{
+      followup: {
+        id: string;
+        purpose: string;
+        sourceQuizVersionId: string;
+        sourceSessionId: null;
+        sourceReportId: null;
+      };
+      genericUrl: string;
+      personalAccess: Array<{ id: string; kind: string; label: string; url: string }>;
+    }>();
+    expect(creation.followup).toMatchObject({
+      purpose: "assignment",
+      sourceQuizVersionId: currentPublishedVersionId,
+      sourceSessionId: null,
+      sourceReportId: null,
+    });
+    expect(creation.personalAccess).toEqual([
+      expect.objectContaining({ kind: "assignment_personal", label: "Learner A" }),
+      expect.objectContaining({ kind: "assignment_personal", label: "Learner B" }),
+    ]);
+    expect(created.body).not.toContain("tokenHash");
+
+    const detail = await app.inject({
+      method: "GET",
+      url: `/v1/followups/${creation.followup.id}`,
+      headers: { cookie: signedIn.cookie },
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.headers["cache-control"]).toBe("private, no-store");
+    expect(detail.headers.pragma).toBe("no-cache");
+    expect(detail.json()).toMatchObject({
+      followup: { id: creation.followup.id, purpose: "assignment" },
+      context: { quizId, quizTitle: "Misconception check", version: 2 },
+      access: [
+        { kind: "assignment_personal", label: "Learner A" },
+        { kind: "assignment_personal", label: "Learner B" },
+      ],
+    });
+    expect(detail.body).not.toMatch(/token|url/i);
+
+    const replacement = await app.inject({
+      method: "POST",
+      url: `/v1/followups/${creation.followup.id}/personal-passes`,
+      headers: { cookie: signedIn.cookie },
+      payload: { label: "Replacement" },
+    });
+    expect(replacement.statusCode).toBe(201);
+    expect(replacement.headers["cache-control"]).toBe("private, no-store");
+    expect(replacement.json()).toMatchObject({
+      access: { kind: "assignment_personal", label: "Replacement", url: expect.any(String) },
+    });
+
+    const accommodation = await app.inject({
+      method: "POST",
+      url: `/v1/followups/${creation.followup.id}/accommodation-passes`,
+      headers: { cookie: signedIn.cookie },
+      payload: { label: "Extended time", timeMultiplier: 1.5 },
+    });
+    expect(accommodation.statusCode).toBe(201);
+    expect(accommodation.headers["cache-control"]).toBe("private, no-store");
+    expect(accommodation.headers.pragma).toBe("no-cache");
+    expect(accommodation.json()).toMatchObject({
+      access: { kind: "accommodation", label: "Extended time", url: expect.any(String) },
+    });
+    expect(accommodation.body).not.toContain("tokenHash");
+
+    const genericToken = new URLSearchParams(new URL(creation.genericUrl).hash.slice(1)).get(
+      "token",
+    )!;
+    const started = await app.inject({
+      method: "POST",
+      url: `/v1/followups/${creation.followup.id}/start`,
+      headers: { authorization: `Bearer ${genericToken}` },
+      payload: {},
+    });
+    expect(started.statusCode).toBe(201);
+    expect(started.json()).toMatchObject({
+      snapshot: { purpose: "assignment", phase: "question_open" },
+    });
+
+    config.FEATURE_PRACTICE_ASSIGNMENTS = false;
+    const disabledMint = await app.inject({
+      method: "POST",
+      url: `/v1/followups/${creation.followup.id}/personal-passes`,
+      headers: { cookie: signedIn.cookie },
+      payload: { label: "Disabled mint" },
+    });
+    expect(disabledMint.statusCode).toBe(404);
+    const detailAfterDisable = await app.inject({
+      method: "GET",
+      url: `/v1/followups/${creation.followup.id}`,
+      headers: { cookie: signedIn.cookie },
+    });
+    expect(detailAfterDisable.statusCode).toBe(200);
+    const startAfterDisable = await app.inject({
+      method: "POST",
+      url: `/v1/followups/${creation.followup.id}/start`,
+      headers: { authorization: `Bearer ${genericToken}` },
+      payload: {},
+    });
+    expect(startAfterDisable.statusCode).toBe(201);
+    const replacementId = replacement.json<{ access: { id: string } }>().access.id;
+    const revokedAfterDisable = await app.inject({
+      method: "DELETE",
+      url: `/v1/followups/${creation.followup.id}/access/${replacementId}`,
+      headers: { cookie: signedIn.cookie },
+    });
+    expect(revokedAfterDisable.statusCode).toBe(204);
+    const closedAfterDisable = await app.inject({
+      method: "POST",
+      url: `/v1/followups/${creation.followup.id}/close`,
+      headers: { cookie: signedIn.cookie },
+    });
+    expect(closedAfterDisable.statusCode).toBe(204);
+
+    await built.productEvents.drain();
+    expect(repository.productEvents).toContainEqual(
+      expect.objectContaining({
+        workspaceId,
+        name: "practice_assignment_created",
+        dimensions: { segment: "workplace", betaVersion: "p0-2026" },
+      }),
+    );
+    const assignmentAudits = repository.audits.filter((audit) =>
+      audit.action.startsWith("practice_assignment."),
+    );
+    expect(assignmentAudits.map((audit) => audit.action)).toEqual([
+      "practice_assignment.create",
+      "practice_assignment.personal_pass.create",
+    ]);
+    expect(JSON.stringify(assignmentAudits)).not.toMatch(/Learner|Replacement|#token=/);
   });
 
   it("preserves exact database timestamps in session and follow-up cursors", async () => {
@@ -252,12 +494,14 @@ describe("P0 beta creator APIs", () => {
             items: [
               {
                 id: followupId,
+                purpose: "recovery" as const,
+                sourceQuizVersionId: randomUUID(),
                 sourceSessionId: sessionId,
                 sourceReportId: randomUUID(),
                 quizId: randomUUID(),
                 title: "Exact follow-up cursor",
                 status: "open",
-                conceptKeys: [],
+                conceptKeys: ["exact_cursor"],
                 checkpointCount: 1,
                 attemptCount: 0,
                 completedAttemptCount: 0,
