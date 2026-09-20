@@ -16,6 +16,8 @@ jobs:
       actions: read
       contents: read
     runs-on: ubuntu-latest
+    outputs:
+      candidate_commit: ${{ steps.candidate.outputs.commit }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -31,6 +33,7 @@ jobs:
       - name: Require all pre-release Canadian beta gates
         run: pnpm readiness:require:beta:preflight
       - name: Verify signed semantic-version tag from main
+        id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -46,6 +49,7 @@ jobs:
           test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = "tag"
           local_tag_object="$(git rev-parse "refs/tags/$GITHUB_REF_NAME")"
           tag_commit="$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")"
+          echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
           git merge-base --is-ancestor "$tag_commit" origin/main
 
           tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME")"
@@ -138,6 +142,8 @@ jobs:
         with:
           context: .
           file: apps/${{ matrix.component }}/Dockerfile
+          build-args: OPENROUND_BUILD_ID=${{ needs.preflight.outputs.candidate_commit }}
+          labels: org.opencontainers.image.revision=${{ needs.preflight.outputs.candidate_commit }}
           provenance: mode=max
           push: true
           sbom: true

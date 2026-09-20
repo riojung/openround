@@ -12,7 +12,8 @@ embed, and follow-up routes use their own scoped credentials as documented by th
 
 ## Service and feature APIs
 
-- `GET /health/live` — process liveness.
+- `GET /health/live` — process liveness and the build-time `buildId` used to bind readiness
+  evidence to the deployed candidate.
 - `GET /health/ready` — active PostgreSQL and Redis-compatible checks; returns 503 without secret
   connection detail when either is unavailable.
 - `GET /v1/features` — public URL, edition mode, effective

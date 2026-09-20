@@ -13,6 +13,8 @@ COPY apps/server apps/server
 COPY packages packages
 RUN pnpm --filter @openround/server build
 RUN pnpm --filter @openround/server deploy --prod --legacy /prod/server
+ARG OPENROUND_BUILD_ID=unversioned
+RUN printf '%s\n' "$OPENROUND_BUILD_ID" > /app/BUILD_ID
 
 FROM node:22-alpine AS runtime
 RUN addgroup -S openround && adduser -S openround -G openround
@@ -20,6 +22,7 @@ WORKDIR /app
 COPY --from=build /prod/server/node_modules ./node_modules
 COPY --from=build /app/apps/server/dist ./dist
 COPY --from=build /app/packages/db/migrations ./migrations
+COPY --from=build /app/BUILD_ID ./BUILD_ID
 COPY --from=build /prod/server/package.json ./package.json
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /licenses/
 ENV NODE_ENV=production

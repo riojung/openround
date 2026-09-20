@@ -8,13 +8,14 @@
       "name": "Source, database, browser, and security CI",
       "owner": "engineering",
       "requiredFor": ["canadian-beta-preflight", "canadian-beta", "canadian-ga"],
-      "status": "complete",
+      "status": "pending",
       "criterion": "Main passes checks, PostgreSQL isolation, browser coverage, dependency review, secret scanning, SBOM generation, and CodeQL.",
       "evidence": [
-        "https://github.com/riojung/openround/actions/runs/35455109657",
-        "https://github.com/riojung/openround/actions/runs/35455109697",
-        "https://github.com/riojung/openround/actions/runs/35431824098"
-      ]
+        "https://github.com/riojung/openround/actions/runs/35476051192",
+        "https://github.com/riojung/openround/actions/runs/35476051189",
+        "https://github.com/riojung/openround/actions/runs/35476051204"
+      ],
+      "nextAction": "Merge the browser-smoke locator fix through a reviewed pull request, require CI, Security, and Production-path smoke to pass on the resulting main commit, then replace this evidence and mark the gate complete."
     },
     {
       "id": "local-production-smoke",

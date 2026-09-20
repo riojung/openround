@@ -17,10 +17,13 @@
   loopback or private-network URLs and must never be enabled in hosted production. Keep
   `AUTH_DEBUG_MAGIC_LINKS=false`; exposing a sign-in token in an API response is only for explicit,
   loopback-bound local testing.
-- Build the exact candidate image and execute `node dist/config-check.js` with the deployment's
-  server environment before migration or promotion. Retain its non-secret JSON summary with the
-  release evidence. A zero exit code proves schema and cross-field validation; it does not prove
-  that external credentials authenticate.
+- Build the exact candidate image with `OPENROUND_BUILD_ID` set to its full Git commit (or immutable
+  image digest) and execute `node dist/config-check.js` with the deployment's server environment
+  before migration or promotion. Retain its non-secret JSON summary with the release evidence. A
+  zero exit code proves schema and cross-field validation; it does not prove that external
+  credentials authenticate. Remote probes must compare both the running server's `/health/live`
+  build ID and the web root's `X-OpenRound-Build-Id` with that candidate marker; target-region
+  probes independently compare the server marker.
 - Production metrics require a bearer token at startup. Keep `METRICS_ENABLED=false` until a
   private authenticated collector is ready; do not expose the route through the public ingress.
 - Application traffic uses a non-owner PostgreSQL role; only the migration job receives the

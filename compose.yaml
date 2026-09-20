@@ -84,6 +84,8 @@ services:
     build:
       context: .
       dockerfile: apps/server/Dockerfile
+      args:
+        OPENROUND_BUILD_ID: ${OPENROUND_BUILD_ID:-unversioned}
     depends_on:
       minio-init:
         condition: service_completed_successfully
@@ -166,6 +168,7 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         NEXT_PUBLIC_API_URL: "${OPENROUND_API_URL:-}"
+        OPENROUND_BUILD_ID: ${OPENROUND_BUILD_ID:-unversioned}
     depends_on:
       server:
         condition: service_healthy

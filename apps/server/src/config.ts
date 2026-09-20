@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { z } from "zod";
 
@@ -149,6 +150,7 @@ export const ConfigSchema = z
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: z.string().url().optional(),
     OTEL_SERVICE_NAME: z.string().trim().min(1).max(120).default("openround-server"),
     OTEL_SERVICE_VERSION: z.string().trim().min(1).max(80).default("0.1.0"),
+    OPENROUND_BUILD_ID: z.string().trim().min(1).max(200).default("unversioned"),
     SMTP_URL: z.string().min(1).optional(),
     EMAIL_FROM: z.string().default("OpenRound <noreply@localhost>"),
     DEVELOPMENT_EMAIL_INBOX_URL: optionalHttpUrl,
@@ -425,6 +427,18 @@ export const ConfigSchema = z
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
 
+function embeddedBuildId() {
+  try {
+    const value = readFileSync(new URL("../BUILD_ID", import.meta.url), "utf8").trim();
+    return value || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
-  return ConfigSchema.parse(environment);
+  const buildId = embeddedBuildId();
+  return ConfigSchema.parse(
+    buildId ? { ...environment, OPENROUND_BUILD_ID: buildId } : environment,
+  );
 }

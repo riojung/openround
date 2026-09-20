@@ -16,20 +16,21 @@ discoverable OpenRound workflow was found; it is not a claim that a competitor o
 The walkthrough and gap table below are the pre-beta research baseline, not the current product
 state. The merged P0 beta closes the first-run creation, authoring hierarchy, Sessions/Results/
 Follow-ups history, live command-center, participant submit/receipt, visual Recovery Story,
-privacy-safe telemetry, and Recovery Rehearsal gaps. Session avatars are also implemented from
-join through live staff/presenter and retained report views without creating learner profiles.
+privacy-safe telemetry, and Recovery Rehearsal gaps. Session avatars are implemented from join
+through live staff/presenter and retained report views without creating learner profiles.
+Standalone `Assign practice` is also implemented for the current published Round, including
+generic and labelled accountless links, progress, accommodations, revocation, expiry, and resume.
 
 The remaining product gaps are deliberately sequenced after beta evidence:
 
-| Current priority | Remaining gap                                         | Evidence or implementation boundary                                                                                                       |
-| ---------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| P1               | Standalone `Assign practice` from any published Round | Existing practice is report-scoped remediation; use an additive assignment purpose/source rather than weakening report evidence semantics |
-| P1               | Private workspace question reuse                      | First-party starters exist, but creators cannot yet reuse selected questions from another Round as a maintained private bank              |
-| P1 evidence      | Hosted Free capacity above 20 and Pro above 100       | Do not change published limits before Canadian-region cost, abuse, support, soak, and failover evidence                                   |
-| P1               | Accountless live time-flex/extra time                 | Follow-up accommodation passes exist; live participant-specific timing still requires privacy-safe UX and usability validation            |
-| P1/P2            | Accessible team discussion delivery                   | Add only after the core command-center and recovery workflow pass observed trials                                                         |
-| P2               | Exact-match short text and rank/order                 | New response contracts remain outside the P0 beta                                                                                         |
-| P2               | Slide companion and institutional grade services      | Companion workflow precedes native add-ins; NRPS/AGS remains contract-, privacy-, and pilot-gated                                         |
+| Current priority | Remaining gap                                    | Evidence or implementation boundary                                                                                            |
+| ---------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| P1               | Private workspace question reuse                 | First-party starters exist, but creators cannot yet reuse selected questions from another Round as a maintained private bank   |
+| P1 evidence      | Hosted Free capacity above 20 and Pro above 100  | Do not change published limits before Canadian-region cost, abuse, support, soak, and failover evidence                        |
+| P1               | Accountless live time-flex/extra time            | Follow-up accommodation passes exist; live participant-specific timing still requires privacy-safe UX and usability validation |
+| P1/P2            | Accessible team discussion delivery              | Add only after the core command-center and recovery workflow pass observed trials                                              |
+| P2               | Exact-match short text and rank/order            | New response contracts remain outside the P0 beta                                                                              |
+| P2               | Slide companion and institutional grade services | Companion workflow precedes native add-ins; NRPS/AGS remains contract-, privacy-, and pilot-gated                              |
 
 Public marketplaces, arcade economies, persistent learner profiles, and large game-mode catalogs
 remain intentional non-goals. Post-beta innovations remain ordered as Concept Health Map, Session
@@ -62,7 +63,8 @@ The fastest credible strategy is:
 6. **Close the offering gap deliberately.** Validate moving Hosted Free from 20 to 50 participants
    and Hosted Pro from 100 toward 250 only after hosted cost, abuse, failover, and support evidence.
 7. **Protect the wedge.** Do not delay this work for a public marketplace, full slide editor,
-   avatars, an arcade economy, twenty modes, native apps, or 1,000-person single events.
+   persistent learner profiles, an arcade economy, twenty modes, native apps, or 1,000-person
+   single events.
 
 ## Research caveat: use the StudyGlen guide as an index, not ground truth
 
@@ -98,20 +100,20 @@ observed workflows, and OpenRound customer research.
 
 The table emphasizes the buying or usage advantage that matters, not every feature in every plan.
 
-| Product        | Current free entry                                                                                                                           | Experience advantage                                                                                                                                       | OpenRound implication                                                                                                        |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **Kahoot**     | Usually 10–40 participants depending on account category; free/basic capabilities vary                                                       | Category-leading polish, ready-made content, familiar live/assignment workflow, broad paid question types                                                  | Match the clarity of `Host` and `Assign`, not its branding, shapes, sounds, or game-show identity                            |
-| **StudyGlen**  | One AI quiz/flashcard generation daily; unlimited live sessions; its live FAQ says 50 participants, while another official page says 100     | Extremely short PDF/image/text/YouTube/Anki-to-live-game path, explanations, generated diagrams, 41 languages                                              | Put source creation in the primary Create flow and measure source-to-room time                                               |
-| **Wayground**  | Up to 100 participants, limited storage, live and asynchronous delivery, accommodations, and AI                                              | Broad instructional formats, differentiation, anti-cheating, assignments, and institutional integrations                                                   | Make delivery choice and accessibility visible; do not attempt its full suite immediately                                    |
-| **Blooket**    | Unlimited sets, 60 players, 14-day homework, public library, and many modes                                                                  | Strong student pull, content reuse, collectibles, and 25+ documented modes                                                                                 | Add starter content and one restrained team mode; do not build an arcade economy                                             |
-| **Gimkit**     | Rotating free modes; standard games up to 500, all 2D modes up to 60; assignments require Pro                                                | Deep cooperative/competitive 2D play with configurable game/learning balance                                                                               | Separate content from delivery mode; defer world-building and cosmetics                                                      |
-| **Slido**      | 100 participants, three polls and one quiz per Slido, audience Q&A                                                                           | Best-in-class anonymous/upvoted Q&A, moderation, cohosting, and presentation integrations                                                                  | Consolidate OpenRound audience tools and add a persistent host control bar                                                   |
-| **AhaSlides**  | 50 participants, five quiz plus three unscored slides, five PDF/PPT AI queries monthly                                                       | Presentation-first creation, broad interaction types, self-paced delivery, and visible import                                                              | Use a slide companion later; do not build a full presentation editor now                                                     |
-| **Mentimeter** | 50 cumulative participants per month plus one session that may exceed the threshold                                                          | Highly polished result visuals, 23 slide types, AI, and an excellent presenter workflow                                                                    | Improve result visualization and hierarchy; breadth is not the near-term moat                                                |
-| **Socrative**  | 50 students, five quizzes, one room, 30-day history, and bounded AI generation/import/analysis                                               | Strong assessment, exit-ticket, room, and question/participant reporting workflows                                                                         | Preserve OpenRound's stronger recovery story while adding history and drill-down clarity                                     |
-| **Baamboozle** | Free core play; current official material does not publish a simple participant ceiling                                                      | One shared screen can run teacher-led team play without participant devices                                                                                | Consider a later facilitated team mode only if target customers ask for it                                                   |
-| **Wordwall**   | Three created activities and 12 templates                                                                                                    | One content set switches among 34 interactive templates; assignments, printables, and a large library                                                      | Build content reuse and a few delivery modes before adding more visual themes                                                |
-| **OpenRound**  | Hosted Free: 20 participants, five published sets, 30-day aggregate reports, three AI jobs when configured; Community is operator-configured | Accountless Recovery Loop, confidence, misconceptions, interventions, linked rechecks, privacy, accessibility, durability, Q&A/Pulse/chat, and portability | The technical wedge exists; activation, discoverability, assignment breadth, visual insight, and packaging are the real gaps |
+| Product        | Current free entry                                                                                                                           | Experience advantage                                                                                                                                                                     | OpenRound implication                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Kahoot**     | Usually 10–40 participants depending on account category; free/basic capabilities vary                                                       | Category-leading polish, ready-made content, familiar live/assignment workflow, broad paid question types                                                                                | Match the clarity of `Host` and `Assign`, not its branding, shapes, sounds, or game-show identity                                           |
+| **StudyGlen**  | One AI quiz/flashcard generation daily; unlimited live sessions; its live FAQ says 50 participants, while another official page says 100     | Extremely short PDF/image/text/YouTube/Anki-to-live-game path, explanations, generated diagrams, 41 languages                                                                            | Put source creation in the primary Create flow and measure source-to-room time                                                              |
+| **Wayground**  | Up to 100 participants, limited storage, live and asynchronous delivery, accommodations, and AI                                              | Broad instructional formats, differentiation, anti-cheating, assignments, and institutional integrations                                                                                 | Make delivery choice and accessibility visible; do not attempt its full suite immediately                                                   |
+| **Blooket**    | Unlimited sets, 60 players, 14-day homework, public library, and many modes                                                                  | Strong student pull, content reuse, collectibles, and 25+ documented modes                                                                                                               | Add starter content and one restrained team mode; do not build an arcade economy                                                            |
+| **Gimkit**     | Rotating free modes; standard games up to 500, all 2D modes up to 60; assignments require Pro                                                | Deep cooperative/competitive 2D play with configurable game/learning balance                                                                                                             | Separate content from delivery mode; defer world-building and cosmetics                                                                     |
+| **Slido**      | 100 participants, three polls and one quiz per Slido, audience Q&A                                                                           | Best-in-class anonymous/upvoted Q&A, moderation, cohosting, and presentation integrations                                                                                                | Consolidate OpenRound audience tools and add a persistent host control bar                                                                  |
+| **AhaSlides**  | 50 participants, five quiz plus three unscored slides, five PDF/PPT AI queries monthly                                                       | Presentation-first creation, broad interaction types, self-paced delivery, and visible import                                                                                            | Use a slide companion later; do not build a full presentation editor now                                                                    |
+| **Mentimeter** | 50 cumulative participants per month plus one session that may exceed the threshold                                                          | Highly polished result visuals, 23 slide types, AI, and an excellent presenter workflow                                                                                                  | Improve result visualization and hierarchy; breadth is not the near-term moat                                                               |
+| **Socrative**  | 50 students, five quizzes, one room, 30-day history, and bounded AI generation/import/analysis                                               | Strong assessment, exit-ticket, room, and question/participant reporting workflows                                                                                                       | Preserve OpenRound's stronger recovery story while adding history and drill-down clarity                                                    |
+| **Baamboozle** | Free core play; current official material does not publish a simple participant ceiling                                                      | One shared screen can run teacher-led team play without participant devices                                                                                                              | Consider a later facilitated team mode only if target customers ask for it                                                                  |
+| **Wordwall**   | Three created activities and 12 templates                                                                                                    | One content set switches among 34 interactive templates; assignments, printables, and a large library                                                                                    | Build content reuse and a few delivery modes before adding more visual themes                                                               |
+| **OpenRound**  | Hosted Free: 20 participants, five published sets, 30-day aggregate reports, three AI jobs when configured; Community is operator-configured | Accountless Recovery Loop, confidence, misconceptions, interventions, linked rechecks, live and self-paced delivery, privacy, accessibility, durability, Q&A/Pulse/chat, and portability | The technical wedge and standalone assignment path exist; private reuse, delivery breadth, validation, and packaging are the remaining gaps |
 
 ### Market baseline that users now expect
 
@@ -126,8 +128,9 @@ A credible 2026 live-learning product combines eight systems:
 7. Live insight, question-level reports, export, and a retrievable history.
 8. An engagement layer appropriate to the audience.
 
-OpenRound is already strong on 1, 2, much of 5, and the depth of 7. It is partial on 3, 4, and 6,
-and intentionally restrained on 8.
+OpenRound is strong on 1, 2, much of 5, and the depth of 7. It now has credible live and self-paced
+delivery plus source/import creation. It remains partial on team/cooperative delivery, URL/video
+creation, and cross-Round content reuse, and intentionally restrained on 8.
 
 ## Verified OpenRound baseline
 
@@ -152,11 +155,14 @@ Those capabilities are present in the current implementation.
 - Confidence, concept metadata, private misconception labels and feedback, linked rechecks, and
   deterministic facilitator guidance.
 - Accountless seven-digit code, direct-link, and QR joining, with participant resume credentials.
+- Participant-selected session avatars with a deterministic fallback for older clients and safe
+  role-filtered live/report projections.
 - Separate host, cohost, presenter, embed, and participant credentials and views.
 - Accuracy/private-result and speed/leaderboard choices.
 - Six accessible Round Experience presets plus local contrast, motion, and mute preferences.
 - Pulse, moderated Q&A, room chat, replies, reactions, pinning, reporting, mute, ban, and kick.
-- Accountless self-paced follow-ups with personal/generic links and time-flex accommodations.
+- Accountless self-paced follow-ups and standalone assignments with generic/labelled links,
+  progress, resume, revocation, expiry, and time-flex accommodations.
 - JSON, CSV, bulk, and QTI import; JSON/CSV/QTI export; folders, tags, search, duplicate, archive.
 - Source-grounded pasted text/PDF/DOCX/PPTX proposals with citations and mandatory human review.
 - Recovery-oriented reports, privacy-aware retention/deletion, open-source community operation,
@@ -336,11 +342,13 @@ conversation, and export detail behind clear drill-down tabs. Visuals should inc
 
 Do not present session recovery as proof of long-term retention or facilitator quality.
 
-## Implementation plan
+## Original implementation plan and current disposition
 
-The plan assumes one full-time engineer plus fractional product/design and accessibility support.
-Two engineers can overlap the shell/editor and live/report tracks and expose the visible catch-up
-slice in about six weeks. One engineer should budget 10–12 weeks for the complete P0/P1 sequence.
+The sequence below is retained as the original delivery plan. Repository implementation through
+Weeks 9–10 is complete. Its usability, accessibility, physical-device, hosted-capacity, operations,
+security, privacy/legal, and design-partner exit evidence remains pending where called out. The
+plan assumed one full-time engineer plus fractional product/design and accessibility support; two
+engineers could overlap the shell/editor and live/report tracks.
 
 ```mermaid
 flowchart LR
@@ -388,8 +396,7 @@ Scope:
 - Add the unified Create Round launcher.
 - Ship 6–10 first-party starter Rounds covering an exit ticket, misconception check, compliance
   check, technical concept, icebreaker poll, and workplace knowledge check.
-- Simplify library cards to Host live, Assign practice (initially “coming next” or feature-flagged),
-  Edit, and More.
+- Simplify library cards to Host live, feature-gated Assign practice, Edit, and More.
 - Add recent work, last edited/hosted, useful empty states, list/grid choice, and stable sorting.
 
 Backend/data work:
@@ -471,7 +478,7 @@ Exit gate:
 - A facilitator can find any retained report without a saved URL and identify the main unresolved
   concept in under 45 seconds; paginated queries stay tenant-scoped and use indexed plans.
 
-### Weeks 9–10 — general Assign practice
+### Weeks 9–10 — general Assign practice (repository implementation complete)
 
 Scope:
 
@@ -598,20 +605,24 @@ Baseline these first; the values below are provisional exit targets.
 - **Keep AI out of live decisions.** Source-grounded drafting remains human-reviewed; live insight
   stays deterministic and explainable.
 
-## Immediate product backlog
+## Original product backlog and current disposition
 
-| Rank | Epic                            | Primary outcome                       | Main dependency                                          |
-| ---: | ------------------------------- | ------------------------------------- | -------------------------------------------------------- |
-|    1 | Product funnel baseline         | Know where adoption actually fails    | Privacy review and event contract                        |
-|    2 | Sessions/Results history        | Make the evidence promise retrievable | Indexed list APIs and tenant tests                       |
-|    3 | Unified host command center     | Reduce live cognitive load            | Front-end composition; small aggregate payload extension |
-|    4 | Unified Create Round + starters | Reduce time to first value            | Starter content and shell                                |
-|    5 | Report recovery story           | Make differentiation legible          | Existing report v3 data                                  |
-|    6 | Simplified editor               | Reduce creation abandonment           | Component extraction and usability copy                  |
-|    7 | Participant interaction tray    | Keep answering focused                | Audience component recomposition                         |
-|    8 | General Assign practice         | Reach async parity                    | Follow-up model generalization                           |
-|    9 | Free-cap experiment             | Remove obvious acquisition gap        | Hosted cost/load/abuse/support evidence                  |
-|   10 | Team discuss mode               | Add restrained replayability          | Recovery-safe team contract and pilot demand             |
+This table preserves the original priority order instead of presenting completed work as a current
+backlog. Implementation is complete for ranks 1–8; their observed usability and hosted evidence
+remain separate release gates.
+
+| Rank | Epic                            | Primary outcome                       | Current disposition                                 |
+| ---: | ------------------------------- | ------------------------------------- | --------------------------------------------------- |
+|    1 | Product funnel baseline         | Know where adoption actually fails    | Instrumentation complete; pilot baseline pending    |
+|    2 | Sessions/Results history        | Make the evidence promise retrievable | Implemented; result-discovery trials pending        |
+|    3 | Unified host command center     | Reduce live cognitive load            | Implemented; observed action-finding trials pending |
+|    4 | Unified Create Round + starters | Reduce time to first value            | Implemented; unassisted creation trials pending     |
+|    5 | Report recovery story           | Make differentiation legible          | Implemented; comprehension trials pending           |
+|    6 | Simplified editor               | Reduce creation abandonment           | Implemented; authoring usability trials pending     |
+|    7 | Participant interaction tray    | Keep answering focused                | Implemented; participant usability trials pending   |
+|    8 | General Assign practice         | Reach async parity                    | Implemented; hosted/usability evidence pending      |
+|    9 | Free-cap experiment             | Remove obvious acquisition gap        | Hosted cost/load/abuse/support evidence pending     |
+|   10 | Team discuss mode               | Add restrained replayability          | Not implemented; post-beta and demand-gated         |
 
 ## Sources
 

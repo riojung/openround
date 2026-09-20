@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+const buildId = process.env.OPENROUND_BUILD_ID?.trim() || "unversioned";
+
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
   output: "standalone",
@@ -18,6 +20,7 @@ const nextConfig: NextConfig = {
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+          { key: "X-OpenRound-Build-Id", value: buildId },
         ],
       },
     ];

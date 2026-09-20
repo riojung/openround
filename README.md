@@ -14,7 +14,8 @@ The repository contains a runnable differentiated product slice:
 - Tenant-scoped checkpoint-set library, six response types, confidence, concepts, linked rechecks,
   folders/tags, portability, autosave, duplication, archive, and immutable publish versions
 - Seven-digit multi-device guest join, copyable direct links, host/presenter QR, LAN/public address
-  selection, friendly aliases, capacity enforcement, lobby, presenter view, and reconnect credentials
+  selection, friendly aliases, participant-selected session avatars, capacity enforcement, lobby,
+  presenter view, and reconnect credentials
 - Server-authoritative Recovery Loop with interventions, linked rechecks/revotes, deterministic
   explained insights, durable canonical responses/confidence, pause/resume, scoring, and reconnect
 - Six accessible versioned Round Experience presets with creator preview, one-session host
@@ -27,8 +28,9 @@ The repository contains a runnable differentiated product slice:
 - Versioned asynchronous evidence reports, moderated realtime Q&A, collaboration roles, scoped
   cohost/presenter credentials, secure presenter embed, aggregate interaction evidence, and an
   authorized interaction transcript
-- Accountless self-paced follow-up with generic/personal links, time-flex mode, and private 1.5×/2×
-  accommodation passes
+- Accountless self-paced recovery follow-up and standalone practice assignment from a published
+  Round, with generic/labelled links, progress, resume, revocation, expiry, time-flex mode, and
+  private 1.5×/2× accommodation passes
 - Disabled-by-default source-grounded authoring from pasted text or private PDF/DOCX/PPTX, with
   bounded isolated extraction, citations, draft-only human review, and BYO provider support
 - Contract-gated institution foundation with explicit generic OIDC creator linking, LTI 1.3

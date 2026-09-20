@@ -1,41 +1,62 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import {
+  assertSecureReadinessUrl,
+  requiredBillingMode,
+  requiredBoolean,
+  requiredCookiePair,
+  requiredEnvironmentString,
+  requiredImmutableBuildId,
+} from "../support/readiness-contract.js";
 
 async function main() {
   const apiUrl = requiredUrl("READINESS_API_URL");
-  const webUrl = new URL(process.env.READINESS_WEB_URL ?? apiUrl);
+  const webUrl = requiredUrl("READINESS_WEB_URL");
   const allowHttp = process.env.READINESS_ALLOW_HTTP === "true";
   const outputPath =
     process.env.READINESS_OUTPUT?.trim() || "artifacts/readiness/remote-probe.json";
+  const expectedBuildId = requiredImmutableBuildId(process.env, "READINESS_EXPECTED_BUILD_ID");
+  const creatorCookie = requiredCookiePair(process.env, "READINESS_CREATOR_COOKIE");
+  const expectedHomeRegion = requiredEnvironmentString(
+    process.env,
+    "READINESS_EXPECTED_HOME_REGION",
+  );
+  const expectedFeatures = {
+    billing: requiredBillingMode(process.env, "READINESS_EXPECT_BILLING"),
+    communityMode: requiredBoolean(process.env, "READINESS_EXPECT_COMMUNITY_MODE"),
+    signups: requiredBoolean(process.env, "READINESS_EXPECT_SIGNUPS"),
+    sessionCreation: requiredBoolean(process.env, "READINESS_EXPECT_SESSION_CREATION"),
+    mediaUploads: requiredBoolean(process.env, "READINESS_EXPECT_MEDIA_UPLOADS"),
+    uxBeta: requiredBoolean(process.env, "READINESS_EXPECT_UX_BETA"),
+    recoveryRehearsal: requiredBoolean(process.env, "READINESS_EXPECT_RECOVERY_REHEARSAL"),
+    practiceAssignments: requiredBoolean(process.env, "READINESS_EXPECT_PRACTICE_ASSIGNMENTS"),
+  };
 
-  for (const target of [apiUrl, webUrl]) {
-    if (!allowHttp) assert.equal(target.protocol, "https:", `${target.origin} must use HTTPS`);
-  }
+  for (const target of [apiUrl, webUrl]) assertSecureReadinessUrl(target, allowHttp);
 
   function requiredUrl(name: string) {
-    const value = process.env[name]?.trim();
-    assert.ok(value, `${name} is required`);
-    return new URL(value);
+    return new URL(requiredEnvironmentString(process.env, name));
   }
 
   function normalizedOrigin(value: string) {
     return new URL(value).origin;
   }
 
-  function optionalBoolean(name: string) {
-    const value = process.env[name]?.trim();
-    if (!value) return undefined;
-    assert.ok(value === "true" || value === "false", `${name} must be true or false`);
-    return value === "true";
-  }
-
-  async function request(path: string, target = apiUrl, redirect: "manual" | "follow" = "manual") {
+  async function request(
+    path: string,
+    target = apiUrl,
+    redirect: "manual" | "follow" = "manual",
+    cookie?: string,
+  ) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15_000);
     try {
       return await fetch(new URL(path, target), {
-        headers: { "user-agent": "openround-readiness-probe/1.0" },
+        headers: {
+          "user-agent": "openround-readiness-probe/1.0",
+          ...(cookie ? { cookie } : {}),
+        },
         redirect,
         signal: controller.signal,
       });
@@ -44,8 +65,8 @@ async function main() {
     }
   }
 
-  async function jsonResponse(path: string) {
-    const response = await request(path);
+  async function jsonResponse(path: string, cookie?: string) {
+    const response = await request(path, apiUrl, "manual", cookie);
     const body = await response.text();
     assert.equal(
       response.status,
@@ -57,15 +78,24 @@ async function main() {
 
   const live = await jsonResponse("/health/live");
   assert.equal(live.body.status, "ok", "liveness status must be ok");
+  assert.equal(
+    live.body.buildId,
+    expectedBuildId,
+    "deployed server build does not match READINESS_EXPECTED_BUILD_ID",
+  );
 
   const ready = await jsonResponse("/health/ready");
   assert.equal(ready.body.status, "ready", "readiness status must be ready");
   assert.deepEqual(ready.body.dependencies, { database: "ready", coordination: "ready" });
+  if (expectedFeatures.mediaUploads) {
+    assert.equal(ready.body.storage, "configured", "media-enabled staging must configure storage");
+    assert.equal(ready.body.mediaScanning, "enabled", "media-enabled staging must enable scanning");
+  }
 
   const featuresResult = await jsonResponse("/v1/features");
   const features = featuresResult.body;
   const expectedWebOrigin = normalizedOrigin(
-    process.env.READINESS_EXPECTED_WEB_ORIGIN?.trim() || webUrl.origin,
+    requiredEnvironmentString(process.env, "READINESS_EXPECTED_WEB_ORIGIN"),
   );
   assert.equal(
     normalizedOrigin(String(features.publicWebUrl)),
@@ -73,33 +103,38 @@ async function main() {
     "publicWebUrl does not match the expected web origin",
   );
 
-  const expectedFeatures: Array<[string, string, unknown]> = [
-    ["billing", "READINESS_EXPECT_BILLING", process.env.READINESS_EXPECT_BILLING?.trim()],
-    [
-      "communityMode",
-      "READINESS_EXPECT_COMMUNITY_MODE",
-      optionalBoolean("READINESS_EXPECT_COMMUNITY_MODE"),
-    ],
-    ["signups", "READINESS_EXPECT_SIGNUPS", optionalBoolean("READINESS_EXPECT_SIGNUPS")],
-    [
-      "sessionCreation",
-      "READINESS_EXPECT_SESSION_CREATION",
-      optionalBoolean("READINESS_EXPECT_SESSION_CREATION"),
-    ],
-    [
-      "mediaUploads",
-      "READINESS_EXPECT_MEDIA_UPLOADS",
-      optionalBoolean("READINESS_EXPECT_MEDIA_UPLOADS"),
-    ],
-  ];
-  for (const [feature, environmentName, expected] of expectedFeatures) {
-    if (expected !== undefined && expected !== "") {
-      assert.equal(features[feature], expected, `${feature} does not match ${environmentName}`);
-    }
+  for (const [feature, expected] of Object.entries(expectedFeatures)) {
+    assert.equal(features[feature], expected, `${feature} does not match its required expectation`);
   }
 
+  const account = await jsonResponse("/v1/auth/me", creatorCookie);
+  const productFeatures = account.body.productFeatures as Record<string, unknown> | undefined;
+  assert.ok(productFeatures, "authenticated account omitted productFeatures");
+  for (const feature of ["uxBeta", "recoveryRehearsal", "practiceAssignments"] as const) {
+    assert.equal(
+      productFeatures[feature],
+      expectedFeatures[feature],
+      `synthetic workspace ${feature} does not match its required expectation`,
+    );
+  }
+
+  const workspaceResult = await jsonResponse("/v1/workspaces", creatorCookie);
+  const activeWorkspaceId = workspaceResult.body.activeWorkspaceId;
+  const workspaces = workspaceResult.body.workspaces;
+  assert.equal(typeof activeWorkspaceId, "string", "workspace response omitted activeWorkspaceId");
+  assert.ok(Array.isArray(workspaces), "workspace response omitted workspaces");
+  const activeWorkspace = (workspaces as Array<Record<string, unknown>>).find(
+    (workspace) => workspace.id === activeWorkspaceId,
+  );
+  assert.ok(activeWorkspace, "active synthetic workspace was not returned");
+  assert.equal(
+    activeWorkspace.homeRegion,
+    expectedHomeRegion,
+    "synthetic workspace is not assigned to the expected Canadian home region",
+  );
+
   const metrics = await request("/metrics");
-  const metricsExpectation = process.env.READINESS_EXPECT_METRICS?.trim() || "protected";
+  const metricsExpectation = requiredEnvironmentString(process.env, "READINESS_EXPECT_METRICS");
   assert.ok(
     metricsExpectation === "protected" || metricsExpectation === "disabled",
     "READINESS_EXPECT_METRICS must be protected or disabled",
@@ -122,6 +157,11 @@ async function main() {
     assert.equal(finalWebUrl.protocol, "https:", "final web root must use HTTPS");
   }
   assert.ok(web.status >= 200 && web.status < 300, `web root returned ${web.status}`);
+  assert.equal(
+    web.headers.get("x-openround-build-id"),
+    expectedBuildId,
+    "deployed web build does not match READINESS_EXPECTED_BUILD_ID",
+  );
   const requiredHeaders: Record<string, RegExp> = {
     "content-security-policy":
       /script-src[^;]*'nonce-[^']+'[^;]*'strict-dynamic'[^;]*;.*object-src 'none'.*frame-ancestors 'none'/i,
@@ -133,7 +173,9 @@ async function main() {
   if (finalWebUrl.protocol === "https:") {
     requiredHeaders["strict-transport-security"] = /max-age=(?:[3-9]\d{7}|\d{9,})/i;
   }
-  const observedHeaders: Record<string, string> = {};
+  const observedHeaders: Record<string, string> = {
+    "x-openround-build-id": expectedBuildId,
+  };
   for (const [name, pattern] of Object.entries(requiredHeaders)) {
     const value = web.headers.get(name) ?? "";
     assert.match(value, pattern, `${name} is missing or unsafe`);
@@ -141,9 +183,12 @@ async function main() {
   }
 
   const evidence = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     checkedAt: new Date().toISOString(),
-    commit: process.env.GITHUB_SHA ?? null,
+    candidate: {
+      buildId: expectedBuildId,
+      homeRegion: expectedHomeRegion,
+    },
     targets: {
       apiOrigin: apiUrl.origin,
       webOrigin: webUrl.origin,
@@ -151,6 +196,14 @@ async function main() {
     },
     health: { live: live.body, ready: ready.body },
     publicFeatures: features,
+    syntheticWorkspace: {
+      homeRegion: activeWorkspace.homeRegion,
+      productFeatures: {
+        uxBeta: productFeatures.uxBeta,
+        recoveryRehearsal: productFeatures.recoveryRehearsal,
+        practiceAssignments: productFeatures.practiceAssignments,
+      },
+    },
     metrics: metricsExpectation,
     securityHeaders: observedHeaders,
   };

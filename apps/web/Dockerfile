@@ -17,6 +17,8 @@ COPY packages/insights packages/insights
 COPY packages/rehearsal packages/rehearsal
 ARG NEXT_PUBLIC_API_URL=""
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ARG OPENROUND_BUILD_ID=unversioned
+RUN printf '%s\n' "$OPENROUND_BUILD_ID" > /app/BUILD_ID
 RUN pnpm --filter @openround/web build
 
 FROM node:22-alpine AS runtime
@@ -25,6 +27,7 @@ WORKDIR /app
 COPY --from=build --chown=openround:openround /app/apps/web/.next/standalone ./
 COPY --from=build --chown=openround:openround /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=build --chown=openround:openround /app/apps/web/public ./apps/web/public
+COPY --from=build --chown=openround:openround /app/BUILD_ID ./BUILD_ID
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /licenses/
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0

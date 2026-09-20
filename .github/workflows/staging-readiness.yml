@@ -42,6 +42,11 @@ jobs:
       READINESS_EXPECT_SIGNUPS: ${{ vars.OPENROUND_EXPECTED_SIGNUPS }}
       READINESS_EXPECT_SESSION_CREATION: ${{ vars.OPENROUND_EXPECTED_SESSION_CREATION }}
       READINESS_EXPECT_MEDIA_UPLOADS: ${{ vars.OPENROUND_EXPECTED_MEDIA_UPLOADS }}
+      READINESS_EXPECT_UX_BETA: ${{ vars.OPENROUND_EXPECTED_UX_BETA }}
+      READINESS_EXPECT_RECOVERY_REHEARSAL: ${{ vars.OPENROUND_EXPECTED_RECOVERY_REHEARSAL }}
+      READINESS_EXPECT_PRACTICE_ASSIGNMENTS: ${{ vars.OPENROUND_EXPECTED_PRACTICE_ASSIGNMENTS }}
+      READINESS_EXPECTED_BUILD_ID: ${{ github.sha }}
+      READINESS_EXPECTED_HOME_REGION: ca-central-1
       READINESS_EXPECT_METRICS: protected
       READINESS_OUTPUT: artifacts/readiness/remote-probe.json
     steps:
@@ -55,10 +60,27 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Validate required staging configuration
+        env:
+          READINESS_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
         run: |
           test -n "$READINESS_API_URL"
           test -n "$READINESS_WEB_URL"
+          test -n "$READINESS_EXPECTED_WEB_ORIGIN"
+          test -n "$READINESS_EXPECT_BILLING"
+          test -n "$READINESS_EXPECT_COMMUNITY_MODE"
+          test -n "$READINESS_EXPECT_SIGNUPS"
+          test -n "$READINESS_EXPECT_SESSION_CREATION"
+          test -n "$READINESS_EXPECT_MEDIA_UPLOADS"
+          test -n "$READINESS_EXPECT_UX_BETA"
+          test -n "$READINESS_EXPECT_RECOVERY_REHEARSAL"
+          test -n "$READINESS_EXPECT_PRACTICE_ASSIGNMENTS"
+          test -n "$READINESS_EXPECTED_BUILD_ID"
+          test -n "$READINESS_EXPECTED_HOME_REGION"
+          test -n "$READINESS_EXPECT_METRICS"
+          test -n "$READINESS_CREATOR_COOKIE"
       - name: Probe deployment and dependency readiness
+        env:
+          READINESS_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
         run: pnpm smoke:remote
       - name: Upload public-endpoint probe evidence
         if: always()
@@ -78,7 +100,7 @@ jobs:
       LOAD_BASE_URL: ${{ vars.OPENROUND_API_URL }}
       LOAD_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
       LOAD_RUNNER_REGION: ${{ vars.OPENROUND_LOAD_RUNNER_REGION }}
-      LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
+      LOAD_EXPECTED_BUILD_ID: ${{ github.sha }}
       LOAD_OUTPUT: artifacts/readiness/target-region-load.json
       LOAD_RUN_ID: staging-${{ github.run_id }}-${{ github.run_attempt }}
       CLIENTS: ${{ inputs.clients }}
@@ -96,11 +118,14 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Validate target-region load configuration
+        env:
+          LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
         run: |
           test -n "$LOAD_BASE_URL"
           test -n "$LOAD_ORIGIN"
           test -n "$LOAD_RUNNER_REGION"
           test -n "$LOAD_CREATOR_COOKIE"
+          test -n "$LOAD_EXPECTED_BUILD_ID"
       - name: Capture load-generator provenance
         run: |
           mkdir -p artifacts/readiness
@@ -109,8 +134,9 @@ jobs:
             fs.writeFileSync(
               "artifacts/readiness/load-runner-provenance.json",
               `${JSON.stringify({
-                schemaVersion: 1,
-                commit: process.env.GITHUB_SHA,
+                schemaVersion: 2,
+                candidateBuildId: process.env.LOAD_EXPECTED_BUILD_ID,
+                workflowCommit: process.env.GITHUB_SHA,
                 declaredRegion: process.env.LOAD_RUNNER_REGION,
                 runner: {
                   name: process.env.RUNNER_NAME,
@@ -123,10 +149,13 @@ jobs:
             );
           '
       - name: Run target-region correctness and latency game
+        env:
+          LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
         run: pnpm load:compose
       - name: Run repeated target-region soak
         if: inputs.soak_minutes != '0'
         env:
+          LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
           SOAK_MINUTES: ${{ inputs.soak_minutes }}
         run: |
           mkdir -p artifacts/readiness/soak
@@ -147,8 +176,9 @@ jobs:
             fs.writeFileSync(
               "artifacts/readiness/soak-summary.json",
               `${JSON.stringify({
-                schemaVersion: 1,
-                commit: process.env.GITHUB_SHA,
+                schemaVersion: 2,
+                candidateBuildId: process.env.LOAD_EXPECTED_BUILD_ID,
+                workflowCommit: process.env.GITHUB_SHA,
                 startedAt: process.env.STARTED_AT,
                 finishedAt: process.env.FINISHED_AT,
                 requestedMinutes: Number(process.env.SOAK_MINUTES),
