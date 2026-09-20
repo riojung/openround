@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
-import { MemoryRepository, type CreatorContext } from "@openround/db";
+import {
+  MemoryRepository,
+  type CreatorContext,
+  type PresentationSessionRecord,
+} from "@openround/db";
 import { buildApp } from "../src/app.js";
 import { MemorySessionCache } from "../src/cache.js";
 import { ConfigSchema } from "../src/config.js";
@@ -226,6 +230,9 @@ describe("Home workspace summary", () => {
       payload: { expectedDraftRevision: 1 },
     });
     expect(publishedPresentation.statusCode, publishedPresentation.body).toBe(200);
+    const publishedPresentationVersion = publishedPresentation.json<{
+      version: { id: string; content: PresentationSessionRecord["content"] };
+    }>().version;
     const hostedPresentation = await app.inject({
       method: "POST",
       url: "/v1/presentation-sessions",
@@ -244,6 +251,28 @@ describe("Home workspace summary", () => {
         payload: { expectedRevision },
       });
     }
+
+    const expiredPresentationSessionId = randomUUID();
+    const expiredAt = new Date(Date.now() - 1);
+    await built.presentationSessions.createSession({
+      id: expiredPresentationSessionId,
+      workspaceId: creator.workspaceId,
+      presentationId: presentation.id,
+      presentationVersionId: publishedPresentationVersion.id,
+      title: publishedPresentationVersion.content.title,
+      content: publishedPresentationVersion.content,
+      code: "9081726",
+      status: "active",
+      phase: "lobby",
+      currentBlockIndex: -1,
+      revision: 0,
+      createdBy: creator.userId,
+      createdAt: expiredAt,
+      updatedAt: expiredAt,
+      finishedAt: null,
+      liveExpiresAt: expiredAt,
+      retentionExpiresAt: new Date(Date.now() + 30 * 86_400_000),
+    });
 
     const createdGroup = await app.inject({
       method: "POST",
@@ -301,8 +330,11 @@ describe("Home workspace summary", () => {
           artifactTitle: "Safety decisions",
         }),
       ],
-      totals: expect.objectContaining({ artifacts: 2, activeAssignments: 1 }),
+      totals: expect.objectContaining({ artifacts: 2, activeSessions: 1, activeAssignments: 1 }),
     });
+    expect(
+      response.json<{ sessions: Array<{ id: string }> }>().sessions.map(({ id }) => id),
+    ).not.toContain(expiredPresentationSessionId);
 
     const outsider = await signIn(app, "home-outsider@example.com");
     const isolated = await app.inject({

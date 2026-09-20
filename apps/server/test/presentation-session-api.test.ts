@@ -457,5 +457,20 @@ describe("live Presentation sessions", () => {
     });
     expect(expiredHost.statusCode).toBe(409);
     expect(expiredHost.json()).toMatchObject({ error: { code: "PHASE_CLOSED" } });
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/v1/presentation-sessions",
+      headers: { cookie },
+    });
+    expect(listed.statusCode).toBe(200);
+    const listedSessions = listed.json<{ sessions: Array<{ id: string; status: string }> }>()
+      .sessions;
+    expect(listedSessions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: entitled.id, status: "active" })]),
+    );
+    expect(listedSessions).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: expired.id })]),
+    );
   });
 });

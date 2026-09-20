@@ -48,6 +48,40 @@ export function QuestionNavigator({
 }) {
   const terminology = uxBeta ? "question" : "checkpoint";
 
+  if (!uxBeta) {
+    return (
+      <aside className="panel">
+        <h2 style={{ fontSize: "1.4rem" }}>Checkpoints</h2>
+        <div className="question-list">
+          {draft.questions.map((item, index) => (
+            <button
+              aria-current={item.id === selectedQuestionId}
+              className="question-tab"
+              key={item.id}
+              onClick={() => onSelectQuestion(item.id)}
+              type="button"
+            >
+              <strong>{index + 1}.</strong> {item.prompt || "Untitled checkpoint"}
+              {(item.delivery ?? "main") === "recheck" ? " · recheck" : ""}
+            </button>
+          ))}
+        </div>
+        <div className="button-row" style={{ marginTop: 16 }}>
+          {QUESTION_TYPES.map((type) => (
+            <button
+              className="button-quiet small-button"
+              key={type}
+              onClick={() => onAddQuestion(type)}
+              type="button"
+            >
+              {editorTypeLabel(type, false)}
+            </button>
+          ))}
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <aside className={styles.questionMap} data-collapsed={collapsed} aria-label="Question map">
       <div className={styles.mapHeader}>
@@ -176,7 +210,7 @@ export function QuestionNavigator({
         </div>
       )}
 
-      {!collapsed && uxBeta ? (
+      {!collapsed ? (
         <div className={styles.mapInsert}>
           <label className="field" htmlFor="insert-question-type">
             <span>Add a question</span>
@@ -217,19 +251,6 @@ export function QuestionNavigator({
               Reuse from your workspace
             </button>
           ) : null}
-        </div>
-      ) : !collapsed ? (
-        <div className="button-row" style={{ marginTop: 16 }}>
-          {QUESTION_TYPES.map((type) => (
-            <button
-              className="button-quiet small-button"
-              key={type}
-              onClick={() => onAddQuestion(type)}
-              type="button"
-            >
-              {editorTypeLabel(type, false)}
-            </button>
-          ))}
         </div>
       ) : null}
     </aside>

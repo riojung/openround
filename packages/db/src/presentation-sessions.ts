@@ -181,9 +181,13 @@ export class MemoryPresentationSessionRepository
     }
   }
 
-  async listSessions(workspaceId: string) {
+  async listSessions(workspaceId: string, now = new Date()) {
     return [...this.sessions.values()]
-      .filter((session) => session.workspaceId === workspaceId)
+      .filter(
+        (session) =>
+          session.workspaceId === workspaceId &&
+          (session.status !== "active" || session.liveExpiresAt > now),
+      )
       .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
       .map(clone);
   }
@@ -361,11 +365,13 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     }
   }
 
-  async listSessions(workspaceId: string) {
+  async listSessions(workspaceId: string, now = new Date()) {
     return this.transaction(workspaceId, async (client) => {
       const result = await client.query(
-        "SELECT * FROM presentation_live_sessions WHERE workspace_id = $1 ORDER BY created_at DESC",
-        [workspaceId],
+        `SELECT * FROM presentation_live_sessions
+         WHERE workspace_id = $1 AND (status <> 'active' OR live_expires_at > $2)
+         ORDER BY created_at DESC`,
+        [workspaceId, now],
       );
       return result.rows.map(mapSession);
     });

@@ -81,7 +81,9 @@ export async function registerHomeRoutes(
       workspacePresentationsEnabled ? presentations.listPresentations(creator.workspaceId) : [],
       repository.listSessionHistory(creator.workspaceId, { limit: 25, now }),
       repository.listSessionHistory(creator.workspaceId, { limit: 250, status: "active", now }),
-      workspacePresentationsEnabled ? presentationSessions.listSessions(creator.workspaceId) : [],
+      workspacePresentationsEnabled
+        ? presentationSessions.listSessions(creator.workspaceId, now)
+        : [],
       repository.listFollowupHistory(creator.workspaceId, { limit: 250, status: "open", now }),
       repository.listFollowupHistory(creator.workspaceId, {
         limit: 250,

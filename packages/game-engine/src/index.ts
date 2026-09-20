@@ -1112,6 +1112,7 @@ export function snapshotForRole(
     version: state.version,
     seq: state.seq,
     phase: state.phase,
+    answerRevealed: revealed,
     roundId: state.roundId,
     roundKind: state.roundKind,
     sourceRoundId: state.sourceRoundId,

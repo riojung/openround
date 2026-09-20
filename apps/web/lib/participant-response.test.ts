@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   participantProgressStage,
+  participantRevealState,
   participantResponseControlsDisabled,
   participantResponseView,
 } from "./participant-response";
@@ -82,6 +83,35 @@ describe("participantResponseView", () => {
         submitting: false,
       }),
     ).toBe(true);
+  });
+});
+
+describe("participantRevealState", () => {
+  it("keeps post-reveal intervention feedback visible without an answer key", () => {
+    expect(participantRevealState({ answerRevealed: true, myCorrect: false }, true)).toEqual({
+      revealed: true,
+      selectedCorrect: false,
+      selectedIncorrect: true,
+    });
+  });
+
+  it("does not expose a result during a pre-reveal intervention", () => {
+    expect(participantRevealState({ answerRevealed: false, myCorrect: undefined }, true)).toEqual({
+      revealed: false,
+      selectedCorrect: false,
+      selectedIncorrect: false,
+    });
+  });
+
+  it("marks only the learner's selected response from their own correct result", () => {
+    expect(participantRevealState({ answerRevealed: true, myCorrect: true }, true)).toMatchObject({
+      selectedCorrect: true,
+      selectedIncorrect: false,
+    });
+    expect(participantRevealState({ answerRevealed: true, myCorrect: true }, false)).toMatchObject({
+      selectedCorrect: false,
+      selectedIncorrect: false,
+    });
   });
 });
 

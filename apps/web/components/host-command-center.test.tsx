@@ -13,6 +13,7 @@ function snapshot(phase: SessionSnapshot["phase"]): SessionSnapshot {
     version: 1,
     seq: 1,
     phase,
+    answerRevealed: phase === "question_reveal" || phase === "leaderboard" || phase === "finished",
     roundId: "00000000-0000-4000-8000-000000000002",
     roundKind: "main",
     sourceRoundId: "00000000-0000-4000-8000-000000000002",

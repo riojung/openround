@@ -671,6 +671,7 @@ describe("public contracts", () => {
 
     expect(JSON.stringify(snapshot)).not.toContain("isCorrect");
     expect(JSON.stringify(snapshot)).not.toContain("correctChoiceId");
+    expect(snapshot.answerRevealed).toBe(false);
   });
 
   it("requires an explicit participant for kick commands", () => {

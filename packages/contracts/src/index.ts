@@ -1073,6 +1073,11 @@ export const SessionSnapshotSchema = z.object({
   version: z.number().int().nonnegative(),
   seq: z.number().int().nonnegative(),
   phase: SessionPhaseSchema,
+  /**
+   * Non-secret signal that the facilitator has revealed this question's result. Participant
+   * projections use it to render their own outcome without receiving the answer key.
+   */
+  answerRevealed: z.boolean().default(false),
   roundId: z.string().uuid().nullable(),
   roundKind: RoundKindSchema.default("main"),
   sourceRoundId: z.string().uuid().nullable().default(null),

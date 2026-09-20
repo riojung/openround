@@ -983,6 +983,7 @@ describe("game engine", () => {
     });
     expect(preRevealSnapshot).toMatchObject({
       phase: "intervention",
+      answerRevealed: false,
       intervention: { type: "peer_discussion", finishedAt: null },
     });
     expect(preRevealSnapshot.correctResponse).toBeUndefined();
@@ -1010,6 +1011,7 @@ describe("game engine", () => {
     });
     expect(participantReveal).toMatchObject({
       phase: "intervention",
+      answerRevealed: true,
       questionPosition: 0,
       myCorrect: false,
       explanation: "Use the safe procedure.",
@@ -1028,6 +1030,7 @@ describe("game engine", () => {
     });
 
     expect(snapshotForRole(explaining.state, { role: "host" })).toMatchObject({
+      answerRevealed: true,
       correctChoiceId: mainCorrect,
       correctResponse: { kind: "choice", choiceIds: [mainCorrect] },
       question: { purpose: "diagnostic", linkedRecheckAvailable: true },

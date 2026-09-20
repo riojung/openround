@@ -518,7 +518,7 @@ export async function registerPresentationSessionRoutes(
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
     if (requirePresentationWorkspace(creator.workspaceId, reply, request.id) !== true) return;
-    const sessions = await presentationSessions.listSessions(creator.workspaceId);
+    const sessions = await presentationSessions.listSessions(creator.workspaceId, new Date());
     return {
       sessions: await Promise.all(
         sessions.map((session) => hostSnapshot(session, presentationSessions)),

@@ -76,7 +76,7 @@ export type PresentationParticipantJoin =
   | { status: "closed" };
 
 export interface PresentationSessionRepository {
-  listSessions(workspaceId: string): Promise<PresentationSessionRecord[]>;
+  listSessions(workspaceId: string, now?: Date): Promise<PresentationSessionRecord[]>;
   createSession(input: PresentationSessionRecord): Promise<PresentationSessionRecord>;
   getSessionForWorkspace(
     workspaceId: string,

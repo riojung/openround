@@ -177,6 +177,7 @@ describe("realtime authorization", () => {
     const selectSnapshot = snapshotSelector(state);
     const participantSnapshot = selectSnapshot("participant", participantId);
     expect(participantSnapshot).toMatchObject({
+      answerRevealed: true,
       myParticipantId: participantId,
       myCorrect: false,
       feedback: "Review the explanation and try the recheck.",

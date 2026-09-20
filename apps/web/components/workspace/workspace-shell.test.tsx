@@ -52,6 +52,7 @@ describe("professional workspace shell", () => {
   beforeEach(() => {
     fixtures.pathname = "/library";
     fixtures.workspace.canEdit = true;
+    fixtures.workspace.productFeatures.uxBeta = true;
     fixtures.workspace.productFeatures.workspaceShell = true;
     fixtures.workspace.productFeatures.builderV2 = true;
     fixtures.workspace.productFeatures.presentations = true;
@@ -132,6 +133,33 @@ describe("professional workspace shell", () => {
     expect(markup).not.toContain('href="/create/presentation"');
     expect(markup).not.toContain('href="/groups"');
     expect(markup).not.toContain('href="/discover"');
+  });
+
+  it("keeps explicitly non-beta surfaces available when the workspace shell rollout is off", () => {
+    fixtures.workspace.productFeatures.uxBeta = false;
+    fixtures.workspace.productFeatures.workspaceShell = false;
+
+    const markup = renderToStaticMarkup(
+      <WorkspaceShell requireBeta={false} title="Legacy Round workflow">
+        <p>Legacy, account, practice, and assignment content</p>
+      </WorkspaceShell>,
+    );
+
+    expect(markup).toContain("Legacy, account, practice, and assignment content");
+    expect(markup).not.toContain("Loading your workspace");
+  });
+
+  it("continues to gate beta surfaces when the workspace shell rollout is off", () => {
+    fixtures.workspace.productFeatures.workspaceShell = false;
+
+    const markup = renderToStaticMarkup(
+      <WorkspaceShell title="Library">
+        <p>Beta workspace content</p>
+      </WorkspaceShell>,
+    );
+
+    expect(markup).toContain("Loading your workspace");
+    expect(markup).not.toContain("Beta workspace content");
   });
 
   it("fails closed on direct feature routes", () => {

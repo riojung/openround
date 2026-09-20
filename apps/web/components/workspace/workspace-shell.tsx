@@ -294,8 +294,8 @@ export function WorkspaceShell({
   const [globalSearch, setGlobalSearch] = useState("");
   const workspaceAccessUnavailable =
     Boolean(error) ||
-    productFeatures?.workspaceShell !== true ||
-    (requireBeta && productFeatures?.uxBeta !== true) ||
+    (requireBeta &&
+      (productFeatures?.workspaceShell !== true || productFeatures?.uxBeta !== true)) ||
     (requiredFeature !== undefined && productFeatures?.[requiredFeature] !== true);
   const shouldReturnToDashboard =
     !loading &&

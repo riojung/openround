@@ -98,8 +98,11 @@ describe("editor views", () => {
 
     expect(markup).toContain("Checkpoints");
     expect(markup).toContain(">Numeric</button>");
+    expect(markup).toContain('class="panel"');
     expect(markup).not.toContain('id="insert-question-type"');
     expect(markup).not.toContain("Reuse from your workspace");
+    expect(markup).not.toContain('aria-label="Question map"');
+    expect(markup).not.toContain("Collapse question map");
   });
 
   it("renders diagnostic details as a beta disclosure without exposing IDs as labels", () => {

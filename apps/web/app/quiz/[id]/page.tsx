@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
@@ -11,6 +12,7 @@ import type {
   QuizDraft,
   RoundCategory,
 } from "@openround/contracts";
+import { Brand } from "../../../components/brand";
 import { BuilderCommandBar } from "../../../components/editor/builder-command-bar";
 import { DeliveryScoring } from "../../../components/editor/delivery-scoring";
 import { DiagnosticDetails } from "../../../components/editor/diagnostic-details";
@@ -164,8 +166,17 @@ export default function QuizEditorPage() {
       const mutationId = clientUuid();
       const request = saveQueue.current.then(async () => {
         const expectedRevision = serverRevision.current;
-        const result = await retryWithBackoff(() =>
-          apiFetch<{ quiz: QuizRecord }>(`/v1/quizzes/${id}/draft`, {
+        const result = await retryWithBackoff(() => {
+          if (!uxBeta) {
+            return apiFetch<{ quiz: QuizRecord }>(`/v1/quizzes/${id}`, {
+              method: "PATCH",
+              body: JSON.stringify({
+                draft: candidate,
+                expectedDraftRevision: expectedRevision,
+              }),
+            });
+          }
+          return apiFetch<{ quiz: QuizRecord }>(`/v1/quizzes/${id}/draft`, {
             method: "PUT",
             body: JSON.stringify({
               draft: candidate,
@@ -173,8 +184,8 @@ export default function QuizEditorPage() {
               mutationId,
               schemaVersion: 1,
             }),
-          }),
-        );
+          });
+        });
         serverRevision.current = result.quiz.draftRevision;
         lastSavedJson.current = JSON.stringify(candidate);
         return result;
@@ -185,7 +196,7 @@ export default function QuizEditorPage() {
       );
       return request;
     },
-    [id],
+    [id, uxBeta],
   );
 
   useEffect(() => {
@@ -237,6 +248,7 @@ export default function QuizEditorPage() {
         loadDraft(loadedQuiz.draft);
         serverRevision.current = loadedQuiz.draftRevision ?? 0;
         lastSavedJson.current = JSON.stringify(loadedQuiz.draft);
+        setSaveState("saved");
         setEntitlements(account.entitlements);
         setCanEdit(account.creator.role === "owner" || account.creator.role === "editor");
         setRoundExperiencesAvailable(account.productFeatures.roundExperiences);
@@ -782,6 +794,358 @@ export default function QuizEditorPage() {
     entitlements?.maxPublishedQuizzes !== undefined &&
     publishedQuizCount >= entitlements.maxPublishedQuizzes,
   );
+
+  if (!uxBeta) {
+    const draftGuidance = readinessIssues[0];
+
+    return (
+      <>
+        <header className="shell topbar">
+          <Brand />
+          <div className="button-row">
+            <span className="muted" role="status">
+              {saveState === "saving"
+                ? "Saving…"
+                : saveState === "saved"
+                  ? "Saved"
+                  : saveState === "conflict"
+                    ? "Edit conflict"
+                    : saveState === "error"
+                      ? "Save failed"
+                      : ""}
+            </span>
+            <Link className="button-quiet small-button" href="/dashboard">
+              Dashboard
+            </Link>
+            <button
+              className="button-quiet small-button"
+              disabled={!draft?.questions.length || saveState === "saving"}
+              onClick={() => void openPreview()}
+              type="button"
+            >
+              Preview
+            </button>
+            {practiceAssignmentsAvailable &&
+            quiz?.status === "published" &&
+            quiz.currentVersionId ? (
+              <Link className="button-quiet small-button" href={`/quiz/${id}/assign`}>
+                Assign practice
+              </Link>
+            ) : null}
+            <button
+              className="button small-button"
+              disabled={!draft?.questions.length || saveState === "saving" || publishLimitReached}
+              onClick={() => void publish()}
+              type="button"
+            >
+              {publishLimitReached ? "Publish limit reached" : "Publish"}
+            </button>
+          </div>
+        </header>
+        <main className="shell page-main" id="main">
+          <div className="page-heading">
+            <div>
+              <p className="eyebrow">Checkpoint set editor</p>
+              <h1 style={{ fontSize: "clamp(2.4rem, 6vw, 4rem)" }}>
+                {draft?.title || "Untitled checkpoint set"}
+              </h1>
+            </div>
+            {quiz ? <span className="status-pill">{quiz.status}</span> : null}
+          </div>
+          {recoverySnapshot ? (
+            <section className="notice" role="status">
+              <strong>Unsaved local work is available</strong>
+              <p>
+                This browser preserved changes from{" "}
+                {new Date(recoverySnapshot.savedAt).toLocaleString()}.
+              </p>
+              <div className="button-row">
+                <button
+                  className="button small-button"
+                  onClick={restoreRecoverySnapshot}
+                  type="button"
+                >
+                  Restore local work
+                </button>
+                <button
+                  className="button-quiet small-button"
+                  onClick={dismissRecoverySnapshot}
+                  type="button"
+                >
+                  Use server draft
+                </button>
+              </div>
+            </section>
+          ) : null}
+          {saveConflict ? (
+            <section className="error" role="alert">
+              <strong>A newer server edit prevented this save</strong>
+              <p>
+                Your local work is preserved. Reload the current server draft, download your local
+                copy, or duplicate it as a new checkpoint set.
+              </p>
+              <div className="button-row">
+                <button
+                  className="button small-button"
+                  onClick={() => void reloadLatestDraft()}
+                  type="button"
+                >
+                  Reload current
+                </button>
+                <button
+                  className="button-quiet small-button"
+                  onClick={preserveLocalCopy}
+                  type="button"
+                >
+                  Preserve local copy
+                </button>
+                <button
+                  className="button-quiet small-button"
+                  onClick={() => void duplicateLocalDraft()}
+                  type="button"
+                >
+                  Duplicate as new
+                </button>
+              </div>
+            </section>
+          ) : null}
+          {error ? (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {draftGuidance ? (
+            <div
+              className={`${validationAction ? "error" : "notice"} validation-guidance`}
+              role={validationAction ? "alert" : undefined}
+            >
+              <strong>
+                {validationAction
+                  ? `Cannot ${validationAction} this checkpoint set yet`
+                  : "Draft checklist"}
+              </strong>
+              <p>
+                <strong>Source:</strong> {draftGuidance.source}
+              </p>
+              <p>
+                <strong>How to fix:</strong> {draftGuidance.resolution}
+              </p>
+              <small>
+                Your in-progress draft is still saved automatically. Only preview and publishing
+                require every checkpoint to be complete.
+              </small>
+              {draftGuidance.questionIndex !== undefined &&
+              draftGuidance.questionIndex !== selectedIndex ? (
+                <button
+                  className="button-quiet small-button"
+                  onClick={() =>
+                    setSelectedQuestionId(
+                      draft?.questions[draftGuidance.questionIndex!]?.id ?? null,
+                    )
+                  }
+                  type="button"
+                >
+                  Edit checkpoint {draftGuidance.questionIndex + 1}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {publishLimitReached ? (
+            <p className="notice">
+              This plan&apos;s {entitlements?.maxPublishedQuizzes} published checkpoint set slots
+              are in use. Archive a published set or compare plans before publishing this draft.
+            </p>
+          ) : null}
+          {!draft ? (
+            <p>Loading editor…</p>
+          ) : (
+            <>
+              <section className="panel" style={{ marginBottom: 22 }}>
+                <div className="field">
+                  <label htmlFor="quiz-title">Title</label>
+                  <input
+                    aria-invalid={!draft.title.trim()}
+                    className="input"
+                    id="quiz-title"
+                    maxLength={160}
+                    onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+                    value={draft.title}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="quiz-description">Description</label>
+                  <textarea
+                    className="textarea"
+                    id="quiz-description"
+                    maxLength={1000}
+                    onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+                    value={draft.description}
+                  />
+                </div>
+                {roundExperiencesAvailable ? (
+                  <ExperiencePicker
+                    category={draft.category ?? "general"}
+                    onCategoryChange={(category: RoundCategory) => setDraft({ ...draft, category })}
+                    onPresetChange={(preset: ExperiencePresetId) =>
+                      setDraft({ ...draft, experiencePreset: { id: preset, version: 1 } })
+                    }
+                    presetId={draft.experiencePreset?.id ?? "focus"}
+                  />
+                ) : (
+                  <p className="notice">
+                    Round Experiences are not enabled for this workspace. Existing presentation
+                    metadata is preserved and new sessions use Focus.
+                  </p>
+                )}
+              </section>
+              <div className="editor-layout">
+                <QuestionNavigator
+                  canReuseQuestions={canEdit}
+                  draft={draft}
+                  insertType={insertType}
+                  onAddQuestion={addQuestion}
+                  onInsertTypeChange={setInsertType}
+                  onOpenQuestionReuse={openQuestionReuse}
+                  onSelectQuestion={setSelectedQuestionId}
+                  questionReuseOpen={questionReuseOpen}
+                  selectedQuestionId={selectedQuestionId}
+                  uxBeta={false}
+                />
+                <section className="panel" aria-label="Selected checkpoint editor">
+                  {!question ? (
+                    <div>
+                      <h2 style={{ fontSize: "1.7rem" }}>Add the first checkpoint</h2>
+                      <p className="muted">Choose a response format for the signal you need.</p>
+                    </div>
+                  ) : (
+                    <>
+                      <div
+                        className="toolbar"
+                        style={{ justifyContent: "space-between", marginBottom: 22 }}
+                      >
+                        <span className="status-pill">
+                          {editorTypeLabel(question.type, false)}
+                          {(question.delivery ?? "main") === "recheck" ? " · linked recheck" : ""}
+                        </span>
+                        <div className="button-row">
+                          <button
+                            className="button-quiet small-button"
+                            disabled={selectedIndex === 0}
+                            onClick={() => moveQuestion(question.id, -1)}
+                            type="button"
+                          >
+                            Move up
+                          </button>
+                          <button
+                            className="button-quiet small-button"
+                            disabled={selectedIndex === draft.questions.length - 1}
+                            onClick={() => moveQuestion(question.id, 1)}
+                            type="button"
+                          >
+                            Move down
+                          </button>
+                          <button
+                            className="button-quiet small-button"
+                            onClick={() => duplicateQuestion(question.id)}
+                            type="button"
+                          >
+                            Duplicate
+                          </button>
+                          {(question.delivery ?? "main") === "main" &&
+                          question.type !== "poll" &&
+                          question.type !== "rating" &&
+                          !question.linkedRecheckQuestionId ? (
+                            <button
+                              className="button-quiet small-button"
+                              onClick={addLinkedRecheck}
+                              type="button"
+                            >
+                              Add linked recheck
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="field">
+                        <label htmlFor="prompt">Checkpoint prompt</label>
+                        <textarea
+                          aria-invalid={!question.prompt.trim()}
+                          className="textarea"
+                          id="prompt"
+                          maxLength={500}
+                          onChange={(event) =>
+                            updateQuestion((item) => ({ ...item, prompt: event.target.value }))
+                          }
+                          value={question.prompt}
+                        />
+                      </div>
+                      <DiagnosticDetails
+                        onUpdateQuestion={updateQuestion}
+                        question={question}
+                        questions={draft.questions}
+                        uxBeta={false}
+                      />
+                      <MediaEditor
+                        mediaPreviewUrl={mediaPreviewUrl}
+                        mediaState={mediaState}
+                        mediaUploadsEnabled={mediaUploadsEnabled}
+                        onRemoveImage={() => {
+                          applyQuestionStructuralChange(
+                            { ...question, mediaId: null, mediaAlt: null },
+                            "Image removed.",
+                          );
+                          setMediaPreviewUrl("");
+                        }}
+                        onUpdateQuestion={updateQuestion}
+                        onUploadImage={(file) => void uploadQuestionImage(file)}
+                        question={question}
+                        uxBeta={false}
+                      />
+                      <ResponseEditor
+                        onStructuralChange={applyQuestionStructuralChange}
+                        onUpdateChoiceQuestion={updateChoiceQuestion}
+                        onUpdateQuestion={updateQuestion}
+                        question={question}
+                        uxBeta={false}
+                      />
+                      <DeliveryScoring onUpdateQuestion={updateQuestion} question={question} />
+                      {question.sourceCitations?.length ? (
+                        <details className="notice source-citations">
+                          <summary>Source evidence for this generated draft</summary>
+                          <p>
+                            These citations support the original assistant proposal. Recheck them if
+                            you change the checkpoint or answer.
+                          </p>
+                          <ul>
+                            {question.sourceCitations.map((citation) => (
+                              <li
+                                key={`${citation.sourceDigest}-${citation.locator}-${citation.excerpt}`}
+                              >
+                                <strong>
+                                  {citation.sourceName} · {citation.locator}:
+                                </strong>{" "}
+                                “{citation.excerpt}”
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                      <button
+                        className="button-danger"
+                        onClick={() => removeQuestion(question.id)}
+                        type="button"
+                      >
+                        Delete checkpoint
+                      </button>
+                    </>
+                  )}
+                </section>
+              </div>
+            </>
+          )}
+        </main>
+      </>
+    );
+  }
 
   return (
     <div className={builderStyles.builder}>

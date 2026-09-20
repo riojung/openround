@@ -40,6 +40,27 @@ export interface LocalResponseReceipt {
   confidence: ConfidenceValue | null;
 }
 
+export interface ParticipantRevealState {
+  revealed: boolean;
+  selectedCorrect: boolean;
+  selectedIncorrect: boolean;
+}
+
+/**
+ * Builds the learner-safe reveal state from the explicit server signal and the learner's own
+ * result. It never needs the facilitator-only correct response.
+ */
+export function participantRevealState(
+  snapshot: Pick<SessionSnapshot, "answerRevealed" | "myCorrect">,
+  selected = false,
+): ParticipantRevealState {
+  return {
+    revealed: snapshot.answerRevealed,
+    selectedCorrect: snapshot.answerRevealed && selected && snapshot.myCorrect === true,
+    selectedIncorrect: snapshot.answerRevealed && selected && snapshot.myCorrect === false,
+  };
+}
+
 export function participantResponseControlsDisabled(input: {
   questionOpen: boolean;
   saved: boolean;
