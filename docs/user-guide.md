@@ -59,6 +59,19 @@ Ratings and polls are always opinion checkpoints, unscored, and confidence-free.
 Use **Add linked recheck** to create a differently worded check for the same concept. Rechecks are
 unscored by default. A main checkpoint may link to one recheck; a recheck cannot link onward.
 
+### Reuse questions from another Round
+
+When the UX beta is enabled, an owner or editor can select **Reuse from your workspace** in the
+question Insert area. Search by Round title, question prompt, response type, or concept, then choose
+one or more main questions. A valid linked recheck is included with its main question and counts
+toward the current Round's 200-question limit.
+
+Selecting **Add _N_ questions** appends one independent snapshot to the current draft and
+autosaves it through the normal editor queue. Every copy receives fresh question and choice IDs;
+copied main-to-recheck links point to the copied recheck. The source Round is not changed, and
+later edits to either Round do not synchronize. Use the editor's one-step **Undo** immediately
+after the add to remove the whole copied selection.
+
 Optional images are private. When an operator enables malware scanning, provide meaningful alt
 text, select a JPEG, PNG, or WebP file up to 10 MB, and wait for upload and safety checking to
 finish.

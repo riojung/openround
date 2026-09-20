@@ -1381,6 +1381,7 @@ export async function registerRoutes(
   });
 
   app.get("/v1/quizzes", async (request, reply) => {
+    reply.header("cache-control", "private, no-store").header("pragma", "no-cache");
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
     const query = QuizListQuerySchema.parse(request.query);
@@ -1517,6 +1518,7 @@ export async function registerRoutes(
   });
 
   app.get("/v1/quizzes/:id", async (request, reply) => {
+    reply.header("cache-control", "private, no-store").header("pragma", "no-cache");
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
     const { id } = IdParamsSchema.parse(request.params);

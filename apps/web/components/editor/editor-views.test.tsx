@@ -58,11 +58,14 @@ describe("editor views", () => {
   it("keeps stable-id navigation and the beta Insert menu labels", () => {
     const markup = renderToStaticMarkup(
       <QuestionNavigator
+        canReuseQuestions
         draft={draft}
         insertType="numeric"
         onAddQuestion={() => undefined}
         onInsertTypeChange={() => undefined}
+        onOpenQuestionReuse={() => undefined}
         onSelectQuestion={() => undefined}
+        questionReuseOpen={false}
         selectedQuestionId={recheckQuestion.id}
         uxBeta
       />,
@@ -72,6 +75,9 @@ describe("editor views", () => {
     expect(markup).toContain('id="insert-question-guidance"');
     expect(markup).toContain("Use for calculations or measurements");
     expect(markup).toContain("Add question");
+    expect(markup).toContain("Reuse from your workspace");
+    expect(markup).toContain('aria-controls="private-question-bank"');
+    expect(markup).toContain('aria-expanded="false"');
     expect(markup).toContain('aria-current="true"');
     expect(markup).toContain("Which model fits the new evidence? · recheck");
   });
@@ -92,6 +98,7 @@ describe("editor views", () => {
     expect(markup).toContain("Checkpoints");
     expect(markup).toContain(">Numeric</button>");
     expect(markup).not.toContain('id="insert-question-type"');
+    expect(markup).not.toContain("Reuse from your workspace");
   });
 
   it("renders diagnostic details as a beta disclosure without exposing IDs as labels", () => {

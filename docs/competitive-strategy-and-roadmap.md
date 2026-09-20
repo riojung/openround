@@ -12,14 +12,15 @@ This document records the strategy baseline that led to the Recovery Loop. The m
 implements six response types, confidence, misconception rationale, deterministic intervention and
 recheck flows, source-grounded authoring, import/export, cohosting, accountless follow-ups,
 workspace history, participant-selected session avatars, the Recovery Rehearsal, and standalone
-practice assignment from any published Round. Statements below describing those capabilities as
+practice assignment from any published Round. The first P1 authoring slice also adds private
+cross-Round question reuse as an independent snapshot with fresh IDs and remapped valid recheck
+links; it is not a synchronized question bank. Statements below describing those capabilities as
 absent should be read as historical audit findings.
 
-The current product frontier is private workspace question reuse, live time-flex, hosted capacity
-evidence, team discussion delivery, short-text/rank response types, slide companion workflows, and
-contract-gated NRPS/AGS. The Canadian beta remains blocked by deployment, operational,
-accessibility, security, legal, device, and design-partner evidence rather than a missing P0 feature
-epic.
+The current product frontier is live time-flex, hosted capacity evidence, team discussion delivery,
+short-text/rank response types, slide companion workflows, and contract-gated NRPS/AGS. The
+Canadian beta remains blocked by deployment, operational, accessibility, security, legal, device,
+and design-partner evidence rather than a missing P0 feature epic.
 
 ## Executive decision
 

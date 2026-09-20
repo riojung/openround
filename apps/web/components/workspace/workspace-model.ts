@@ -52,6 +52,29 @@ export function responseTypeLabel(type: QuestionType) {
   return questionTypeOptions.find((option) => option.type === type)?.label ?? type;
 }
 
+export function prioritizeStartersForSegment<
+  T extends { segment: "all" | "education" | "workplace" },
+>(starters: readonly T[], segment: "education" | "workplace" | null | undefined): T[] {
+  if (!segment) return [...starters];
+
+  const recommended: T[] = [];
+  const remaining: T[] = [];
+  for (const starter of starters) {
+    (starter.segment === "all" || starter.segment === segment ? recommended : remaining).push(
+      starter,
+    );
+  }
+  return [...recommended, ...remaining];
+}
+
+export function formatStarterCategory(category: string) {
+  return category
+    .split("_")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toLocaleUpperCase("en-CA") + word.slice(1))
+    .join(" ");
+}
+
 export function dashboardMessage(params: URLSearchParams) {
   if (params.get("billing") === "success") return "Your plan update is being activated.";
   if (params.get("invitation") === "accepted") return "Workspace invitation accepted.";

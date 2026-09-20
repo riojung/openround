@@ -2530,6 +2530,57 @@ html[data-openround-motion="reduced"] *::after {
   margin: 0;
 }
 
+.question-reuse-picker {
+  margin-bottom: 22px;
+}
+
+.question-reuse-picker .page-heading {
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.question-reuse-picker .page-heading h2 {
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  margin-bottom: 8px;
+}
+
+.question-reuse-sources {
+  display: grid;
+  gap: 12px;
+}
+
+.question-reuse-sources .editor-disclosure {
+  margin: 0;
+}
+
+.question-reuse-sources fieldset {
+  border: 0;
+  margin: 0;
+  padding: 8px 0 0;
+}
+
+.question-reuse-sources .question-tab {
+  align-items: flex-start;
+  cursor: pointer;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 22px minmax(0, 1fr);
+  margin-top: 10px;
+  width: 100%;
+}
+
+.question-reuse-sources .question-tab input {
+  accent-color: var(--teal);
+  height: 20px;
+  margin: 2px 0 0;
+  width: 20px;
+}
+
+.question-reuse-sources .question-tab span > span {
+  display: block;
+  margin-top: 4px;
+}
+
 .undo-toast {
   align-items: center;
   background: var(--navy);

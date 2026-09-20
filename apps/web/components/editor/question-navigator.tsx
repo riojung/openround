@@ -15,17 +15,23 @@ export function QuestionNavigator({
   insertType,
   selectedQuestionId,
   uxBeta,
+  canReuseQuestions,
   onAddQuestion,
   onInsertTypeChange,
+  onOpenQuestionReuse,
   onSelectQuestion,
+  questionReuseOpen,
 }: {
   draft: QuizDraft;
   insertType: QuestionType;
   selectedQuestionId: string | null;
   uxBeta: boolean;
+  canReuseQuestions?: boolean;
   onAddQuestion: (type: QuestionType) => void;
   onInsertTypeChange: (type: QuestionType) => void;
+  onOpenQuestionReuse?: () => void;
   onSelectQuestion: (questionId: string) => void;
+  questionReuseOpen?: boolean;
 }) {
   return (
     <aside className="panel">
@@ -74,6 +80,18 @@ export function QuestionNavigator({
           >
             Add question
           </button>
+          {canReuseQuestions && onOpenQuestionReuse ? (
+            <button
+              aria-controls="private-question-bank"
+              aria-expanded={Boolean(questionReuseOpen)}
+              className="button-quiet small-button"
+              id="open-private-question-bank"
+              onClick={onOpenQuestionReuse}
+              type="button"
+            >
+              Reuse from your workspace
+            </button>
+          ) : null}
         </div>
       ) : (
         <div className="button-row" style={{ marginTop: 16 }}>
