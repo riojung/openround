@@ -677,7 +677,7 @@ function BetaDashboard() {
   const { creator, entitlements, productFeatures, canEdit, startUpgrade } = useWorkspace();
   const [quizzes, setQuizzes] = useState<QuizRecord[]>([]);
   const [folders, setFolders] = useState<FolderRecord[]>([]);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
   const [folderFilter, setFolderFilter] = useState("all");
   const [newFolderName, setNewFolderName] = useState("");
   const [editingFolder, setEditingFolder] = useState<FolderRecord | null>(null);
@@ -732,6 +732,10 @@ function BetaDashboard() {
       view: readRoundLibraryView(window.localStorage, workspaceId),
     });
   }, [workspaceId]);
+
+  useEffect(() => {
+    setSearch(searchParams.get("q") ?? "");
+  }, [searchParams]);
 
   function setLibraryView(view: RoundLibraryView) {
     if (!workspaceId) return;
@@ -1256,7 +1260,7 @@ function BetaDashboard() {
 function DashboardGate() {
   const { loading, productFeatures } = useWorkspace();
   if (loading) return <p className={styles.dashboardLoading}>Loading your workspace…</p>;
-  if (!productFeatures?.uxBeta) return <LegacyDashboardPage />;
+  if (!productFeatures?.uxBeta || !productFeatures.workspaceShell) return <LegacyDashboardPage />;
   return <BetaDashboard />;
 }
 

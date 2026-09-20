@@ -6,10 +6,152 @@ import {
   FollowupAccessLimitError,
   MemoryRepository,
   PublishedQuizLimitError,
+  QuizDraftRevisionConflictError,
   SessionNotActiveError,
 } from "../src/index.js";
 
+function publishableRound(title: string) {
+  return {
+    title,
+    description: "",
+    questions: [
+      {
+        id: randomUUID(),
+        type: "numeric" as const,
+        prompt: "What is one plus one?",
+        correctValue: "2",
+        tolerance: "0",
+        unit: null,
+        timeLimitSeconds: 30,
+        basePoints: 1_000,
+        explanation: "One plus one is two.",
+        mediaId: null,
+        mediaAlt: null,
+      },
+    ],
+  };
+}
+
 describe("memory repository", () => {
+  it("fences stale draft saves and publishes the acknowledged revision idempotently", async () => {
+    const repository = new MemoryRepository();
+    const workspaceId = randomUUID();
+    const quizId = randomUUID();
+    const now = new Date("2026-09-19T12:00:00.000Z");
+    const original = { title: "Original", description: "", questions: [] };
+    const created = await repository.createQuiz({
+      id: quizId,
+      workspaceId,
+      title: original.title,
+      description: original.description,
+      status: "draft",
+      draft: original,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(created).toMatchObject({ draftRevision: 0, publishedDraftRevision: null });
+
+    const savedDraft = { ...original, title: "Saved revision" };
+    const saved = await repository.updateQuiz(workspaceId, quizId, savedDraft, 0);
+    expect(saved).toMatchObject({ draftRevision: 1, draft: { title: "Saved revision" } });
+    await expect(repository.updateQuiz(workspaceId, quizId, original, 0)).rejects.toEqual(
+      expect.objectContaining<Partial<QuizDraftRevisionConflictError>>({
+        expectedRevision: 0,
+        currentRevision: 1,
+      }),
+    );
+
+    const versionInput = {
+      id: randomUUID(),
+      workspaceId,
+      quizId,
+      version: 1,
+      content: publishableRound(savedDraft.title),
+      contentHash: "same-content",
+      publishedAt: now,
+    };
+    await expect(repository.publishQuiz(versionInput, null, 0)).rejects.toBeInstanceOf(
+      QuizDraftRevisionConflictError,
+    );
+    const version = await repository.publishQuiz(versionInput, null, 1);
+    expect(version).toMatchObject({ sourceDraftRevision: 1 });
+    expect(await repository.getQuiz(workspaceId, quizId)).toMatchObject({
+      currentVersionId: version.id,
+      draftRevision: 1,
+      publishedDraftRevision: 1,
+    });
+
+    const duplicate = await repository.publishQuiz(
+      { ...versionInput, id: randomUUID(), version: 2 },
+      null,
+      1,
+    );
+    expect(duplicate.id).toBe(version.id);
+  });
+
+  it("deduplicates Round draft mutations and bounds recovery history", async () => {
+    const repository = new MemoryRepository();
+    const workspaceId = randomUUID();
+    const editorId = randomUUID();
+    const quizId = randomUUID();
+    const original = { title: "Original", description: "", questions: [] };
+    await repository.createQuiz({
+      id: quizId,
+      workspaceId,
+      title: original.title,
+      description: original.description,
+      status: "draft",
+      draft: original,
+      currentVersionId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const mutationId = randomUUID();
+    const mutation = {
+      workspaceId,
+      quizId,
+      draft: { ...original, title: "Revision 1" },
+      expectedRevision: 0,
+      mutationId,
+      editorId,
+      schemaVersion: 1,
+      draftHash: "revision-1",
+    };
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({
+      draftRevision: 1,
+      lastEditedBy: editorId,
+    });
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({
+      draftRevision: 1,
+    });
+
+    for (let expectedRevision = 1; expectedRevision < 25; expectedRevision += 1) {
+      await repository.updateQuizDraft({
+        ...mutation,
+        draft: { ...original, title: `Revision ${expectedRevision + 1}` },
+        expectedRevision,
+        mutationId: randomUUID(),
+        draftHash: `revision-${expectedRevision + 1}`,
+      });
+    }
+    const history = await repository.listQuizDraftHistory(workspaceId, quizId);
+    expect(history).toHaveLength(20);
+    expect(history[0]?.revision).toBe(25);
+    expect(history.at(-1)?.revision).toBe(6);
+
+    const restored = await repository.restoreQuizDraftHistory({
+      workspaceId,
+      quizId,
+      historyRevision: 10,
+      expectedRevision: 25,
+      mutationId: randomUUID(),
+      editorId,
+    });
+    expect(restored).toMatchObject({ draftRevision: 26, draft: { title: "Revision 10" } });
+  });
+
   it("applies an initial plan only to the deterministic in-memory workspace", async () => {
     const workspaceId = randomUUID();
     const repository = new MemoryRepository({
@@ -75,7 +217,7 @@ describe("memory repository", () => {
       workspaceId: owner.workspaceId,
       quizId,
       version: 1,
-      content,
+      content: publishableRound(content.title),
       contentHash: randomUUID(),
       publishedAt: now,
     });
@@ -354,7 +496,7 @@ describe("memory repository", () => {
         workspaceId,
         quizId,
         version: 1,
-        content,
+        content: publishableRound(content.title),
         contentHash: randomUUID(),
         publishedAt: now,
       },
@@ -568,7 +710,7 @@ describe("memory repository", () => {
       workspaceId,
       quizId,
       version: 1,
-      content: draft,
+      content: publishableRound(draft.title),
       contentHash: randomUUID(),
       publishedAt: createdAt,
     });
@@ -577,7 +719,7 @@ describe("memory repository", () => {
       workspaceId,
       quizId,
       version: 2,
-      content: draft,
+      content: publishableRound(draft.title),
       contentHash: randomUUID(),
       publishedAt: new Date(createdAt.getTime() + 1_000),
     });
@@ -586,7 +728,7 @@ describe("memory repository", () => {
       workspaceId: otherWorkspaceId,
       quizId: otherQuizId,
       version: 1,
-      content: { ...draft, title: "Other workspace Round" },
+      content: publishableRound("Other workspace Round"),
       contentHash: randomUUID(),
       publishedAt: createdAt,
     });
@@ -835,7 +977,7 @@ describe("memory repository", () => {
       workspaceId,
       quizId,
       version: 1,
-      content: { ...draft, title },
+      content: publishableRound(title),
       contentHash: randomUUID(),
       publishedAt: now,
     });

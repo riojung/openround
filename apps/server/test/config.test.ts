@@ -23,6 +23,11 @@ describe("production configuration", () => {
     expect(config.FEATURE_ROUND_EXPERIENCES).toBe(true);
     expect(config.FEATURE_AUDIENCE_PULSE).toBe(true);
     expect(config.FEATURE_ROOM_CHAT).toBe(true);
+    expect(config.FEATURE_WORKSPACE_SHELL).toBe(false);
+    expect(config.FEATURE_BUILDER_V2).toBe(false);
+    expect(config.FEATURE_PRESENTATIONS).toBe(false);
+    expect(config.FEATURE_GROUPS).toBe(false);
+    expect(config.FEATURE_DISCOVER).toBe(false);
     expect(config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST).toEqual([]);
   });
 
@@ -54,6 +59,11 @@ describe("production configuration", () => {
         FEATURE_UX_BETA: "true",
         FEATURE_RECOVERY_REHEARSAL: "true",
         FEATURE_PRACTICE_ASSIGNMENTS: "false",
+        FEATURE_WORKSPACE_SHELL: "true",
+        FEATURE_BUILDER_V2: "true",
+        FEATURE_PRESENTATIONS: "true",
+        FEATURE_GROUPS: "false",
+        FEATURE_DISCOVER: "true",
         UX_BETA_WORKSPACE_ALLOWLIST: `${first},${second}`,
       }),
     );
@@ -62,6 +72,11 @@ describe("production configuration", () => {
       uxBeta: true,
       recoveryRehearsal: true,
       practiceAssignments: false,
+      workspaceShell: true,
+      builderV2: true,
+      presentations: true,
+      groups: false,
+      discover: true,
     });
     expect(summary.uxBetaWorkspaceAllowlistSize).toBe(2);
     expect(summary.buildId).toBe(buildId);

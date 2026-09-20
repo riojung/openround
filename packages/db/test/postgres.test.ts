@@ -1,4 +1,4 @@
-import { randomInt, randomUUID } from "node:crypto";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,6 +8,7 @@ import { Pool } from "pg";
 import {
   ProductEventNameSchema,
   type AuthoringDraft,
+  type PresentationDraft,
   type QuizDraft,
   type Report,
 } from "@openround/contracts";
@@ -19,15 +20,212 @@ import {
 } from "@openround/game-engine";
 import { PostgresRepository } from "../src/postgres.js";
 import {
+  PresentationMutationConflictError,
+  PostgresCollaborationGroupRepository,
+  PostgresLibraryMetadataRepository,
+  PostgresPresentationRepository,
+  PostgresPresentationSessionRepository,
+} from "../src/index.js";
+import {
   FollowupAccessLimitError,
+  QuizDraftRevisionConflictError,
   SessionCodeConflictError,
   SessionNotActiveError,
   SessionVersionConflictError,
 } from "../src/types.js";
+import { discoverMigrations, runMigrations } from "../src/migrations.js";
 
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
 const runtimeUrl = process.env.TEST_DATABASE_URL;
 const enabled = Boolean(adminUrl && runtimeUrl);
+
+function publishableRound(title: string): QuizDraft {
+  return {
+    title,
+    description: "",
+    questions: [
+      {
+        id: randomUUID(),
+        type: "numeric",
+        prompt: "What is one plus one?",
+        correctValue: "2",
+        tolerance: "0",
+        unit: null,
+        timeLimitSeconds: 30,
+        basePoints: 1_000,
+        explanation: "One plus one is two.",
+        mediaId: null,
+        mediaAlt: null,
+      },
+    ],
+  };
+}
+
+describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
+  it("backfills revision metadata on a populated pre-018 schema and restores immutability", async () => {
+    const schema = `openround_upgrade_${randomUUID().replaceAll("-", "")}`;
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const preRevisionDirectory = await mkdtemp(join(tmpdir(), "openround-pre-revision-"));
+    const adminPool = new Pool({ connectionString: adminUrl });
+    let isolatedPool: Pool | undefined;
+
+    try {
+      const migrations = await discoverMigrations(migrationsDirectory);
+      for (const migration of migrations.filter(({ version }) => version <= 17)) {
+        await writeFile(join(preRevisionDirectory, migration.fileName), migration.sql);
+      }
+
+      await adminPool.query(`CREATE SCHEMA "${schema}"`);
+      const isolatedUrl = new URL(adminUrl!);
+      isolatedUrl.searchParams.set("options", `-csearch_path=${schema},public`);
+      isolatedPool = new Pool({ connectionString: isolatedUrl.toString(), max: 1 });
+
+      await expect(
+        isolatedPool.query<{ current_schema: string }>("SELECT current_schema()"),
+      ).resolves.toMatchObject({ rows: [{ current_schema: schema }] });
+      await runMigrations(isolatedPool, preRevisionDirectory);
+
+      const ownerId = randomUUID();
+      const workspaceId = randomUUID();
+      const quizId = randomUUID();
+      const versionId = randomUUID();
+      const draft = publishableRound("Legacy published round");
+      const preMigrationClient = await isolatedPool.connect();
+      try {
+        await preMigrationClient.query("SELECT set_config('app.system_access', 'on', false)");
+        await preMigrationClient.query("BEGIN");
+        await preMigrationClient.query("INSERT INTO users (id, email) VALUES ($1, $2)", [
+          ownerId,
+          `upgrade-${ownerId}@example.com`,
+        ]);
+        await preMigrationClient.query(
+          `INSERT INTO workspaces (id, name, segment, owner_id)
+           VALUES ($1, 'Upgrade audit', 'workplace', $2)`,
+          [workspaceId, ownerId],
+        );
+        await preMigrationClient.query(
+          `INSERT INTO workspace_members (workspace_id, user_id, role)
+           VALUES ($1, $2, 'owner')`,
+          [workspaceId, ownerId],
+        );
+        await preMigrationClient.query(
+          `INSERT INTO quizzes
+             (id, workspace_id, title, description, status, draft, current_version_id)
+           VALUES ($1, $2, $3, '', 'draft', $4::jsonb, NULL)`,
+          [quizId, workspaceId, draft.title, JSON.stringify(draft)],
+        );
+        await preMigrationClient.query(
+          `INSERT INTO quiz_versions
+             (id, workspace_id, quiz_id, version, content, content_hash)
+           VALUES ($1, $2, $3, 1, $4::jsonb, 'legacy-content-hash')`,
+          [versionId, workspaceId, quizId, JSON.stringify(draft)],
+        );
+        await preMigrationClient.query(
+          `UPDATE quizzes
+           SET current_version_id = $1, status = 'published'
+           WHERE id = $2`,
+          [versionId, quizId],
+        );
+        await preMigrationClient.query("COMMIT");
+
+        await expect(
+          preMigrationClient.query(
+            "UPDATE quiz_versions SET content_hash = 'must-remain-blocked' WHERE id = $1",
+            [versionId],
+          ),
+        ).rejects.toMatchObject({ code: "55000" });
+      } catch (error) {
+        await preMigrationClient.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        preMigrationClient.release();
+      }
+
+      await runMigrations(isolatedPool, migrationsDirectory);
+
+      const verificationClient = await isolatedPool.connect();
+      try {
+        await verificationClient.query("SELECT set_config('app.system_access', 'on', false)");
+        await expect(
+          verificationClient.query<{
+            draft_revision: string;
+            published_draft_revision: string;
+            source_draft_revision: string;
+          }>(
+            `SELECT quiz.draft_revision, quiz.published_draft_revision,
+                    version.source_draft_revision
+             FROM quizzes AS quiz
+             JOIN quiz_versions AS version ON version.id = quiz.current_version_id
+             WHERE quiz.id = $1`,
+            [quizId],
+          ),
+        ).resolves.toMatchObject({
+          rows: [
+            {
+              draft_revision: "0",
+              published_draft_revision: "0",
+              source_draft_revision: "0",
+            },
+          ],
+        });
+
+        await expect(
+          verificationClient.query<{ tgenabled: string }>(
+            `SELECT tgenabled
+             FROM pg_trigger
+             WHERE tgrelid = 'quiz_versions'::regclass
+               AND tgname = 'quiz_versions_immutable'
+               AND NOT tgisinternal`,
+          ),
+        ).resolves.toMatchObject({ rows: [{ tgenabled: "O" }] });
+        await expect(
+          verificationClient.query(
+            "UPDATE quiz_versions SET content_hash = 'still-blocked' WHERE id = $1",
+            [versionId],
+          ),
+        ).rejects.toMatchObject({ code: "55000" });
+
+        await expect(
+          verificationClient.query<{ count: string; maximum: number }>(
+            "SELECT count(*) AS count, max(version) AS maximum FROM _openround_migrations",
+          ),
+        ).resolves.toMatchObject({ rows: [{ count: "30", maximum: 30 }] });
+
+        await expect(
+          verificationClient.query(
+            `INSERT INTO product_events
+               (id, workspace_id, event_name, dimensions, occurred_at, expires_at)
+             VALUES ($1, $2, 'draft_conflict', $3::jsonb, now(), now() + interval '1 day')`,
+            [randomUUID(), workspaceId, JSON.stringify({ artifactType: "presentation" })],
+          ),
+        ).resolves.toMatchObject({ rowCount: 1 });
+        await expect(
+          verificationClient.query(
+            `INSERT INTO product_events
+               (id, workspace_id, event_name, dimensions, occurred_at, expires_at)
+             VALUES ($1, $2, 'draft_conflict', $3::jsonb, now(), now() + interval '1 day')`,
+            [randomUUID(), workspaceId, JSON.stringify({ artifactType: "unknown" })],
+          ),
+        ).rejects.toMatchObject({ code: "23514" });
+        await expect(
+          verificationClient.query(
+            `INSERT INTO product_events
+               (id, workspace_id, event_name, dimensions, occurred_at, expires_at)
+             VALUES ($1, $2, 'draft_conflict', $3::jsonb, now(), now() + interval '1 day')`,
+            [randomUUID(), workspaceId, JSON.stringify({ freeForm: "private" })],
+          ),
+        ).rejects.toMatchObject({ code: "23514" });
+      } finally {
+        verificationClient.release();
+      }
+    } finally {
+      await isolatedPool?.end();
+      await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      await adminPool.end();
+      await rm(preRevisionDirectory, { recursive: true, force: true });
+    }
+  });
+});
 
 describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
   let repository: PostgresRepository;
@@ -75,6 +273,19 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 15, name: "product_event_funnel" },
       { version: 16, name: "round_last_hosted_indexes" },
       { version: 17, name: "round_practice_assignments" },
+      { version: 18, name: "round_authoring_revisions" },
+      { version: 19, name: "presentations" },
+      { version: 20, name: "presentation_live_sessions" },
+      { version: 21, name: "collaboration_groups" },
+      { version: 22, name: "presentation_session_retention" },
+      { version: 23, name: "presentation_live_scoring" },
+      { version: 24, name: "media_references" },
+      { version: 25, name: "round_draft_history" },
+      { version: 26, name: "library_metadata" },
+      { version: 27, name: "artifact_schema_versions" },
+      { version: 28, name: "authoring_product_events" },
+      { version: 29, name: "presentation_live_expiry" },
+      { version: 30, name: "presentation_noop_mutations" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -84,7 +295,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("17");
+    expect(bootstrapped.rows[0]?.count).toBe("30");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -129,15 +340,694 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     return result!;
   }
 
+  it("atomically fences draft replacements and revision-bound publishing", async () => {
+    const owner = await creator("draft-revision");
+    const now = new Date();
+    const quizId = randomUUID();
+    const original = publishableRound("Original");
+    const created = await repository.createQuiz({
+      id: quizId,
+      workspaceId: owner.workspaceId,
+      title: original.title,
+      description: original.description,
+      status: "draft",
+      draft: original,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(created.draftRevision).toBe(0);
+
+    const next = { ...original, title: "Saved" };
+    const mutationId = randomUUID();
+    const mutation = {
+      workspaceId: owner.workspaceId,
+      quizId,
+      draft: next,
+      expectedRevision: 0,
+      mutationId,
+      editorId: owner.userId,
+      schemaVersion: 1,
+      draftHash: "saved-draft",
+    };
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({
+      draftRevision: 1,
+      lastEditedBy: owner.userId,
+    });
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({
+      draftRevision: 1,
+    });
+    await expect(
+      repository.updateQuizDraft({
+        ...mutation,
+        draft: original,
+        mutationId: randomUUID(),
+        draftHash: "stale-draft",
+      }),
+    ).rejects.toEqual(expect.objectContaining({ expectedRevision: 0, currentRevision: 1 }));
+    await expect(repository.listQuizDraftHistory(owner.workspaceId, quizId)).resolves.toEqual([
+      expect.objectContaining({ revision: 1, savedBy: owner.userId }),
+      expect.objectContaining({ revision: 0 }),
+    ]);
+
+    const publication = {
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      quizId,
+      version: 1,
+      content: next,
+      contentHash: randomUUID(),
+      publishedAt: now,
+    };
+    await expect(repository.publishQuiz(publication, null, 0)).rejects.toBeInstanceOf(
+      QuizDraftRevisionConflictError,
+    );
+    const version = await repository.publishQuiz(publication, null, 1);
+    expect(version.sourceDraftRevision).toBe(1);
+    await expect(repository.getQuiz(owner.workspaceId, quizId)).resolves.toMatchObject({
+      currentVersionId: version.id,
+      draftRevision: 1,
+      publishedDraftRevision: 1,
+    });
+
+    await repository.updateQuizDraft({
+      ...mutation,
+      draft: { ...next, title: "Intervening PostgreSQL save" },
+      expectedRevision: 1,
+      mutationId: randomUUID(),
+      editorId: owner.userId,
+      draftHash: "intervening-postgres-save",
+    });
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({
+      draftRevision: 1,
+      draft: { title: "Saved" },
+    });
+    await expect(repository.getQuiz(owner.workspaceId, quizId)).resolves.toMatchObject({
+      draftRevision: 2,
+      draft: { title: "Intervening PostgreSQL save" },
+    });
+
+    const restoreMutationId = randomUUID();
+    const restoreInput = {
+      workspaceId: owner.workspaceId,
+      quizId,
+      historyRevision: 1,
+      expectedRevision: 2,
+      mutationId: restoreMutationId,
+      editorId: owner.userId,
+    };
+    await repository.restoreQuizDraftHistory(restoreInput);
+    await repository.updateQuizDraft({
+      ...mutation,
+      draft: { ...next, title: "After PostgreSQL restore" },
+      expectedRevision: 3,
+      mutationId: randomUUID(),
+      draftHash: "after-postgres-restore",
+    });
+    await expect(repository.restoreQuizDraftHistory(restoreInput)).resolves.toMatchObject({
+      draftRevision: 3,
+      draft: { title: "Saved" },
+    });
+    await expect(repository.getQuiz(owner.workspaceId, quizId)).resolves.toMatchObject({
+      draftRevision: 4,
+      draft: { title: "After PostgreSQL restore" },
+    });
+  });
+
+  it("tracks media usage through database triggers and protects referenced assets", async () => {
+    const owner = await creator("media-reference-owner");
+    const outsider = await creator("media-reference-outsider");
+    const now = new Date();
+    const mediaId = randomUUID();
+    const orphanId = randomUUID();
+    for (const id of [mediaId, orphanId]) {
+      await repository.createMediaAsset({
+        id,
+        workspaceId: owner.workspaceId,
+        objectKey: `media/${owner.workspaceId}/${id}.png`,
+        mimeType: "image/png",
+        sizeBytes: 128,
+        scanStatus: "clean",
+        altText: "File description",
+        createdAt: new Date(now.getTime() - 8 * 86_400_000),
+      });
+    }
+    const quizId = randomUUID();
+    const draft = {
+      title: "Media reference",
+      description: "",
+      category: "education",
+      experiencePreset: { id: "focus", version: 1 },
+      questions: [
+        {
+          id: randomUUID(),
+          type: "single_select",
+          prompt: "Which option is supported?",
+          purpose: "diagnostic",
+          confidence: "optional",
+          delivery: "main",
+          conceptKeys: ["evidence"],
+          linkedRecheckQuestionId: null,
+          choices: [
+            { id: randomUUID(), label: "A", isCorrect: true },
+            { id: randomUUID(), label: "B", isCorrect: false },
+          ],
+          timeLimitSeconds: 20,
+          basePoints: 1_000,
+          explanation: "A is supported.",
+          mediaId,
+          mediaAlt: "Placement description",
+        },
+      ],
+    } satisfies QuizDraft;
+    await repository.createQuiz({
+      id: quizId,
+      workspaceId: owner.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await expect(repository.deleteMediaAsset(owner.workspaceId, mediaId)).resolves.toBe(false);
+    await expect(repository.listMediaReferences(outsider.workspaceId, mediaId)).resolves.toEqual(
+      [],
+    );
+    const unattached = await repository.listUnattachedMedia(now, 1_000);
+    expect(unattached).toEqual(expect.arrayContaining([expect.objectContaining({ id: orphanId })]));
+    expect(unattached).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: mediaId })]),
+    );
+    await expect(repository.listMediaReferences(owner.workspaceId, mediaId)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ownerType: "quiz_draft", ownerId: quizId }),
+        expect.objectContaining({ ownerType: "quiz_history" }),
+      ]),
+    );
+
+    const version = await repository.publishQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      quizId,
+      version: 1,
+      content: draft,
+      contentHash: randomUUID(),
+      publishedAt: now,
+    });
+    await expect(repository.listMediaReferences(owner.workspaceId, mediaId)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ownerType: "quiz_draft", ownerId: quizId }),
+        expect.objectContaining({ ownerType: "quiz_version", ownerId: version.id }),
+      ]),
+    );
+    await expect(repository.exportAccount(owner.userId)).resolves.toMatchObject({
+      mediaReferences: expect.arrayContaining([
+        expect.objectContaining({ media_id: mediaId, owner_type: "quiz_draft" }),
+        expect.objectContaining({ media_id: mediaId, owner_type: "quiz_version" }),
+      ]),
+    });
+    await repository.deleteAccount(owner.userId);
+    await expect(repository.listMediaReferences(owner.workspaceId)).resolves.toEqual([]);
+    await expect(repository.listMediaAssets(owner.workspaceId)).resolves.toEqual([]);
+  });
+
+  it("isolates presentation children and serializes idempotent draft mutations", async () => {
+    const owner = await creator("presentation-owner");
+    const outsider = await creator("presentation-outsider");
+    const presentations = new PostgresPresentationRepository(repository);
+    const libraryMetadata = new PostgresLibraryMetadataRepository(repository);
+    const now = new Date();
+    const draft = {
+      title: "Secure presentation",
+      description: "",
+      experiencePreset: { id: "focus", version: 1 },
+      schemaVersion: 1,
+      blocks: [
+        {
+          id: randomUUID(),
+          kind: "content",
+          layout: "title_body",
+          title: "Opening",
+          body: "",
+          mediaId: null,
+          mediaAlt: null,
+          speakerNotes: "",
+        },
+      ],
+    } satisfies PresentationDraft;
+    const presentation = await presentations.createPresentation({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      draftRevision: 0,
+      draftSchemaVersion: 1,
+      currentVersionId: null,
+      folderId: null,
+      publishedDraftRevision: null,
+      lastEditedBy: owner.userId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await expect(
+      presentations.getPresentation(outsider.workspaceId, presentation.id),
+    ).resolves.toBeNull();
+
+    const folder = await repository.createFolder({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      name: `Briefings ${randomUUID()}`,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await expect(
+      presentations.organizePresentation(owner.workspaceId, presentation.id, folder.id),
+    ).resolves.toMatchObject({ folderId: folder.id });
+    await libraryMetadata.setFavorite({
+      workspaceId: owner.workspaceId,
+      userId: owner.userId,
+      artifactType: "presentation",
+      artifactId: presentation.id,
+      favorite: true,
+      now,
+    });
+    await expect(
+      libraryMetadata.listFavorites(owner.workspaceId, owner.userId),
+    ).resolves.toMatchObject([{ artifactId: presentation.id, userId: owner.userId }]);
+
+    const noOpMutation = {
+      workspaceId: owner.workspaceId,
+      presentationId: presentation.id,
+      draft,
+      expectedRevision: 0,
+      mutationId: randomUUID(),
+      editorId: owner.userId,
+      draftHash: "unchanged-presentation",
+    };
+    await expect(presentations.updatePresentationDraft(noOpMutation)).resolves.toMatchObject({
+      draftRevision: 0,
+    });
+    await expect(presentations.updatePresentationDraft(noOpMutation)).resolves.toMatchObject({
+      draftRevision: 0,
+    });
+    await expect(
+      presentations.listPresentationHistory(owner.workspaceId, presentation.id, 20),
+    ).resolves.toHaveLength(1);
+
+    const mutationId = randomUUID();
+    const update = {
+      workspaceId: owner.workspaceId,
+      presentationId: presentation.id,
+      draft: { ...draft, title: "Saved once" },
+      expectedRevision: 0,
+      mutationId,
+      editorId: owner.userId,
+      draftHash: "same-request",
+    };
+    const retried = await Promise.all([
+      presentations.updatePresentationDraft(update),
+      presentations.updatePresentationDraft(update),
+    ]);
+    expect(retried).toEqual([
+      expect.objectContaining({ draftRevision: 1 }),
+      expect.objectContaining({ draftRevision: 1 }),
+    ]);
+    await expect(
+      presentations.updatePresentationDraft({ ...update, draftHash: "different-request" }),
+    ).rejects.toBeInstanceOf(PresentationMutationConflictError);
+
+    await presentations.updatePresentationDraft({
+      ...update,
+      draft: { ...draft, title: "Intervening PostgreSQL presentation save" },
+      expectedRevision: 1,
+      mutationId: randomUUID(),
+      editorId: outsider.userId,
+      draftHash: "intervening-presentation-save",
+    });
+    await expect(presentations.updatePresentationDraft(update)).resolves.toMatchObject({
+      draftRevision: 1,
+      draft: { title: "Saved once" },
+      lastEditedBy: owner.userId,
+    });
+    await expect(
+      presentations.getPresentation(owner.workspaceId, presentation.id),
+    ).resolves.toMatchObject({
+      draftRevision: 2,
+      draft: { title: "Intervening PostgreSQL presentation save" },
+    });
+
+    const restoreMutationId = randomUUID();
+    const restoreInput = {
+      workspaceId: owner.workspaceId,
+      presentationId: presentation.id,
+      historyRevision: 1,
+      expectedRevision: 2,
+      mutationId: restoreMutationId,
+      editorId: owner.userId,
+    };
+    await presentations.restorePresentationHistory(restoreInput);
+    await presentations.updatePresentationDraft({
+      ...update,
+      draft: { ...draft, title: "After PostgreSQL presentation restore" },
+      expectedRevision: 3,
+      mutationId: randomUUID(),
+      draftHash: "after-presentation-restore",
+    });
+    await expect(presentations.restorePresentationHistory(restoreInput)).resolves.toMatchObject({
+      draftRevision: 3,
+      draft: { title: "Saved once" },
+      lastEditedBy: owner.userId,
+    });
+    await expect(
+      presentations.getPresentation(owner.workspaceId, presentation.id),
+    ).resolves.toMatchObject({
+      draftRevision: 4,
+      draft: { title: "After PostgreSQL presentation restore" },
+    });
+
+    const crossTenant = await runtimePool.connect();
+    try {
+      await crossTenant.query("BEGIN");
+      await crossTenant.query("SELECT set_config('app.workspace_id', $1, true)", [
+        owner.workspaceId,
+      ]);
+      await crossTenant.query("SELECT set_config('app.user_id', $1, true)", [outsider.userId]);
+      const hiddenFavorites = await crossTenant.query(
+        "SELECT artifact_id FROM library_favorites WHERE artifact_id = $1",
+        [presentation.id],
+      );
+      expect(hiddenFavorites.rows).toEqual([]);
+      await crossTenant.query("SELECT set_config('app.workspace_id', $1, true)", [
+        outsider.workspaceId,
+      ]);
+      await expect(
+        crossTenant.query(
+          `INSERT INTO presentation_draft_history
+             (id, workspace_id, presentation_id, revision, draft, saved_by)
+           VALUES ($1,$2,$3,99,$4,$5)`,
+          [
+            randomUUID(),
+            outsider.workspaceId,
+            presentation.id,
+            JSON.stringify(draft),
+            outsider.userId,
+          ],
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await crossTenant.query("ROLLBACK");
+      crossTenant.release();
+    }
+
+    const privileges = await runtimePool.query<{
+      can_insert: boolean;
+      can_update: boolean;
+      can_delete: boolean;
+    }>(`SELECT
+          has_table_privilege(current_user, 'presentation_versions', 'INSERT') AS can_insert,
+          has_table_privilege(current_user, 'presentation_versions', 'UPDATE') AS can_update,
+          has_table_privilege(current_user, 'presentation_versions', 'DELETE') AS can_delete`);
+    expect(privileges.rows[0]).toEqual({
+      can_insert: true,
+      can_update: false,
+      can_delete: false,
+    });
+  });
+
+  it("exports and cascade-deletes Presentation sessions and collaboration groups", async () => {
+    const owner = await creator("new-lifecycle-owner");
+    const presentations = new PostgresPresentationRepository(repository);
+    const presentationSessions = new PostgresPresentationSessionRepository(repository);
+    const groups = new PostgresCollaborationGroupRepository(repository);
+    const now = new Date();
+    const blockId = randomUUID();
+    const draft = {
+      title: "Portable briefing",
+      description: "Lifecycle coverage",
+      experiencePreset: { id: "focus", version: 1 },
+      schemaVersion: 1,
+      blocks: [
+        {
+          id: blockId,
+          kind: "content",
+          layout: "title_body",
+          title: "Opening",
+          body: "Review together.",
+          mediaId: null,
+          mediaAlt: null,
+          speakerNotes: "Private facilitator note",
+        },
+        {
+          id: randomUUID(),
+          kind: "question",
+          question: {
+            id: randomUUID(),
+            type: "numeric",
+            prompt: "How many evidence sources were reviewed?",
+            correctValue: "1",
+            tolerance: "0",
+            unit: null,
+            timeLimitSeconds: 30,
+            basePoints: 1_000,
+            explanation: "One source was reviewed.",
+            mediaId: null,
+            mediaAlt: null,
+          },
+        },
+      ],
+    } satisfies PresentationDraft;
+    const presentation = await presentations.createPresentation({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      draftRevision: 0,
+      draftSchemaVersion: 1,
+      currentVersionId: null,
+      folderId: null,
+      publishedDraftRevision: null,
+      lastEditedBy: owner.userId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const version = await presentations.publishPresentation(
+      {
+        id: randomUUID(),
+        workspaceId: owner.workspaceId,
+        presentationId: presentation.id,
+        version: 1,
+        content: draft,
+        contentHash: randomUUID(),
+        sourceDraftRevision: 0,
+        publishedAt: now,
+      },
+      0,
+    );
+    const session = await presentationSessions.createSession({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      presentationId: presentation.id,
+      presentationVersionId: version.id,
+      title: draft.title,
+      content: draft,
+      code: String(randomInt(0, 10_000_000)).padStart(7, "0"),
+      status: "active",
+      phase: "lobby",
+      currentBlockIndex: -1,
+      revision: 0,
+      createdBy: owner.userId,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: null,
+      liveExpiresAt: new Date(now.getTime() + 24 * 60 * 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+    });
+    const participant = await presentationSessions.addParticipant({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      nickname: "River",
+      tokenHash: createHash("sha256").update(randomUUID()).digest("hex"),
+      joinedAt: now,
+      lastSeenAt: now,
+    });
+    const questionBlock = draft.blocks[1];
+    if (!questionBlock || questionBlock.kind !== "question") {
+      throw new Error("Expected the account export fixture to include a question block");
+    }
+    await presentationSessions.saveResponse({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      participantId: participant.id,
+      blockId: questionBlock.id,
+      questionId: questionBlock.question.id,
+      response: { numericValue: "1" },
+      correct: true,
+      score: 875,
+      responseMs: 2_500,
+      submittedAt: now,
+    });
+    const groupId = randomUUID();
+    const group = await groups.createGroup(
+      {
+        id: groupId,
+        workspaceId: owner.workspaceId,
+        name: "Facilitators",
+        description: "Review group",
+        createdBy: owner.userId,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        workspaceId: owner.workspaceId,
+        groupId,
+        userId: owner.userId,
+        role: "owner",
+        joinedAt: now,
+      },
+    );
+    await groups.addMessage({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      groupId: group.id,
+      authorId: owner.userId,
+      body: "Review before hosting.",
+      createdAt: now,
+    });
+
+    const exported = await repository.exportAccount(owner.userId);
+    expect(exported).toMatchObject({
+      presentations: [{ id: presentation.id }],
+      presentationVersions: [{ id: version.id }],
+      presentationSessions: [{ id: session.id }],
+      presentationSessionParticipants: [{ id: participant.id, nickname: "River" }],
+      presentationSessionResponses: [expect.objectContaining({ score: 875, response_ms: 2_500 })],
+      collaborationGroups: [{ id: group.id }],
+      collaborationGroupMessages: [{ body: "Review before hosting." }],
+    });
+    expect(exported.presentationSessionParticipants).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ token_hash: expect.anything() })]),
+    );
+
+    await repository.deleteAccount(owner.userId);
+    const system = await runtimePool.connect();
+    try {
+      await system.query("BEGIN");
+      await system.query("SELECT set_config('app.system_access', 'on', true)");
+      for (const table of [
+        "presentations",
+        "presentation_versions",
+        "presentation_live_sessions",
+        "presentation_live_participants",
+        "collaboration_groups",
+        "collaboration_group_members",
+        "collaboration_group_messages",
+      ]) {
+        const result = await system.query<{ count: string }>(
+          `SELECT count(*) FROM ${table} WHERE workspace_id = $1`,
+          [owner.workspaceId],
+        );
+        expect(result.rows[0]?.count, table).toBe("0");
+      }
+      await system.query("ROLLBACK");
+    } finally {
+      system.release();
+    }
+  });
+
+  it("transfers Group ownership before deleting a collaborator account", async () => {
+    const workspaceOwner = await creator("group-workspace-owner");
+    const departingOwner = await creator("group-departing-owner");
+    const groups = new PostgresCollaborationGroupRepository(repository);
+    const now = new Date();
+    const membershipClient = await runtimePool.connect();
+    try {
+      await membershipClient.query("BEGIN");
+      await membershipClient.query("SELECT set_config('app.system_access', 'on', true)");
+      await membershipClient.query(
+        `INSERT INTO workspace_members (workspace_id, user_id, role)
+         VALUES ($1,$2,'editor')`,
+        [workspaceOwner.workspaceId, departingOwner.userId],
+      );
+      await membershipClient.query("COMMIT");
+    } catch (error) {
+      await membershipClient.query("ROLLBACK");
+      throw error;
+    } finally {
+      membershipClient.release();
+    }
+
+    const retainedGroupId = randomUUID();
+    await groups.createGroup(
+      {
+        id: retainedGroupId,
+        workspaceId: workspaceOwner.workspaceId,
+        name: "Retained facilitators",
+        description: "Has a successor",
+        createdBy: departingOwner.userId,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        workspaceId: workspaceOwner.workspaceId,
+        groupId: retainedGroupId,
+        userId: departingOwner.userId,
+        role: "owner",
+        joinedAt: now,
+      },
+    );
+    await groups.addMember({
+      workspaceId: workspaceOwner.workspaceId,
+      groupId: retainedGroupId,
+      userId: workspaceOwner.userId,
+      role: "member",
+      joinedAt: new Date(now.getTime() + 1),
+    });
+
+    const emptyGroupId = randomUUID();
+    await groups.createGroup(
+      {
+        id: emptyGroupId,
+        workspaceId: workspaceOwner.workspaceId,
+        name: "Deleted facilitators",
+        description: "No successor",
+        createdBy: departingOwner.userId,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        workspaceId: workspaceOwner.workspaceId,
+        groupId: emptyGroupId,
+        userId: departingOwner.userId,
+        role: "owner",
+        joinedAt: now,
+      },
+    );
+
+    await repository.deleteAccount(departingOwner.userId);
+
+    await expect(groups.listMembers(retainedGroupId)).resolves.toEqual([
+      expect.objectContaining({ userId: workspaceOwner.userId, role: "owner" }),
+    ]);
+    await expect(
+      groups.listGroups(workspaceOwner.workspaceId, workspaceOwner.userId),
+    ).resolves.toEqual([expect.objectContaining({ id: retainedGroupId })]);
+    await expect(groups.getGroup(workspaceOwner.workspaceId, emptyGroupId)).resolves.toBeNull();
+  });
+
   it("paginates histories without losing PostgreSQL microsecond precision", async () => {
     const owner = await creator("report-cursor");
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 24 * 60 * 60_000);
-    const content = {
-      title: "Cursor precision",
-      description: "",
-      questions: [],
-    } satisfies QuizDraft;
+    const content = publishableRound("Cursor precision");
     const quizId = randomUUID();
     await repository.createQuiz({
       id: quizId,
@@ -1973,11 +2863,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
   it("rejects assignment creation when an in-flight archive wins the source Round lock", async () => {
     const owner = await creator("assignment-source-race");
     const now = new Date("2026-09-19T12:00:00.000Z");
-    const content = {
-      title: "Atomic assignment source",
-      description: "",
-      questions: [],
-    } satisfies QuizDraft;
+    const content = publishableRound("Atomic assignment source");
     const quiz = await repository.createQuiz({
       id: randomUUID(),
       workspaceId: owner.workspaceId,

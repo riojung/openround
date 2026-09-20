@@ -48,6 +48,8 @@ import {
   OrganizeQuizSchema,
   PublicFeaturesSchema,
   ProductEventBatchSchema,
+  PublishQuizRequestSchema,
+  RestoreRoundDraftHistorySchema,
   ReportContextSchema,
   ReportSummaryPageSchema,
   RoundFilterOptionsResponseSchema,
@@ -56,6 +58,7 @@ import {
   StarterIdSchema,
   StartersResponseSchema,
   QuizContentSchema,
+  RoundDraftMutationSchema,
   QnaSettingsSchema,
   SetAudienceSignalSchema,
   SetChatReactionSchema,
@@ -63,6 +66,7 @@ import {
   UpdateQnaSettingsSchema,
   UpdateFolderSchema,
   UpdateQuizSchema,
+  UpdateQuizRequestSchema,
   UpdateWorkspaceMemberSchema,
   UpdateWorkspaceInstitutionPolicySchema,
   UpsertLtiRegistrationSchema,
@@ -71,9 +75,12 @@ import {
   WorkspaceMemberSchema,
   WorkspaceSummarySchema,
   StartFollowupSchema,
+  type QuizDraft,
 } from "@openround/contracts";
 import {
   PublishedQuizLimitError,
+  QuizDraftMutationConflictError,
+  QuizDraftRevisionConflictError,
   type BillingEventInput,
   type CreatorContext,
   type Repository,
@@ -101,8 +108,16 @@ import { LtiError, type LtiService } from "./lti-service.js";
 import { InteractionError, type InteractionService } from "./interaction-service.js";
 import { instantiateStarter, starterSummaries } from "./starters.js";
 import type { ProductEventDispatcher } from "./product-events.js";
+import {
+  professionalWorkspaceEligible,
+  professionalWorkspaceFeatureEnabled,
+} from "./workspace-rollout.js";
 
 const IdParamsSchema = z.object({ id: z.string().uuid() });
+const RoundHistoryParamsSchema = z.object({
+  id: z.string().uuid(),
+  revision: z.coerce.number().int().nonnegative(),
+});
 const SessionMediaParamsSchema = z.object({ id: z.string().uuid(), mediaId: z.string().uuid() });
 const SessionStaffParamsSchema = z.object({
   id: z.string().uuid(),
@@ -251,6 +266,53 @@ function apiError(
   requestId: string,
 ) {
   return reply.code(status).send({ error: { code, message, requestId } });
+}
+
+function draftEtag(revision: number | undefined) {
+  return `"draft-${revision ?? 0}"`;
+}
+
+interface RoundPublishIssue {
+  artifactType: "round";
+  artifactId: string;
+  questionId: string | null;
+  field: string;
+  path: string;
+  message: string;
+}
+
+function roundPublishIssue(
+  quizId: string,
+  draft: QuizDraft,
+  path: readonly PropertyKey[],
+  message: string,
+): RoundPublishIssue {
+  const questionIndex = path[0] === "questions" && typeof path[1] === "number" ? path[1] : -1;
+  const field = [...path].reverse().find((part) => typeof part === "string");
+  return {
+    artifactType: "round",
+    artifactId: quizId,
+    questionId: questionIndex >= 0 ? (draft.questions[questionIndex]?.id ?? null) : null,
+    field: typeof field === "string" ? field : "artifact",
+    path: path.map(String).join("."),
+    message,
+  };
+}
+
+function roundPublishValidationError(
+  reply: FastifyReply,
+  requestId: string,
+  issues: RoundPublishIssue[],
+) {
+  return reply.code(422).send({
+    error: {
+      code: "VALIDATION_ERROR",
+      message: "This Round has publish blockers. Review every issue and try again.",
+      requestId,
+      details: { issues },
+    },
+    validation: { issues },
+  });
 }
 
 function sessionStatus(code: SessionError["code"]) {
@@ -402,7 +464,7 @@ export async function registerRoutes(
     });
   };
   const uxBetaWorkspaceEnabled = (workspaceId: string) =>
-    config.FEATURE_UX_BETA && config.UX_BETA_WORKSPACE_ALLOWLIST.includes(workspaceId);
+    professionalWorkspaceEligible(config, workspaceId);
   const practiceAssignmentsWorkspaceEnabled = (workspaceId: string) =>
     uxBetaWorkspaceEnabled(workspaceId) && config.FEATURE_PRACTICE_ASSIGNMENTS;
   const workspaceProductFeatures = async (workspaceId: string) => {
@@ -418,6 +480,11 @@ export async function registerRoutes(
       uxBeta: uxBetaWorkspaceEnabled(workspaceId),
       recoveryRehearsal: uxAllowed && config.FEATURE_UX_BETA && config.FEATURE_RECOVERY_REHEARSAL,
       practiceAssignments: practiceAssignmentsWorkspaceEnabled(workspaceId),
+      workspaceShell: professionalWorkspaceFeatureEnabled(config, workspaceId, "workspaceShell"),
+      builderV2: professionalWorkspaceFeatureEnabled(config, workspaceId, "builderV2"),
+      presentations: professionalWorkspaceFeatureEnabled(config, workspaceId, "presentations"),
+      groups: professionalWorkspaceFeatureEnabled(config, workspaceId, "groups"),
+      discover: professionalWorkspaceFeatureEnabled(config, workspaceId, "discover"),
     };
   };
   const requireWorkspaceRole = (
@@ -522,6 +589,31 @@ export async function registerRoutes(
         request.id,
       );
     }
+    if (error instanceof QuizDraftRevisionConflictError) {
+      return reply.code(409).send({
+        error: {
+          code: "STALE_DRAFT",
+          message: "This Round changed since you opened it. Refresh before saving or publishing.",
+          requestId: request.id,
+          details: {
+            quizId: error.quizId,
+            expectedDraftRevision: error.expectedRevision,
+            currentDraftRevision: error.currentRevision,
+            currentEditorId: error.currentEditorId,
+          },
+        },
+      });
+    }
+    if (error instanceof QuizDraftMutationConflictError) {
+      return reply.code(409).send({
+        error: {
+          code: "CONFLICT",
+          message: "This mutation ID was already used for a different Round change.",
+          requestId: request.id,
+          details: { mutationId: error.mutationId },
+        },
+      });
+    }
     if (error instanceof SessionError) {
       return apiError(reply, sessionStatus(error.code), error.code, error.message, request.id);
     }
@@ -609,6 +701,7 @@ export async function registerRoutes(
       uxBeta: config.FEATURE_UX_BETA,
       recoveryRehearsal: config.FEATURE_UX_BETA && config.FEATURE_RECOVERY_REHEARSAL,
       practiceAssignments: config.FEATURE_UX_BETA && config.FEATURE_PRACTICE_ASSIGNMENTS,
+      presentations: config.FEATURE_PRESENTATIONS,
     });
   });
 
@@ -1411,6 +1504,8 @@ export async function registerRoutes(
       description: draft.description,
       status: "draft",
       draft,
+      draftSchemaVersion: 1,
+      lastEditedBy: creator.userId,
       currentVersionId: null,
       folderId: null,
       tags: ["starter"],
@@ -1442,6 +1537,8 @@ export async function registerRoutes(
       description: cleanPlainText(input.description, 1_000),
       status: "draft",
       draft: { title: input.title, description: input.description, questions: [] },
+      draftSchemaVersion: 1,
+      lastEditedBy: creator.userId,
       currentVersionId: null,
       folderId: null,
       tags: [],
@@ -1495,6 +1592,8 @@ export async function registerRoutes(
       description: result.draft.description,
       status: "draft",
       draft: result.draft,
+      draftSchemaVersion: 1,
+      lastEditedBy: creator.userId,
       currentVersionId: null,
       folderId: null,
       tags: [],
@@ -1527,6 +1626,7 @@ export async function registerRoutes(
     const currentVersion = quiz.currentVersionId
       ? await repository.getQuizVersion(creator.workspaceId, quiz.currentVersionId)
       : null;
+    reply.header("etag", draftEtag(quiz.draftRevision));
     return { quiz, currentVersion };
   });
 
@@ -1614,9 +1714,92 @@ export async function registerRoutes(
     if (!creator) return;
     if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
     const { id } = IdParamsSchema.parse(request.params);
-    const draft = UpdateQuizSchema.parse(request.body);
-    const quiz = await repository.updateQuiz(creator.workspaceId, id, draft);
-    return quiz ? { quiz } : apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
+    const revisioned =
+      request.body !== null &&
+      typeof request.body === "object" &&
+      "expectedDraftRevision" in request.body;
+    const input = revisioned
+      ? UpdateQuizRequestSchema.parse(request.body)
+      : { draft: UpdateQuizSchema.parse(request.body), expectedDraftRevision: undefined };
+    const quiz = await repository.updateQuiz(
+      creator.workspaceId,
+      id,
+      input.draft,
+      input.expectedDraftRevision,
+      creator.userId,
+    );
+    if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
+    reply.header("etag", draftEtag(quiz.draftRevision));
+    return { quiz };
+  });
+
+  app.put("/v1/quizzes/:id/draft", { bodyLimit: 4_000_000 }, async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const input = RoundDraftMutationSchema.parse(request.body);
+    const quiz = await repository.updateQuizDraft({
+      workspaceId: creator.workspaceId,
+      quizId: id,
+      draft: input.draft,
+      expectedRevision: input.expectedRevision,
+      mutationId: input.mutationId,
+      editorId: creator.userId,
+      schemaVersion: input.schemaVersion,
+      draftHash: createHash("sha256").update(JSON.stringify(input.draft)).digest("hex"),
+    });
+    if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
+    reply.header("etag", draftEtag(quiz.draftRevision));
+    return { quiz };
+  });
+
+  app.get("/v1/quizzes/:id/history", async (request, reply) => {
+    reply.header("cache-control", "private, no-store").header("pragma", "no-cache");
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const quiz = await repository.getQuiz(creator.workspaceId, id);
+    if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
+    const history = await repository.listQuizDraftHistory(creator.workspaceId, id, 20);
+    return {
+      history: history.map(({ id: historyId, revision, savedBy, createdAt }) => ({
+        id: historyId,
+        revision,
+        savedBy,
+        createdAt,
+      })),
+    };
+  });
+
+  app.post("/v1/quizzes/:id/history/:revision/restore", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id, revision } = RoundHistoryParamsSchema.parse(request.params);
+    const input = RestoreRoundDraftHistorySchema.parse(request.body);
+    const quiz = await repository.restoreQuizDraftHistory({
+      workspaceId: creator.workspaceId,
+      quizId: id,
+      historyRevision: revision,
+      expectedRevision: input.expectedRevision,
+      mutationId: input.mutationId,
+      editorId: creator.userId,
+    });
+    if (!quiz) {
+      return apiError(reply, 404, "NOT_FOUND", "Round revision not found", request.id);
+    }
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "quiz.restore",
+      targetType: "quiz",
+      targetId: id,
+      requestId: request.id,
+      metadata: { restoredRevision: revision, resultingRevision: quiz.draftRevision ?? 0 },
+    });
+    reply.header("etag", draftEtag(quiz.draftRevision));
+    return { quiz };
   });
 
   app.patch("/v1/quizzes/:id/organization", async (request, reply) => {
@@ -1656,27 +1839,65 @@ export async function registerRoutes(
     if (!creator) return;
     if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
     const { id } = IdParamsSchema.parse(request.params);
+    const revisioned =
+      request.body !== null &&
+      typeof request.body === "object" &&
+      "expectedDraftRevision" in request.body;
+    const input = revisioned ? PublishQuizRequestSchema.parse(request.body) : null;
     const quiz = await repository.getQuiz(creator.workspaceId, id);
     if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
-    for (const mediaId of new Set(
-      quiz.draft.questions.flatMap((question) => (question.mediaId ? [question.mediaId] : [])),
-    )) {
-      const asset = await repository.getMediaAsset(creator.workspaceId, mediaId);
-      if (!asset || asset.scanStatus !== "clean") {
-        return apiError(
-          reply,
-          422,
-          "VALIDATION_ERROR",
-          "Every question image must finish security scanning before publishing",
-          request.id,
+    const expectedDraftRevision = input?.expectedDraftRevision ?? quiz.draftRevision ?? 0;
+    if (expectedDraftRevision !== (quiz.draftRevision ?? 0)) {
+      throw new QuizDraftRevisionConflictError(
+        quiz.id,
+        expectedDraftRevision,
+        quiz.draftRevision ?? 0,
+        quiz.lastEditedBy ?? null,
+      );
+    }
+    const parsedContent = QuizContentSchema.safeParse(quiz.draft);
+    const validationIssues = parsedContent.success
+      ? []
+      : parsedContent.error.issues.map((issue) =>
+          roundPublishIssue(quiz.id, quiz.draft, issue.path, issue.message),
         );
-      }
+    const mediaReferences = quiz.draft.questions.flatMap((question, questionIndex) =>
+      question.mediaId
+        ? [
+            {
+              mediaId: question.mediaId,
+              path: ["questions", questionIndex, "mediaId"] as const,
+            },
+          ]
+        : [],
+    );
+    const mediaStatuses = await Promise.all(
+      mediaReferences.map(async (reference) => ({
+        ...reference,
+        media: await repository.getMediaAsset(creator.workspaceId, reference.mediaId),
+      })),
+    );
+    for (const reference of mediaStatuses) {
+      if (reference.media?.scanStatus === "clean") continue;
+      validationIssues.push(
+        roundPublishIssue(
+          quiz.id,
+          quiz.draft,
+          reference.path,
+          reference.media
+            ? "This image must finish security scanning before publishing"
+            : "This image is unavailable or does not belong to this workspace",
+        ),
+      );
+    }
+    if (!parsedContent.success || validationIssues.length > 0) {
+      return roundPublishValidationError(reply, request.id, validationIssues);
     }
     const entitlements = entitlementsFor(creator.plan, config);
     const current = quiz.currentVersionId
       ? await repository.getQuizVersion(creator.workspaceId, quiz.currentVersionId)
       : null;
-    const content = QuizContentSchema.parse(quiz.draft);
+    const content = parsedContent.data;
     const contentHash = createHash("sha256").update(JSON.stringify(content)).digest("hex");
     const version = await repository.publishQuiz(
       {
@@ -1686,9 +1907,11 @@ export async function registerRoutes(
         version: (current?.version ?? 0) + 1,
         content,
         contentHash,
+        sourceDraftRevision: expectedDraftRevision,
         publishedAt: new Date(),
       },
       entitlements.maxPublishedQuizzes,
+      expectedDraftRevision,
     );
     await repository.recordAudit({
       workspaceId: creator.workspaceId,
@@ -1697,7 +1920,7 @@ export async function registerRoutes(
       targetType: "quiz_version",
       targetId: version.id,
       requestId: request.id,
-      metadata: { version: version.version, contentHash },
+      metadata: { version: version.version, contentHash, draftRevision: expectedDraftRevision },
     });
     if (uxBetaWorkspaceEnabled(creator.workspaceId)) {
       productEvents.enqueue({
@@ -1706,6 +1929,7 @@ export async function registerRoutes(
         events: [{ name: "round_published" }],
       });
     }
+    reply.header("etag", draftEtag(expectedDraftRevision));
     return { version };
   });
 
@@ -1724,6 +1948,10 @@ export async function registerRoutes(
       title,
       status: "draft",
       currentVersionId: null,
+      draftRevision: 0,
+      draftSchemaVersion: 1,
+      publishedDraftRevision: null,
+      lastEditedBy: creator.userId,
       draft: { ...source.draft, title },
       createdAt: now,
       updatedAt: now,

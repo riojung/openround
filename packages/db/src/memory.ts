@@ -4,6 +4,8 @@ import {
   FollowupAccessLimitError,
   FollowupVersionConflictError,
   PublishedQuizLimitError,
+  QuizDraftMutationConflictError,
+  QuizDraftRevisionConflictError,
   SessionCodeConflictError,
   SessionNotActiveError,
   SessionVersionConflictError,
@@ -39,6 +41,8 @@ import type {
   LtiRegistrationRecord,
   MagicTokenRecord,
   MediaAssetRecord,
+  MediaReferenceOwnerType,
+  MediaReferenceRecord,
   MediaScanStatus,
   OperationalFeaturesRecord,
   OperationalFeaturesUpdate,
@@ -50,6 +54,8 @@ import type {
   QnaReplyRecord,
   QnaSettingsRecord,
   QuizRecord,
+  QuizDraftHistoryRecord,
+  QuizDraftUpdate,
   QuizVersionRecord,
   ReportJob,
   ReportHistoryRecord,
@@ -62,6 +68,13 @@ import type {
   WorkspaceMemberRecord,
   WorkspaceSummaryRecord,
 } from "./types.js";
+import { quizMediaIds } from "./media-references.js";
+import {
+  ROUND_CONTENT_SCHEMA_VERSION,
+  ROUND_DRAFT_SCHEMA_VERSION,
+  upcastRoundContent,
+  upcastRoundDraft,
+} from "./artifact-schemas.js";
 import {
   questionDelivery,
   type BrandTheme,
@@ -81,12 +94,92 @@ interface ConsentRecord {
   acceptedAt: Date;
 }
 
+interface QuizDraftMutationReceipt {
+  workspaceId: string;
+  quizId: string;
+  expectedRevision: number;
+  resultingRevision: number;
+  draftHash: string;
+  createdAt: Date;
+}
+
+function quizAtDraftRevision(current: QuizRecord, snapshot: QuizDraftHistoryRecord): QuizRecord {
+  const normalized = normalizeQuizHistory(snapshot);
+  return normalizeQuizRecord({
+    ...current,
+    title: normalized.draft.title,
+    description: normalized.draft.description,
+    draft: structuredClone(normalized.draft),
+    draftRevision: normalized.revision,
+    draftSchemaVersion: normalized.draftSchemaVersion,
+    lastEditedBy: normalized.savedBy,
+    updatedAt: normalized.createdAt,
+  });
+}
+
 interface MemoryWorkspace {
   id: string;
   name: string;
   segment: CreatorContext["segment"];
   homeRegion: string;
   embedAllowedOrigins: string[];
+}
+
+function normalizeQuizRecord(input: QuizRecord): QuizRecord {
+  const draftSchemaVersion = input.draftSchemaVersion ?? ROUND_DRAFT_SCHEMA_VERSION;
+  const draft = upcastRoundDraft(input.draft, draftSchemaVersion);
+  return {
+    ...input,
+    title: draft.title,
+    description: draft.description,
+    draft,
+    draftSchemaVersion,
+  };
+}
+
+function normalizeQuizVersion(input: QuizVersionRecord): QuizVersionRecord {
+  const contentSchemaVersion = input.contentSchemaVersion ?? ROUND_CONTENT_SCHEMA_VERSION;
+  return {
+    ...input,
+    content: upcastRoundContent(input.content, contentSchemaVersion),
+    contentSchemaVersion,
+  };
+}
+
+function normalizeQuizHistory(
+  input: QuizDraftHistoryRecord,
+  fallbackSchemaVersion = ROUND_DRAFT_SCHEMA_VERSION,
+): QuizDraftHistoryRecord {
+  const draftSchemaVersion = input.draftSchemaVersion ?? fallbackSchemaVersion;
+  return {
+    ...input,
+    draft: upcastRoundDraft(input.draft, draftSchemaVersion),
+    draftSchemaVersion,
+  };
+}
+
+export interface MemoryRepositoryLifecycleContext {
+  userId: string;
+  ownedWorkspaceIds: ReadonlySet<string>;
+}
+
+export interface MemoryRepositoryLifecycleExtension {
+  exportAccount(
+    context: MemoryRepositoryLifecycleContext,
+  ): Promise<Record<string, unknown>> | Record<string, unknown>;
+  deleteAccount(context: MemoryRepositoryLifecycleContext): Promise<void> | void;
+  purgeExpired?(now: Date): Promise<string[]> | string[];
+}
+
+export interface MemoryAccountExport extends Record<string, unknown> {
+  workspaceMemberships?: WorkspaceSummaryRecord[];
+  workspaces?: unknown[];
+  quizzes?: QuizRecord[];
+  quizDraftHistory?: QuizDraftHistoryRecord[];
+  mediaAssets?: MediaAssetRecord[];
+  mediaReferences?: MediaReferenceRecord[];
+  consentRecords?: ConsentRecord[];
+  auditEvents?: AuditEventRecord[];
 }
 
 export class MemoryRepository implements Repository {
@@ -111,6 +204,8 @@ export class MemoryRepository implements Repository {
   readonly ltiLoginTransactions = new Map<string, LtiLoginTransactionRecord>();
   readonly ltiLaunches = new Map<string, LtiLaunchRecord>();
   readonly quizzes = new Map<string, QuizRecord>();
+  readonly quizDraftHistory = new Map<string, QuizDraftHistoryRecord>();
+  readonly quizDraftMutations = new Map<string, QuizDraftMutationReceipt>();
   readonly folders = new Map<string, FolderRecord>();
   readonly versions = new Map<string, QuizVersionRecord>();
   readonly sessions = new Map<string, StoredSession>();
@@ -138,6 +233,7 @@ export class MemoryRepository implements Repository {
   readonly audienceRestrictions = new Map<string, AudienceRestrictionRecord>();
   readonly audienceOutbox = new Map<string, AudienceOutboxRecord>();
   readonly mediaAssets = new Map<string, MediaAssetRecord>();
+  readonly mediaReferences = new Map<string, MediaReferenceRecord>();
   readonly answers = new Map<string, EngineAnswer>();
   readonly reports = new Map<string, Report>();
   readonly reportCreatedAt = new Map<string, Date>();
@@ -162,6 +258,10 @@ export class MemoryRepository implements Repository {
   readonly audits: AuditEventRecord[] = [];
   readonly productEvents: ProductEventRecord[] = [];
   readonly consents: ConsentRecord[] = [];
+  private readonly lifecycleExtensions = new Map<
+    string,
+    { instance: unknown; lifecycle: MemoryRepositoryLifecycleExtension }
+  >();
   readonly operationalFeatures: OperationalFeaturesRecord = {
     signups: true,
     sessionCreation: true,
@@ -175,6 +275,17 @@ export class MemoryRepository implements Repository {
   constructor(options: { initialWorkspaceId?: string; initialPlan?: Plan } = {}) {
     this.nextInitialWorkspaceId = options.initialWorkspaceId;
     this.nextInitialPlan = options.initialPlan;
+  }
+
+  getOrCreateLifecycleExtension<T extends MemoryRepositoryLifecycleExtension>(
+    name: string,
+    create: () => T,
+  ): T {
+    const existing = this.lifecycleExtensions.get(name);
+    if (existing) return existing.instance as T;
+    const instance = create();
+    this.lifecycleExtensions.set(name, { instance, lifecycle: instance });
+    return instance;
   }
 
   async initialize() {}
@@ -519,7 +630,7 @@ export class MemoryRepository implements Repository {
           (left.id === right.id ? 0 : left.id < right.id ? 1 : -1),
       )
       .map((quiz) => ({
-        ...structuredClone(quiz),
+        ...structuredClone(normalizeQuizRecord(quiz)),
         lastHostedAt: structuredClone(lastHostedAtByQuizId.get(quiz.id) ?? null),
       }));
   }
@@ -589,30 +700,281 @@ export class MemoryRepository implements Repository {
     quiz.folderId = folderId;
     quiz.tags = [...tags];
     quiz.updatedAt = new Date();
-    return structuredClone(quiz);
+    return structuredClone(normalizeQuizRecord(quiz));
   }
 
   async createQuiz(input: QuizRecord) {
-    const normalized = { ...input, folderId: input.folderId ?? null, tags: input.tags ?? [] };
+    const parsed = normalizeQuizRecord(input);
+    const normalized = {
+      ...parsed,
+      folderId: parsed.folderId ?? null,
+      tags: parsed.tags ?? [],
+      draftRevision: parsed.draftRevision ?? 0,
+      publishedDraftRevision: parsed.publishedDraftRevision ?? null,
+      lastEditedBy: parsed.lastEditedBy ?? null,
+    };
+    this.validateMediaReferences(normalized.workspaceId, quizMediaIds(normalized.draft));
     this.quizzes.set(input.id, structuredClone(normalized));
+    const historyId = crypto.randomUUID();
+    this.quizDraftHistory.set(`${input.id}:${normalized.draftRevision}`, {
+      id: historyId,
+      workspaceId: normalized.workspaceId,
+      quizId: normalized.id,
+      revision: normalized.draftRevision,
+      draft: structuredClone(normalized.draft),
+      draftSchemaVersion: normalized.draftSchemaVersion,
+      savedBy: normalized.lastEditedBy,
+      mutationId: null,
+      createdAt: normalized.createdAt,
+    });
+    await this.replaceMediaReferences(
+      normalized.workspaceId,
+      "quiz_draft",
+      normalized.id,
+      quizMediaIds(normalized.draft),
+      normalized.createdAt,
+    );
+    await this.replaceMediaReferences(
+      normalized.workspaceId,
+      "quiz_history",
+      historyId,
+      quizMediaIds(normalized.draft),
+      normalized.createdAt,
+    );
     return structuredClone(normalized);
   }
 
   async getQuiz(workspaceId: string, quizId: string) {
     const quiz = this.quizzes.get(quizId);
-    return quiz?.workspaceId === workspaceId ? structuredClone(quiz) : null;
+    return quiz?.workspaceId === workspaceId ? structuredClone(normalizeQuizRecord(quiz)) : null;
   }
 
-  async updateQuiz(workspaceId: string, quizId: string, draft: QuizDraft) {
+  async updateQuiz(
+    workspaceId: string,
+    quizId: string,
+    draft: QuizDraft,
+    expectedDraftRevision?: number,
+    editorId?: string,
+  ) {
     const quiz = this.quizzes.get(quizId);
     if (!quiz || quiz.workspaceId !== workspaceId || quiz.status === "archived") return null;
+    const normalizedDraft = upcastRoundDraft(draft, ROUND_DRAFT_SCHEMA_VERSION);
+    const currentDraftRevision = quiz.draftRevision ?? 0;
+    if (expectedDraftRevision !== undefined && expectedDraftRevision !== currentDraftRevision) {
+      throw new QuizDraftRevisionConflictError(
+        quizId,
+        expectedDraftRevision,
+        currentDraftRevision,
+        quiz.lastEditedBy ?? null,
+      );
+    }
+    this.validateMediaReferences(workspaceId, quizMediaIds(normalizedDraft));
+    Object.assign(quiz, {
+      title: normalizedDraft.title,
+      description: normalizedDraft.description,
+      draft: structuredClone(normalizedDraft),
+      draftRevision: currentDraftRevision + 1,
+      draftSchemaVersion: ROUND_DRAFT_SCHEMA_VERSION,
+      lastEditedBy: editorId ?? quiz.lastEditedBy ?? null,
+      updatedAt: new Date(),
+    });
+    const historyId = crypto.randomUUID();
+    this.quizDraftHistory.set(`${quizId}:${quiz.draftRevision}`, {
+      id: historyId,
+      workspaceId,
+      quizId,
+      revision: quiz.draftRevision ?? currentDraftRevision + 1,
+      draft: structuredClone(normalizedDraft),
+      draftSchemaVersion: ROUND_DRAFT_SCHEMA_VERSION,
+      savedBy: editorId ?? quiz.lastEditedBy ?? null,
+      mutationId: null,
+      createdAt: quiz.updatedAt,
+    });
+    await this.replaceMediaReferences(
+      workspaceId,
+      "quiz_draft",
+      quizId,
+      quizMediaIds(normalizedDraft),
+      quiz.updatedAt,
+    );
+    await this.replaceMediaReferences(
+      workspaceId,
+      "quiz_history",
+      historyId,
+      quizMediaIds(normalizedDraft),
+      quiz.updatedAt,
+    );
+    await this.pruneQuizDraftHistory(quizId, quiz.updatedAt);
+    return structuredClone(normalizeQuizRecord(quiz));
+  }
+
+  async updateQuizDraft(input: QuizDraftUpdate) {
+    const draft = upcastRoundDraft(input.draft, input.schemaVersion);
+    const quiz = this.quizzes.get(input.quizId);
+    if (!quiz || quiz.workspaceId !== input.workspaceId) return null;
+    const mutationKey = `${input.workspaceId}:${input.mutationId}`;
+    const retry = this.quizDraftMutations.get(mutationKey);
+    if (retry) {
+      if (
+        retry.quizId !== input.quizId ||
+        retry.expectedRevision !== input.expectedRevision ||
+        retry.draftHash !== input.draftHash
+      ) {
+        throw new QuizDraftMutationConflictError(input.mutationId);
+      }
+      return this.replayQuizDraftMutation(quiz, retry);
+    }
+    if (quiz.status === "archived") return null;
+    const currentRevision = quiz.draftRevision ?? 0;
+    if (input.expectedRevision !== currentRevision) {
+      throw new QuizDraftRevisionConflictError(
+        input.quizId,
+        input.expectedRevision,
+        currentRevision,
+        quiz.lastEditedBy ?? null,
+      );
+    }
+
+    const meaningful = JSON.stringify(normalizeQuizRecord(quiz).draft) !== JSON.stringify(draft);
+    const updatedAt = new Date();
+    const resultingRevision = meaningful ? currentRevision + 1 : currentRevision;
+    if (meaningful) {
+      this.validateMediaReferences(input.workspaceId, quizMediaIds(draft));
+    }
+    this.quizDraftMutations.set(mutationKey, {
+      workspaceId: input.workspaceId,
+      quizId: input.quizId,
+      expectedRevision: input.expectedRevision,
+      resultingRevision,
+      draftHash: input.draftHash,
+      createdAt: updatedAt,
+    });
+    if (!meaningful) return structuredClone(normalizeQuizRecord(quiz));
+
     Object.assign(quiz, {
       title: draft.title,
       description: draft.description,
       draft: structuredClone(draft),
-      updatedAt: new Date(),
+      draftRevision: resultingRevision,
+      draftSchemaVersion: input.schemaVersion,
+      lastEditedBy: input.editorId,
+      updatedAt,
     });
-    return structuredClone(quiz);
+    const historyId = crypto.randomUUID();
+    this.quizDraftHistory.set(`${input.quizId}:${resultingRevision}`, {
+      id: historyId,
+      workspaceId: input.workspaceId,
+      quizId: input.quizId,
+      revision: resultingRevision,
+      draft: structuredClone(draft),
+      draftSchemaVersion: input.schemaVersion,
+      savedBy: input.editorId,
+      mutationId: input.mutationId,
+      createdAt: updatedAt,
+    });
+    await this.replaceMediaReferences(
+      input.workspaceId,
+      "quiz_draft",
+      input.quizId,
+      quizMediaIds(draft),
+      updatedAt,
+    );
+    await this.replaceMediaReferences(
+      input.workspaceId,
+      "quiz_history",
+      historyId,
+      quizMediaIds(draft),
+      updatedAt,
+    );
+    await this.pruneQuizDraftHistory(input.quizId, updatedAt);
+    return structuredClone(normalizeQuizRecord(quiz));
+  }
+
+  private replayQuizDraftMutation(
+    current: QuizRecord,
+    receipt: QuizDraftMutationReceipt,
+  ): QuizRecord {
+    const currentRevision = current.draftRevision ?? 0;
+    if (currentRevision === receipt.resultingRevision) {
+      return structuredClone(normalizeQuizRecord(current));
+    }
+    const snapshot = this.quizDraftHistory.get(`${receipt.quizId}:${receipt.resultingRevision}`);
+    if (snapshot && snapshot.workspaceId === receipt.workspaceId) {
+      return structuredClone(quizAtDraftRevision(current, snapshot));
+    }
+    throw new QuizDraftRevisionConflictError(
+      receipt.quizId,
+      receipt.resultingRevision,
+      currentRevision,
+      current.lastEditedBy ?? null,
+    );
+  }
+
+  private async pruneQuizDraftHistory(quizId: string, now: Date) {
+    const snapshots = [...this.quizDraftHistory.entries()]
+      .filter(([, snapshot]) => snapshot.quizId === quizId)
+      .sort((left, right) => right[1].revision - left[1].revision);
+    const cutoff = now.getTime() - 30 * 24 * 60 * 60 * 1_000;
+    for (const [index, [key, snapshot]] of snapshots.entries()) {
+      if (index >= 20 || snapshot.createdAt.getTime() < cutoff) {
+        this.quizDraftHistory.delete(key);
+        await this.replaceMediaReferences(
+          snapshot.workspaceId,
+          "quiz_history",
+          snapshot.id,
+          [],
+          now,
+        );
+      }
+    }
+    for (const [key, receipt] of this.quizDraftMutations) {
+      if (receipt.quizId === quizId && receipt.createdAt.getTime() < cutoff) {
+        this.quizDraftMutations.delete(key);
+      }
+    }
+  }
+
+  async listQuizDraftHistory(workspaceId: string, quizId: string, limit = 20) {
+    return [...this.quizDraftHistory.values()]
+      .filter((snapshot) => snapshot.workspaceId === workspaceId && snapshot.quizId === quizId)
+      .sort((left, right) => right.revision - left.revision)
+      .slice(0, limit)
+      .map((snapshot) => structuredClone(normalizeQuizHistory(snapshot)));
+  }
+
+  async restoreQuizDraftHistory(input: {
+    workspaceId: string;
+    quizId: string;
+    historyRevision: number;
+    expectedRevision: number;
+    mutationId: string;
+    editorId: string;
+  }) {
+    const quiz = this.quizzes.get(input.quizId);
+    if (!quiz || quiz.workspaceId !== input.workspaceId) return null;
+    const retry = this.quizDraftMutations.get(`${input.workspaceId}:${input.mutationId}`);
+    if (retry) {
+      if (
+        retry.quizId !== input.quizId ||
+        retry.expectedRevision !== input.expectedRevision ||
+        retry.draftHash !== `restore:${input.historyRevision}`
+      ) {
+        throw new QuizDraftMutationConflictError(input.mutationId);
+      }
+      return this.replayQuizDraftMutation(quiz, retry);
+    }
+    const snapshot = this.quizDraftHistory.get(`${input.quizId}:${input.historyRevision}`);
+    if (!snapshot || snapshot.workspaceId !== input.workspaceId) return null;
+    return this.updateQuizDraft({
+      workspaceId: input.workspaceId,
+      quizId: input.quizId,
+      draft: normalizeQuizHistory(snapshot).draft,
+      expectedRevision: input.expectedRevision,
+      mutationId: input.mutationId,
+      editorId: input.editorId,
+      schemaVersion: snapshot.draftSchemaVersion ?? ROUND_DRAFT_SCHEMA_VERSION,
+      draftHash: `restore:${input.historyRevision}`,
+    });
   }
 
   async archiveQuiz(
@@ -636,16 +998,30 @@ export class MemoryRepository implements Repository {
     }
     quiz.status = archived ? "archived" : quiz.currentVersionId ? "published" : "draft";
     quiz.updatedAt = new Date();
-    return structuredClone(quiz);
+    return structuredClone(normalizeQuizRecord(quiz));
   }
 
   async duplicateQuiz(input: QuizRecord) {
     return this.createQuiz(input);
   }
 
-  async publishQuiz(input: QuizVersionRecord, maxPublishedQuizzes: number | null = null) {
+  async publishQuiz(
+    input: QuizVersionRecord,
+    maxPublishedQuizzes: number | null = null,
+    expectedDraftRevision?: number,
+  ) {
     const quiz = this.quizzes.get(input.quizId);
     if (!quiz || quiz.workspaceId !== input.workspaceId) throw new Error("Quiz not found");
+    const currentDraftRevision = quiz.draftRevision ?? 0;
+    if (expectedDraftRevision !== undefined && expectedDraftRevision !== currentDraftRevision) {
+      throw new QuizDraftRevisionConflictError(
+        input.quizId,
+        expectedDraftRevision,
+        currentDraftRevision,
+        quiz.lastEditedBy ?? null,
+      );
+    }
+    const normalizedInput = normalizeQuizVersion(input);
     const publishedQuizCount = [...this.quizzes.values()].filter(
       (candidate) =>
         candidate.workspaceId === input.workspaceId && candidate.status === "published",
@@ -657,16 +1033,35 @@ export class MemoryRepository implements Repository {
     ) {
       throw new PublishedQuizLimitError(maxPublishedQuizzes);
     }
-    this.versions.set(input.id, structuredClone(input));
-    quiz.currentVersionId = input.id;
+    const existing = [...this.versions.values()].find(
+      (version) =>
+        version.quizId === normalizedInput.quizId &&
+        version.contentHash === normalizedInput.contentHash,
+    );
+    const version = existing ?? {
+      ...structuredClone(normalizedInput),
+      sourceDraftRevision: currentDraftRevision,
+    };
+    if (!existing) this.versions.set(version.id, structuredClone(version));
+    quiz.currentVersionId = version.id;
     quiz.status = "published";
+    quiz.publishedDraftRevision = currentDraftRevision;
     quiz.updatedAt = new Date();
-    return structuredClone(input);
+    await this.replaceMediaReferences(
+      input.workspaceId,
+      "quiz_version",
+      version.id,
+      quizMediaIds(version.content),
+      version.publishedAt,
+    );
+    return structuredClone(normalizeQuizVersion(version));
   }
 
   async getQuizVersion(workspaceId: string, versionId: string) {
     const version = this.versions.get(versionId);
-    return version?.workspaceId === workspaceId ? structuredClone(version) : null;
+    return version?.workspaceId === workspaceId
+      ? structuredClone(normalizeQuizVersion(version))
+      : null;
   }
 
   async countPublishedQuizzes(workspaceId: string) {
@@ -2182,9 +2577,93 @@ export class MemoryRepository implements Repository {
       .map((asset) => structuredClone(asset));
   }
 
+  async listMediaReferences(workspaceId: string, mediaId?: string) {
+    return [...this.mediaReferences.values()]
+      .filter(
+        (reference) =>
+          reference.workspaceId === workspaceId &&
+          (mediaId === undefined || reference.mediaId === mediaId),
+      )
+      .sort(
+        (left, right) =>
+          left.createdAt.getTime() - right.createdAt.getTime() ||
+          left.ownerType.localeCompare(right.ownerType) ||
+          left.ownerId.localeCompare(right.ownerId),
+      )
+      .map((reference) => structuredClone(reference));
+  }
+
+  async replaceMediaReferences(
+    workspaceId: string,
+    ownerType: MediaReferenceOwnerType,
+    ownerId: string,
+    mediaIds: string[],
+    createdAt = new Date(),
+  ) {
+    const uniqueMediaIds = [...new Set(mediaIds)];
+    this.validateMediaReferences(workspaceId, uniqueMediaIds);
+    for (const [key, reference] of this.mediaReferences) {
+      if (
+        reference.workspaceId === workspaceId &&
+        reference.ownerType === ownerType &&
+        reference.ownerId === ownerId
+      ) {
+        this.mediaReferences.delete(key);
+      }
+    }
+    for (const mediaId of uniqueMediaIds) {
+      const reference: MediaReferenceRecord = {
+        workspaceId,
+        mediaId,
+        ownerType,
+        ownerId,
+        createdAt,
+      };
+      this.mediaReferences.set(`${workspaceId}:${mediaId}:${ownerType}:${ownerId}`, reference);
+    }
+    return this.listMediaReferences(workspaceId).then((references) =>
+      references.filter(
+        (reference) => reference.ownerType === ownerType && reference.ownerId === ownerId,
+      ),
+    );
+  }
+
+  validateMediaReferences(workspaceId: string, mediaIds: string[]) {
+    const invalidMediaId = [...new Set(mediaIds)].find((mediaId) => {
+      const asset = this.mediaAssets.get(mediaId);
+      return !asset || asset.workspaceId !== workspaceId;
+    });
+    if (invalidMediaId) {
+      throw new Error(`Media asset ${invalidMediaId} is unavailable in this workspace`);
+    }
+  }
+
   async listStaleMedia(cutoff: Date, limit = 100) {
     return [...this.mediaAssets.values()]
-      .filter((asset) => asset.scanStatus !== "clean" && asset.createdAt <= cutoff)
+      .filter(
+        (asset) =>
+          asset.scanStatus !== "clean" &&
+          asset.createdAt <= cutoff &&
+          ![...this.mediaReferences.values()].some(
+            (reference) =>
+              reference.workspaceId === asset.workspaceId && reference.mediaId === asset.id,
+          ),
+      )
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .slice(0, limit)
+      .map((asset) => structuredClone(asset));
+  }
+
+  async listUnattachedMedia(cutoff: Date, limit = 100) {
+    return [...this.mediaAssets.values()]
+      .filter(
+        (asset) =>
+          asset.createdAt <= cutoff &&
+          ![...this.mediaReferences.values()].some(
+            (reference) =>
+              reference.workspaceId === asset.workspaceId && reference.mediaId === asset.id,
+          ),
+      )
       .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
       .slice(0, limit)
       .map((asset) => structuredClone(asset));
@@ -2205,6 +2684,13 @@ export class MemoryRepository implements Repository {
   async deleteMediaAsset(workspaceId: string, mediaId: string) {
     const asset = this.mediaAssets.get(mediaId);
     if (!asset || asset.workspaceId !== workspaceId) return false;
+    if (
+      [...this.mediaReferences.values()].some(
+        (reference) => reference.workspaceId === workspaceId && reference.mediaId === mediaId,
+      )
+    ) {
+      return false;
+    }
     return this.mediaAssets.delete(mediaId);
   }
 
@@ -3007,7 +3493,7 @@ export class MemoryRepository implements Repository {
     return purged;
   }
 
-  async exportAccount(userId: string) {
+  async exportAccount(userId: string): Promise<MemoryAccountExport> {
     const user = this.users.get(userId);
     if (!user || user.deletedAt) return {};
     const workspaceMemberships = await this.listWorkspaces(userId);
@@ -3024,112 +3510,133 @@ export class MemoryRepository implements Repository {
       sessionIds.has(participant.sessionId),
     );
     const ownedWorkspaceIdList = [...ownedWorkspaceIds];
-    return {
-      profile: { id: user.userId, email: user.email, segment: user.segment },
-      workspaceMemberships,
-      workspaces: await Promise.all(
-        ownedWorkspaceIdList.map(async (workspaceId) => ({
-          ...this.workspaces.get(workspaceId)!,
-          role: "owner",
-          brandTheme: await this.getBrandTheme(workspaceId),
-        })),
-      ),
-      folders: (
-        await Promise.all(ownedWorkspaceIdList.map((workspaceId) => this.listFolders(workspaceId)))
-      ).flat(),
-      quizzes: (
-        await Promise.all(
-          ownedWorkspaceIdList.map((workspaceId) => this.listQuizzes(workspaceId, true)),
-        )
-      ).flat(),
-      quizVersions: [...this.versions.values()].filter((version) =>
-        ownedWorkspaceIds.has(version.workspaceId),
-      ),
-      mediaAssets: (
-        await Promise.all(
-          ownedWorkspaceIdList.map((workspaceId) => this.listMediaAssets(workspaceId)),
-        )
-      ).flat(),
-      sessions: sessions.map(({ hostTokenHash: _hostTokenHash, ...session }) => session),
-      participants: participants.map(({ tokenHash: _tokenHash, ...participant }) => participant),
-      answers: [...this.answers.entries()]
-        .filter(([key]) => sessionIds.has(key.split(":", 1)[0]!))
-        .map(([, answer]) => structuredClone(answer)),
-      reports: [...this.reports.values()].filter((report) => sessionIds.has(report.sessionId)),
-      interactionSettings: [...this.interactionSettings.values()].filter((settings) =>
-        sessionIds.has(settings.sessionId),
-      ),
-      participantSignals: [...this.participantSignals.values()].filter((signal) =>
-        sessionIds.has(signal.sessionId),
-      ),
-      signalEvents: this.signalEvents.filter((event) => sessionIds.has(event.sessionId)),
-      chatMessages: [...this.chatMessages.values()].filter((message) =>
-        sessionIds.has(message.sessionId),
-      ),
-      chatReactions: [...this.chatReactions.values()].filter((reaction) =>
-        sessionIds.has(reaction.sessionId),
-      ),
-      chatReports: [...this.chatReports]
-        .map((report) => {
-          const separator = report.indexOf(":");
-          return {
-            messageId: report.slice(0, separator),
-            participantId: report.slice(separator + 1),
-          };
-        })
-        .filter((report) =>
-          [...this.chatMessages.values()].some(
-            (message) => message.id === report.messageId && sessionIds.has(message.sessionId),
+    const extensionData = Object.assign(
+      {},
+      ...(await Promise.all(
+        [...this.lifecycleExtensions.values()].map(({ lifecycle }) =>
+          lifecycle.exportAccount({ userId, ownedWorkspaceIds }),
+        ),
+      )),
+    ) as Record<string, unknown>;
+    return Object.assign(
+      {
+        profile: { id: user.userId, email: user.email, segment: user.segment },
+        workspaceMemberships,
+        workspaces: await Promise.all(
+          ownedWorkspaceIdList.map(async (workspaceId) => ({
+            ...this.workspaces.get(workspaceId)!,
+            role: "owner",
+            brandTheme: await this.getBrandTheme(workspaceId),
+          })),
+        ),
+        folders: (
+          await Promise.all(
+            ownedWorkspaceIdList.map((workspaceId) => this.listFolders(workspaceId)),
+          )
+        ).flat(),
+        quizzes: (
+          await Promise.all(
+            ownedWorkspaceIdList.map((workspaceId) => this.listQuizzes(workspaceId, true)),
+          )
+        ).flat(),
+        quizDraftHistory: [...this.quizDraftHistory.values()]
+          .filter((snapshot) => ownedWorkspaceIds.has(snapshot.workspaceId))
+          .map((snapshot) => structuredClone(normalizeQuizHistory(snapshot))),
+        quizVersions: [...this.versions.values()]
+          .filter((version) => ownedWorkspaceIds.has(version.workspaceId))
+          .map((version) => structuredClone(normalizeQuizVersion(version))),
+        mediaAssets: (
+          await Promise.all(
+            ownedWorkspaceIdList.map((workspaceId) => this.listMediaAssets(workspaceId)),
+          )
+        ).flat(),
+        mediaReferences: (
+          await Promise.all(
+            ownedWorkspaceIdList.map((workspaceId) => this.listMediaReferences(workspaceId)),
+          )
+        ).flat(),
+        sessions: sessions.map(({ hostTokenHash: _hostTokenHash, ...session }) => session),
+        participants: participants.map(({ tokenHash: _tokenHash, ...participant }) => participant),
+        answers: [...this.answers.entries()]
+          .filter(([key]) => sessionIds.has(key.split(":", 1)[0]!))
+          .map(([, answer]) => structuredClone(answer)),
+        reports: [...this.reports.values()].filter((report) => sessionIds.has(report.sessionId)),
+        interactionSettings: [...this.interactionSettings.values()].filter((settings) =>
+          sessionIds.has(settings.sessionId),
+        ),
+        participantSignals: [...this.participantSignals.values()].filter((signal) =>
+          sessionIds.has(signal.sessionId),
+        ),
+        signalEvents: this.signalEvents.filter((event) => sessionIds.has(event.sessionId)),
+        chatMessages: [...this.chatMessages.values()].filter((message) =>
+          sessionIds.has(message.sessionId),
+        ),
+        chatReactions: [...this.chatReactions.values()].filter((reaction) =>
+          sessionIds.has(reaction.sessionId),
+        ),
+        chatReports: [...this.chatReports]
+          .map((report) => {
+            const separator = report.indexOf(":");
+            return {
+              messageId: report.slice(0, separator),
+              participantId: report.slice(separator + 1),
+            };
+          })
+          .filter((report) =>
+            [...this.chatMessages.values()].some(
+              (message) => message.id === report.messageId && sessionIds.has(message.sessionId),
+            ),
           ),
+        audienceRestrictions: [...this.audienceRestrictions.values()].filter((restriction) =>
+          sessionIds.has(restriction.sessionId),
         ),
-      audienceRestrictions: [...this.audienceRestrictions.values()].filter((restriction) =>
-        sessionIds.has(restriction.sessionId),
-      ),
-      followups: [...this.followups.values()]
-        .filter((followup) => ownedWorkspaceIds.has(followup.workspaceId))
-        .map(({ genericTokenHash: _genericTokenHash, ...followup }) => structuredClone(followup)),
-      followupAccess: [...this.followupAccess.values()]
-        .filter((access) => ownedWorkspaceIds.has(access.workspaceId))
-        .map(({ tokenHash: _tokenHash, ...access }) => structuredClone(access)),
-      followupAttempts: [...this.followupAttempts.values()]
-        .filter((attempt) => ownedWorkspaceIds.has(attempt.workspaceId))
-        .map(({ attemptTokenHash: _attemptTokenHash, ...attempt }) => structuredClone(attempt)),
-      followupAnswers: [...this.followupAnswers.values()].filter((answer) =>
-        ownedWorkspaceIds.has(answer.workspaceId),
-      ),
-      authoringJobs: [...this.authoringJobs.values()]
-        .filter((job) => ownedWorkspaceIds.has(job.workspaceId))
-        .map(({ sourceBlob, ...job }) => ({
-          ...structuredClone(job),
-          sourceBlobBase64: sourceBlob?.toString("base64") ?? null,
-        })),
-      institutionPolicies: await Promise.all(
-        ownedWorkspaceIdList.map((workspaceId) => this.getInstitutionPolicy(workspaceId)),
-      ),
-      externalIdentities: [...this.externalIdentities.values()].filter(
-        (identity) => identity.userId === userId,
-      ),
-      ltiRegistrations: (
-        await Promise.all(
-          ownedWorkspaceIdList.map((workspaceId) => this.listLtiRegistrations(workspaceId)),
-        )
-      ).flat(),
-      ltiLaunches: [...this.ltiLaunches.values()]
-        .filter((launch) => ownedWorkspaceIds.has(launch.workspaceId))
-        .map(({ linkTokenHash: _linkTokenHash, responseJwt: _responseJwt, ...launch }) =>
-          structuredClone(launch),
+        followups: [...this.followups.values()]
+          .filter((followup) => ownedWorkspaceIds.has(followup.workspaceId))
+          .map(({ genericTokenHash: _genericTokenHash, ...followup }) => structuredClone(followup)),
+        followupAccess: [...this.followupAccess.values()]
+          .filter((access) => ownedWorkspaceIds.has(access.workspaceId))
+          .map(({ tokenHash: _tokenHash, ...access }) => structuredClone(access)),
+        followupAttempts: [...this.followupAttempts.values()]
+          .filter((attempt) => ownedWorkspaceIds.has(attempt.workspaceId))
+          .map(({ attemptTokenHash: _attemptTokenHash, ...attempt }) => structuredClone(attempt)),
+        followupAnswers: [...this.followupAnswers.values()].filter((answer) =>
+          ownedWorkspaceIds.has(answer.workspaceId),
         ),
-      billing: await Promise.all(
-        ownedWorkspaceIdList.map(async (workspaceId) => ({
-          workspaceId,
-          ...(await this.getBillingProfile(workspaceId)),
-        })),
-      ),
-      consentRecords: this.consents.filter((record) => record.userId === userId),
-      auditEvents: this.audits.filter(
-        (audit) => audit.workspaceId !== null && ownedWorkspaceIds.has(audit.workspaceId),
-      ),
-    };
+        authoringJobs: [...this.authoringJobs.values()]
+          .filter((job) => ownedWorkspaceIds.has(job.workspaceId))
+          .map(({ sourceBlob, ...job }) => ({
+            ...structuredClone(job),
+            sourceBlobBase64: sourceBlob?.toString("base64") ?? null,
+          })),
+        institutionPolicies: await Promise.all(
+          ownedWorkspaceIdList.map((workspaceId) => this.getInstitutionPolicy(workspaceId)),
+        ),
+        externalIdentities: [...this.externalIdentities.values()].filter(
+          (identity) => identity.userId === userId,
+        ),
+        ltiRegistrations: (
+          await Promise.all(
+            ownedWorkspaceIdList.map((workspaceId) => this.listLtiRegistrations(workspaceId)),
+          )
+        ).flat(),
+        ltiLaunches: [...this.ltiLaunches.values()]
+          .filter((launch) => ownedWorkspaceIds.has(launch.workspaceId))
+          .map(({ linkTokenHash: _linkTokenHash, responseJwt: _responseJwt, ...launch }) =>
+            structuredClone(launch),
+          ),
+        billing: await Promise.all(
+          ownedWorkspaceIdList.map(async (workspaceId) => ({
+            workspaceId,
+            ...(await this.getBillingProfile(workspaceId)),
+          })),
+        ),
+        consentRecords: this.consents.filter((record) => record.userId === userId),
+        auditEvents: this.audits.filter(
+          (audit) => audit.workspaceId !== null && ownedWorkspaceIds.has(audit.workspaceId),
+        ),
+      },
+      extensionData,
+    );
   }
 
   async deleteAccount(userId: string) {
@@ -3141,6 +3648,11 @@ export class MemoryRepository implements Repository {
         .filter((workspace) => workspace.role === "owner")
         .map((workspace) => workspace.id),
     );
+    await Promise.all(
+      [...this.lifecycleExtensions.values()].map(({ lifecycle }) =>
+        lifecycle.deleteAccount({ userId, ownedWorkspaceIds }),
+      ),
+    );
     user.deletedAt = new Date();
     user.email = `deleted-${userId.slice(0, 8)}@invalid.local`;
     for (const [tokenHash, session] of this.creatorSessions) {
@@ -3151,6 +3663,12 @@ export class MemoryRepository implements Repository {
     }
     for (const [id, quiz] of this.quizzes) {
       if (ownedWorkspaceIds.has(quiz.workspaceId)) this.quizzes.delete(id);
+    }
+    for (const [key, snapshot] of this.quizDraftHistory) {
+      if (ownedWorkspaceIds.has(snapshot.workspaceId)) this.quizDraftHistory.delete(key);
+    }
+    for (const [key, mutation] of this.quizDraftMutations) {
+      if (ownedWorkspaceIds.has(mutation.workspaceId)) this.quizDraftMutations.delete(key);
     }
     for (const [id, folder] of this.folders) {
       if (ownedWorkspaceIds.has(folder.workspaceId)) this.folders.delete(id);
@@ -3179,6 +3697,9 @@ export class MemoryRepository implements Repository {
     }
     for (const [id, asset] of this.mediaAssets) {
       if (ownedWorkspaceIds.has(asset.workspaceId)) this.mediaAssets.delete(id);
+    }
+    for (const [key, reference] of this.mediaReferences) {
+      if (ownedWorkspaceIds.has(reference.workspaceId)) this.mediaReferences.delete(key);
     }
     for (const [id, job] of this.authoringJobs) {
       if (ownedWorkspaceIds.has(job.workspaceId)) this.authoringJobs.delete(id);
@@ -3260,6 +3781,12 @@ export class MemoryRepository implements Repository {
     for (const [id, launch] of this.ltiLaunches) {
       if (launch.expiresAt <= now) this.ltiLaunches.delete(id);
     }
+    const extensionPurges = await Promise.all(
+      [...this.lifecycleExtensions.values()].map(({ lifecycle }) =>
+        lifecycle.purgeExpired ? lifecycle.purgeExpired(now) : [],
+      ),
+    );
+    purged.push(...extensionPurges.flat());
     return purged;
   }
 

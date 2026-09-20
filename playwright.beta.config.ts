@@ -51,7 +51,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `NODE_ENV=test PORT=${betaE2eApiPort} ALLOW_IN_MEMORY=true COMMUNITY_MODE=false WEB_ORIGIN=http://127.0.0.1:${betaE2eWebPort} PUBLIC_API_URL=http://127.0.0.1:${betaE2eApiPort} FEATURE_UX_BETA=true FEATURE_RECOVERY_REHEARSAL=true FEATURE_PRACTICE_ASSIGNMENTS=true UX_BETA_WORKSPACE_ALLOWLIST=${betaWorkspaceId} TEST_INITIAL_WORKSPACE_ID=${betaWorkspaceId} TEST_INITIAL_PLAN=pro LOG_LEVEL=silent pnpm --filter @openround/server dev`,
+      command: `NODE_ENV=test PORT=${betaE2eApiPort} ALLOW_IN_MEMORY=true COMMUNITY_MODE=false WEB_ORIGIN=http://127.0.0.1:${betaE2eWebPort} PUBLIC_API_URL=http://127.0.0.1:${betaE2eApiPort} FEATURE_UX_BETA=true FEATURE_RECOVERY_REHEARSAL=true FEATURE_PRACTICE_ASSIGNMENTS=true FEATURE_WORKSPACE_SHELL=true FEATURE_BUILDER_V2=true FEATURE_PRESENTATIONS=true FEATURE_GROUPS=true FEATURE_DISCOVER=true UX_BETA_WORKSPACE_ALLOWLIST=${betaWorkspaceId} TEST_INITIAL_WORKSPACE_ID=${betaWorkspaceId} TEST_INITIAL_PLAN=pro LOG_LEVEL=silent pnpm --filter @openround/server dev`,
       port: betaE2eApiPort,
       reuseExistingServer: false,
       timeout: 120_000,

@@ -13,19 +13,28 @@ export interface EditorControllerState {
   draft: QuizDraft | null;
   selectedQuestionId: string | null;
   insertType: QuestionType;
-  structuralUndo: StructuralUndo | null;
+  undoStack: StructuralUndo[];
+  redoStack: StructuralUndo[];
+  lastDraftEditAt: number | null;
+  lastDraftEditQuestionId: string | null;
 }
+
+const HISTORY_LIMIT = 30;
+const TEXT_EDIT_COALESCE_MS = 750;
 
 export const initialEditorControllerState: EditorControllerState = {
   draft: null,
   selectedQuestionId: null,
   insertType: "single_select",
-  structuralUndo: null,
+  undoStack: [],
+  redoStack: [],
+  lastDraftEditAt: null,
+  lastDraftEditQuestionId: null,
 };
 
 type EditorControllerAction =
   | { type: "load"; draft: QuizDraft }
-  | { type: "draft"; value: SetStateAction<QuizDraft | null> }
+  | { type: "draft"; value: SetStateAction<QuizDraft | null>; occurredAt?: number }
   | { type: "select"; value: string | null }
   | { type: "insert_type"; value: QuestionType }
   | {
@@ -34,7 +43,12 @@ type EditorControllerAction =
       selectedQuestionId: string | null;
       undo: StructuralUndo;
     }
-  | { type: "undo" };
+  | { type: "undo" }
+  | { type: "redo" };
+
+function appendHistory(history: StructuralUndo[], snapshot: StructuralUndo) {
+  return [...history, snapshot].slice(-HISTORY_LIMIT);
+}
 
 export function editorControllerReducer(
   state: EditorControllerState,
@@ -46,16 +60,44 @@ export function editorControllerReducer(
         ...state,
         draft: action.draft,
         selectedQuestionId: action.draft.questions[0]?.id ?? null,
-        structuralUndo: null,
+        undoStack: [],
+        redoStack: [],
+        lastDraftEditAt: null,
+        lastDraftEditQuestionId: null,
       };
-    case "draft":
+    case "draft": {
+      const nextDraft =
+        typeof action.value === "function" ? action.value(state.draft) : action.value;
+      if (!state.draft || !nextDraft || nextDraft === state.draft) {
+        return { ...state, draft: nextDraft };
+      }
+      const occurredAt = action.occurredAt ?? Date.now();
+      const coalescesWithPreviousEdit =
+        state.lastDraftEditAt !== null &&
+        occurredAt - state.lastDraftEditAt <= TEXT_EDIT_COALESCE_MS &&
+        state.lastDraftEditQuestionId === state.selectedQuestionId;
       return {
         ...state,
-        draft: typeof action.value === "function" ? action.value(state.draft) : action.value,
-        structuralUndo: null,
+        draft: nextDraft,
+        undoStack: coalescesWithPreviousEdit
+          ? state.undoStack
+          : appendHistory(state.undoStack, {
+              draft: state.draft,
+              selectedQuestionId: state.selectedQuestionId,
+              message: "Draft edited.",
+            }),
+        redoStack: [],
+        lastDraftEditAt: occurredAt,
+        lastDraftEditQuestionId: state.selectedQuestionId,
       };
+    }
     case "select":
-      return { ...state, selectedQuestionId: action.value };
+      return {
+        ...state,
+        selectedQuestionId: action.value,
+        lastDraftEditAt: null,
+        lastDraftEditQuestionId: null,
+      };
     case "insert_type":
       return { ...state, insertType: action.value };
     case "structural_change":
@@ -63,17 +105,45 @@ export function editorControllerReducer(
         ...state,
         draft: action.draft,
         selectedQuestionId: action.selectedQuestionId,
-        structuralUndo: action.undo,
+        undoStack: appendHistory(state.undoStack, action.undo),
+        redoStack: [],
+        lastDraftEditAt: null,
+        lastDraftEditQuestionId: null,
       };
-    case "undo":
-      return state.structuralUndo
-        ? {
-            ...state,
-            draft: state.structuralUndo.draft,
-            selectedQuestionId: state.structuralUndo.selectedQuestionId,
-            structuralUndo: null,
-          }
-        : state;
+    case "undo": {
+      const previous = state.undoStack.at(-1);
+      if (!previous || !state.draft) return state;
+      return {
+        ...state,
+        draft: previous.draft,
+        selectedQuestionId: previous.selectedQuestionId,
+        undoStack: state.undoStack.slice(0, -1),
+        redoStack: appendHistory(state.redoStack, {
+          draft: state.draft,
+          selectedQuestionId: state.selectedQuestionId,
+          message: previous.message,
+        }),
+        lastDraftEditAt: null,
+        lastDraftEditQuestionId: null,
+      };
+    }
+    case "redo": {
+      const next = state.redoStack.at(-1);
+      if (!next || !state.draft) return state;
+      return {
+        ...state,
+        draft: next.draft,
+        selectedQuestionId: next.selectedQuestionId,
+        undoStack: appendHistory(state.undoStack, {
+          draft: state.draft,
+          selectedQuestionId: state.selectedQuestionId,
+          message: next.message,
+        }),
+        redoStack: state.redoStack.slice(0, -1),
+        lastDraftEditAt: null,
+        lastDraftEditQuestionId: null,
+      };
+    }
   }
 }
 
@@ -81,7 +151,7 @@ export function useEditorController() {
   const [state, dispatch] = useReducer(editorControllerReducer, initialEditorControllerState);
   const loadDraft = useCallback((draft: QuizDraft) => dispatch({ type: "load", draft }), []);
   const setDraft = useCallback<Dispatch<SetStateAction<QuizDraft | null>>>(
-    (value) => dispatch({ type: "draft", value }),
+    (value) => dispatch({ type: "draft", value, occurredAt: Date.now() }),
     [],
   );
   const setSelectedQuestionId = useCallback<Dispatch<SetStateAction<string | null>>>(
@@ -106,14 +176,18 @@ export function useEditorController() {
     [],
   );
   const undoStructuralChange = useCallback(() => dispatch({ type: "undo" }), []);
+  const redoStructuralChange = useCallback(() => dispatch({ type: "redo" }), []);
 
   return {
     ...state,
+    structuralUndo: state.undoStack.at(-1) ?? null,
+    structuralRedo: state.redoStack.at(-1) ?? null,
     loadDraft,
     setDraft,
     setSelectedQuestionId,
     setInsertType,
     applyStructuralChange,
     undoStructuralChange,
+    redoStructuralChange,
   };
 }

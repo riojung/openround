@@ -66,17 +66,19 @@ function consumeRateLimit(
 }
 
 export function snapshotSelector(state: GameState) {
-  const staffSnapshot = snapshotForRole(state, { role: "host" });
+  const hostSnapshot = snapshotForRole(state, { role: "host" });
+  const presenterSnapshot = snapshotForRole(state, { role: "presenter" });
   const participantBase = snapshotForRole(state, { role: "participant" });
   const currentRoundHasAnswers = Object.values(state.answers).some(
     (answer) => answer.roundId === state.roundId,
   );
   const visibleParticipantById = new Map(
-    staffSnapshot.participants.map((participant) => [participant.id, participant]),
+    hostSnapshot.participants.map((participant) => [participant.id, participant]),
   );
 
   return (role: RealtimeRole, participantId?: string): SessionSnapshot => {
-    if (role !== "participant") return staffSnapshot;
+    if (role === "host") return hostSnapshot;
+    if (role === "presenter") return presenterSnapshot;
     if (!participantId) return participantBase;
     if (currentRoundHasAnswers) {
       return snapshotForRole(state, { role: "participant", participantId });
@@ -303,10 +305,6 @@ export async function attachRealtime(
       const sockets = await io.in(`session:${state.sessionId}`).fetchSockets();
       const selectSnapshot = snapshotSelector(state);
       for (const event of events) {
-        const staffEnvelope = sessions.envelope(state, event, {
-          snapshot: selectSnapshot("host"),
-          ...(reportId ? { reportId } : {}),
-        });
         for (const socket of sockets) {
           const role = socket.data.role as RealtimeRole | undefined;
           if (!role) continue;
@@ -325,7 +323,16 @@ export async function attachRealtime(
                 continue;
               }
             }
-            emitTrackedEvent(socket, event.type, staffEnvelope, role, metrics);
+            emitTrackedEvent(
+              socket,
+              event.type,
+              sessions.envelope(state, event, {
+                snapshot: selectSnapshot(role),
+                ...(reportId ? { reportId } : {}),
+              }),
+              role,
+              metrics,
+            );
             continue;
           }
           const snapshot = selectSnapshot(role, socket.data.participantId as string | undefined);

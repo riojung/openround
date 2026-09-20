@@ -6,6 +6,26 @@ does not turn calendar, demand, legal, research, provider, certification, or pro
 gates into software claims. `OpenRound` is a working identity pending independent name and
 trademark review.
 
+## Professional workspace and interactive Presentation beta
+
+The professional workspace is implemented as an additive, selected-workspace beta. Five independent
+deployment ceilings—`FEATURE_WORKSPACE_SHELL`, `FEATURE_BUILDER_V2`, `FEATURE_PRESENTATIONS`,
+`FEATURE_GROUPS`, and `FEATURE_DISCOVER`—default off and additionally require the existing
+workspace allowlist. Direct authenticated APIs fail closed outside the allowlist; public
+Presentation participation is available only for sessions created by an eligible workspace.
+
+| Area                      | Repository status                                                                                                                                                                                                                                                                         | Deferred or still requiring external evidence                                                                                           |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace                 | Responsive Home, unified Library, Sessions, Assignments, Results, Discover, Groups, Workspace settings, universal search, activity inbox, and an anchored Round/Presentation Create menu                                                                                                  | Observed workplace and higher-education navigation studies and production search-index evidence                                         |
+| Round Builder v2          | Shared command-bar/map/canvas/inspector/readiness composition, direct structured editing, Recovery pair visualization, bounded Undo/Redo with coalesced typing, revision-fenced autosave, IndexedDB recovery, conflict choices, and aggregate publish blockers                            | Manual assistive-technology and physical tablet/phone verification before default-on                                                    |
+| Presentations             | Structured content and interactive blocks, source/slide proposals, independent Round-question copies with remapped IDs, immutable versions, live delivery, reconnect, scoring, Recovery phases, timeline, reports, and content-only “not assessed” treatment                              | Self-paced Presentation assignment, freeform coordinates, PPTX export, and synchronized source questions remain explicitly out of scope |
+| Collaboration and catalog | Facilitator Groups support membership, artifact curation, discussion, scheduling, and Round assignment; Discover is first-party/workspace-approved only                                                                                                                                   | Public creator marketplace, commerce, learner social profiles, and real-time coauthoring remain deferred                                |
+| Safety and operations     | Draft/content schema upcasters, strict publish validation, exact idempotency replay, media references and seven-day orphan cleanup, RLS/export/deletion/retention coverage, participant-safe projections, atomic Presentation joins/responses/transitions, and independent rollback flags | Hosted restore/rollback rehearsal, independent privacy/security/accessibility review, and target-region capacity evidence               |
+
+The implementation preserves `/v1/quizzes`, accountless learners, existing live Round sessions,
+assignments, and immutable Round versions. Legacy Round mutation routes now require a revision
+fence instead of accepting silent last-write-wins content replacement.
+
 ## 2026 P0 UX beta implementation
 
 The current branch contains the gated creator workspace, authoring, setup, live host, participant,
@@ -48,10 +68,11 @@ requests reduced motion. These changes do not close the beta-exit evidence or re
 
 The beta Playwright configuration schedules non-mobile scenarios in desktop Chromium and Firefox,
 and `@mobile` scenarios at 390×844 in mobile Chromium and WebKit. Axe automation scans the
-authenticated dashboard, Create, Templates, Assign Practice, one-time receipt, and Practice
-management surfaces on desktop. The mobile matrix additionally scans Assign Practice, receipt,
-management, and the accountless participant question state; it checks horizontal overflow and
-44-pixel create, response, and submit targets. This automated coverage is not manual
+authenticated dashboard, Home, Library, Sessions, Assignments, Results, Discover, Groups, Activity,
+Workspace settings, Create, Templates, Presentation Builder dialogs, Assign Practice, one-time
+receipt, and Practice management surfaces on desktop. The mobile matrix additionally scans Assign
+Practice, receipt, management, and the accountless participant question state; it checks horizontal
+overflow and 44-pixel create, response, and submit targets. This automated coverage is not manual
 VoiceOver/NVDA evidence, and clean-host CI remains authoritative for Firefox.
 
 The capacity and production-smoke workflows now run evidence collection and artifact upload on

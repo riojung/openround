@@ -21,6 +21,8 @@ embed, and follow-up routes use their own scoped credentials as documented by th
   `recoveryRehearsal` availability.
 - `POST /v1/product-events` — creator-authenticated batch of 1–20 schema-allowlisted beta events;
   accepted names are `creation_started`, `creation_completed`, `round_published`,
+  `first_block_created`, `draft_save_failed`, `draft_conflict`, `publish_blocked`,
+  `creation_abandoned`, `presentation_host_started`, `presentation_reconnected`,
   `setup_recipe_selected`, `host_setup_completed`, `participant_joined`,
   `first_answer_submitted`, `response_saved_acknowledged`, `question_locked`, `insight_shown`,
   `intervention_started`, `recheck_opened`, `report_viewed`, `followup_shared`,
@@ -30,23 +32,31 @@ embed, and follow-up routes use their own scoped credentials as documented by th
   events entered the bounded best-effort persistence queue; the request does not wait for storage.
 - `GET /metrics` — private Prometheus output when enabled and authorized.
 
-`FEATURE_UX_BETA`, `FEATURE_RECOVERY_REHEARSAL`, and `FEATURE_PRACTICE_ASSIGNMENTS` default off. The authenticated
+`FEATURE_UX_BETA`, `FEATURE_RECOVERY_REHEARSAL`, `FEATURE_PRACTICE_ASSIGNMENTS`,
+`FEATURE_WORKSPACE_SHELL`, `FEATURE_BUILDER_V2`, `FEATURE_PRESENTATIONS`, `FEATURE_GROUPS`, and
+`FEATURE_DISCOVER` default off. The five professional-workspace switches are independent rollback
+ceilings: disabling Presentations also removes Presentation authoring and live-session routes, and
+disabling Groups removes its collaboration routes. The authenticated
 `productFeatures` view requires explicit membership in `UX_BETA_WORKSPACE_ALLOWLIST`; an empty
-allowlist fails closed and enables no workspace. Rehearsal requires both flags and allowlist
-membership. Standalone practice creation similarly requires the UX beta, its independent practice
-flag, and allowlist membership; already-issued participant links and creator close/revoke controls
-remain available when creation is disabled.
+allowlist fails closed and enables no workspace. Presentation, Presentation-session, Groups, Home,
+and Library-metadata APIs enforce the same workspace eligibility on every request; a deployment
+flag alone cannot make them available to an unlisted workspace. Public Presentation join and
+participant routes resolve eligibility from the session's owning workspace. Rehearsal requires both
+flags and allowlist membership. Standalone practice creation similarly requires the UX beta, its
+independent practice flag, and allowlist membership; already-issued participant links and creator
+close/revoke controls remain available when creation is disabled.
 Because guests do not call `/v1/auth/me`, every role-filtered session snapshot carries the
 workspace-resolved `uxBeta` value. The public feature view is deployment availability, not evidence
 that a particular workspace is allowlisted.
 
-Product events accept only `creationPath`, `recipe`, `scenario`, `segment`, `betaVersion`, and
-`durationBucket` categorical dimensions. The server replaces `segment` and `betaVersion` with
-trusted workspace/release values. Actor/object IDs, content, answers, aliases, source text, and
-free-form metadata are rejected. Creation events require `creationPath`, setup selection requires
-`recipe`, both rehearsal events require `scenario`, and rehearsal completion also requires
-`durationBucket`. Raw rows expire after 30 days and the same bounded labels feed the Prometheus
-counter.
+Product events accept only `creationPath`, `artifactType`, `recipe`, `scenario`, `segment`,
+`betaVersion`, and `durationBucket` categorical dimensions. The server replaces `segment` and
+`betaVersion` with trusted workspace/release values. Actor/object IDs, content, answers, aliases,
+source text, and free-form metadata are rejected. Creation events require `creationPath`; creation
+and authoring events require the bounded `artifactType` value (`round` or `presentation`); setup
+selection requires `recipe`; both rehearsal events require `scenario`; and rehearsal completion
+also requires `durationBucket`. Raw rows expire after 30 days and the same bounded labels feed the
+Prometheus counter.
 Authoritative server transitions emit publish, room-created, join, first-answer, durable-save,
 lock/insight, intervention, recheck, ready-report-view, and committed practice-assignment creation
 milestones. `followup_shared` and `practice_assignment_shared` are emitted only from an explicit
@@ -120,8 +130,14 @@ Legacy `/v1/quizzes` naming is intentionally stable through v1 even though the U
 - `GET|POST /v1/quizzes`; `GET` accepts `archived=true|false` and `summary=true|false`. Normal
   library rows include the tenant-scoped `lastHostedAt` across retained versions; `summary=true`
   returns only each Round's `id` and `title` for filter controls.
-- `GET|PATCH /v1/quizzes/{id}`
-- `POST /v1/quizzes/{id}/publish`
+- `GET|PATCH /v1/quizzes/{id}` — draft replacement on the legacy path remains supported, but the
+  `PATCH` body must be `{ draft, expectedDraftRevision }`; unfenced writes return
+  `PRECONDITION_REQUIRED`.
+- `PUT /v1/quizzes/{id}/draft` — revision-fenced, idempotent Builder save with
+  `{ draft, expectedRevision, mutationId, schemaVersion }`.
+- `POST /v1/quizzes/{id}/publish` — requires `expectedDraftRevision` and atomically publishes that
+  exact acknowledged draft revision.
+- `GET /v1/quizzes/{id}/history`; `POST /v1/quizzes/{id}/history/{revision}/restore`
 - `POST /v1/quizzes/{id}/duplicate`
 - `POST /v1/quizzes/{id}/archive`
 - `GET|POST /v1/folders`
@@ -151,11 +167,21 @@ prefixes.
 - `POST /v1/authoring/jobs` — pasted text or base64 PDF/DOCX/PPTX; returns 202.
 - `GET /v1/authoring/jobs/{id}`
 - `POST /v1/authoring/jobs/{id}/apply` — idempotently creates one unpublished review draft.
+- `POST /v1/authoring/jobs/{id}/apply-presentation` — creates an unpublished mixed Presentation
+  from the explicitly selected content-slide proposals and Recovery questions; an omitted
+  selection preserves the select-all legacy behavior.
+- `POST /v1/presentations/{id}/blocks/source-proposals` — revision-fenced insertion after an
+  optional block. The request carries the authoring job, selected proposal IDs, expected draft
+  revision, and mutation ID; retries are idempotent and every inserted block/question/choice gets
+  a fresh ID with Recovery links remapped inside the inserted selection.
 
 Uploaded files are limited to 6 MB. Arbitrary URLs are rejected. A disabled deployment returns
 `AUTHORING_DISABLED` before storing the source. Hosted monthly limits return `AUTHORING_LIMIT`.
-Jobs expose no raw source through ordinary API views. Output is schema- and citation-validated,
-retains private creator citations, and never publishes automatically.
+Jobs expose no retained raw source through ordinary API views. Output is schema- and
+citation-validated and includes bounded, reviewable content-slide excerpts derived directly from
+extracted sections plus the linked Recovery pair. Each proposed block retains citations and
+provider/model disclosure. Nothing mutates an artifact until a creator confirms a proposal
+selection, and source-created artifacts remain unpublished drafts.
 
 ## Media APIs
 

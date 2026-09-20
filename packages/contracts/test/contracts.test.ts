@@ -2,21 +2,28 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   AnswerSubmitSchema,
+  ApiErrorSchema,
   AVATAR_IDS,
   AvatarIdSchema,
   BrandThemeSchema,
   canonicalizeResponse,
+  CopyRoundQuestionsToPresentationSchema,
   CreatePracticeAssignmentSchema,
   EntitlementsSchema,
+  FacilitatorQuestionSchema,
   FollowupSchema,
   FollowupSummarySchema,
   HostCommandSchema,
   JoinRequestSchema,
   normalizeDecimalString,
   OperationalFeaturesUpdateSchema,
+  ParticipantQuestionSchema,
+  PresentationContentSchema,
+  PresentationDraftSchema,
   ProductEventBatchSchema,
   ProductEventNameSchema,
   PublicFeaturesSchema,
+  PublishQuizRequestSchema,
   QuizContentSchema,
   QuizDraftSchema,
   QuestionSchema,
@@ -24,9 +31,69 @@ import {
   RoundFilterOptionsResponseSchema,
   SessionSnapshotSchema,
   SyncRequestSchema,
+  UpdateQuizRequestSchema,
+  WorkspaceProductFeaturesSchema,
 } from "../src/index.js";
 
 describe("public contracts", () => {
+  it("accepts every presentation-session error emitted by the API", () => {
+    for (const code of [
+      "PRECONDITION_REQUIRED",
+      "STALE_SESSION",
+      "PARTICIPANT_LIMIT",
+      "PHASE_CLOSED",
+      "ALREADY_RESPONDED",
+    ]) {
+      expect(
+        ApiErrorSchema.safeParse({ error: { code, message: "Request rejected" } }).success,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps facilitator-only Round metadata out of participant question DTOs", () => {
+    const participantQuestion = {
+      id: randomUUID(),
+      type: "single_select" as const,
+      prompt: "Which control is safest?",
+      confidence: "required" as const,
+      choices: [
+        { id: randomUUID(), label: "The approved control" },
+        { id: randomUUID(), label: "An unapproved shortcut" },
+      ],
+      timeLimitSeconds: 20,
+      basePoints: 1_000,
+      mediaId: null,
+      mediaAlt: null,
+    };
+
+    expect(ParticipantQuestionSchema.parse(participantQuestion)).toEqual(participantQuestion);
+    expect(
+      ParticipantQuestionSchema.safeParse({
+        ...participantQuestion,
+        purpose: "diagnostic",
+        linkedRecheckAvailable: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      FacilitatorQuestionSchema.parse({
+        ...participantQuestion,
+        purpose: "diagnostic",
+        linkedRecheckAvailable: true,
+      }),
+    ).toMatchObject({ purpose: "diagnostic", linkedRecheckAvailable: true });
+  });
+
+  it("requires revision fences for legacy Round mutations and publishing", () => {
+    expect(
+      UpdateQuizRequestSchema.safeParse({ title: "Unfenced", description: "", questions: [] })
+        .success,
+    ).toBe(false);
+    expect(PublishQuizRequestSchema.safeParse({}).success).toBe(false);
+    expect(PublishQuizRequestSchema.parse({ expectedDraftRevision: 0 })).toEqual({
+      expectedDraftRevision: 0,
+    });
+  });
+
   it("keeps avatar selection allowlisted and backward compatible", () => {
     expect(AVATAR_IDS).toEqual([
       "comet",
@@ -67,7 +134,9 @@ describe("public contracts", () => {
       roomChat: true,
     };
 
-    expect(PublicFeaturesSchema.parse(base).developmentEmailInboxUrl).toBeUndefined();
+    const parsed = PublicFeaturesSchema.parse(base);
+    expect(parsed.developmentEmailInboxUrl).toBeUndefined();
+    expect(parsed.presentations).toBe(false);
     expect(
       PublicFeaturesSchema.parse({
         ...base,
@@ -84,6 +153,34 @@ describe("public contracts", () => {
       PublicFeaturesSchema.safeParse({
         ...base,
         developmentEmailInboxUrl: "not a URL",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires an explicit authenticated rollout decision for every workspace milestone", () => {
+    expect(
+      WorkspaceProductFeaturesSchema.parse({
+        roundExperiences: true,
+        audiencePulse: true,
+        roomChat: true,
+        uxBeta: true,
+        recoveryRehearsal: false,
+        practiceAssignments: false,
+        workspaceShell: true,
+        builderV2: true,
+        presentations: false,
+        groups: true,
+        discover: false,
+      }),
+    ).toMatchObject({ workspaceShell: true, presentations: false, groups: true });
+    expect(
+      WorkspaceProductFeaturesSchema.safeParse({
+        roundExperiences: true,
+        audiencePulse: true,
+        roomChat: true,
+        uxBeta: true,
+        recoveryRehearsal: false,
+        practiceAssignments: false,
       }).success,
     ).toBe(false);
   });
@@ -235,6 +332,13 @@ describe("public contracts", () => {
     expect(ProductEventNameSchema.options).toEqual([
       "creation_started",
       "creation_completed",
+      "first_block_created",
+      "draft_save_failed",
+      "draft_conflict",
+      "publish_blocked",
+      "creation_abandoned",
+      "presentation_host_started",
+      "presentation_reconnected",
       "round_published",
       "setup_recipe_selected",
       "host_setup_completed",
@@ -252,27 +356,45 @@ describe("public contracts", () => {
       "rehearsal_started",
       "rehearsal_completed",
     ]);
-    expect(
-      ProductEventBatchSchema.safeParse({
-        events: ProductEventNameSchema.options.map((name) => ({
-          name,
-          occurredAt: new Date().toISOString(),
-          dimensions:
-            name === "creation_started" || name === "creation_completed"
-              ? { creationPath: "starter" }
-              : name === "setup_recipe_selected"
-                ? { recipe: "recovery" }
-                : name === "rehearsal_started"
-                  ? { scenario: "split_room" }
-                  : name === "rehearsal_completed"
-                    ? { scenario: "split_room", durationBucket: "1_to_5m" }
-                    : {},
-        })),
-      }).success,
-    ).toBe(true);
+    for (const name of ProductEventNameSchema.options) {
+      const dimensions =
+        name === "creation_started" || name === "creation_completed"
+          ? { creationPath: "starter", artifactType: "round" }
+          : [
+                "first_block_created",
+                "draft_save_failed",
+                "draft_conflict",
+                "publish_blocked",
+                "creation_abandoned",
+                "presentation_host_started",
+                "presentation_reconnected",
+              ].includes(name)
+            ? { artifactType: "presentation" }
+            : name === "setup_recipe_selected"
+              ? { recipe: "recovery" }
+              : name === "rehearsal_started"
+                ? { scenario: "split_room" }
+                : name === "rehearsal_completed"
+                  ? { scenario: "split_room", durationBucket: "1_to_5m" }
+                  : {};
+      expect(
+        ProductEventBatchSchema.safeParse({
+          events: [{ name, occurredAt: new Date().toISOString(), dimensions }],
+        }).success,
+      ).toBe(true);
+    }
     for (const event of [
       { name: "creation_started", dimensions: {} },
       { name: "creation_completed", dimensions: {} },
+      { name: "creation_started", dimensions: { creationPath: "starter" } },
+      { name: "creation_completed", dimensions: { creationPath: "starter" } },
+      { name: "first_block_created", dimensions: {} },
+      { name: "draft_save_failed", dimensions: {} },
+      { name: "draft_conflict", dimensions: {} },
+      { name: "publish_blocked", dimensions: {} },
+      { name: "creation_abandoned", dimensions: {} },
+      { name: "presentation_host_started", dimensions: { artifactType: "round" } },
+      { name: "presentation_reconnected", dimensions: { artifactType: "round" } },
       { name: "setup_recipe_selected", dimensions: {} },
       { name: "rehearsal_started", dimensions: {} },
       { name: "rehearsal_completed", dimensions: { scenario: "split_room" } },
@@ -290,7 +412,11 @@ describe("public contracts", () => {
           {
             name: "creation_started",
             occurredAt: new Date().toISOString(),
-            dimensions: { creationPath: "starter", objectId: randomUUID() },
+            dimensions: {
+              creationPath: "starter",
+              artifactType: "round",
+              objectId: randomUUID(),
+            },
           },
         ],
       }).success,
@@ -301,7 +427,7 @@ describe("public contracts", () => {
           {
             name: "creation_started",
             occurredAt: new Date().toISOString(),
-            dimensions: { creationPath: "starter" },
+            dimensions: { creationPath: "starter", artifactType: "round" },
             actorId: randomUUID(),
           },
         ],
@@ -415,6 +541,47 @@ describe("public contracts", () => {
         ]),
       );
     }
+  });
+
+  it("stores transient answer and rating states but rejects them at publish time", () => {
+    const choiceId = randomUUID();
+    const incomplete = {
+      title: "Still editing",
+      description: "",
+      questions: [
+        {
+          id: randomUUID(),
+          type: "multi_select" as const,
+          prompt: "Select every applicable answer",
+          choices: [
+            { id: choiceId, label: "First", isCorrect: false },
+            { id: randomUUID(), label: "Second", isCorrect: false },
+          ],
+          timeLimitSeconds: 20,
+          basePoints: 1_000,
+          explanation: "",
+          mediaId: null,
+          mediaAlt: null,
+        },
+        {
+          id: randomUUID(),
+          type: "rating" as const,
+          prompt: "Rate this",
+          min: 5,
+          max: 5,
+          minLabel: "Low",
+          maxLabel: "High",
+          timeLimitSeconds: 20,
+          basePoints: 1_000,
+          explanation: "",
+          mediaId: null,
+          mediaAlt: null,
+        },
+      ],
+    };
+
+    expect(QuizDraftSchema.safeParse(incomplete).success).toBe(true);
+    expect(QuizContentSchema.safeParse(incomplete).success).toBe(false);
   });
 
   it("preserves versioned experience metadata when content is published", () => {
@@ -666,6 +833,141 @@ describe("public contracts", () => {
     expect(QuizContentSchema.safeParse(content).success).toBe(true);
     expect(
       QuizContentSchema.safeParse({ ...content, questions: [content.questions[0]] }).success,
+    ).toBe(false);
+
+    const shared = structuredClone(content);
+    shared.questions.splice(1, 0, {
+      ...common,
+      id: randomUUID(),
+      delivery: "main" as const,
+      linkedRecheckQuestionId: linkedId,
+    });
+    const sharedResult = QuizContentSchema.safeParse(shared);
+    expect(sharedResult.success).toBe(false);
+    expect(sharedResult.error?.issues.map(({ message }) => message)).toContain(
+      "A recheck cannot be shared by multiple diagnostic checkpoints",
+    );
+
+    const misordered = { ...content, questions: [...content.questions].reverse() };
+    const orderResult = QuizContentSchema.safeParse(misordered);
+    expect(orderResult.success).toBe(false);
+    expect(orderResult.error?.issues.map(({ message }) => message)).toContain(
+      "Place the linked recheck after its diagnostic checkpoint",
+    );
+
+    const orphan = structuredClone(content);
+    orphan.questions[0]!.linkedRecheckQuestionId = null;
+    const orphanResult = QuizContentSchema.safeParse(orphan);
+    expect(orphanResult.success).toBe(false);
+    expect(orphanResult.error?.issues.map(({ message }) => message)).toContain(
+      "Every recheck must be linked from one earlier diagnostic checkpoint",
+    );
+  });
+
+  it("requires a main checkpoint and unique checkpoint and per-question choice ids", () => {
+    const questionId = randomUUID();
+    const choiceId = randomUUID();
+    const question = {
+      id: questionId,
+      prompt: "Choose one",
+      type: "single_select" as const,
+      delivery: "recheck" as const,
+      timeLimitSeconds: 20,
+      basePoints: 1_000,
+      explanation: "",
+      mediaId: null,
+      mediaAlt: null,
+      choices: [
+        { id: choiceId, label: "A", isCorrect: true },
+        { id: randomUUID(), label: "B", isCorrect: false },
+      ],
+    };
+    const allRechecks = { title: "Invalid", description: "", questions: [question] };
+    expect(QuizContentSchema.safeParse(allRechecks).success).toBe(false);
+
+    const duplicateIds = {
+      ...allRechecks,
+      questions: [
+        { ...question, delivery: "main" as const },
+        {
+          ...question,
+          delivery: "main" as const,
+          choices: [
+            { id: choiceId, label: "C", isCorrect: true },
+            { id: choiceId, label: "D", isCorrect: false },
+          ],
+        },
+      ],
+    };
+    const parsed = QuizContentSchema.safeParse(duplicateIds);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues.map((issue) => issue.message)).toEqual(
+        expect.arrayContaining([
+          "Checkpoint IDs must be unique",
+          "Answer choice IDs must be unique",
+        ]),
+      );
+    }
+  });
+
+  it("keeps presentation drafts autosaveable while enforcing publish accessibility", () => {
+    const mediaId = randomUUID();
+    const draft = {
+      title: "Accessible presentation",
+      description: "",
+      experiencePreset: { id: "focus" as const, version: 1 as const },
+      schemaVersion: 1 as const,
+      blocks: [
+        {
+          id: randomUUID(),
+          kind: "content" as const,
+          layout: "media" as const,
+          title: "Evidence",
+          body: "",
+          mediaId,
+          mediaAlt: null,
+          speakerNotes: "",
+        },
+        {
+          id: randomUUID(),
+          kind: "question" as const,
+          question: {
+            id: randomUUID(),
+            type: "single_select" as const,
+            prompt: "Which signal is strongest?",
+            choices: [
+              { id: randomUUID(), label: "Observed behaviour", isCorrect: true },
+              { id: randomUUID(), label: "Raw volume", isCorrect: false },
+            ],
+            timeLimitSeconds: 20,
+            basePoints: 1_000,
+            explanation: "",
+            mediaId: null,
+            mediaAlt: null,
+          },
+        },
+      ],
+    };
+
+    expect(PresentationDraftSchema.safeParse(draft).success).toBe(true);
+    const publish = PresentationContentSchema.safeParse(draft);
+    expect(publish.success).toBe(false);
+    if (!publish.success) {
+      expect(publish.error.issues.map((issue) => issue.message)).toContain(
+        "Describe the slide image for participants who cannot see it",
+      );
+    }
+
+    const questionId = randomUUID();
+    expect(
+      CopyRoundQuestionsToPresentationSchema.safeParse({
+        sourceQuizVersionId: randomUUID(),
+        questionIds: [questionId, questionId],
+        afterBlockId: null,
+        expectedRevision: 0,
+        mutationId: randomUUID(),
+      }).success,
     ).toBe(false);
   });
 });

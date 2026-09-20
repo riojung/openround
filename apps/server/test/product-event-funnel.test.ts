@@ -75,6 +75,7 @@ describe("P0 product-event funnel", () => {
           method: "POST",
           url: `/v1/quizzes/${quiz.id}/publish`,
           headers: { cookie: signedIn.cookie },
+          payload: { expectedDraftRevision: 0 },
         })
       ).statusCode,
     ).toBe(200);

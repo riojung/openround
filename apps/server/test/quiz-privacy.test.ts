@@ -66,24 +66,27 @@ describe("private Round reads", () => {
       url: `/v1/quizzes/${quizId}`,
       headers: { cookie: ownerCookie },
       payload: {
-        title: privateTitle,
-        description: "Internal planning only",
-        questions: [
-          {
-            id: randomUUID(),
-            type: "single_select",
-            prompt: privatePrompt,
-            choices: [
-              { id: randomUUID(), label: "Private option A", isCorrect: true },
-              { id: randomUUID(), label: "Private option B", isCorrect: false },
-            ],
-            timeLimitSeconds: 20,
-            basePoints: 1_000,
-            explanation: "Confidential rationale",
-            mediaId: null,
-            mediaAlt: null,
-          },
-        ],
+        expectedDraftRevision: 0,
+        draft: {
+          title: privateTitle,
+          description: "Internal planning only",
+          questions: [
+            {
+              id: randomUUID(),
+              type: "single_select",
+              prompt: privatePrompt,
+              choices: [
+                { id: randomUUID(), label: "Private option A", isCorrect: true },
+                { id: randomUUID(), label: "Private option B", isCorrect: false },
+              ],
+              timeLimitSeconds: 20,
+              basePoints: 1_000,
+              explanation: "Confidential rationale",
+              mediaId: null,
+              mediaAlt: null,
+            },
+          ],
+        },
       },
     });
     expect(updated.statusCode).toBe(200);

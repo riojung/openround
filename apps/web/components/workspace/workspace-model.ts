@@ -1,41 +1,14 @@
-import type { QuestionType } from "@openround/contracts";
+import { QUESTION_TYPE_REGISTRY, type QuestionType } from "@openround/contracts";
 
 export const questionTypeOptions: Array<{
   type: QuestionType;
   label: string;
   description: string;
-}> = [
-  {
-    type: "single_select",
-    label: "Single choice",
-    description: "One correct response with clear feedback.",
-  },
-  {
-    type: "true_false",
-    label: "True or false",
-    description: "A fast check for one precise claim.",
-  },
-  {
-    type: "multi_select",
-    label: "Multiple choice",
-    description: "Learners select every correct response.",
-  },
-  {
-    type: "numeric",
-    label: "Number",
-    description: "A numeric answer with optional tolerance and unit.",
-  },
-  {
-    type: "rating",
-    label: "Rating scale",
-    description: "An unscored sentiment or reflection scale.",
-  },
-  {
-    type: "poll",
-    label: "Poll",
-    description: "An unscored choice with no right answer.",
-  },
-];
+}> = Object.values(QUESTION_TYPE_REGISTRY).map(({ type, label, description }) => ({
+  type,
+  label,
+  description,
+}));
 
 export function formatCompactDate(value: string) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -49,7 +22,7 @@ export function formatPercent(value: number | null) {
 }
 
 export function responseTypeLabel(type: QuestionType) {
-  return questionTypeOptions.find((option) => option.type === type)?.label ?? type;
+  return QUESTION_TYPE_REGISTRY[type].label;
 }
 
 export function prioritizeStartersForSegment<

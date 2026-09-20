@@ -73,13 +73,14 @@ describe("editor views", () => {
 
     expect(markup).toContain('id="insert-question-type"');
     expect(markup).toContain('id="insert-question-guidance"');
-    expect(markup).toContain("Use for calculations or measurements");
+    expect(markup).toContain("A numeric answer with optional tolerance and unit.");
     expect(markup).toContain("Add question");
     expect(markup).toContain("Reuse from your workspace");
     expect(markup).toContain('aria-controls="private-question-bank"');
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).toContain('aria-current="true"');
-    expect(markup).toContain("Which model fits the new evidence? · recheck");
+    expect(markup).toContain("Which model fits the new evidence?");
+    expect(markup).toContain("Single select · recheck");
   });
 
   it("preserves the feature-off checkpoint navigator", () => {

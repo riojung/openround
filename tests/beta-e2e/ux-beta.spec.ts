@@ -13,7 +13,15 @@ async function signIn(page: Page, email: string) {
   await page.getByRole("button", { name: "Send sign-in link" }).click();
   await page.getByRole("link", { name: "Continue to dashboard" }).click();
   await expect(page).toHaveURL(/\/dashboard/);
-  await expect(page.getByRole("link", { name: "Create Round", exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create", exact: true })).toBeVisible();
+}
+
+async function openRoundCreate(page: Page) {
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  const round = page.getByRole("link", { name: /^Round\b/ });
+  await expect(round).toBeVisible();
+  await round.click();
+  await expect(page).toHaveURL(/\/create$/);
 }
 
 async function joinParticipant(browser: Browser, code: string) {
@@ -97,8 +105,10 @@ async function productEventMetricValue(page: Page, name: string) {
 test("creator starts a blank Round with the selected first response type", async ({ page }) => {
   await signIn(page, betaEmail);
 
-  await page.goto("/create");
+  await openRoundCreate(page);
   await expect(page.getByRole("heading", { name: "How do you want to start?" })).toBeVisible();
+  await page.getByRole("link", { name: /Start blank/ }).click();
+  await expect(page.getByRole("heading", { name: "Start a blank Round" })).toBeVisible();
   await page.getByLabel("Round title (optional for now)", { exact: true }).fill("Beta blank Round");
   await page.getByRole("radio", { name: /^Number/ }).check();
 
@@ -326,6 +336,7 @@ test("starter rehearsal completes privately with bounded telemetry", async ({ pa
   const reportsBeforeRehearsal = (await beforeReports.json()).items;
 
   await page.goto("/create");
+  await page.getByRole("link", { name: /Use a starter/ }).click();
   const starterCard = page.getByRole("article").filter({
     has: page.getByRole("heading", { name: "Misconception check", exact: true }),
   });
@@ -402,7 +413,7 @@ test("starter rehearsal completes privately with bounded telemetry", async ({ pa
   const metrics = await page.request.get(`${apiUrl}/metrics`);
   expect(metrics.ok()).toBeTruthy();
   expect(await metrics.text()).toContain(
-    'name="rehearsal_completed",creation_path="none",recipe="none",scenario="confident_misconception",segment="education",beta_version="p0-2026",duration_bucket="under_1m"',
+    'name="rehearsal_completed",creation_path="none",recipe="none",scenario="confident_misconception",segment="education",beta_version="p0-2026",duration_bucket="under_1m",artifact_type="none"',
   );
 });
 

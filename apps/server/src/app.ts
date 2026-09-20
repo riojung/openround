@@ -7,7 +7,15 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import rawBody from "fastify-raw-body";
 import type Stripe from "stripe";
-import { MemoryRepository, PostgresRepository, type Repository } from "@openround/db";
+import {
+  createCollaborationGroupRepository,
+  createLibraryMetadataRepository,
+  createPresentationRepository,
+  createPresentationSessionRepository,
+  MemoryRepository,
+  PostgresRepository,
+  type Repository,
+} from "@openround/db";
 import { AuthService } from "./auth.js";
 import { AudienceOutboxWorker } from "./audience-outbox-worker.js";
 import {
@@ -33,6 +41,12 @@ import { RetentionService } from "./retention.js";
 import { SessionService } from "./session-service.js";
 import { StorageService } from "./storage.js";
 import { ProductEventDispatcher } from "./product-events.js";
+import { registerPresentationRoutes } from "./presentation-routes.js";
+import { registerPresentationSessionRoutes } from "./presentation-session-routes.js";
+import { registerGroupRoutes } from "./group-routes.js";
+import { registerHomeRoutes } from "./home-routes.js";
+import { registerLibraryRoutes } from "./library-routes.js";
+import { professionalWorkspaceFeatureEnabled } from "./workspace-rollout.js";
 
 export async function buildApp(
   config: AppConfig,
@@ -100,6 +114,16 @@ export async function buildApp(
             throw new Error("DATABASE_URL is required unless ALLOW_IN_MEMORY=true");
           })());
   const metrics = new MetricsService();
+  const presentations = createPresentationRepository(repository);
+  const presentationSessions = createPresentationSessionRepository(repository);
+  const groups = createCollaborationGroupRepository(repository);
+  const libraryMetadata = createLibraryMetadataRepository(repository);
+  const workspaceShellEnabled = (workspaceId: string) =>
+    professionalWorkspaceFeatureEnabled(config, workspaceId, "workspaceShell");
+  const presentationsEnabled = (workspaceId: string) =>
+    professionalWorkspaceFeatureEnabled(config, workspaceId, "presentations");
+  const groupsEnabled = (workspaceId: string) =>
+    professionalWorkspaceFeatureEnabled(config, workspaceId, "groups");
   if (repository instanceof PostgresRepository) metrics.bindPostgres(repository.pool);
   if (repository instanceof PostgresRepository && config.RUN_MIGRATIONS) {
     if (config.DATABASE_MIGRATION_URL && config.DATABASE_MIGRATION_URL !== config.DATABASE_URL) {
@@ -205,6 +229,12 @@ export async function buildApp(
   const qna = new QnaService(repository, sessions, interactions);
   const audienceOutboxWorker = new AudienceOutboxWorker(repository, interactions, metrics);
   const followups = new FollowupService(repository);
+  const scanner =
+    overrides.scanner !== undefined
+      ? overrides.scanner
+      : config.MEDIA_SCAN_MODE === "clamav"
+        ? new ClamAvScanner(config.CLAMAV_HOST!, config.CLAMAV_PORT, config.CLAMAV_TIMEOUT_MS)
+        : null;
   const authoringAssistant =
     overrides.authoringAssistant !== undefined
       ? overrides.authoringAssistant
@@ -216,7 +246,7 @@ export async function buildApp(
             config.AUTHORING_AI_PROVIDER_NAME,
           )
         : null;
-  const authoring = new AuthoringService(repository, Boolean(authoringAssistant));
+  const authoring = new AuthoringService(repository, Boolean(authoringAssistant), scanner);
   const authoringWorker = new AuthoringWorker(
     repository,
     authoringAssistant,
@@ -224,12 +254,6 @@ export async function buildApp(
     config.AUTHORING_EXTRACTION_TIMEOUT_MS,
     metrics,
   );
-  const scanner =
-    overrides.scanner !== undefined
-      ? overrides.scanner
-      : config.MEDIA_SCAN_MODE === "clamav"
-        ? new ClamAvScanner(config.CLAMAV_HOST!, config.CLAMAV_PORT, config.CLAMAV_TIMEOUT_MS)
-        : null;
   const storage = new StorageService(config, scanner);
   const readiness =
     overrides.readiness ??
@@ -285,6 +309,51 @@ export async function buildApp(
     readiness,
     stripeClient: overrides.stripe,
   });
+  if (config.FEATURE_PRESENTATIONS) {
+    await registerPresentationRoutes(app, {
+      repository,
+      presentations,
+      auth,
+      workspaceEnabled: presentationsEnabled,
+    });
+    await registerPresentationSessionRoutes(app, {
+      repository,
+      presentations,
+      presentationSessions,
+      auth,
+      config,
+      storage,
+      workspaceEnabled: presentationsEnabled,
+    });
+  }
+  if (config.FEATURE_GROUPS) {
+    await registerGroupRoutes(app, {
+      repository,
+      presentations,
+      groups,
+      auth,
+      workspaceEnabled: groupsEnabled,
+      presentationsEnabled,
+    });
+  }
+  await registerHomeRoutes(app, {
+    repository,
+    presentations,
+    presentationSessions,
+    groups,
+    auth,
+    workspaceEnabled: workspaceShellEnabled,
+    presentationsEnabled,
+    groupsEnabled,
+  });
+  await registerLibraryRoutes(app, {
+    repository,
+    presentations,
+    libraryMetadata,
+    auth,
+    workspaceEnabled: workspaceShellEnabled,
+    presentationsEnabled,
+  });
 
   app.addHook("onClose", async () => {
     sessions.close();
@@ -311,5 +380,9 @@ export async function buildApp(
     reportWorker,
     metrics,
     productEvents,
+    presentations,
+    presentationSessions,
+    groups,
+    libraryMetadata,
   };
 }

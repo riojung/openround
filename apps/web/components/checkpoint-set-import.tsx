@@ -3,7 +3,7 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import type { ImportValidationReport } from "@openround/contracts";
 import { API_URL } from "../lib/api";
-import { recordCreationEvent } from "./workspace/product-events";
+import { recordAuthoringEvent, recordCreationEvent } from "./workspace/product-events";
 
 type ImportFormat = ImportValidationReport["format"];
 
@@ -86,7 +86,7 @@ export function CheckpointSetImport({
     setError("");
     setMessage("");
     setValidation(null);
-    if (trackCreation) recordCreationEvent("creation_started", "import");
+    if (trackCreation) recordCreationEvent("creation_started", "import", "round");
     try {
       const response = await fetch(`${API_URL}/v1/quizzes/import`, {
         method: "POST",
@@ -110,7 +110,12 @@ export function CheckpointSetImport({
       setMessage(
         `${result.quiz.title} was imported as a draft with ${result.validation?.importedCheckpoints ?? 0} ${terminology === "round" ? "questions" : "checkpoints"}.`,
       );
-      if (trackCreation) recordCreationEvent("creation_completed", "import");
+      if (trackCreation) {
+        recordCreationEvent("creation_completed", "import", "round");
+        if ((result.validation?.importedCheckpoints ?? 0) > 0) {
+          recordAuthoringEvent("first_block_created", "round");
+        }
+      }
       setData("");
       setTitle("");
       await onImported(result.quiz);

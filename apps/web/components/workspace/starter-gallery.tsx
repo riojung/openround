@@ -11,7 +11,7 @@ import {
 } from "./workspace-model";
 import type { StarterSummary } from "./workspace-types";
 import styles from "./workspace-content.module.css";
-import { recordCreationEvent } from "./product-events";
+import { recordAuthoringEvent, recordCreationEvent } from "./product-events";
 
 export function StarterGallery({ compact = false }: { compact?: boolean }) {
   const router = useRouter();
@@ -42,13 +42,14 @@ export function StarterGallery({ compact = false }: { compact?: boolean }) {
   async function useStarter(starter: StarterSummary) {
     setBusyId(starter.id);
     setActionError("");
-    recordCreationEvent("creation_started", "starter");
+    recordCreationEvent("creation_started", "starter", "round");
     try {
       const response = await apiFetch<{ quiz: { id: string } }>(`/v1/starters/${starter.id}/use`, {
         method: "POST",
         body: "{}",
       });
-      recordCreationEvent("creation_completed", "starter");
+      recordCreationEvent("creation_completed", "starter", "round");
+      if (starter.questionCount > 0) recordAuthoringEvent("first_block_created", "round");
       router.push(`/quiz/${response.quiz.id}`);
     } catch (caught) {
       setActionError(humanError(caught));

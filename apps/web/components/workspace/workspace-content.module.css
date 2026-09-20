@@ -34,6 +34,7 @@
 }
 
 .startCard {
+  position: relative;
   display: flex;
   min-height: 210px;
   flex-direction: column;
@@ -68,6 +69,20 @@
   font-weight: 850;
 }
 
+.startBadge {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  border-radius: 999px;
+  background: #f0f5f5;
+  color: #486581;
+  font-size: 0.66rem;
+  font-weight: 820;
+  letter-spacing: 0.05em;
+  padding: 0.34rem 0.58rem;
+  text-transform: uppercase;
+}
+
 .startCard h2 {
   margin: 1rem 0 0.45rem;
   font-size: 1.2rem;
@@ -85,6 +100,50 @@
   color: #087375;
   font-size: 0.88rem;
   font-weight: 800;
+}
+
+.launcherNote {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  border: 1px solid #cce3df;
+  border-radius: 0.9rem;
+  background: #eef9f6;
+  color: #31566d;
+  margin-top: 1.1rem;
+  padding: 0.9rem 1rem;
+}
+
+.launcherNote strong {
+  color: #055d5f;
+  white-space: nowrap;
+}
+
+.launcherNote span {
+  line-height: 1.45;
+}
+
+.focusedCreate {
+  display: grid;
+  gap: 1rem;
+}
+
+.methodToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.methodToolbar > span {
+  border-radius: 999px;
+  background: #dff3f1;
+  color: #055d5f;
+  font-size: 0.7rem;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  padding: 0.42rem 0.68rem;
+  text-transform: uppercase;
 }
 
 .panel {
@@ -758,6 +817,15 @@
 
   .startCard {
     min-height: 165px;
+  }
+
+  .launcherNote {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .launcherNote strong {
+    white-space: normal;
   }
 
   .starterCard {

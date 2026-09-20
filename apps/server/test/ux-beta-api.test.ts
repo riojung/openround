@@ -73,6 +73,7 @@ describe("P0 beta creator APIs", () => {
       method: "POST",
       url: `/v1/quizzes/${quizId}/publish`,
       headers: { cookie: signedIn.cookie },
+      payload: { expectedDraftRevision: 0 },
     });
     const assignment = await app.inject({
       method: "POST",
@@ -224,6 +225,7 @@ describe("P0 beta creator APIs", () => {
       method: "POST",
       url: `/v1/quizzes/${quizId}/publish`,
       headers: { cookie: signedIn.cookie },
+      payload: { expectedDraftRevision: 0 },
     });
     expect(published.statusCode).toBe(200);
     const firstPublishedVersionId = published.json<{ version: { id: string } }>().version.id;
@@ -240,11 +242,19 @@ describe("P0 beta creator APIs", () => {
     expect(freeAttempt.statusCode).toBe(402);
     expect(freeAttempt.json()).toMatchObject({ error: { code: "ENTITLEMENT_LIMIT" } });
     await repository.setPlan(workspaceId, "pro");
+    const beforeRepublish = (await repository.getQuiz(workspaceId, quizId))!;
+    await repository.updateQuiz(
+      workspaceId,
+      quizId,
+      { ...beforeRepublish.draft, title: `${beforeRepublish.title} updated` },
+      beforeRepublish.draftRevision,
+    );
 
     const republished = await app.inject({
       method: "POST",
       url: `/v1/quizzes/${quizId}/publish`,
       headers: { cookie: signedIn.cookie },
+      payload: { expectedDraftRevision: (beforeRepublish.draftRevision ?? 0) + 1 },
     });
     expect(republished.statusCode).toBe(200);
     const currentPublishedVersionId = republished.json<{ version: { id: string } }>().version.id;
@@ -313,7 +323,7 @@ describe("P0 beta creator APIs", () => {
     expect(detail.headers.pragma).toBe("no-cache");
     expect(detail.json()).toMatchObject({
       followup: { id: creation.followup.id, purpose: "assignment" },
-      context: { quizId, quizTitle: "Misconception check", version: 2 },
+      context: { quizId, quizTitle: "Misconception check updated", version: 2 },
       access: [
         { kind: "assignment_personal", label: "Learner A" },
         { kind: "assignment_personal", label: "Learner B" },
@@ -589,6 +599,7 @@ describe("P0 beta creator APIs", () => {
           method: "POST",
           url: `/v1/quizzes/${quiz.id}/publish`,
           headers: { cookie },
+          payload: { expectedDraftRevision: 0 },
         })
       ).statusCode,
     ).toBe(200);
@@ -836,13 +847,18 @@ describe("P0 beta creator APIs", () => {
           {
             name: "creation_started",
             occurredAt: new Date().toISOString(),
-            dimensions: { creationPath: "starter" },
+            dimensions: { creationPath: "starter", artifactType: "round" },
+          },
+          {
+            name: "draft_conflict",
+            occurredAt: new Date().toISOString(),
+            dimensions: { artifactType: "presentation" },
           },
         ],
       },
     });
     expect(telemetry.statusCode).toBe(202);
-    expect(telemetry.json()).toEqual({ accepted: 1 });
+    expect(telemetry.json()).toEqual({ accepted: 2 });
     await built.productEvents.drain();
     const creationStartedEvent = repository.productEvents.find(
       (event) => event.name === "creation_started",
@@ -852,11 +868,22 @@ describe("P0 beta creator APIs", () => {
       name: "creation_started",
       dimensions: {
         creationPath: "starter",
+        artifactType: "round",
         segment: "workplace",
         betaVersion: "p0-2026",
       },
     });
     expect(JSON.stringify(creationStartedEvent)).not.toContain(signedIn.creator.creator.userId);
+    expect(repository.productEvents).toContainEqual(
+      expect.objectContaining({
+        name: "draft_conflict",
+        dimensions: expect.objectContaining({
+          artifactType: "presentation",
+          segment: "workplace",
+          betaVersion: "p0-2026",
+        }),
+      }),
+    );
     const rejectedTelemetry = await app.inject({
       method: "POST",
       url: "/v1/product-events",

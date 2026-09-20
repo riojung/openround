@@ -51,6 +51,21 @@ describe("MetricsService", () => {
     );
   });
 
+  it("records only the bounded artifact type for authoring product events", async () => {
+    const metrics = new MetricsService();
+
+    metrics.recordProductEvent({
+      name: "draft_conflict",
+      dimensions: { artifactType: "presentation" },
+    });
+
+    const rendered = await metrics.render();
+    expect(rendered).toContain(
+      'openround_product_events_total{name="draft_conflict",creation_path="none",recipe="none",scenario="none",segment="none",beta_version="none",duration_bucket="none",artifact_type="presentation"} 1',
+    );
+    expect(rendered).not.toMatch(/presentationId|artifactId|title|sourceText/);
+  });
+
   it("records audit retention without workspace labels", async () => {
     const metrics = new MetricsService();
     metrics.recordRetention({

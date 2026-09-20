@@ -38,6 +38,12 @@ export const errorCodes = [
   "MESSAGE_REMOVED",
   "INVALID_REACTION",
   "AUDIENCE_SYNC_REQUIRED",
+  "PRECONDITION_REQUIRED",
+  "STALE_DRAFT",
+  "STALE_SESSION",
+  "PARTICIPANT_LIMIT",
+  "PHASE_CLOSED",
+  "ALREADY_RESPONDED",
   "IMPORT_VALIDATION_FAILED",
   "EXPORT_VALIDATION_FAILED",
   "FOLLOWUP_NOT_OPEN",
@@ -87,8 +93,24 @@ export const PublicFeaturesSchema = z.object({
   uxBeta: z.boolean().default(false),
   recoveryRehearsal: z.boolean().default(false),
   practiceAssignments: z.boolean().default(false),
+  presentations: z.boolean().default(false),
 });
 export type PublicFeatures = z.infer<typeof PublicFeaturesSchema>;
+
+export const WorkspaceProductFeaturesSchema = z.object({
+  roundExperiences: z.boolean(),
+  audiencePulse: z.boolean(),
+  roomChat: z.boolean(),
+  uxBeta: z.boolean(),
+  recoveryRehearsal: z.boolean(),
+  practiceAssignments: z.boolean(),
+  workspaceShell: z.boolean(),
+  builderV2: z.boolean(),
+  presentations: z.boolean(),
+  groups: z.boolean(),
+  discover: z.boolean(),
+});
+export type WorkspaceProductFeatures = z.infer<typeof WorkspaceProductFeaturesSchema>;
 
 export const OperationalFeatureFlagsSchema = z.object({
   signups: z.boolean(),
@@ -242,6 +264,91 @@ export const QuestionTypeSchema = z.enum([
 ]);
 export type QuestionType = z.infer<typeof QuestionTypeSchema>;
 
+export const QUESTION_TYPE_REGISTRY_VERSION = 1;
+
+export interface QuestionTypeDefinition {
+  type: QuestionType;
+  label: string;
+  editorLabel: string;
+  description: string;
+  responseKind: "choice" | "number" | "scale";
+  scored: boolean;
+  supportsConfidence: boolean;
+  supportsRecovery: boolean;
+}
+
+/**
+ * Versioned source of truth for question capabilities and human-facing labels. Canvas editors,
+ * preview/live renderers, and reports use this registry so a newly introduced type cannot silently
+ * appear in only one surface.
+ */
+export const QUESTION_TYPE_REGISTRY = {
+  single_select: {
+    type: "single_select",
+    label: "Single choice",
+    editorLabel: "Single select",
+    description: "One correct response with clear feedback.",
+    responseKind: "choice",
+    scored: true,
+    supportsConfidence: true,
+    supportsRecovery: true,
+  },
+  true_false: {
+    type: "true_false",
+    label: "True or false",
+    editorLabel: "True or false",
+    description: "A fast check for one precise claim.",
+    responseKind: "choice",
+    scored: true,
+    supportsConfidence: true,
+    supportsRecovery: true,
+  },
+  multi_select: {
+    type: "multi_select",
+    label: "Multiple choice",
+    editorLabel: "Multiple select",
+    description: "Learners select every correct response.",
+    responseKind: "choice",
+    scored: true,
+    supportsConfidence: true,
+    supportsRecovery: true,
+  },
+  numeric: {
+    type: "numeric",
+    label: "Number",
+    editorLabel: "Numeric response",
+    description: "A numeric answer with optional tolerance and unit.",
+    responseKind: "number",
+    scored: true,
+    supportsConfidence: true,
+    supportsRecovery: true,
+  },
+  rating: {
+    type: "rating",
+    label: "Rating scale",
+    editorLabel: "Rating",
+    description: "An unscored sentiment or reflection scale.",
+    responseKind: "scale",
+    scored: false,
+    supportsConfidence: false,
+    supportsRecovery: false,
+  },
+  poll: {
+    type: "poll",
+    label: "Poll",
+    editorLabel: "Poll",
+    description: "An unscored choice with no right answer.",
+    responseKind: "choice",
+    scored: false,
+    supportsConfidence: false,
+    supportsRecovery: false,
+  },
+} as const satisfies Record<QuestionType, QuestionTypeDefinition>;
+
+export function questionTypeDefinition(type: QuestionType): QuestionTypeDefinition {
+  return QUESTION_TYPE_REGISTRY[type];
+}
+
 export const QuestionPurposeSchema = z.enum(["diagnostic", "practice", "opinion"]);
 export type QuestionPurpose = z.infer<typeof QuestionPurposeSchema>;
 
@@ -389,7 +496,7 @@ const CommonQuestionDraftSchema = z.object({
 const ChoiceQuestionDraftSchema = CommonQuestionDraftSchema.extend({
   type: z.enum(["single_select", "true_false", "multi_select", "poll"]),
   choices: z.array(ChoiceDraftSchema).min(2).max(6),
-}).superRefine(applyChoiceRules);
+});
 
 const NumericQuestionDraftSchema = CommonQuestionDraftSchema.extend({
   type: z.literal("numeric"),
@@ -404,14 +511,17 @@ const RatingQuestionDraftSchema = CommonQuestionDraftSchema.extend({
   max: z.number().int().min(2).max(10),
   minLabel: z.string().trim().max(80),
   maxLabel: z.string().trim().max(80),
-}).refine((question) => question.max > question.min, {
-  message: "Rating maximum must be greater than its minimum",
-  path: ["max"],
 });
 
-export const QuestionDraftSchema = z
-  .union([ChoiceQuestionDraftSchema, NumericQuestionDraftSchema, RatingQuestionDraftSchema])
-  .superRefine(applyCommonQuestionRules);
+/**
+ * Drafts validate bounded storage shape, not publish-time correctness. This deliberately permits
+ * transient editor states such as an unanswered multi-select or an unfinished rating range.
+ */
+export const QuestionDraftSchema = z.union([
+  ChoiceQuestionDraftSchema,
+  NumericQuestionDraftSchema,
+  RatingQuestionDraftSchema,
+]);
 export type QuestionDraft = z.infer<typeof QuestionDraftSchema>;
 
 const CommonQuestionSchema = CommonQuestionDraftSchema.extend({
@@ -530,7 +640,39 @@ export const QuizContentSchema = z
     questions: z.array(QuestionSchema).min(1, "Add at least one question").max(200),
   })
   .superRefine((quiz, context) => {
+    if (!quiz.questions.some((question) => (question.delivery ?? "main") === "main")) {
+      context.addIssue({
+        code: "custom",
+        message: "Add at least one main checkpoint",
+        path: ["questions"],
+      });
+    }
+    const seenQuestionIds = new Set<string>();
+    for (const [questionIndex, question] of quiz.questions.entries()) {
+      if (seenQuestionIds.has(question.id)) {
+        context.addIssue({
+          code: "custom",
+          message: "Checkpoint IDs must be unique",
+          path: ["questions", questionIndex, "id"],
+        });
+      }
+      seenQuestionIds.add(question.id);
+      if (!("choices" in question)) continue;
+      const seenChoiceIds = new Set<string>();
+      for (const [choiceIndex, choice] of question.choices.entries()) {
+        if (seenChoiceIds.has(choice.id)) {
+          context.addIssue({
+            code: "custom",
+            message: "Answer choice IDs must be unique",
+            path: ["questions", questionIndex, "choices", choiceIndex, "id"],
+          });
+        }
+        seenChoiceIds.add(choice.id);
+      }
+    }
     const byId = new Map(quiz.questions.map((question) => [question.id, question]));
+    const indexById = new Map(quiz.questions.map((question, index) => [question.id, index]));
+    const linkedSources = new Map<string, number[]>();
     for (const [index, question] of quiz.questions.entries()) {
       if (!question.linkedRecheckQuestionId) continue;
       const linked = byId.get(question.linkedRecheckQuestionId);
@@ -545,6 +687,36 @@ export const QuizContentSchema = z
           code: "custom",
           message: "Linked checkpoint must be marked as a recheck",
           path: ["questions", index, "linkedRecheckQuestionId"],
+        });
+      } else {
+        const linkedIndex = indexById.get(linked.id)!;
+        if (linkedIndex <= index) {
+          context.addIssue({
+            code: "custom",
+            message: "Place the linked recheck after its diagnostic checkpoint",
+            path: ["questions", index, "linkedRecheckQuestionId"],
+          });
+        }
+        const sources = linkedSources.get(linked.id) ?? [];
+        sources.push(index);
+        linkedSources.set(linked.id, sources);
+      }
+    }
+    for (const [index, question] of quiz.questions.entries()) {
+      if ((question.delivery ?? "main") !== "recheck") continue;
+      const sources = linkedSources.get(question.id) ?? [];
+      if (sources.length === 0) {
+        context.addIssue({
+          code: "custom",
+          message: "Every recheck must be linked from one earlier diagnostic checkpoint",
+          path: ["questions", index, "delivery"],
+        });
+      }
+      for (const sharedSourceIndex of sources.slice(1)) {
+        context.addIssue({
+          code: "custom",
+          message: "A recheck cannot be shared by multiple diagnostic checkpoints",
+          path: ["questions", sharedSourceIndex, "linkedRecheckQuestionId"],
         });
       }
     }
@@ -711,11 +883,10 @@ export const ParticipantViewSchema = z.object({
 });
 export type ParticipantView = z.infer<typeof ParticipantViewSchema>;
 
-export const PublicQuestionSchema = z.object({
+const LiveQuestionBaseSchema = z.object({
   id: z.string().uuid(),
   type: QuestionTypeSchema.default("single_select"),
   prompt: z.string(),
-  purpose: QuestionPurposeSchema.default("diagnostic"),
   confidence: ConfidenceModeSchema.default("off"),
   choices: z
     .array(ChoiceSchema.omit({ isCorrect: true, feedback: true, misconceptionKey: true }))
@@ -729,13 +900,37 @@ export const PublicQuestionSchema = z.object({
       maxLabel: z.string(),
     })
     .optional(),
-  linkedRecheckAvailable: z.boolean().default(false),
   timeLimitSeconds: z.number().int(),
   basePoints: z.number().int(),
   mediaId: z.string().uuid().nullable(),
   mediaAlt: z.string().nullable(),
 });
+
+/** Question fields that are safe to send to a learner in a live Round. */
+export const ParticipantQuestionSchema = LiveQuestionBaseSchema.strict();
+export type ParticipantQuestion = z.infer<typeof ParticipantQuestionSchema>;
+
+/**
+ * The facilitator projection preserves the legacy live/follow-up question contract. Purpose and
+ * Recovery Loop availability are authoring/facilitation metadata and must not enter participant
+ * question DTOs.
+ */
+export const FacilitatorQuestionSchema = LiveQuestionBaseSchema.extend({
+  purpose: QuestionPurposeSchema.default("diagnostic"),
+  linkedRecheckAvailable: z.boolean().default(false),
+}).strict();
+export type FacilitatorQuestion = z.infer<typeof FacilitatorQuestionSchema>;
+
+/** Backward-compatible name used by host and follow-up surfaces. */
+export const PublicQuestionSchema = FacilitatorQuestionSchema;
 export type PublicQuestion = z.infer<typeof PublicQuestionSchema>;
+
+/** Role-dependent live wire shape. Facilitator-only fields stay optional on the shared envelope. */
+export const LiveQuestionSchema = LiveQuestionBaseSchema.extend({
+  purpose: QuestionPurposeSchema.optional(),
+  linkedRecheckAvailable: z.boolean().optional(),
+}).strict();
+export type LiveQuestion = z.infer<typeof LiveQuestionSchema>;
 
 export const RoundKindSchema = z.enum(["main", "linked_recheck", "revote"]);
 export type RoundKind = z.infer<typeof RoundKindSchema>;
@@ -884,7 +1079,7 @@ export const SessionSnapshotSchema = z.object({
   questionIndex: z.number().int().nonnegative().nullable(),
   questionPosition: z.number().int().nonnegative().nullable().optional(),
   questionCount: z.number().int().nonnegative(),
-  question: PublicQuestionSchema.nullable(),
+  question: LiveQuestionSchema.nullable(),
   deadline: z.string().datetime().nullable(),
   participants: z.array(ParticipantViewSchema),
   answerCount: z.number().int().nonnegative(),
@@ -1645,6 +1840,39 @@ export const CreateQuizSchema = z.object({
 
 export const UpdateQuizSchema = QuizDraftSchema;
 
+export const DraftRevisionSchema = z.number().int().nonnegative();
+export type DraftRevision = z.infer<typeof DraftRevisionSchema>;
+
+/** Revision-aware replacement payload retained on the legacy PATCH route during migration. */
+export const RevisionedUpdateQuizSchema = z.object({
+  draft: QuizDraftSchema,
+  expectedDraftRevision: DraftRevisionSchema,
+});
+export type RevisionedUpdateQuiz = z.infer<typeof RevisionedUpdateQuizSchema>;
+
+/** Revision-fenced, idempotent Round draft replacement used by the professional Builder. */
+export const RoundDraftMutationSchema = z.object({
+  draft: QuizDraftSchema,
+  expectedRevision: DraftRevisionSchema,
+  mutationId: z.string().uuid(),
+  schemaVersion: z.literal(1),
+});
+export type RoundDraftMutation = z.infer<typeof RoundDraftMutationSchema>;
+
+export const RestoreRoundDraftHistorySchema = z.object({
+  expectedRevision: DraftRevisionSchema,
+  mutationId: z.string().uuid(),
+});
+export type RestoreRoundDraftHistory = z.infer<typeof RestoreRoundDraftHistorySchema>;
+
+export const UpdateQuizRequestSchema = RevisionedUpdateQuizSchema;
+export type UpdateQuizRequest = z.infer<typeof UpdateQuizRequestSchema>;
+
+export const PublishQuizRequestSchema = z.object({
+  expectedDraftRevision: DraftRevisionSchema,
+});
+export type PublishQuizRequest = z.infer<typeof PublishQuizRequestSchema>;
+
 export const StarterIdSchema = z.enum([
   "exit-ticket",
   "misconception-check",
@@ -1791,6 +2019,13 @@ export type ReportContext = z.infer<typeof ReportContextSchema>;
 export const ProductEventNameSchema = z.enum([
   "creation_started",
   "creation_completed",
+  "first_block_created",
+  "draft_save_failed",
+  "draft_conflict",
+  "publish_blocked",
+  "creation_abandoned",
+  "presentation_host_started",
+  "presentation_reconnected",
   "round_published",
   "setup_recipe_selected",
   "host_setup_completed",
@@ -1816,6 +2051,7 @@ export const ProductEventSchema = z
     dimensions: z
       .object({
         creationPath: z.enum(["starter", "source", "import", "blank"]).optional(),
+        artifactType: z.enum(["round", "presentation"]).optional(),
         recipe: z.enum(["recovery", "friendly_competition", "open_discussion"]).optional(),
         scenario: z.enum(["low_participation", "split_room", "confident_misconception"]).optional(),
         segment: z.enum(["education", "workplace"]).optional(),
@@ -1835,6 +2071,36 @@ export const ProductEventSchema = z
         code: "custom",
         path: ["dimensions", "creationPath"],
         message: "Creation events require a creation path",
+      });
+    }
+    if (
+      [
+        "creation_started",
+        "creation_completed",
+        "first_block_created",
+        "draft_save_failed",
+        "draft_conflict",
+        "publish_blocked",
+        "creation_abandoned",
+        "presentation_host_started",
+        "presentation_reconnected",
+      ].includes(event.name) &&
+      !event.dimensions.artifactType
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["dimensions", "artifactType"],
+        message: "Authoring events require an artifact type",
+      });
+    }
+    if (
+      (event.name === "presentation_host_started" || event.name === "presentation_reconnected") &&
+      event.dimensions.artifactType !== "presentation"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["dimensions", "artifactType"],
+        message: "Presentation delivery events require the presentation artifact type",
       });
     }
     if (event.name === "setup_recipe_selected" && !event.dimensions.recipe) {
@@ -2220,6 +2486,16 @@ export type FollowupSnapshot = z.infer<typeof FollowupSnapshotSchema>;
 export const AuthoringSourceTypeSchema = z.enum(["pasted_text", "pdf", "docx", "pptx"]);
 export type AuthoringSourceType = z.infer<typeof AuthoringSourceTypeSchema>;
 
+export const ContentSlideLayoutSchema = z.enum([
+  "title",
+  "title_body",
+  "media",
+  "quote",
+  "section",
+  "callout",
+]);
+export type ContentSlideLayout = z.infer<typeof ContentSlideLayoutSchema>;
+
 const PastedAuthoringSourceSchema = z.object({
   sourceType: z.literal("pasted_text"),
   sourceName: z.string().trim().min(1).max(200).default("Pasted source"),
@@ -2263,15 +2539,39 @@ export const AuthoringCitationSchema = z.object({
   excerpt: z.string().min(1).max(500),
 });
 
+/**
+ * A reviewable, source-derived slide proposal. These are intentionally content-only: source
+ * conversion does not imply that document media or freeform layout can be reproduced safely.
+ */
+export const AuthoringContentSlideProposalSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.literal("content"),
+  layout: ContentSlideLayoutSchema.exclude(["media"]),
+  title: z.string().trim().min(1).max(160),
+  body: z.string().trim().max(4_000),
+  citations: z
+    .array(
+      z.object({
+        locator: z.string().trim().min(1).max(120),
+        excerpt: z.string().trim().min(1).max(500),
+      }),
+    )
+    .min(1)
+    .max(4),
+});
+export type AuthoringContentSlideProposal = z.infer<typeof AuthoringContentSlideProposalSchema>;
+
 export const AuthoringDraftSchema = z.object({
   schemaVersion: z.literal(1),
   sourceName: z.string(),
   sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
   checkpointSet: QuizContentSchema,
   citations: z.array(AuthoringCitationSchema).min(2).max(20),
+  contentSlideProposals: z.array(AuthoringContentSlideProposalSchema).max(8).optional(),
   generatedAt: z.string().datetime(),
   provider: z.string(),
   model: z.string(),
+  conversionNotes: z.array(z.string().trim().min(1).max(300)).max(10).optional(),
 });
 export type AuthoringDraft = z.infer<typeof AuthoringDraftSchema>;
 
@@ -2291,4 +2591,371 @@ export type AuthoringJob = z.infer<typeof AuthoringJobSchema>;
 
 export const ApplyAuthoringJobSchema = z.object({
   title: z.string().trim().min(1).max(160).optional(),
+});
+
+const AuthoringProposalSelectionFields = {
+  selectedContentSlideIds: z
+    .array(z.string().uuid())
+    .max(8)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "Select each content-slide proposal only once",
+    })
+    .optional(),
+  selectedQuestionIds: z
+    .array(z.string().uuid())
+    .max(2)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "Select each proposed question only once",
+    })
+    .optional(),
+};
+
+function requireAuthoringProposalSelection(
+  input: {
+    selectedContentSlideIds?: string[];
+    selectedQuestionIds?: string[];
+  },
+  context: z.RefinementCtx,
+) {
+  if (
+    (input.selectedContentSlideIds !== undefined || input.selectedQuestionIds !== undefined) &&
+    (input.selectedContentSlideIds?.length ?? 0) + (input.selectedQuestionIds?.length ?? 0) === 0
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["selectedContentSlideIds"],
+      message: "Select at least one content slide or question",
+    });
+  }
+}
+
+export const ApplyPresentationAuthoringJobSchema = z
+  .object({
+    title: z.string().trim().min(1).max(160).optional(),
+    ...AuthoringProposalSelectionFields,
+  })
+  .superRefine(requireAuthoringProposalSelection);
+export type ApplyPresentationAuthoringJob = z.infer<typeof ApplyPresentationAuthoringJobSchema>;
+
+/**
+ * Presentations deliberately use structured, responsive blocks instead of
+ * arbitrary coordinates. This keeps authoring, accessibility, and live
+ * rendering on the same contract.
+ */
+export const ArtifactTypeSchema = z.enum(["round", "presentation"]);
+export type ArtifactType = z.infer<typeof ArtifactTypeSchema>;
+
+export const PresentationCitationSchema = z.object({
+  locator: z.string().trim().min(1).max(120),
+  excerpt: z.string().trim().min(1).max(500),
+});
+
+export const PresentationSourceDisclosureSchema = z.object({
+  sourceName: z.string().trim().min(1).max(200),
+  sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  provider: z.string().trim().min(1).max(120),
+  model: z.string().trim().min(1).max(120),
+  conversionNotes: z.array(z.string().trim().min(1).max(300)).max(10).optional(),
+});
+
+const ContentSlideDraftFields = {
+  id: z.string().uuid(),
+  kind: z.literal("content"),
+  layout: ContentSlideLayoutSchema,
+  title: z.string().trim().max(160),
+  body: z.string().trim().max(4_000),
+  mediaId: z.string().uuid().nullable(),
+  mediaAlt: z.string().trim().max(300).nullable(),
+  speakerNotes: z.string().trim().max(2_000),
+  citations: z.array(PresentationCitationSchema).max(20).optional(),
+  sourceDisclosure: PresentationSourceDisclosureSchema.optional(),
+};
+
+/** Draft slides retain bounded storage shape while allowing incomplete accessibility metadata. */
+export const ContentSlideDraftSchema = z.object(ContentSlideDraftFields);
+export type ContentSlideDraft = z.infer<typeof ContentSlideDraftSchema>;
+
+export const ContentSlideSchema = z.object(ContentSlideDraftFields).superRefine((slide, ctx) => {
+  if (!slide.title && !slide.body && !slide.mediaId) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Add a title, body, or image to this slide",
+      path: ["title"],
+    });
+  }
+  if (slide.mediaId && !slide.mediaAlt?.trim()) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Describe the slide image for participants who cannot see it",
+      path: ["mediaAlt"],
+    });
+  }
+});
+export type ContentSlide = z.infer<typeof ContentSlideSchema>;
+
+const QuestionProvenanceSchema = z.object({
+  sourceQuizVersionId: z.string().uuid(),
+  sourceQuestionId: z.string().uuid(),
+});
+
+export const InteractiveQuestionBlockDraftSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.literal("question"),
+  question: QuestionDraftSchema,
+  provenance: QuestionProvenanceSchema.optional(),
+  citations: z.array(PresentationCitationSchema).max(20).optional(),
+  sourceDisclosure: PresentationSourceDisclosureSchema.optional(),
+});
+export type InteractiveQuestionBlockDraft = z.infer<typeof InteractiveQuestionBlockDraftSchema>;
+
+export const InteractiveQuestionBlockSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.literal("question"),
+  question: QuestionSchema,
+  provenance: QuestionProvenanceSchema.optional(),
+  citations: z.array(PresentationCitationSchema).max(20).optional(),
+  sourceDisclosure: PresentationSourceDisclosureSchema.optional(),
+});
+export type InteractiveQuestionBlock = z.infer<typeof InteractiveQuestionBlockSchema>;
+
+export const PresentationBlockDraftSchema = z.discriminatedUnion("kind", [
+  ContentSlideDraftSchema,
+  InteractiveQuestionBlockDraftSchema,
+]);
+export type PresentationBlockDraft = z.infer<typeof PresentationBlockDraftSchema>;
+
+export const PresentationBlockSchema = z.discriminatedUnion("kind", [
+  ContentSlideSchema,
+  InteractiveQuestionBlockSchema,
+]);
+export type PresentationBlock = z.infer<typeof PresentationBlockSchema>;
+
+function applyPresentationTopology(
+  presentation: {
+    blocks: Array<
+      | { id: string; kind: "content" }
+      | {
+          id: string;
+          kind: "question";
+          question: {
+            id: string;
+            delivery?: QuestionDelivery;
+            linkedRecheckQuestionId?: string | null;
+            choices?: Array<{ id: string }>;
+          };
+        }
+    >;
+  },
+  ctx: z.RefinementCtx,
+  publishReady: boolean,
+) {
+  const blockIds = new Set<string>();
+  const questionIds = new Map<
+    string,
+    { delivery?: QuestionDelivery; linkedRecheckQuestionId?: string | null; blockIndex: number }
+  >();
+  const choiceIds = new Set<string>();
+  for (const [blockIndex, block] of presentation.blocks.entries()) {
+    if (blockIds.has(block.id)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Every presentation block needs a unique ID",
+        path: ["blocks", blockIndex, "id"],
+      });
+    }
+    blockIds.add(block.id);
+    if (block.kind !== "question") continue;
+    if (questionIds.has(block.question.id)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Every presentation question needs a unique ID",
+        path: ["blocks", blockIndex, "question", "id"],
+      });
+    }
+    questionIds.set(block.question.id, { ...block.question, blockIndex });
+    for (const [choiceIndex, choice] of (block.question.choices ?? []).entries()) {
+      if (choiceIds.has(choice.id)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Every answer choice needs a unique ID",
+          path: ["blocks", blockIndex, "question", "choices", choiceIndex, "id"],
+        });
+      }
+      choiceIds.add(choice.id);
+    }
+  }
+  if (!publishReady) return;
+  const linkedSources = new Map<string, number[]>();
+  for (const [blockIndex, block] of presentation.blocks.entries()) {
+    if (block.kind !== "question" || !block.question.linkedRecheckQuestionId) continue;
+    const linked = questionIds.get(block.question.linkedRecheckQuestionId);
+    if (!linked || (linked.delivery ?? "main") !== "recheck") {
+      ctx.addIssue({
+        code: "custom",
+        message: "Linked recheck must reference a recheck question in this presentation",
+        path: ["blocks", blockIndex, "question", "linkedRecheckQuestionId"],
+      });
+      continue;
+    }
+    if (linked.blockIndex <= blockIndex) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Place the linked recheck after its diagnostic question",
+        path: ["blocks", blockIndex, "question", "linkedRecheckQuestionId"],
+      });
+    }
+    const sources = linkedSources.get(block.question.linkedRecheckQuestionId) ?? [];
+    sources.push(blockIndex);
+    linkedSources.set(block.question.linkedRecheckQuestionId, sources);
+  }
+  for (const [questionId, question] of questionIds) {
+    if ((question.delivery ?? "main") !== "recheck") continue;
+    const sources = linkedSources.get(questionId) ?? [];
+    if (sources.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Every recheck must be linked from one earlier diagnostic question",
+        path: ["blocks", question.blockIndex, "question", "delivery"],
+      });
+    }
+    for (const sharedSourceIndex of sources.slice(1)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "A recheck cannot be shared by multiple diagnostic questions",
+        path: ["blocks", sharedSourceIndex, "question", "linkedRecheckQuestionId"],
+      });
+    }
+  }
+}
+
+export const PresentationDraftSchema = z
+  .object({
+    title: z.string().trim().max(160),
+    description: z.string().trim().max(1_000).default(""),
+    experiencePreset: ExperiencePresetRefSchema.default({ id: "focus", version: 1 }),
+    schemaVersion: z.literal(1).default(1),
+    sourceDisclosure: PresentationSourceDisclosureSchema.optional(),
+    blocks: z.array(PresentationBlockDraftSchema).max(200),
+  })
+  .superRefine((presentation, ctx) => applyPresentationTopology(presentation, ctx, false));
+export type PresentationDraft = z.infer<typeof PresentationDraftSchema>;
+
+export const PresentationContentSchema = z
+  .object({
+    title: z.string().trim().min(1, "Enter a presentation title").max(160),
+    description: z.string().trim().max(1_000).default(""),
+    experiencePreset: ExperiencePresetRefSchema.default({ id: "focus", version: 1 }),
+    schemaVersion: z.literal(1),
+    sourceDisclosure: PresentationSourceDisclosureSchema.optional(),
+    blocks: z.array(PresentationBlockSchema).min(1).max(200),
+  })
+  .superRefine((presentation, ctx) => {
+    applyPresentationTopology(presentation, ctx, true);
+    if (!presentation.blocks.some((block) => block.kind === "question")) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Add at least one interactive question before publishing",
+        path: ["blocks"],
+      });
+    }
+    if (
+      !presentation.blocks.some(
+        (block) => block.kind === "question" && (block.question.delivery ?? "main") === "main",
+      )
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Add at least one main interactive question before publishing",
+        path: ["blocks"],
+      });
+    }
+  });
+export type PresentationContent = z.infer<typeof PresentationContentSchema>;
+
+export const CreatePresentationSchema = z.object({
+  title: z.string().trim().min(1).max(160),
+  description: z.string().trim().max(1_000).default(""),
+});
+
+export const PresentationDraftMutationSchema = z.object({
+  draft: PresentationDraftSchema,
+  expectedRevision: z.number().int().nonnegative(),
+  mutationId: z.string().uuid(),
+  schemaVersion: z.literal(1),
+});
+export type PresentationDraftMutation = z.infer<typeof PresentationDraftMutationSchema>;
+
+export const PublishPresentationSchema = z.object({
+  expectedDraftRevision: z.number().int().nonnegative(),
+});
+
+export const CopyRoundQuestionsToPresentationSchema = z.object({
+  sourceQuizVersionId: z.string().uuid(),
+  questionIds: z
+    .array(z.string().uuid())
+    .min(1)
+    .max(50)
+    .refine((questionIds) => new Set(questionIds).size === questionIds.length, {
+      message: "Select each source question only once",
+    }),
+  afterBlockId: z.string().uuid().nullable().default(null),
+  expectedRevision: z.number().int().nonnegative(),
+  mutationId: z.string().uuid(),
+});
+
+export const InsertAuthoringProposalsIntoPresentationSchema = z
+  .object({
+    authoringJobId: z.string().uuid(),
+    ...AuthoringProposalSelectionFields,
+    afterBlockId: z.string().uuid().nullable().default(null),
+    expectedRevision: z.number().int().nonnegative(),
+    mutationId: z.string().uuid(),
+  })
+  .superRefine(requireAuthoringProposalSelection);
+export type InsertAuthoringProposalsIntoPresentation = z.infer<
+  typeof InsertAuthoringProposalsIntoPresentationSchema
+>;
+
+export const PresentationSessionPhaseSchema = z.enum([
+  "lobby",
+  "content",
+  "question_open",
+  "question_reveal",
+  "intervention",
+  "finished",
+]);
+export type PresentationSessionPhase = z.infer<typeof PresentationSessionPhaseSchema>;
+
+export const CreatePresentationSessionSchema = z.object({
+  presentationId: z.string().uuid(),
+});
+
+export const AdvancePresentationSessionSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+});
+
+export const JoinPresentationSessionSchema = z.object({
+  code: z.string().regex(/^\d{7}$/, "Enter a seven-digit presentation code"),
+  nickname: z.string().trim().min(1).max(32),
+});
+
+export const PresentationSessionResponseSchema = z
+  .object({
+    choiceIds: z.array(z.string().uuid()).max(10).optional(),
+    numericValue: z.string().trim().max(100).optional(),
+    ratingValue: z.number().int().optional(),
+    confidence: ConfidenceValueSchema.nullable().optional(),
+  })
+  .refine(
+    (response) =>
+      response.choiceIds !== undefined ||
+      response.numericValue !== undefined ||
+      response.ratingValue !== undefined,
+    { message: "Add a response before submitting" },
+  );
+export type PresentationSessionResponse = z.infer<typeof PresentationSessionResponseSchema>;
+
+export const SubmitPresentationSessionResponseSchema = z.object({
+  participantToken: z.string().min(32).max(1_000),
+  response: PresentationSessionResponseSchema,
 });

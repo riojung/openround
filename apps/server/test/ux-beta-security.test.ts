@@ -125,6 +125,7 @@ async function createPublishedRound(target: FastifyInstance, cookie: string) {
     method: "POST",
     url: `/v1/quizzes/${quiz.id}/publish`,
     headers: { cookie },
+    payload: { expectedDraftRevision: 0 },
   });
   expect(published.statusCode).toBe(200);
   return quiz;

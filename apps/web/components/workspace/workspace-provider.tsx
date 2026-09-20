@@ -2,7 +2,10 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Entitlements } from "@openround/contracts";
+import type {
+  Entitlements,
+  WorkspaceProductFeatures as ContractWorkspaceProductFeatures,
+} from "@openround/contracts";
 import { apiFetch, humanError } from "../../lib/api";
 
 export interface WorkspaceCreator {
@@ -14,14 +17,7 @@ export interface WorkspaceCreator {
   plan: "free" | "pro" | "team";
 }
 
-export interface WorkspaceProductFeatures {
-  roundExperiences: boolean;
-  audiencePulse: boolean;
-  roomChat: boolean;
-  uxBeta: boolean;
-  recoveryRehearsal: boolean;
-  practiceAssignments: boolean;
-}
+export type WorkspaceProductFeatures = ContractWorkspaceProductFeatures;
 
 interface WorkspaceAccountResponse {
   creator: WorkspaceCreator;

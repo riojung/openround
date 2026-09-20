@@ -686,6 +686,50 @@ h3 {
   padding-top: 12px;
 }
 
+.authoring-assistant .authoring-proposal-options {
+  display: grid;
+  gap: 9px;
+  margin-top: 16px !important;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+}
+
+.authoring-proposal-option,
+.authoring-question-proposal {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.authoring-proposal-option {
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--cream);
+}
+
+.authoring-proposal-option:has(input:checked) {
+  border-color: var(--teal);
+  background: var(--sky);
+}
+
+.authoring-proposal-option > span,
+.authoring-proposal-option small {
+  display: block;
+}
+
+.authoring-proposal-option small {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.authoring-question-proposal > input,
+.authoring-proposal-option > input {
+  margin-top: 4px;
+}
+
 .source-citations {
   margin-bottom: 22px;
 }

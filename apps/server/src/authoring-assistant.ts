@@ -4,6 +4,7 @@ import {
   AuthoringDraftSchema,
   QuizContentSchema,
   type AuthoringDraft,
+  type AuthoringContentSlideProposal,
   type QuestionDraft,
 } from "@openround/contracts";
 import type { ExtractedSource } from "./source-extraction.js";
@@ -172,6 +173,65 @@ function normalizedEvidence(value: string) {
   return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase("en-CA");
 }
 
+function sourceText(value: string) {
+  return value.normalize("NFKC").replace(/\s+/g, " ").trim();
+}
+
+function boundedSourcePrefix(value: string, maximum: number) {
+  if (value.length <= maximum) return value;
+  const candidate = value.slice(0, maximum + 1);
+  const minimumUsefulBoundary = Math.floor(maximum * 0.55);
+  const sentenceBoundary = Math.max(
+    candidate.lastIndexOf(". "),
+    candidate.lastIndexOf("? "),
+    candidate.lastIndexOf("! "),
+  );
+  if (sentenceBoundary >= minimumUsefulBoundary) {
+    return candidate.slice(0, sentenceBoundary + 1).trim();
+  }
+  const phraseBoundary = Math.max(candidate.lastIndexOf("; "), candidate.lastIndexOf(", "));
+  if (phraseBoundary >= minimumUsefulBoundary) {
+    return candidate.slice(0, phraseBoundary + 1).trim();
+  }
+  const wordBoundary = candidate.lastIndexOf(" ");
+  return candidate.slice(0, wordBoundary >= minimumUsefulBoundary ? wordBoundary : maximum).trim();
+}
+
+/**
+ * Converts extracted sections into bounded proposal cards without asking the provider to invent or
+ * paraphrase slide copy. Every visible word is copied from an extracted section and each proposal
+ * retains the exact section locator and excerpt used for review.
+ */
+export function deriveContentSlideProposals(
+  source: ExtractedSource,
+): AuthoringContentSlideProposal[] {
+  return source.sections.slice(0, 8).flatMap((section, index) => {
+    const text = sourceText(section.text);
+    if (!text) return [];
+    const title = boundedSourcePrefix(text, 96);
+    const remainder = text
+      .slice(title.length)
+      .trim()
+      .replace(/^[.!?;,:\-–—]+\s*/, "");
+    const body = boundedSourcePrefix(remainder, 1_600);
+    return [
+      {
+        id: randomUUID(),
+        kind: "content" as const,
+        layout: index === 0 ? ("section" as const) : ("title_body" as const),
+        title,
+        body,
+        citations: [
+          {
+            locator: section.locator,
+            excerpt: boundedSourcePrefix(text, 96),
+          },
+        ],
+      },
+    ];
+  });
+}
+
 function checkpoint(
   generated: z.infer<typeof GeneratedCheckpointSchema>,
   id: string,
@@ -291,14 +351,35 @@ export function validateAuthoringOutput(input: {
       ...generated.citations[index]!,
     })),
   ];
+  const conversionNotes: string[] = [
+    ...{
+      pasted_text: [],
+      pdf: [
+        "Only readable PDF text was extracted; scanned images, annotations, forms, and visual layout may be omitted.",
+      ],
+      docx: [
+        "Only document paragraph text was extracted; tables, charts, comments, footnotes, and page layout may be omitted.",
+      ],
+      pptx: [
+        "Only slide text was extracted; animations, transitions, charts, embedded media, speaker notes, and freeform positioning are omitted.",
+      ],
+    }[input.source.sourceType],
+  ];
+  if (input.source.truncated) {
+    conversionNotes.push(
+      "The extracted source exceeded the 100,000-character review limit; later material was omitted.",
+    );
+  }
   return AuthoringDraftSchema.parse({
     schemaVersion: 1,
     sourceName: input.source.sourceName,
     sourceDigest: input.sourceDigest,
     checkpointSet,
     citations,
+    contentSlideProposals: deriveContentSlideProposals(input.source),
     generatedAt: input.generatedAt.toISOString(),
     provider: input.provider,
     model: input.model,
+    conversionNotes,
   });
 }
