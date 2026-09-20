@@ -132,6 +132,13 @@ Legacy `/v1/quizzes` naming is intentionally stable through v1 even though the U
 - `GET /v1/quizzes/{id}/export.csv`
 - `GET /v1/quizzes/{id}/export.qti.zip`
 
+Authenticated `GET /v1/quizzes` library reads, including `summary=true`, and
+`GET /v1/quizzes/{id}` detail reads are tenant-scoped and return `Cache-Control: private,
+no-store` with `Pragma: no-cache`. The UX-beta private question picker uses those existing reads and
+the normal draft `PATCH`; it appends fresh-ID independent copies in the browser, remaps a valid
+main-to-recheck link to the copied recheck, and does not mutate or synchronize with the source
+Round. There is no separate question-bank API or shared question identity.
+
 Imports always return a validation report. OpenRound JSON is lossless and versioned. The QTI 3
 profile supports single select, true/false, multiple select, and numeric response; unsupported
 types and omitted media are explicit warnings/errors. CSV output escapes spreadsheet formula

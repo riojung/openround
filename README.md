@@ -12,7 +12,8 @@ The repository contains a runnable differentiated product slice:
 
 - Email magic-link creator access with secure, revocable sessions
 - Tenant-scoped checkpoint-set library, six response types, confidence, concepts, linked rechecks,
-  folders/tags, portability, autosave, duplication, archive, and immutable publish versions
+  private cross-Round question reuse as independent copies, folders/tags, portability, autosave,
+  duplication, archive, and immutable publish versions
 - Seven-digit multi-device guest join, copyable direct links, host/presenter QR, LAN/public address
   selection, friendly aliases, participant-selected session avatars, capacity enforcement, lobby,
   presenter view, and reconnect credentials

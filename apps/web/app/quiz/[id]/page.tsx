@@ -19,12 +19,18 @@ import { MediaEditor } from "../../../components/editor/media-editor";
 import { ParticipantPreview } from "../../../components/editor/participant-preview";
 import { editorTypeLabel } from "../../../components/editor/question-labels";
 import { QuestionNavigator } from "../../../components/editor/question-navigator";
+import { QuestionReusePicker } from "../../../components/editor/question-reuse-picker";
 import { ResponseEditor } from "../../../components/editor/response-editor";
 import { isChoiceQuestion, type ChoiceQuestionDraft } from "../../../components/editor/types";
 import { ExperiencePicker } from "../../../components/experience-picker";
 import { apiFetch, humanError } from "../../../lib/api";
 import { useEditorController } from "../../../lib/editor-controller";
 import { moveQuestionById, removeQuestionById } from "../../../lib/editor-structure";
+import {
+  cloneQuestionReuseSelections,
+  type QuestionReuseSelection,
+  type QuestionReuseSource,
+} from "../../../lib/question-reuse";
 import { clientUuid } from "../../../lib/uuid";
 
 interface QuizRecord {
@@ -194,6 +200,9 @@ export default function QuizEditorPage() {
   const [quiz, setQuiz] = useState<QuizRecord | null>(null);
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [publishedQuizCount, setPublishedQuizCount] = useState(0);
+  const [questionReuseSources, setQuestionReuseSources] = useState<QuestionReuseSource[]>([]);
+  const [questionReuseOpen, setQuestionReuseOpen] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
   const {
     draft,
     selectedQuestionId,
@@ -258,6 +267,7 @@ export default function QuizEditorPage() {
     Promise.all([
       apiFetch<{ quiz: QuizRecord }>(`/v1/quizzes/${id}`),
       apiFetch<{
+        creator: { role: "owner" | "editor" | "viewer" };
         entitlements: Entitlements;
         productFeatures: {
           roundExperiences: boolean;
@@ -272,12 +282,29 @@ export default function QuizEditorPage() {
         setQuiz(loadedQuiz);
         loadDraft(loadedQuiz.draft);
         setEntitlements(account.entitlements);
+        setCanEdit(account.creator.role === "owner" || account.creator.role === "editor");
         setRoundExperiencesAvailable(account.productFeatures.roundExperiences);
         setUxBeta(account.productFeatures.uxBeta);
         setPracticeAssignmentsAvailable(Boolean(account.productFeatures.practiceAssignments));
         setPublishedQuizCount(
           library.quizzes.filter((candidate) => candidate.status === "published").length,
         );
+        setQuestionReuseSources(
+          library.quizzes
+            .filter(
+              (candidate) =>
+                candidate.id !== loadedQuiz.id &&
+                candidate.draft.questions.some(
+                  (question) => (question.delivery ?? "main") === "main",
+                ),
+            )
+            .map((candidate) => ({
+              id: candidate.id,
+              title: candidate.draft.title,
+              draft: { questions: candidate.draft.questions },
+            })),
+        );
+        setQuestionReuseOpen(false);
         loaded.current = true;
       })
       .catch((caught) => {
@@ -404,6 +431,46 @@ export default function QuizEditorPage() {
     const next = [...draft.questions, inserted];
     setDraft({ ...draft, questions: next });
     setSelectedQuestionId(inserted.id);
+  }
+
+  function openQuestionReuse() {
+    setQuestionReuseOpen(true);
+    window.setTimeout(() => {
+      document
+        .querySelector<HTMLInputElement>(
+          '[data-testid="question-reuse-picker"] input[type="search"]',
+        )
+        ?.focus();
+    }, 0);
+  }
+
+  function closeQuestionReuse() {
+    setQuestionReuseOpen(false);
+    window.setTimeout(() => document.getElementById("open-private-question-bank")?.focus(), 0);
+  }
+
+  function reuseQuestions(selections: QuestionReuseSelection[]) {
+    if (!draft) return;
+    const cloned = cloneQuestionReuseSelections(questionReuseSources, selections, clientUuid);
+    if (cloned.includedQuestionCount === 0) return;
+    if (draft.questions.length + cloned.includedQuestionCount > 200) {
+      setError("Select fewer questions so this Round stays within the 200-question limit.");
+      return;
+    }
+    setError("");
+    applyStructuralChange(
+      { ...draft, questions: [...draft.questions, ...cloned.questions] },
+      cloned.firstQuestionId,
+      {
+        draft,
+        selectedQuestionId,
+        message: `${cloned.includedQuestionCount} ${
+          cloned.includedQuestionCount === 1 ? "question" : "questions"
+        } reused.`,
+      },
+    );
+    setQuestionReuseOpen(false);
+    window.setTimeout(() => document.getElementById("prompt")?.focus(), 0);
   }
 
   function removeQuestion() {
@@ -758,13 +825,24 @@ export default function QuizEditorPage() {
                 </p>
               )}
             </section>
+            {uxBeta && canEdit && questionReuseOpen ? (
+              <QuestionReusePicker
+                currentQuestionCount={draft.questions.length}
+                onCancel={closeQuestionReuse}
+                onReuse={reuseQuestions}
+                sources={questionReuseSources}
+              />
+            ) : null}
             <div className="editor-layout">
               <QuestionNavigator
+                canReuseQuestions={canEdit}
                 draft={draft}
                 insertType={insertType}
                 onAddQuestion={addQuestion}
                 onInsertTypeChange={setInsertType}
+                onOpenQuestionReuse={openQuestionReuse}
                 onSelectQuestion={setSelectedQuestionId}
+                questionReuseOpen={questionReuseOpen}
                 selectedQuestionId={selectedQuestionId}
                 uxBeta={uxBeta}
               />

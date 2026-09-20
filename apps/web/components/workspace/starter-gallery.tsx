@@ -4,7 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, humanError } from "../../lib/api";
 import { useWorkspace } from "./workspace-provider";
-import { responseTypeLabel } from "./workspace-model";
+import {
+  formatStarterCategory,
+  prioritizeStartersForSegment,
+  responseTypeLabel,
+} from "./workspace-model";
 import type { StarterSummary } from "./workspace-types";
 import styles from "./workspace-content.module.css";
 import { recordCreationEvent } from "./product-events";
@@ -15,14 +19,17 @@ export function StarterGallery({ compact = false }: { compact?: boolean }) {
   const [starters, setStarters] = useState<StarterSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState("");
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [actionError, setActionError] = useState("");
 
   const refresh = useCallback(async () => {
+    setLoadError("");
+    setLoading(true);
     try {
       const response = await apiFetch<{ starters: StarterSummary[] }>("/v1/starters");
       setStarters(response.starters);
     } catch (caught) {
-      setError(humanError(caught));
+      setLoadError(humanError(caught));
     } finally {
       setLoading(false);
     }
@@ -34,7 +41,7 @@ export function StarterGallery({ compact = false }: { compact?: boolean }) {
 
   async function useStarter(starter: StarterSummary) {
     setBusyId(starter.id);
-    setError("");
+    setActionError("");
     recordCreationEvent("creation_started", "starter");
     try {
       const response = await apiFetch<{ quiz: { id: string } }>(`/v1/starters/${starter.id}/use`, {
@@ -44,27 +51,48 @@ export function StarterGallery({ compact = false }: { compact?: boolean }) {
       recordCreationEvent("creation_completed", "starter");
       router.push(`/quiz/${response.quiz.id}`);
     } catch (caught) {
-      setError(humanError(caught));
+      setActionError(humanError(caught));
       setBusyId("");
     }
   }
 
-  if (loading) return <p className={styles.muted}>Loading starters…</p>;
+  if (loading)
+    return (
+      <p className={styles.muted} role="status">
+        Loading starters…
+      </p>
+    );
+
+  const orderedStarters = prioritizeStartersForSegment(starters, creator?.segment);
 
   return (
     <>
-      {error ? (
+      {loadError ? (
+        <div>
+          <p className="error" role="alert">
+            {loadError}
+          </p>
+          <button
+            className="button-quiet small-button"
+            onClick={() => void refresh()}
+            type="button"
+          >
+            Retry loading starters
+          </button>
+        </div>
+      ) : null}
+      {actionError ? (
         <p className="error" role="alert">
-          {error}
+          {actionError}
         </p>
       ) : null}
       <div className={compact ? styles.starterGridCompact : styles.starterGrid}>
-        {starters.map((starter) => {
+        {orderedStarters.map((starter) => {
           const recommended = starter.segment === "all" || starter.segment === creator?.segment;
           return (
             <article className={styles.starterCard} key={starter.id}>
               <div className={styles.cardTopline}>
-                <span className={styles.category}>{starter.category.replaceAll("_", " ")}</span>
+                <span className={styles.category}>{formatStarterCategory(starter.category)}</span>
                 {recommended ? <span className={styles.recommended}>Good fit</span> : null}
               </div>
               <h3>{starter.title}</h3>
@@ -91,7 +119,7 @@ export function StarterGallery({ compact = false }: { compact?: boolean }) {
           );
         })}
       </div>
-      {!starters.length && !error ? (
+      {!starters.length && !loadError ? (
         <div className={styles.emptyState}>
           <h3>No starters are available yet</h3>
           <p>The starter library will appear here when it is enabled for this workspace.</p>

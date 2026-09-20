@@ -116,6 +116,157 @@ test("creator starts a blank Round with the selected first response type", async
   ).toContainText("Numeric response");
 });
 
+test("creator reuses a main question with its linked recheck as independent copies", async ({
+  page,
+}) => {
+  await signIn(page, betaEmail);
+
+  const suffix = randomUUID().slice(0, 8);
+  const sourceTitle = `Question bank source ${suffix}`;
+  const targetTitle = `Question bank target ${suffix}`;
+  const mainPrompt = `Which release check prevents regressions ${suffix}?`;
+  const recheckPrompt = `Apply the release check to a new case ${suffix}.`;
+  const sourceMainQuestionId = randomUUID();
+  const sourceRecheckQuestionId = randomUUID();
+  const sourceMainChoiceIds = [randomUUID(), randomUUID()];
+  const sourceRecheckChoiceIds = [randomUUID(), randomUUID()];
+  const commonQuestion = {
+    type: "single_select" as const,
+    purpose: "diagnostic" as const,
+    confidence: "required" as const,
+    conceptKeys: ["release-safety"],
+    timeLimitSeconds: 30,
+    explanation: "Use the evidence before choosing the release action.",
+    mediaId: null,
+    mediaAlt: null,
+  };
+  const sourceDraft = {
+    title: sourceTitle,
+    description: "Reusable question pair for browser coverage.",
+    category: "business" as const,
+    experiencePreset: { id: "focus" as const, version: 1 as const },
+    questions: [
+      {
+        ...commonQuestion,
+        id: sourceMainQuestionId,
+        prompt: mainPrompt,
+        delivery: "main" as const,
+        linkedRecheckQuestionId: sourceRecheckQuestionId,
+        basePoints: 1_000,
+        choices: [
+          {
+            id: sourceMainChoiceIds[0]!,
+            label: "Run the targeted regression suite",
+            isCorrect: true,
+          },
+          {
+            id: sourceMainChoiceIds[1]!,
+            label: "Skip validation to save time",
+            isCorrect: false,
+            misconceptionKey: "release-safety.skip-validation",
+          },
+        ],
+      },
+      {
+        ...commonQuestion,
+        id: sourceRecheckQuestionId,
+        prompt: recheckPrompt,
+        delivery: "recheck" as const,
+        linkedRecheckQuestionId: null,
+        basePoints: 0,
+        choices: [
+          {
+            id: sourceRecheckChoiceIds[0]!,
+            label: "Validate the affected workflow",
+            isCorrect: true,
+          },
+          {
+            id: sourceRecheckChoiceIds[1]!,
+            label: "Rely on the earlier result",
+            isCorrect: false,
+          },
+        ],
+      },
+    ],
+  };
+
+  const sourceResponse = await page.request.post(`${apiUrl}/v1/quizzes`, {
+    data: { title: sourceTitle, description: sourceDraft.description },
+  });
+  expect(sourceResponse.status()).toBe(201);
+  const sourceQuizId = (await sourceResponse.json()).quiz.id as string;
+  const sourceUpdate = await page.request.patch(`${apiUrl}/v1/quizzes/${sourceQuizId}`, {
+    data: sourceDraft,
+  });
+  expect(sourceUpdate.ok()).toBeTruthy();
+
+  const targetResponse = await page.request.post(`${apiUrl}/v1/quizzes`, {
+    data: { title: targetTitle, description: "Receives independent copies." },
+  });
+  expect(targetResponse.status()).toBe(201);
+  const targetQuizId = (await targetResponse.json()).quiz.id as string;
+
+  await page.goto(`/quiz/${targetQuizId}`);
+  const openQuestionBank = page.getByRole("button", { name: "Reuse from your workspace" });
+  await expect(openQuestionBank).toBeVisible();
+  await openQuestionBank.click();
+
+  const picker = page.getByTestId("question-reuse-picker");
+  await expect(picker).toBeVisible();
+  await picker.getByLabel("Search workspace questions").fill(sourceTitle);
+  await picker.getByRole("checkbox", { name: new RegExp(mainPrompt) }).check();
+  await expect(
+    picker.getByText(`Includes paired recheck: ${recheckPrompt}`, { exact: false }),
+  ).toBeVisible();
+  const visiblePickerText = await picker.innerText();
+  expect(visiblePickerText).not.toContain(sourceQuizId);
+  expect(visiblePickerText).not.toContain(sourceMainQuestionId);
+  expect(visiblePickerText).not.toContain(sourceRecheckQuestionId);
+
+  const autosave = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      new URL(response.url()).pathname === `/v1/quizzes/${targetQuizId}`,
+  );
+  await picker.getByRole("button", { name: "Add 2 questions" }).click();
+  expect((await autosave).ok()).toBeTruthy();
+  await expect(page.getByLabel("Question prompt")).toHaveValue(mainPrompt);
+
+  const persistedResponse = await page.request.get(`${apiUrl}/v1/quizzes/${targetQuizId}`);
+  expect(persistedResponse.ok()).toBeTruthy();
+  const persisted = (await persistedResponse.json()) as {
+    quiz: {
+      draft: {
+        questions: Array<{
+          id: string;
+          prompt: string;
+          delivery?: string;
+          linkedRecheckQuestionId?: string | null;
+          choices?: Array<{ id: string }>;
+        }>;
+      };
+    };
+  };
+  const copiedMain = persisted.quiz.draft.questions.find(
+    (question) => question.prompt === mainPrompt,
+  );
+  const copiedRecheck = persisted.quiz.draft.questions.find(
+    (question) => question.prompt === recheckPrompt,
+  );
+
+  expect(copiedMain).toBeDefined();
+  expect(copiedRecheck).toBeDefined();
+  expect(copiedMain?.id).not.toBe(sourceMainQuestionId);
+  expect(copiedRecheck?.id).not.toBe(sourceRecheckQuestionId);
+  expect(copiedMain?.linkedRecheckQuestionId).toBe(copiedRecheck?.id);
+  expect(copiedRecheck).toMatchObject({ delivery: "recheck", linkedRecheckQuestionId: null });
+  expect(copiedMain?.choices?.map((choice) => choice.id)).toHaveLength(2);
+  expect(copiedRecheck?.choices?.map((choice) => choice.id)).toHaveLength(2);
+  for (const copiedChoice of [...(copiedMain?.choices ?? []), ...(copiedRecheck?.choices ?? [])]) {
+    expect([...sourceMainChoiceIds, ...sourceRecheckChoiceIds]).not.toContain(copiedChoice.id);
+  }
+});
+
 test("direct beta pages fail closed when the account lookup is unavailable", async ({ page }) => {
   await signIn(page, betaEmail);
 

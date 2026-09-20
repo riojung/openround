@@ -277,6 +277,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .loadingMark {
-    animation-duration: 1.8s;
+    animation: none;
   }
 }
