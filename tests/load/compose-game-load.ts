@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { io, type Socket } from "socket.io-client";
+import { optionalImmutableBuildId } from "../support/readiness-contract.js";
 import { waitForReadyReport } from "../support/report-readiness.js";
 
 const baseUrl = (process.env.LOAD_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "");
@@ -17,6 +18,7 @@ const restartServer = process.env.RESTART_SERVER === "true";
 const synchronizedStartAtMs = Number(process.env.START_AT_MS ?? "0");
 const synchronizedAnswerAtMs = Number(process.env.ANSWER_AT_MS ?? "0");
 const suppliedCreatorCookie = process.env.LOAD_CREATOR_COOKIE?.trim() ?? "";
+const expectedBuildId = optionalImmutableBuildId(process.env, "LOAD_EXPECTED_BUILD_ID");
 const keepData = process.env.LOAD_KEEP_DATA === "true";
 const runId = process.env.LOAD_RUN_ID?.trim() || randomUUID();
 const outputPath = process.env.LOAD_OUTPUT?.trim();
@@ -46,6 +48,9 @@ if (suppliedCreatorCookie && /[\r\n]/.test(suppliedCreatorCookie)) {
 }
 if (restartServer && suppliedCreatorCookie) {
   throw new Error("RESTART_SERVER cannot be used with a supplied staging creator cookie");
+}
+if (suppliedCreatorCookie && !expectedBuildId) {
+  throw new Error("LOAD_EXPECTED_BUILD_ID is required with a supplied staging creator cookie");
 }
 
 interface Ack<T> {
@@ -206,6 +211,17 @@ async function restartComposeServer() {
 }
 
 async function main() {
+  const deployment = await api<{ status: string; buildId: string }>("/health/live");
+  assert.equal(deployment.status, "ok", "load target liveness status must be ok");
+  assert.equal(typeof deployment.buildId, "string", "load target omitted its build identifier");
+  if (expectedBuildId) {
+    assert.equal(
+      deployment.buildId,
+      expectedBuildId,
+      "load target build does not match LOAD_EXPECTED_BUILD_ID",
+    );
+  }
+
   if (suppliedCreatorCookie) {
     creatorCookie = suppliedCreatorCookie;
     await api("/v1/auth/me");
@@ -497,6 +513,10 @@ async function main() {
   const results = {
     runId,
     target: new URL(baseUrl).origin,
+    deployment: {
+      buildId: deployment.buildId,
+      expectedBuildId,
+    },
     clients: clientCount,
     correctness: {
       acceptedAnswers: report.metrics.answerCount,

@@ -562,7 +562,7 @@ export async function registerRoutes(
     return apiError(reply, 500, "INTERNAL_ERROR", "The request could not be completed", request.id);
   });
 
-  app.get("/health/live", async () => ({ status: "ok" }));
+  app.get("/health/live", async () => ({ status: "ok", buildId: config.OPENROUND_BUILD_ID }));
   app.get("/health/ready", async (request, reply) => {
     try {
       await dependencies.readiness();

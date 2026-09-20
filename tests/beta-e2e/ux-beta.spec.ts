@@ -1047,7 +1047,7 @@ test("@mobile beta creation remains usable at 390 by 844", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "How do you want to start?" })).toBeVisible();
   await page.getByRole("link", { name: /Start blank/ }).click();
   await expect(page.getByRole("heading", { name: "Start a blank Round" })).toBeInViewport();
-  const title = page.getByLabel("Round title");
+  const title = page.getByLabel("Round title (optional for now)", { exact: true });
   await title.scrollIntoViewIfNeeded();
   await expect(title).toBeInViewport();
   const create = page.getByRole("button", { name: "Create Round and write question" });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createConfigCheckSummary } from "../src/config-check-summary.js";
 import { ConfigSchema } from "../src/config.js";
 
 const productionConfig = {
@@ -40,6 +41,32 @@ describe("production configuration", () => {
         THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST: "not-a-workspace-id",
       }),
     ).toThrow();
+  });
+
+  it("reports beta rollout state without retaining allowlist identifiers", () => {
+    const first = "11111111-1111-4111-8111-111111111111";
+    const second = "22222222-2222-4222-8222-222222222222";
+    const buildId = "a".repeat(40);
+    const summary = createConfigCheckSummary(
+      ConfigSchema.parse({
+        ...productionConfig,
+        OPENROUND_BUILD_ID: buildId,
+        FEATURE_UX_BETA: "true",
+        FEATURE_RECOVERY_REHEARSAL: "true",
+        FEATURE_PRACTICE_ASSIGNMENTS: "false",
+        UX_BETA_WORKSPACE_ALLOWLIST: `${first},${second}`,
+      }),
+    );
+
+    expect(summary.featureFlags).toMatchObject({
+      uxBeta: true,
+      recoveryRehearsal: true,
+      practiceAssignments: false,
+    });
+    expect(summary.uxBetaWorkspaceAllowlistSize).toBe(2);
+    expect(summary.buildId).toBe(buildId);
+    expect(JSON.stringify(summary)).not.toContain(first);
+    expect(JSON.stringify(summary)).not.toContain(second);
   });
 
   it("keeps deterministic workspace seeding limited to the test environment", () => {

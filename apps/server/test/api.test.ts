@@ -1683,12 +1683,14 @@ describe("creator to report journey", () => {
 
 describe("health probes", () => {
   it("keeps liveness healthy while failing readiness when a dependency is unavailable", async () => {
+    const buildId = "a".repeat(40);
     const built = await buildApp(
       ConfigSchema.parse({
         NODE_ENV: "test",
         ALLOW_IN_MEMORY: "true",
         WEB_ORIGIN: "http://localhost:3000",
         PUBLIC_API_URL: "http://localhost:4000",
+        OPENROUND_BUILD_ID: buildId,
         LOG_LEVEL: "silent",
       }),
       {
@@ -1705,7 +1707,7 @@ describe("health probes", () => {
     const ready = await app.inject({ method: "GET", url: "/health/ready" });
 
     expect(live.statusCode).toBe(200);
-    expect(live.json()).toEqual({ status: "ok" });
+    expect(live.json()).toEqual({ status: "ok", buildId });
     expect(ready.statusCode).toBe(503);
     expect(ready.json()).toEqual({
       status: "not_ready",
