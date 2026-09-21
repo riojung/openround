@@ -26,6 +26,17 @@ describe("browser security policy", () => {
     expect(policy).not.toContain("upgrade-insecure-requests");
   });
 
+  it("allows only same-origin media for the self-hosted video guides", async () => {
+    const request = new NextRequest("https://quiz.example.ca/help");
+
+    const policy = (await proxy(request)).headers.get("content-security-policy");
+
+    expect(policy).toContain("media-src 'self'");
+    expect(policy).not.toContain("media-src 'self' https:");
+    expect(policy).not.toContain("media-src 'self' data:");
+    expect(policy).not.toContain("media-src 'self' blob:");
+  });
+
   it("uses the trusted proxy protocol when the internal request URL is HTTP", async () => {
     const request = new NextRequest("http://web:3000/", {
       headers: { "x-forwarded-proto": "https" },

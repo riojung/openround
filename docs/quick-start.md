@@ -35,7 +35,7 @@ Open:
 ## 2. Sign in as a creator
 
 1. Select **Create a free checkpoint set**.
-2. Choose **Workplace learning** or **Education**. This sets the session defaults described in the [user guide](user-guide.md#segment-defaults).
+2. Choose **Workplace learning** or **Education**. This sets the session defaults described in the [user guide](user-guide.md#roles-and-screens).
 3. Enter any valid development email address.
 4. Accept the draft Terms and Privacy notice, then select **Send sign-in link**.
 5. Select **Open local email inbox** in the confirmation, choose the newest OpenRound message, and
@@ -48,6 +48,12 @@ Sign-in cookies belong to the configured `OPENROUND_PUBLIC_URL`. If the browser 
 different origin—for example, `localhost` while the stack is configured for a LAN IP—the sign-in
 page identifies both addresses and links to the configured one. Continue using that configured
 address after opening the email link.
+
+Once signed in, `/help` is available in the default classic setup as well as the professional
+workspace beta. The page keeps its steps and links aligned with the capabilities enabled for the
+current workspace. Captioned professional-builder videos appear only for an allowlisted workspace
+when their full workflow is enabled; the default Compose profile shows the supported classic Round
+path instead.
 
 For isolated, one-computer testing only, you can expose **Continue to dashboard** while also binding
 the product to loopback so another LAN client cannot request a token for an existing creator:
@@ -62,9 +68,11 @@ docker compose up --build -d
 Do not use this shortcut while the product is reachable by other devices. Return to the secure
 default by running the normal `docker compose up -d` command again.
 
-## 3. Create and publish a checkpoint set
+## 3. Create and publish a Round
 
-1. On **Your checkpoint sets**, enter a title and select **Create checkpoint set**.
+1. In the professional workspace, select **Create**, then **Round**, choose a starting method, and
+   give the Round a title. In the classic view, enter a title under **Your checkpoint sets** and
+   select **Create checkpoint set**.
 2. Add a single-select, true/false, multiple-select, numeric, rating, or poll checkpoint.
 3. Choose a topic category and one of the six Round Experience presets. The category recommends a
    preset but does not replace an explicit selection. Preview the host, presenter, and phone
@@ -74,13 +82,14 @@ default by running the normal `docker compose up -d` command again.
    linked recheck.
 6. Set the timer, points, optional explanation, and private misconception feedback.
 7. Wait for the header to show **Saved**, select **Preview**, and step through the participant view.
-8. Return to the editor, select **Publish**, then return to **Dashboard**.
+8. Return to the editor, select **Publish**, then return to **Library** or, in the classic view,
+   **Dashboard**.
 
 Publishing creates an immutable version for future sessions. You can keep editing the draft afterward; a running session continues to use the version it started with.
 
 ## 4. Host and join a round
 
-1. On the published checkpoint-set card, select **Host**.
+1. On the published Round card, select **Host**.
 2. Review the audience, late-join, scoring, result, nickname, and published experience settings.
    Optionally choose a one-session preset override. Presenter sounds remain off unless explicitly
    enabled.

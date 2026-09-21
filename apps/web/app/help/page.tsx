@@ -1,38 +1,17 @@
 import Link from "next/link";
 import { WorkspacePage } from "../../components/workspace/workspace-shell";
 import styles from "../../components/workspace/workspace-hub.module.css";
+import { HelpGuidance } from "./help-guidance";
 
 export default function HelpPage() {
   return (
     <WorkspacePage
       description="Short paths to the workflow, service health, and workspace controls."
       eyebrow="Guidance"
+      requireBeta={false}
       title="Help centre"
     >
-      <section className={styles.cardGrid}>
-        <Link className={styles.quickCard} href="/create">
-          <span className={styles.cardIcon}>01</span>
-          <h3>Create your first Round</h3>
-          <p>Choose a starter, trusted source, structured import, or blank Round.</p>
-          <span className={styles.cardLink}>Open creation guide →</span>
-        </Link>
-        <Link className={styles.quickCard} href="/library">
-          <span className={styles.cardIcon} data-tone="coral">
-            02
-          </span>
-          <h3>Host or assign</h3>
-          <p>Publish a reusable Round, then choose live delivery or account-free practice.</p>
-          <span className={styles.cardLink}>Open Library →</span>
-        </Link>
-        <Link className={styles.quickCard} href="/results">
-          <span className={styles.cardIcon} data-tone="violet">
-            03
-          </span>
-          <h3>Read the Recovery Story</h3>
-          <p>Interpret initial understanding, interventions, rechecks, and unresolved concepts.</p>
-          <span className={styles.cardLink}>Open Results →</span>
-        </Link>
-      </section>
+      <HelpGuidance />
 
       <section className={styles.section}>
         <div className={styles.sectionHeading}>

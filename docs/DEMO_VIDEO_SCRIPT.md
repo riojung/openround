@@ -70,7 +70,7 @@ Participant accounts stay optional, the full Recovery Loop is available in every
 teams can use the hosted service or self-host the Apache-licensed Community edition. That's
 OpenRound: ask, diagnose, intervene, recheck, and prove. Thanks for watching.
 
-## Regenerating the screen recording
+## Regenerating the product-demo screen recording
 
 Install the isolated media tools once:
 
@@ -93,3 +93,26 @@ conversational `en-US-AvaMultilingualNeural` voice by default; set `OPENROUND_VO
 listed by `edge-tts --list-voices` to choose another presenter. Neural narration requires a network
 connection and sends only this synthetic presentation script to the speech service; it does not
 send participant or product data.
+
+## Regenerating the onboarding video guides
+
+The Help centre uses two shorter, captioned guides: **Quick start: create your first Round** and
+**Workspace and builder guide**. Their original product captures live in
+`scripts/demo/assets/guides`. Install FFmpeg with `ffprobe`, plus the isolated narration tool shown
+above, then run:
+
+```bash
+OPENROUND_FFMPEG="$(command -v ffmpeg)" \
+OPENROUND_FFPROBE="$(command -v ffprobe)" \
+OPENROUND_EDGE_TTS=/tmp/openround-voice-tools/bin/edge-tts \
+./scripts/demo/render-onboarding-guides.sh
+```
+
+The renderer writes temporary chapter media beneath `artifacts/onboarding-guides` and publishes the
+MP4, poster image, and English WebVTT captions to `apps/web/public/guides`. Set `OPENROUND_VOICE` to
+another voice reported by `edge-tts --list-voices` when needed.
+
+Only use local captures containing synthetic, non-secret content. Inspect every replacement frame
+for email addresses, names, tokens, room codes, and private workspace material before committing it.
+Rendering sends the project-authored narration text to the configured text-to-speech service; it
+does not send the screenshots, application state, participant responses, or other product data.

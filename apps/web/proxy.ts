@@ -11,7 +11,7 @@ function contentSecurityPolicy(nonce: string, secureRequest: boolean, frameAnces
     `img-src 'self' blob: data: https:${secureRequest ? "" : " http:"}`,
     "font-src 'self' data:",
     `connect-src 'self' ${networkSchemes}`,
-    "media-src 'none'",
+    "media-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",

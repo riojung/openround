@@ -892,6 +892,10 @@
   background: linear-gradient(145deg, #102d83, #3e20a4);
 }
 
+.previewQuestion h1 {
+  color: white;
+}
+
 .previewQuestion .previewEyebrow {
   color: #bed7ff;
 }

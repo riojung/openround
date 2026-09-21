@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch, humanError } from "../../lib/api";
 import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
+import { HomeFirstRunActions } from "./home-first-run-actions";
+import { professionalBuilderGuidesAvailable } from "../../lib/help-guide-availability";
 import styles from "./home.module.css";
 
 type ArtifactType = "round" | "presentation";
@@ -226,11 +228,11 @@ function HomeWorkspace() {
               </div>
             </li>
           </ol>
-          {canEdit ? (
-            <Link className="button" href={createHref}>
-              Create your first artifact
-            </Link>
-          ) : null}
+          <HomeFirstRunActions
+            canEdit={canEdit}
+            createHref={createHref}
+            guideAvailable={professionalBuilderGuidesAvailable(productFeatures)}
+          />
         </section>
       ) : null}
 
