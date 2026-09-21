@@ -158,6 +158,9 @@ function JoinForm() {
       <p className="muted" style={{ fontSize: "0.84rem", marginTop: 18, marginBottom: 0 }}>
         By joining, you agree to the session rules and <Link href="/privacy">privacy notice</Link>.
       </p>
+      <p className="muted" style={{ fontSize: "0.84rem", marginBottom: 0 }}>
+        Joining a Presentation? <Link href="/presentation/join">Use Presentation join</Link>.
+      </p>
     </section>
   );
 }

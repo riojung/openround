@@ -28,4 +28,19 @@ describe("workspace product events", () => {
     });
     expect(JSON.stringify(event)).not.toMatch(/id|token|url|content|answer|alias/i);
   });
+
+  it("keeps authoring telemetry categorical and content-free", () => {
+    const event = buildProductEvent(
+      "publish_blocked",
+      { artifactType: "presentation" },
+      new Date("2026-09-18T12:00:00Z"),
+    );
+
+    expect(ProductEventSchema.parse(event)).toEqual({
+      name: "publish_blocked",
+      occurredAt: "2026-09-18T12:00:00.000Z",
+      dimensions: { artifactType: "presentation" },
+    });
+    expect(JSON.stringify(event)).not.toMatch(/id|title|source|content|question|answer|alias/i);
+  });
 });

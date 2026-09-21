@@ -83,6 +83,16 @@ async function fixture(timeMode: "timed" | "flex" = "timed", reportVersion: 2 | 
       nicknamePolicy: "custom",
     },
   });
+  await repository.createMediaAsset({
+    id: mediaId,
+    workspaceId,
+    objectKey: `media/${workspaceId}/${mediaId}.png`,
+    mimeType: "image/png",
+    sizeBytes: 256,
+    scanStatus: "clean",
+    altText: "Lockout verification diagram",
+    createdAt: now,
+  });
   await repository.createQuiz({
     id: quizId,
     workspaceId,

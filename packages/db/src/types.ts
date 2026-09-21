@@ -180,6 +180,14 @@ export interface QuizRecord {
   description: string;
   status: "draft" | "published" | "archived";
   draft: QuizDraft;
+  /** Monotonically increases after each accepted draft replacement. */
+  draftRevision?: number;
+  /** Contract version used to validate and upcast the mutable draft. */
+  draftSchemaVersion?: number;
+  /** Draft revision represented by currentVersionId, when the current draft has been published. */
+  publishedDraftRevision?: number | null;
+  /** Most recent facilitator to make a meaningful draft change. */
+  lastEditedBy?: string | null;
   currentVersionId: string | null;
   folderId?: string | null;
   tags?: string[];
@@ -206,8 +214,35 @@ export interface QuizVersionRecord {
   quizId: string;
   version: number;
   content: QuizDraft;
+  /** Contract version used to validate and upcast immutable published content. */
+  contentSchemaVersion?: number;
   contentHash: string;
+  sourceDraftRevision?: number | null;
   publishedAt: Date;
+}
+
+export interface QuizDraftHistoryRecord {
+  id: string;
+  workspaceId: string;
+  quizId: string;
+  revision: number;
+  draft: QuizDraft;
+  /** Contract version used to validate and upcast this recovery snapshot. */
+  draftSchemaVersion?: number;
+  savedBy: string | null;
+  mutationId: string | null;
+  createdAt: Date;
+}
+
+export interface QuizDraftUpdate {
+  workspaceId: string;
+  quizId: string;
+  draft: QuizDraft;
+  expectedRevision: number;
+  mutationId: string;
+  editorId: string;
+  schemaVersion: number;
+  draftHash: string;
 }
 
 export interface StoredSession {
@@ -408,6 +443,27 @@ export class PublishedQuizLimitError extends Error {
   constructor(public readonly limit: number) {
     super(`This plan supports ${limit} published quizzes`);
     this.name = "PublishedQuizLimitError";
+  }
+}
+
+export class QuizDraftRevisionConflictError extends Error {
+  constructor(
+    public readonly quizId: string,
+    public readonly expectedRevision: number,
+    public readonly currentRevision: number,
+    public readonly currentEditorId: string | null = null,
+  ) {
+    super(
+      `Round ${quizId} draft revision ${currentRevision} does not match expected revision ${expectedRevision}`,
+    );
+    this.name = "QuizDraftRevisionConflictError";
+  }
+}
+
+export class QuizDraftMutationConflictError extends Error {
+  constructor(public readonly mutationId: string) {
+    super("The Round draft mutation ID was already used for another change");
+    this.name = "QuizDraftMutationConflictError";
   }
 }
 
@@ -715,6 +771,27 @@ export interface MediaAssetRecord {
   createdAt: Date;
 }
 
+export type MediaReferenceOwnerType =
+  | "quiz_draft"
+  | "quiz_version"
+  | "quiz_history"
+  | "presentation_draft"
+  | "presentation_version"
+  | "presentation_history";
+
+/**
+ * A durable usage edge between a media asset and authoring content. References are
+ * intentionally placement-agnostic: accessibility text stays on the question or
+ * slide, while this record exists only to make retention and deletion safe.
+ */
+export interface MediaReferenceRecord {
+  workspaceId: string;
+  mediaId: string;
+  ownerType: MediaReferenceOwnerType;
+  ownerId: string;
+  createdAt: Date;
+}
+
 export interface AuditInput {
   workspaceId: string | null;
   actorId: string | null;
@@ -806,7 +883,27 @@ export interface Repository {
   ): Promise<QuizRecord | null>;
   createQuiz(input: QuizRecord): Promise<QuizRecord>;
   getQuiz(workspaceId: string, quizId: string): Promise<QuizRecord | null>;
-  updateQuiz(workspaceId: string, quizId: string, draft: QuizDraft): Promise<QuizRecord | null>;
+  updateQuiz(
+    workspaceId: string,
+    quizId: string,
+    draft: QuizDraft,
+    expectedDraftRevision?: number,
+    editorId?: string,
+  ): Promise<QuizRecord | null>;
+  updateQuizDraft(input: QuizDraftUpdate): Promise<QuizRecord | null>;
+  listQuizDraftHistory(
+    workspaceId: string,
+    quizId: string,
+    limit?: number,
+  ): Promise<QuizDraftHistoryRecord[]>;
+  restoreQuizDraftHistory(input: {
+    workspaceId: string;
+    quizId: string;
+    historyRevision: number;
+    expectedRevision: number;
+    mutationId: string;
+    editorId: string;
+  }): Promise<QuizRecord | null>;
   archiveQuiz(
     workspaceId: string,
     quizId: string,
@@ -817,6 +914,7 @@ export interface Repository {
   publishQuiz(
     input: QuizVersionRecord,
     maxPublishedQuizzes?: number | null,
+    expectedDraftRevision?: number,
   ): Promise<QuizVersionRecord>;
   getQuizVersion(workspaceId: string, versionId: string): Promise<QuizVersionRecord | null>;
   countPublishedQuizzes(workspaceId: string): Promise<number>;
@@ -1071,7 +1169,16 @@ export interface Repository {
   createMediaAsset(input: MediaAssetRecord): Promise<MediaAssetRecord>;
   getMediaAsset(workspaceId: string, mediaId: string): Promise<MediaAssetRecord | null>;
   listMediaAssets(workspaceId: string): Promise<MediaAssetRecord[]>;
+  listMediaReferences(workspaceId: string, mediaId?: string): Promise<MediaReferenceRecord[]>;
+  replaceMediaReferences(
+    workspaceId: string,
+    ownerType: MediaReferenceOwnerType,
+    ownerId: string,
+    mediaIds: string[],
+    createdAt?: Date,
+  ): Promise<MediaReferenceRecord[]>;
   listStaleMedia(cutoff: Date, limit?: number): Promise<MediaAssetRecord[]>;
+  listUnattachedMedia(cutoff: Date, limit?: number): Promise<MediaAssetRecord[]>;
   updateMediaAsset(
     workspaceId: string,
     mediaId: string,

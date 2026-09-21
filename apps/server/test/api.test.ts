@@ -32,6 +32,372 @@ afterEach(async () => {
   app = undefined;
 });
 
+describe("revision-safe Round authoring", () => {
+  it("accepts revisioned saves, rejects stale saves and publishes, and preserves legacy PATCH", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+    const { cookie } = await signIn(app, "revision-author@example.com");
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/quizzes",
+      headers: { cookie },
+      payload: { title: "Revision-safe Round", description: "" },
+    });
+    const quizId = created.json<{ quiz: { id: string; draftRevision: number } }>().quiz.id;
+    expect(created.json()).toMatchObject({ quiz: { draftRevision: 0 } });
+
+    const draft = {
+      title: "Revision-safe Round",
+      description: "",
+      questions: [
+        {
+          id: randomUUID(),
+          type: "single_select",
+          prompt: "Which save wins?",
+          choices: [
+            { id: randomUUID(), label: "The fenced save", isCorrect: true },
+            { id: randomUUID(), label: "The stale save", isCorrect: false },
+          ],
+          timeLimitSeconds: 20,
+          basePoints: 1_000,
+          explanation: "The expected revision prevents overwrites.",
+          mediaId: null,
+          mediaAlt: null,
+        },
+      ],
+    };
+    const saved = await app.inject({
+      method: "PATCH",
+      url: `/v1/quizzes/${quizId}`,
+      headers: { cookie },
+      payload: { draft, expectedDraftRevision: 0 },
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.headers.etag).toBe('"draft-1"');
+    expect(saved.json()).toMatchObject({ quiz: { draftRevision: 1 } });
+
+    const staleSave = await app.inject({
+      method: "PATCH",
+      url: `/v1/quizzes/${quizId}`,
+      headers: { cookie },
+      payload: { draft: { ...draft, title: "Stale overwrite" }, expectedDraftRevision: 0 },
+    });
+    expect(staleSave.statusCode).toBe(409);
+    expect(staleSave.json()).toMatchObject({
+      error: {
+        code: "STALE_DRAFT",
+        details: { expectedDraftRevision: 0, currentDraftRevision: 1 },
+      },
+    });
+
+    const stalePublish = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/publish`,
+      headers: { cookie },
+      payload: { expectedDraftRevision: 0 },
+    });
+    expect(stalePublish.statusCode).toBe(409);
+    expect(stalePublish.json()).toMatchObject({ error: { code: "STALE_DRAFT" } });
+
+    const published = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/publish`,
+      headers: { cookie },
+      payload: { expectedDraftRevision: 1 },
+    });
+    expect(published.statusCode).toBe(200);
+    expect(published.json()).toMatchObject({ version: { sourceDraftRevision: 1 } });
+
+    const legacy = await app.inject({
+      method: "PATCH",
+      url: `/v1/quizzes/${quizId}`,
+      headers: { cookie },
+      payload: { ...draft, title: "Legacy client save" },
+    });
+    expect(legacy.statusCode).toBe(200);
+    expect(legacy.headers.etag).toBe('"draft-2"');
+    expect(legacy.json()).toMatchObject({
+      quiz: { title: "Legacy client save", draftRevision: 2 },
+    });
+
+    const unfencedPublish = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/publish`,
+      headers: { cookie },
+      payload: {},
+    });
+    expect(unfencedPublish.statusCode).toBe(200);
+    expect(unfencedPublish.json()).toMatchObject({ version: { sourceDraftRevision: 2 } });
+  });
+
+  it("returns every publish blocker with artifact and question keys", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+    const { cookie } = await signIn(app, "round-blockers@example.com");
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/quizzes",
+      headers: { cookie },
+      payload: { title: "Draft Round", description: "" },
+    });
+    const quizId = created.json<{ quiz: { id: string } }>().quiz.id;
+    const questionId = randomUUID();
+    const saved = await app.inject({
+      method: "PUT",
+      url: `/v1/quizzes/${quizId}/draft`,
+      headers: { cookie },
+      payload: {
+        expectedRevision: 0,
+        mutationId: randomUUID(),
+        schemaVersion: 1,
+        draft: {
+          title: "",
+          description: "",
+          questions: [
+            {
+              id: questionId,
+              type: "single_select",
+              prompt: "",
+              choices: [
+                { id: randomUUID(), label: "", isCorrect: false },
+                { id: randomUUID(), label: "", isCorrect: false },
+              ],
+              timeLimitSeconds: 20,
+              basePoints: 1_000,
+              explanation: "",
+              mediaId: null,
+              mediaAlt: null,
+            },
+          ],
+        },
+      },
+    });
+    expect(saved.statusCode).toBe(200);
+
+    const published = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/publish`,
+      headers: { cookie },
+      payload: { expectedDraftRevision: 1 },
+    });
+    expect(published.statusCode).toBe(422);
+    const response = published.json<{
+      error: { details: { issues: Array<Record<string, unknown>> } };
+      validation: { issues: Array<Record<string, unknown>> };
+    }>();
+    expect(response.error.details.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          artifactType: "round",
+          artifactId: quizId,
+          questionId: null,
+          field: "title",
+          path: "title",
+        }),
+        expect.objectContaining({
+          artifactType: "round",
+          artifactId: quizId,
+          questionId,
+        }),
+      ]),
+    );
+    expect(response.validation.issues).toEqual(response.error.details.issues);
+  });
+
+  it("deduplicates PUT mutations and restores bounded recovery history", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+    const { cookie, creator } = await signIn(app, "round-history-author@example.com");
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/quizzes",
+      headers: { cookie },
+      payload: { title: "Recovery history", description: "" },
+    });
+    const quizId = created.json<{ quiz: { id: string } }>().quiz.id;
+    const firstDraft = {
+      title: "First meaningful save",
+      description: "",
+      category: "general",
+      experiencePreset: { id: "focus", version: 1 },
+      questions: [],
+    };
+    const mutationId = randomUUID();
+    const firstPayload = {
+      draft: firstDraft,
+      expectedRevision: 0,
+      mutationId,
+      schemaVersion: 1,
+    };
+    const first = await app.inject({
+      method: "PUT",
+      url: `/v1/quizzes/${quizId}/draft`,
+      headers: { cookie },
+      payload: firstPayload,
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({
+      quiz: { draftRevision: 1, lastEditedBy: creator.userId },
+    });
+
+    const duplicate = await app.inject({
+      method: "PUT",
+      url: `/v1/quizzes/${quizId}/draft`,
+      headers: { cookie },
+      payload: firstPayload,
+    });
+    expect(duplicate.statusCode).toBe(200);
+    expect(duplicate.json()).toMatchObject({ quiz: { draftRevision: 1 } });
+
+    const noOp = await app.inject({
+      method: "PUT",
+      url: `/v1/quizzes/${quizId}/draft`,
+      headers: { cookie },
+      payload: { ...firstPayload, expectedRevision: 1, mutationId: randomUUID() },
+    });
+    expect(noOp.statusCode).toBe(200);
+    expect(noOp.json()).toMatchObject({ quiz: { draftRevision: 1 } });
+
+    const mutationReuse = await app.inject({
+      method: "PUT",
+      url: `/v1/quizzes/${quizId}/draft`,
+      headers: { cookie },
+      payload: { ...firstPayload, draft: { ...firstDraft, title: "Different change" } },
+    });
+    expect(mutationReuse.statusCode).toBe(409);
+    expect(mutationReuse.json()).toMatchObject({
+      error: { code: "CONFLICT", details: { mutationId } },
+    });
+
+    const stale = await app.inject({
+      method: "PUT",
+      url: `/v1/quizzes/${quizId}/draft`,
+      headers: { cookie },
+      payload: {
+        draft: { ...firstDraft, title: "Stale change" },
+        expectedRevision: 0,
+        mutationId: randomUUID(),
+        schemaVersion: 1,
+      },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({
+      error: {
+        code: "STALE_DRAFT",
+        details: { currentDraftRevision: 1, currentEditorId: creator.userId },
+      },
+    });
+
+    const second = await app.inject({
+      method: "PUT",
+      url: `/v1/quizzes/${quizId}/draft`,
+      headers: { cookie },
+      payload: {
+        draft: { ...firstDraft, title: "Second meaningful save" },
+        expectedRevision: 1,
+        mutationId: randomUUID(),
+        schemaVersion: 1,
+      },
+    });
+    expect(second.json()).toMatchObject({ quiz: { draftRevision: 2 } });
+
+    const lostResponseReplay = await app.inject({
+      method: "PUT",
+      url: `/v1/quizzes/${quizId}/draft`,
+      headers: { cookie },
+      payload: firstPayload,
+    });
+    expect(lostResponseReplay.statusCode).toBe(200);
+    expect(lostResponseReplay.headers.etag).toBe('"draft-1"');
+    expect(lostResponseReplay.json()).toMatchObject({
+      quiz: { draftRevision: 1, draft: { title: "First meaningful save" } },
+    });
+
+    const history = await app.inject({
+      method: "GET",
+      url: `/v1/quizzes/${quizId}/history`,
+      headers: { cookie },
+    });
+    expect(history.statusCode).toBe(200);
+    expect(history.json<{ history: Array<{ revision: number }> }>().history).toEqual([
+      expect.objectContaining({ revision: 2 }),
+      expect.objectContaining({ revision: 1 }),
+      expect.objectContaining({ revision: 0 }),
+    ]);
+    expect(history.body).not.toContain('"draft"');
+    expect(history.body).not.toContain('"mutationId"');
+
+    const restoreMutationId = randomUUID();
+    const restore = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/history/1/restore`,
+      headers: { cookie },
+      payload: { expectedRevision: 2, mutationId: restoreMutationId },
+    });
+    expect(restore.statusCode).toBe(200);
+    expect(restore.json()).toMatchObject({
+      quiz: { draftRevision: 3, draft: { title: "First meaningful save" } },
+    });
+    const afterRestore = await app.inject({
+      method: "PUT",
+      url: `/v1/quizzes/${quizId}/draft`,
+      headers: { cookie },
+      payload: {
+        draft: { ...firstDraft, title: "Save after restore" },
+        expectedRevision: 3,
+        mutationId: randomUUID(),
+        schemaVersion: 1,
+      },
+    });
+    expect(afterRestore.statusCode).toBe(200);
+    expect(afterRestore.json()).toMatchObject({ quiz: { draftRevision: 4 } });
+    const restoreRetry = await app.inject({
+      method: "POST",
+      url: `/v1/quizzes/${quizId}/history/1/restore`,
+      headers: { cookie },
+      payload: { expectedRevision: 2, mutationId: restoreMutationId },
+    });
+    expect(restoreRetry.statusCode).toBe(200);
+    expect(restoreRetry.headers.etag).toBe('"draft-3"');
+    expect(restoreRetry.json()).toMatchObject({
+      quiz: { draftRevision: 3, draft: { title: "First meaningful save" } },
+    });
+  });
+});
+
 describe("creator to report journey", () => {
   it("publishes, hosts, answers idempotently, and produces a report", async () => {
     const repository = new MemoryRepository();
@@ -233,14 +599,14 @@ describe("creator to report journey", () => {
       method: "PATCH",
       url: `/v1/quizzes/${quizId}`,
       headers: { cookie },
-      payload: draft,
+      payload: { draft, expectedDraftRevision: 0 },
     });
     expect(updated.statusCode).toBe(200);
     const published = await app.inject({
       method: "POST",
       url: `/v1/quizzes/${quizId}/publish`,
       headers: { cookie },
-      payload: {},
+      payload: { expectedDraftRevision: 1 },
     });
     expect(published.statusCode).toBe(200);
 
@@ -679,6 +1045,16 @@ describe("creator to report journey", () => {
     const open = started.json<{ snapshot: SessionSnapshot }>().snapshot;
     expect(open.phase).toBe("question_open");
     expect(JSON.stringify(open.question)).not.toContain("isCorrect");
+    const participantOpenResponse = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.sessionId}/snapshot?role=participant`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+    });
+    const participantOpen = participantOpenResponse.json<{ snapshot: SessionSnapshot }>().snapshot;
+    expect(participantOpen).not.toHaveProperty("correctChoiceId");
+    expect(participantOpen).not.toHaveProperty("correctResponse");
+    expect(participantOpen.question).not.toHaveProperty("purpose");
+    expect(participantOpen.question).not.toHaveProperty("linkedRecheckAvailable");
     const resetPulse = await app.inject({
       method: "GET",
       url: `/v1/sessions/${session.sessionId}/interactions/summary`,
@@ -748,6 +1124,24 @@ describe("creator to report journey", () => {
       expectedVersion: locked.version,
       action: "reveal",
     });
+    expect(revealed).toMatchObject({
+      correctChoiceId,
+      correctResponse: { kind: "choice", choiceIds: [correctChoiceId] },
+      question: { purpose: "diagnostic", linkedRecheckAvailable: false },
+    });
+    const participantRevealResponse = await app.inject({
+      method: "GET",
+      url: `/v1/sessions/${session.sessionId}/snapshot?role=participant`,
+      headers: { authorization: `Bearer ${participant.participantToken}` },
+    });
+    const participantReveal = participantRevealResponse.json<{
+      snapshot: SessionSnapshot;
+    }>().snapshot;
+    expect(participantReveal).toMatchObject({ myCorrect: true });
+    expect(participantReveal).not.toHaveProperty("correctChoiceId");
+    expect(participantReveal).not.toHaveProperty("correctResponse");
+    expect(participantReveal.question).not.toHaveProperty("purpose");
+    expect(participantReveal.question).not.toHaveProperty("linkedRecheckAvailable");
     const finished = await built.sessions.hostCommand({
       sessionId: session.sessionId,
       hostToken: session.hostToken,

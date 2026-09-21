@@ -55,24 +55,27 @@ async function createCheckpointSet(server: FastifyInstance, cookie: string) {
     url: `/v1/quizzes/${quizId}`,
     headers: { cookie },
     payload: {
-      title: "Portable safety set",
-      description: "Transfer without lock-in",
-      questions: [
-        {
-          id: randomUUID(),
-          type: "single_select",
-          prompt: "=Which procedure is safe?",
-          choices: [
-            { id: randomUUID(), label: "Complete procedure", isCorrect: true },
-            { id: randomUUID(), label: "Shortcut", isCorrect: false },
-          ],
-          timeLimitSeconds: 20,
-          basePoints: 1_000,
-          explanation: "Use the complete procedure.",
-          mediaId: null,
-          mediaAlt: null,
-        },
-      ],
+      expectedDraftRevision: 0,
+      draft: {
+        title: "Portable safety set",
+        description: "Transfer without lock-in",
+        questions: [
+          {
+            id: randomUUID(),
+            type: "single_select",
+            prompt: "=Which procedure is safe?",
+            choices: [
+              { id: randomUUID(), label: "Complete procedure", isCorrect: true },
+              { id: randomUUID(), label: "Shortcut", isCorrect: false },
+            ],
+            timeLimitSeconds: 20,
+            basePoints: 1_000,
+            explanation: "Use the complete procedure.",
+            mediaId: null,
+            mediaAlt: null,
+          },
+        ],
+      },
     },
   });
   expect(updated.statusCode).toBe(200);

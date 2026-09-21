@@ -11,7 +11,7 @@ For a local first run, complete the [quick start](quick-start.md) first.
 | Role               | Main job                                                       | Access                                        |
 | ------------------ | -------------------------------------------------------------- | --------------------------------------------- |
 | Workspace owner    | Manage people, billing, deletion, content, rounds, and reports | Full workspace                                |
-| Editor             | Create checkpoint sets, host rounds, and use reports           | No membership, billing, or workspace deletion |
+| Editor             | Create Rounds, host sessions, and use reports                  | No membership, billing, or workspace deletion |
 | Viewer             | Review content and reports                                     | Read only                                     |
 | Session cohost     | Help control one assigned live round                           | Revocable round-scoped credential             |
 | Presenter          | Show a clean room-facing display                               | Separate read-only credential                 |
@@ -33,15 +33,17 @@ facilitator can change round settings before creating a room.
    sign-in page. If the configured public address differs from the browser address, move to the
    configured sign-in page first and continue using that origin after authentication.
 
-Use **My checkpoint sets** to return to the dashboard and **Sign out** to revoke the current
-browser session. Owners can invite editors or viewers from **Account**. An invitation is
-single-use and expiring. A person who belongs to multiple workspaces can switch the active
-workspace there.
+Use **Home** or **Library** to return to your Rounds in the professional workspace; the classic view
+uses **My checkpoint sets**. Select **Sign out** to revoke the current browser session. Owners can
+invite editors or viewers from **Account**. An invitation is single-use and expiring. A person who
+belongs to multiple workspaces can switch the active workspace there.
 
-## Create and organize checkpoint sets
+## Create and organize Rounds
 
-From **Your checkpoint sets**, enter a title and select **Create checkpoint set**. Draft changes
-autosave after a short pause. Wait for **Saved** before leaving the editor.
+In the professional workspace, select **Create**, then **Round**, and choose a starter, trusted
+source, structured import, or blank Round. In the classic view, enter a title under **Your
+checkpoint sets** and select **Create checkpoint set**. Draft changes autosave after a short pause.
+Wait for **Saved** before leaving the editor.
 
 The editor supports:
 

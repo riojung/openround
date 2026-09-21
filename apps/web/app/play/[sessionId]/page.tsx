@@ -31,6 +31,7 @@ import { experienceThemeStyle } from "../../../lib/theme";
 import { clientUuid } from "../../../lib/uuid";
 import {
   participantProgressStage,
+  participantRevealState,
   participantResponseControlsDisabled,
   participantResponseView,
   type LocalResponseReceipt,
@@ -398,11 +399,7 @@ export default function PlayerPage() {
   const myRow = snapshot?.participants.find(
     (participant) => participant.id === snapshot.myParticipantId,
   );
-  const revealed =
-    snapshot?.phase === "question_reveal" ||
-    snapshot?.phase === "leaderboard" ||
-    snapshot?.phase === "finished" ||
-    (snapshot?.phase === "intervention" && snapshot.correctResponse !== undefined);
+  const revealed = snapshot ? participantRevealState(snapshot).revealed : false;
   const durableResponse = participantResponseView(
     snapshot?.myResponse,
     snapshot?.myConfidence,
@@ -575,17 +572,13 @@ export default function PlayerPage() {
               <div className="answer-grid" aria-label="Answer choices">
                 {snapshot.question.choices.map((choice, index) => {
                   const selected = displayedChoiceIds.includes(choice.id);
-                  const correct =
-                    revealed &&
-                    snapshot.correctResponse?.kind === "choice" &&
-                    snapshot.correctResponse.choiceIds.includes(choice.id);
-                  const incorrect = revealed && selected && !correct;
+                  const revealState = participantRevealState(snapshot, selected);
                   return (
                     <button
                       aria-pressed={selected}
                       className="answer-button"
-                      data-correct={correct || undefined}
-                      data-incorrect={incorrect || undefined}
+                      data-correct={revealState.selectedCorrect || undefined}
+                      data-incorrect={revealState.selectedIncorrect || undefined}
                       data-selected={selected || undefined}
                       disabled={responseControlsDisabled}
                       key={choice.id}

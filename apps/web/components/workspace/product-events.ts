@@ -2,6 +2,15 @@ import { ProductEventSchema, type ProductEvent, type ProductEventName } from "@o
 import { apiFetch } from "../../lib/api";
 
 type CreationPath = "starter" | "source" | "import" | "blank";
+type ArtifactType = "round" | "presentation";
+type AuthoringEventName =
+  | "first_block_created"
+  | "draft_save_failed"
+  | "draft_conflict"
+  | "publish_blocked"
+  | "creation_abandoned"
+  | "presentation_host_started"
+  | "presentation_reconnected";
 
 export function buildProductEvent(
   name: ProductEventName,
@@ -26,8 +35,13 @@ export function recordProductEvent(
 export function recordCreationEvent(
   name: "creation_started" | "creation_completed",
   creationPath: CreationPath,
+  artifactType: ArtifactType,
 ) {
-  recordProductEvent(name, { creationPath });
+  recordProductEvent(name, { creationPath, artifactType });
+}
+
+export function recordAuthoringEvent(name: AuthoringEventName, artifactType: ArtifactType) {
+  recordProductEvent(name, { artifactType });
 }
 
 export function recordFollowupShared() {

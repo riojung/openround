@@ -44,7 +44,30 @@ async function signIn(app: FastifyInstance) {
 async function publishedQuiz(repository: MemoryRepository, workspaceId: string, title: string) {
   const quizId = randomUUID();
   const now = new Date();
-  const draft: QuizDraft = { title, description: "LMS Deep Linking test", questions: [] };
+  const draft: QuizDraft = {
+    title,
+    description: "LMS Deep Linking test",
+    questions: [
+      {
+        id: randomUUID(),
+        type: "numeric",
+        prompt: "How many evidence sources were reviewed?",
+        purpose: "diagnostic",
+        confidence: "off",
+        delivery: "main",
+        conceptKeys: ["evidence"],
+        linkedRecheckQuestionId: null,
+        correctValue: "2",
+        tolerance: "0",
+        unit: null,
+        timeLimitSeconds: 20,
+        basePoints: 1_000,
+        explanation: "The review used two evidence sources.",
+        mediaId: null,
+        mediaAlt: null,
+      },
+    ],
+  };
   await repository.createQuiz({
     id: quizId,
     workspaceId,

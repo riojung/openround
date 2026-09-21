@@ -20,6 +20,7 @@ export class RetentionService {
     private readonly metrics?: MetricsService,
     private readonly onSessionsPurged?: (sessionIds: string[]) => Promise<void>,
     private readonly auditRetentionDays = 365,
+    private readonly unattachedMediaGraceDays = 7,
   ) {}
 
   async run(now = new Date()): Promise<RetentionResult> {
@@ -36,7 +37,20 @@ export class RetentionService {
     const purgedAuditEvents = await this.repository.purgeAuditEvents(auditCutoff);
     const purgedProductEvents = await this.repository.purgeProductEvents(now);
     const cutoff = new Date(now.getTime() - this.quarantineRetentionHours * 60 * 60 * 1_000);
-    const staleMedia = await this.repository.listStaleMedia(cutoff, 100);
+    const unattachedCutoff = new Date(
+      now.getTime() - this.unattachedMediaGraceDays * 24 * 60 * 60 * 1_000,
+    );
+    const [staleQuarantineMedia, unattachedMedia] = await Promise.all([
+      this.repository.listStaleMedia(cutoff, 100),
+      this.repository.listUnattachedMedia(unattachedCutoff, 100),
+    ]);
+    const staleMedia = [
+      ...new Map(
+        [...staleQuarantineMedia, ...unattachedMedia].map((asset) => [asset.id, asset]),
+      ).values(),
+    ]
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .slice(0, 100);
     if (!this.storage.configured) {
       const result = {
         expiredLiveSessions,
@@ -54,10 +68,16 @@ export class RetentionService {
     let purgedMedia = 0;
     let failedMedia = 0;
     for (const asset of staleMedia) {
+      // Delete the metadata first. Its reference-aware delete is the atomic claim:
+      // once accepted, a concurrent draft cannot create a durable reference to the asset.
+      if (!(await this.repository.deleteMediaAsset(asset.workspaceId, asset.id))) continue;
       try {
         await this.storage.deleteAsset(asset);
-        if (await this.repository.deleteMediaAsset(asset.workspaceId, asset.id)) purgedMedia += 1;
+        purgedMedia += 1;
       } catch {
+        // Keep the cleanup retryable without exposing a metadata record after the
+        // object has been removed successfully.
+        await this.repository.createMediaAsset(asset).catch(() => undefined);
         failedMedia += 1;
       }
     }

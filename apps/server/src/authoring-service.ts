@@ -7,6 +7,7 @@ import {
   type QuizDraft,
 } from "@openround/contracts";
 import type { AuthoringJobRecord, CreatorContext, QuizRecord, Repository } from "@openround/db";
+import type { MalwareScanner } from "./malware-scanner.js";
 
 const MAX_SOURCE_BYTES = 6_000_000;
 
@@ -66,6 +67,7 @@ export class AuthoringService {
   constructor(
     private readonly repository: Repository,
     readonly enabled: boolean,
+    private readonly scanner: MalwareScanner | null = null,
   ) {}
 
   async status(workspaceId: string, monthlyLimit: number | null, now = new Date()) {
@@ -110,6 +112,27 @@ export class AuthoringService {
         throw new AuthoringError(
           "ANSWER_INVALID",
           `Uploaded content does not match the ${input.sourceType.toUpperCase()} file type`,
+        );
+      }
+      if (!this.scanner) {
+        throw new AuthoringError(
+          "AUTHORING_DISABLED",
+          "File-based authoring requires malware scanning on this deployment",
+        );
+      }
+      let scan: Awaited<ReturnType<MalwareScanner["scan"]>>;
+      try {
+        scan = await this.scanner.scan(sourceBlob);
+      } catch {
+        throw new AuthoringError(
+          "AUTHORING_DISABLED",
+          "The source security scan is temporarily unavailable",
+        );
+      }
+      if (!scan.clean) {
+        throw new AuthoringError(
+          "ANSWER_INVALID",
+          "The uploaded source did not pass the security scan",
         );
       }
       sourceMimeType = input.mimeType;
@@ -174,6 +197,8 @@ export class AuthoringService {
       description: draft.description,
       status: "draft",
       draft,
+      draftSchemaVersion: 1,
+      lastEditedBy: creator.userId,
       currentVersionId: null,
       folderId: null,
       tags: ["ai-assisted"],

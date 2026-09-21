@@ -120,6 +120,44 @@ describe("source-grounded authoring validation", () => {
         expect.objectContaining({ checkpointId: recheck!.id, locator: "paragraph 1" }),
       ]),
     );
+    expect(output.contentSlideProposals).toEqual([
+      expect.objectContaining({
+        kind: "content",
+        layout: "section",
+        title: "Lockout physically isolates hazardous energy before maintenance begins.",
+        citations: [
+          expect.objectContaining({
+            locator: "paragraph 1",
+            excerpt: "Lockout physically isolates hazardous energy before maintenance begins.",
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        kind: "content",
+        layout: "title_body",
+        title: "A warning sign alone does not isolate the machine from its energy source.",
+        citations: [expect.objectContaining({ locator: "paragraph 2" })],
+      }),
+    ]);
+    expect(output.conversionNotes).toEqual([]);
+  });
+
+  it("discloses source material that structured conversion cannot preserve", () => {
+    const output = validateAuthoringOutput({
+      raw: generatedOutput(),
+      source: { ...source, sourceType: "pptx", truncated: true },
+      sourceDigest: "d".repeat(64),
+      provider: "test-provider",
+      model: "test-model",
+      generatedAt: new Date("2026-09-17T12:00:00.000Z"),
+    });
+
+    expect(output.conversionNotes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("animations"),
+        expect.stringContaining("100,000-character"),
+      ]),
+    );
   });
 
   it("rejects invented locations, excerpts, and identical recheck wording", () => {

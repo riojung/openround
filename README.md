@@ -54,16 +54,17 @@ Legal text, trademark clearance, external penetration testing, school agreements
 
 ## Documentation
 
-| Guide                                                                                | Use it for                                                        |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| [Quick start](docs/quick-start.md)                                                   | Start the complete local stack and run a first quiz               |
-| [User guide](docs/user-guide.md)                                                     | Create, publish, host, join, report, export, and delete           |
-| [Product and experience design](docs/design.md)                                      | Product goals, role journeys, states, content, and accessibility  |
-| [2026 Kahoot-alternatives UX gap plan](docs/kahoot-alternatives-2026-ux-gap-plan.md) | Current benchmark, UX gaps, strategy, and implementation sequence |
-| [Competitive strategy and roadmap](docs/competitive-strategy-and-roadmap.md)         | Market comparison, differentiation, and post-P0 phases            |
-| [Architecture and protocol](docs/architecture.md)                                    | Components, data flows, correctness, security, and scale gates    |
-| [Institution integrations](docs/institution-integrations.md)                         | Configure and validate creator OIDC, LTI, audit, and pilot gates  |
-| [Documentation index](docs/README.md)                                                | API, status, privacy, release, and operations references          |
+| Guide                                                                                | Use it for                                                              |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| In-product guidance                                                                  | Sign in and open `/help` for rollout-matched steps and available videos |
+| [Quick start](docs/quick-start.md)                                                   | Start the complete local stack and run a first quiz                     |
+| [User guide](docs/user-guide.md)                                                     | Create, publish, host, join, report, export, and delete                 |
+| [Product and experience design](docs/design.md)                                      | Product goals, role journeys, states, content, and accessibility        |
+| [2026 Kahoot-alternatives UX gap plan](docs/kahoot-alternatives-2026-ux-gap-plan.md) | Current benchmark, UX gaps, strategy, and implementation sequence       |
+| [Competitive strategy and roadmap](docs/competitive-strategy-and-roadmap.md)         | Market comparison, differentiation, and post-P0 phases                  |
+| [Architecture and protocol](docs/architecture.md)                                    | Components, data flows, correctness, security, and scale gates          |
+| [Institution integrations](docs/institution-integrations.md)                         | Configure and validate creator OIDC, LTI, audit, and pilot gates        |
+| [Documentation index](docs/README.md)                                                | API, status, privacy, release, and operations references                |
 
 ## Quick start with Docker
 
@@ -102,7 +103,11 @@ firewall, media, and public HTTPS instructions.
 
 The complete startup, first-round, shutdown, reset, and troubleshooting instructions are in the
 [quick start](docs/quick-start.md). The [user guide](docs/user-guide.md) explains every creator,
-host, presenter, participant, report, and account workflow.
+host, presenter, participant, report, and account workflow. After signing in, `/help` is available
+in both the default classic setup and the professional workspace rollout. It shows links and
+instructions that match the current workspace. The captioned **Quick start: create your first
+Round** and **Workspace and builder guide** appear only when every capability they demonstrate is
+enabled, so a partial rollout never teaches an unavailable workflow.
 
 Both Compose profiles use community mode: billing is disabled, application entitlements are not
 paywalled, and the P0 support ceiling remains 100 participants per session. The base profile

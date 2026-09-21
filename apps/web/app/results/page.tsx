@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { apiFetch, humanError } from "../../lib/api";
 import { buildHistoryQuery } from "../../lib/history-query";
 import { formatCompactDate, formatPercent } from "../../components/workspace/workspace-model";
-import { WorkspaceProvider } from "../../components/workspace/workspace-provider";
+import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
 import type {
   CursorPage,
@@ -510,9 +510,120 @@ function PracticeList({ rounds }: { rounds: RoundFilterOption[] }) {
   );
 }
 
+interface PresentationResultSummary {
+  id: string;
+  presentationId: string;
+  title: string;
+  status: "active" | "finished";
+  phase: string;
+  participantCount: number;
+  responseCount: number;
+  blockCount: number;
+  createdAt: string;
+  finishedAt?: string | null;
+}
+
+function PresentationResultList() {
+  const [sessions, setSessions] = useState<PresentationResultSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void apiFetch<{ sessions: PresentationResultSummary[] }>("/v1/presentation-sessions", {
+      signal: controller.signal,
+    })
+      .then((response) => {
+        if (!controller.signal.aborted) setSessions(response.sessions);
+      })
+      .catch((caught) => {
+        if (!controller.signal.aborted) setError(humanError(caught));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, []);
+
+  if (loading) return <p className={styles.muted}>Loading Presentation results…</p>;
+  if (error)
+    return (
+      <p className="error" role="alert">
+        {error}
+      </p>
+    );
+  if (!sessions.length) {
+    return (
+      <div className={styles.emptyState}>
+        <h2>No Presentation results yet</h2>
+        <p>Host a published Presentation and its interactive evidence will appear here.</p>
+        <Link className="button" href="/library?type=presentations">
+          Choose a Presentation
+        </Link>
+      </div>
+    );
+  }
+  return (
+    <section className={styles.list} aria-label="Presentation results">
+      {sessions.map((session) => (
+        <article className={styles.listCard} key={session.id}>
+          <div className={styles.rowTopline}>
+            <div>
+              <p className="eyebrow">Presentation</p>
+              <h2>{session.title}</h2>
+              <p className={styles.summaryLine}>
+                Started {formatCompactDate(session.createdAt)} · {session.blockCount} blocks
+              </p>
+            </div>
+            <span className={styles.status} data-tone={session.status}>
+              {session.status}
+            </span>
+          </div>
+          <div className={styles.metricGrid}>
+            <div className={styles.metric}>
+              <strong>{session.participantCount}</strong>
+              <span>Participants</span>
+            </div>
+            <div className={styles.metric}>
+              <strong>{session.responseCount}</strong>
+              <span>Responses</span>
+            </div>
+            <div className={styles.metric}>
+              <strong>{session.phase.replaceAll("_", " ")}</strong>
+              <span>Session phase</span>
+            </div>
+          </div>
+          <div className={styles.listCardActions}>
+            <Link
+              className="button small-button"
+              href={`/presentation-session/${session.id}/report`}
+            >
+              Open report
+            </Link>
+            <Link
+              className="button-quiet small-button"
+              href={`/presentation/${session.presentationId}`}
+            >
+              View Presentation
+            </Link>
+          </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
 function ResultsContent() {
   const params = useSearchParams();
-  const view = params.get("view") === "practice" ? "practice" : "results";
+  const { productFeatures } = useWorkspace();
+  const presentationsEnabled = productFeatures?.presentations === true;
+  const requestedView = params.get("view");
+  const view =
+    requestedView === "practice"
+      ? "practice"
+      : requestedView === "presentations" && presentationsEnabled
+        ? "presentations"
+        : "results";
   const [rounds, setRounds] = useState<RoundFilterOption[]>([]);
 
   useEffect(() => {
@@ -537,6 +648,15 @@ function ResultsContent() {
         >
           Recovery results
         </Link>
+        {presentationsEnabled ? (
+          <Link
+            aria-current={view === "presentations" ? "page" : undefined}
+            className={view === "presentations" ? styles.tabActive : styles.tab}
+            href="/results?view=presentations"
+          >
+            Presentation results
+          </Link>
+        ) : null}
         <Link
           aria-current={view === "practice" ? "page" : undefined}
           className={view === "practice" ? styles.tabActive : styles.tab}
@@ -545,7 +665,13 @@ function ResultsContent() {
           Practice
         </Link>
       </nav>
-      {view === "practice" ? <PracticeList rounds={rounds} /> : <ReportList rounds={rounds} />}
+      {view === "practice" ? (
+        <PracticeList rounds={rounds} />
+      ) : view === "presentations" ? (
+        <PresentationResultList />
+      ) : (
+        <ReportList rounds={rounds} />
+      )}
     </>
   );
 }

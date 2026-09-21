@@ -232,6 +232,7 @@ export class MetricsService {
       "segment",
       "beta_version",
       "duration_bucket",
+      "artifact_type",
     ] as const,
     registers: [this.registry],
   });
@@ -307,6 +308,7 @@ export class MetricsService {
       segment?: string;
       betaVersion?: string;
       durationBucket?: string;
+      artifactType?: string;
     };
   }) {
     this.productEvents.inc({
@@ -317,6 +319,7 @@ export class MetricsService {
       segment: event.dimensions.segment ?? "none",
       beta_version: event.dimensions.betaVersion ?? "none",
       duration_bucket: event.dimensions.durationBucket ?? "none",
+      artifact_type: event.dimensions.artifactType ?? "none",
     });
   }
 

@@ -16,11 +16,23 @@ import {
   FollowupAccessLimitError,
   FollowupVersionConflictError,
   PublishedQuizLimitError,
+  QuizDraftMutationConflictError,
+  QuizDraftRevisionConflictError,
   SessionCodeConflictError,
   SessionNotActiveError,
   SessionVersionConflictError,
 } from "./types.js";
 import { runMigrations } from "./migrations.js";
+import {
+  PRESENTATION_CONTENT_SCHEMA_VERSION,
+  PRESENTATION_DRAFT_SCHEMA_VERSION,
+  ROUND_CONTENT_SCHEMA_VERSION,
+  ROUND_DRAFT_SCHEMA_VERSION,
+  upcastPresentationContent,
+  upcastPresentationDraft,
+  upcastRoundContent,
+  upcastRoundDraft,
+} from "./artifact-schemas.js";
 import type {
   AudienceEventInput,
   AudienceMutation,
@@ -52,6 +64,8 @@ import type {
   LtiRegistrationRecord,
   MagicTokenRecord,
   MediaAssetRecord,
+  MediaReferenceOwnerType,
+  MediaReferenceRecord,
   MediaScanStatus,
   OperationalFeaturesRecord,
   OperationalFeaturesUpdate,
@@ -63,6 +77,8 @@ import type {
   QnaReplyRecord,
   QnaSettingsRecord,
   QuizListRecord,
+  QuizDraftHistoryRecord,
+  QuizDraftUpdate,
   QuizRecord,
   QuizVersionRecord,
   ReportJob,
@@ -83,18 +99,53 @@ function date(value: unknown): Date {
 }
 
 function mapQuiz(row: QueryResultRow): QuizRecord {
+  const draftSchemaVersion = Number(row.draft_schema_version ?? ROUND_DRAFT_SCHEMA_VERSION);
+  const draft = upcastRoundDraft(row.draft, draftSchemaVersion);
   return {
     id: row.id,
     workspaceId: row.workspace_id,
-    title: row.title,
-    description: row.description,
+    title: draft.title,
+    description: draft.description,
     status: row.status,
-    draft: row.draft,
+    draft,
+    draftRevision: Number(row.draft_revision ?? 0),
+    draftSchemaVersion,
+    publishedDraftRevision:
+      row.published_draft_revision == null ? null : Number(row.published_draft_revision),
+    lastEditedBy: row.last_edited_by == null ? null : String(row.last_edited_by),
     currentVersionId: row.current_version_id,
     folderId: row.folder_id ?? null,
     tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
     createdAt: date(row.created_at),
     updatedAt: date(row.updated_at),
+  };
+}
+
+function mapQuizDraftHistory(row: QueryResultRow): QuizDraftHistoryRecord {
+  const draftSchemaVersion = Number(row.draft_schema_version ?? ROUND_DRAFT_SCHEMA_VERSION);
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    quizId: String(row.quiz_id),
+    revision: Number(row.revision),
+    draft: upcastRoundDraft(row.draft, draftSchemaVersion),
+    draftSchemaVersion,
+    savedBy: row.saved_by ? String(row.saved_by) : null,
+    mutationId: row.mutation_id ? String(row.mutation_id) : null,
+    createdAt: date(row.created_at),
+  };
+}
+
+function quizAtDraftRevision(current: QuizRecord, snapshot: QuizDraftHistoryRecord): QuizRecord {
+  return {
+    ...current,
+    title: snapshot.draft.title,
+    description: snapshot.draft.description,
+    draft: snapshot.draft,
+    draftRevision: snapshot.revision,
+    draftSchemaVersion: snapshot.draftSchemaVersion,
+    lastEditedBy: snapshot.savedBy,
+    updatedAt: snapshot.createdAt,
   };
 }
 
@@ -116,13 +167,17 @@ function mapFolder(row: QueryResultRow): FolderRecord {
 }
 
 function mapVersion(row: QueryResultRow): QuizVersionRecord {
+  const contentSchemaVersion = Number(row.content_schema_version ?? ROUND_CONTENT_SCHEMA_VERSION);
   return {
     id: row.id,
     workspaceId: row.workspace_id,
     quizId: row.quiz_id,
     version: row.version,
-    content: row.content,
+    content: upcastRoundContent(row.content, contentSchemaVersion),
+    contentSchemaVersion,
     contentHash: row.content_hash,
+    sourceDraftRevision:
+      row.source_draft_revision == null ? null : Number(row.source_draft_revision),
     publishedAt: date(row.published_at),
   };
 }
@@ -307,6 +362,16 @@ function mapMediaAsset(row: QueryResultRow): MediaAssetRecord {
     sizeBytes: Number(row.size_bytes),
     scanStatus: row.scan_status,
     altText: row.alt_text,
+    createdAt: date(row.created_at),
+  };
+}
+
+function mapMediaReference(row: QueryResultRow): MediaReferenceRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    mediaId: String(row.media_id),
+    ownerType: row.owner_type,
+    ownerId: String(row.owner_id),
     createdAt: date(row.created_at),
   };
 }
@@ -1448,25 +1513,55 @@ export class PostgresRepository implements Repository {
   }
 
   async createQuiz(input: QuizRecord) {
-    const result = await this.workspaceQuery(
-      input.workspaceId,
-      `INSERT INTO quizzes (
-         id, workspace_id, title, description, status, draft, folder_id, tags, created_at, updated_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9, $10) RETURNING *`,
-      [
-        input.id,
-        input.workspaceId,
-        input.title,
-        input.description,
-        input.status,
-        JSON.stringify(input.draft),
-        input.folderId ?? null,
-        input.tags ?? [],
-        input.createdAt,
-        input.updatedAt,
-      ],
+    const draftSchemaVersion = input.draftSchemaVersion ?? ROUND_DRAFT_SCHEMA_VERSION;
+    const draft = upcastRoundDraft(input.draft, draftSchemaVersion);
+    return this.transaction(
+      async (client) => {
+        const result = await client.query(
+          `INSERT INTO quizzes (
+             id, workspace_id, title, description, status, draft, folder_id, tags,
+             draft_revision, draft_schema_version, published_draft_revision, last_edited_by,
+             created_at, updated_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9, $10, $11, $12, $13, $14)
+           RETURNING *`,
+          [
+            input.id,
+            input.workspaceId,
+            draft.title,
+            draft.description,
+            input.status,
+            JSON.stringify(draft),
+            input.folderId ?? null,
+            input.tags ?? [],
+            input.draftRevision ?? 0,
+            draftSchemaVersion,
+            input.publishedDraftRevision ?? null,
+            input.lastEditedBy ?? null,
+            input.createdAt,
+            input.updatedAt,
+          ],
+        );
+        await client.query(
+          `INSERT INTO quiz_draft_history
+             (id, workspace_id, quiz_id, revision, draft, draft_schema_version,
+              saved_by, mutation_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8)
+           ON CONFLICT (quiz_id, revision) DO NOTHING`,
+          [
+            randomUUID(),
+            input.workspaceId,
+            input.id,
+            input.draftRevision ?? 0,
+            JSON.stringify(draft),
+            draftSchemaVersion,
+            input.lastEditedBy ?? null,
+            input.createdAt,
+          ],
+        );
+        return mapQuiz(result.rows[0]!);
+      },
+      { workspaceId: input.workspaceId },
     );
-    return mapQuiz(result.rows[0]!);
   }
 
   async getQuiz(workspaceId: string, quizId: string) {
@@ -1478,14 +1573,309 @@ export class PostgresRepository implements Repository {
     return result.rows[0] ? mapQuiz(result.rows[0]) : null;
   }
 
-  async updateQuiz(workspaceId: string, quizId: string, draft: QuizDraft) {
+  async updateQuiz(
+    workspaceId: string,
+    quizId: string,
+    draft: QuizDraft,
+    expectedDraftRevision?: number,
+    editorId?: string,
+  ) {
+    const normalizedDraft = upcastRoundDraft(draft, ROUND_DRAFT_SCHEMA_VERSION);
+    return this.transaction(
+      async (client) => {
+        const current = await client.query(
+          `SELECT status, draft_revision, last_edited_by
+           FROM quizzes WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+          [workspaceId, quizId],
+        );
+        if (!current.rows[0] || current.rows[0].status === "archived") return null;
+        const currentRevision = Number(current.rows[0].draft_revision);
+        if (expectedDraftRevision !== undefined && expectedDraftRevision !== currentRevision) {
+          throw new QuizDraftRevisionConflictError(
+            quizId,
+            expectedDraftRevision,
+            currentRevision,
+            current.rows[0].last_edited_by ? String(current.rows[0].last_edited_by) : null,
+          );
+        }
+        const result = await client.query(
+          `UPDATE quizzes SET title = $3, description = $4, draft = $5,
+             draft_revision = draft_revision + 1, draft_schema_version = 1,
+             last_edited_by = COALESCE($6::uuid, last_edited_by), updated_at = now()
+           WHERE workspace_id = $1 AND id = $2 RETURNING *`,
+          [
+            workspaceId,
+            quizId,
+            normalizedDraft.title,
+            normalizedDraft.description,
+            JSON.stringify(normalizedDraft),
+            editorId ?? null,
+          ],
+        );
+        const quiz = mapQuiz(result.rows[0]!);
+        await client.query(
+          `INSERT INTO quiz_draft_history
+             (id, workspace_id, quiz_id, revision, draft, draft_schema_version,
+              saved_by, mutation_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8)`,
+          [
+            randomUUID(),
+            workspaceId,
+            quizId,
+            quiz.draftRevision,
+            JSON.stringify(normalizedDraft),
+            ROUND_DRAFT_SCHEMA_VERSION,
+            quiz.lastEditedBy ?? null,
+            quiz.updatedAt,
+          ],
+        );
+        await this.pruneQuizDraftHistory(client, workspaceId, quizId);
+        return quiz;
+      },
+      { workspaceId },
+    );
+  }
+
+  private async replayQuizDraftMutation(
+    client: PoolClient,
+    input: Pick<QuizDraftUpdate, "workspaceId" | "quizId">,
+    receipt: QueryResultRow,
+    currentRow?: QueryResultRow,
+  ): Promise<QuizRecord | null> {
+    const currentResult = currentRow
+      ? null
+      : await client.query("SELECT * FROM quizzes WHERE workspace_id = $1 AND id = $2", [
+          input.workspaceId,
+          input.quizId,
+        ]);
+    const row = currentRow ?? currentResult?.rows[0];
+    if (!row) return null;
+    const current = mapQuiz(row);
+    const resultingRevision = Number(receipt.resulting_revision);
+    if ((current.draftRevision ?? 0) === resultingRevision) return current;
+
+    const history = await client.query(
+      `SELECT * FROM quiz_draft_history
+       WHERE workspace_id = $1 AND quiz_id = $2 AND revision = $3`,
+      [input.workspaceId, input.quizId, resultingRevision],
+    );
+    if (history.rows[0]) {
+      return quizAtDraftRevision(current, mapQuizDraftHistory(history.rows[0]));
+    }
+    throw new QuizDraftRevisionConflictError(
+      input.quizId,
+      resultingRevision,
+      current.draftRevision ?? 0,
+      current.lastEditedBy ?? null,
+    );
+  }
+
+  async updateQuizDraft(input: QuizDraftUpdate) {
+    const draft = upcastRoundDraft(input.draft, input.schemaVersion);
+    return this.transaction(
+      async (client) => {
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+          `${input.workspaceId}:${input.mutationId}`,
+        ]);
+        const prior = await client.query(
+          `SELECT quiz_id, expected_revision, resulting_revision, draft_hash
+           FROM quiz_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2`,
+          [input.workspaceId, input.mutationId],
+        );
+        if (prior.rows[0]) {
+          const receipt = prior.rows[0];
+          if (
+            String(receipt.quiz_id) !== input.quizId ||
+            Number(receipt.expected_revision) !== input.expectedRevision ||
+            String(receipt.draft_hash) !== input.draftHash
+          ) {
+            throw new QuizDraftMutationConflictError(input.mutationId);
+          }
+          return this.replayQuizDraftMutation(client, input, receipt);
+        }
+
+        const current = await client.query(
+          `SELECT * FROM quizzes WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+          [input.workspaceId, input.quizId],
+        );
+        if (!current.rows[0] || current.rows[0].status === "archived") return null;
+        // A duplicate request may have committed while this transaction waited on
+        // the Round row lock, so check the receipt again before evaluating CAS.
+        const raced = await client.query(
+          `SELECT quiz_id, expected_revision, resulting_revision, draft_hash
+           FROM quiz_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2`,
+          [input.workspaceId, input.mutationId],
+        );
+        if (raced.rows[0]) {
+          const receipt = raced.rows[0];
+          if (
+            String(receipt.quiz_id) !== input.quizId ||
+            Number(receipt.expected_revision) !== input.expectedRevision ||
+            String(receipt.draft_hash) !== input.draftHash
+          ) {
+            throw new QuizDraftMutationConflictError(input.mutationId);
+          }
+          return this.replayQuizDraftMutation(client, input, receipt, current.rows[0]);
+        }
+        const quiz = mapQuiz(current.rows[0]);
+        const currentRevision = quiz.draftRevision ?? 0;
+        if (currentRevision !== input.expectedRevision) {
+          throw new QuizDraftRevisionConflictError(
+            input.quizId,
+            input.expectedRevision,
+            currentRevision,
+            quiz.lastEditedBy ?? null,
+          );
+        }
+        const comparison = await client.query<{ meaningful: boolean }>(
+          "SELECT $1::jsonb <> $2::jsonb AS meaningful",
+          [JSON.stringify(quiz.draft), JSON.stringify(draft)],
+        );
+        const meaningful = comparison.rows[0]?.meaningful ?? true;
+        const resultingRevision = meaningful ? currentRevision + 1 : currentRevision;
+        await client.query(
+          `INSERT INTO quiz_draft_mutations
+             (mutation_id, workspace_id, quiz_id, expected_revision, resulting_revision, draft_hash)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            input.mutationId,
+            input.workspaceId,
+            input.quizId,
+            input.expectedRevision,
+            resultingRevision,
+            input.draftHash,
+          ],
+        );
+        if (!meaningful) return quiz;
+
+        const updated = await client.query(
+          `UPDATE quizzes SET title = $3, description = $4, draft = $5,
+             draft_revision = $6, draft_schema_version = $7, last_edited_by = $8,
+             updated_at = now()
+           WHERE workspace_id = $1 AND id = $2 RETURNING *`,
+          [
+            input.workspaceId,
+            input.quizId,
+            draft.title,
+            draft.description,
+            JSON.stringify(draft),
+            resultingRevision,
+            input.schemaVersion,
+            input.editorId,
+          ],
+        );
+        const saved = mapQuiz(updated.rows[0]!);
+        await client.query(
+          `INSERT INTO quiz_draft_history
+             (id, workspace_id, quiz_id, revision, draft, draft_schema_version,
+              saved_by, mutation_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            randomUUID(),
+            input.workspaceId,
+            input.quizId,
+            resultingRevision,
+            JSON.stringify(draft),
+            input.schemaVersion,
+            input.editorId,
+            input.mutationId,
+            saved.updatedAt,
+          ],
+        );
+        await this.pruneQuizDraftHistory(client, input.workspaceId, input.quizId);
+        return saved;
+      },
+      { workspaceId: input.workspaceId },
+    );
+  }
+
+  private async pruneQuizDraftHistory(client: PoolClient, workspaceId: string, quizId: string) {
+    await client.query(
+      `DELETE FROM quiz_draft_history history
+       WHERE history.workspace_id = $1 AND history.quiz_id = $2
+         AND (history.created_at < now() - interval '30 days' OR history.id NOT IN (
+           SELECT kept.id FROM quiz_draft_history kept
+           WHERE kept.workspace_id = $1 AND kept.quiz_id = $2
+           ORDER BY kept.revision DESC LIMIT 20
+         ))`,
+      [workspaceId, quizId],
+    );
+    await client.query(
+      `DELETE FROM quiz_draft_mutations
+       WHERE workspace_id = $1 AND quiz_id = $2
+         AND created_at < now() - interval '30 days'`,
+      [workspaceId, quizId],
+    );
+  }
+
+  async listQuizDraftHistory(workspaceId: string, quizId: string, limit = 20) {
     const result = await this.workspaceQuery(
       workspaceId,
-      `UPDATE quizzes SET title = $3, description = $4, draft = $5, updated_at = now()
-       WHERE workspace_id = $1 AND id = $2 AND status <> 'archived' RETURNING *`,
-      [workspaceId, quizId, draft.title, draft.description, JSON.stringify(draft)],
+      `SELECT * FROM quiz_draft_history
+       WHERE workspace_id = $1 AND quiz_id = $2
+       ORDER BY revision DESC LIMIT $3`,
+      [workspaceId, quizId, Math.min(20, Math.max(1, limit))],
     );
-    return result.rows[0] ? mapQuiz(result.rows[0]) : null;
+    return result.rows.map(mapQuizDraftHistory);
+  }
+
+  async restoreQuizDraftHistory(input: {
+    workspaceId: string;
+    quizId: string;
+    historyRevision: number;
+    expectedRevision: number;
+    mutationId: string;
+    editorId: string;
+  }) {
+    const draftHash = `restore:${input.historyRevision}`;
+    const replayReceipt = () =>
+      this.transaction(
+        async (client) => {
+          const prior = await client.query(
+            `SELECT quiz_id, expected_revision, resulting_revision, draft_hash
+             FROM quiz_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2`,
+            [input.workspaceId, input.mutationId],
+          );
+          if (!prior.rows[0]) return { handled: false as const, quiz: null };
+          const receipt = prior.rows[0];
+          if (
+            String(receipt.quiz_id) !== input.quizId ||
+            Number(receipt.expected_revision) !== input.expectedRevision ||
+            String(receipt.draft_hash) !== draftHash
+          ) {
+            throw new QuizDraftMutationConflictError(input.mutationId);
+          }
+          return {
+            handled: true as const,
+            quiz: await this.replayQuizDraftMutation(client, input, receipt),
+          };
+        },
+        { workspaceId: input.workspaceId },
+      );
+    const replayed = await replayReceipt();
+    if (replayed.handled) return replayed.quiz;
+
+    const snapshot = await this.workspaceQuery(
+      input.workspaceId,
+      `SELECT * FROM quiz_draft_history
+       WHERE workspace_id = $1 AND quiz_id = $2 AND revision = $3`,
+      [input.workspaceId, input.quizId, input.historyRevision],
+    );
+    if (!snapshot.rows[0]) {
+      const racedReplay = await replayReceipt();
+      return racedReplay.handled ? racedReplay.quiz : null;
+    }
+    const history = mapQuizDraftHistory(snapshot.rows[0]);
+    return this.updateQuizDraft({
+      workspaceId: input.workspaceId,
+      quizId: input.quizId,
+      draft: history.draft,
+      expectedRevision: input.expectedRevision,
+      mutationId: input.mutationId,
+      editorId: input.editorId,
+      schemaVersion: history.draftSchemaVersion ?? ROUND_DRAFT_SCHEMA_VERSION,
+      draftHash,
+    });
   }
 
   async archiveQuiz(
@@ -1531,17 +1921,33 @@ export class PostgresRepository implements Repository {
     return this.createQuiz(input);
   }
 
-  async publishQuiz(input: QuizVersionRecord, maxPublishedQuizzes: number | null = null) {
+  async publishQuiz(
+    input: QuizVersionRecord,
+    maxPublishedQuizzes: number | null = null,
+    expectedDraftRevision?: number,
+  ) {
     return this.transaction(
       async (client) => {
         await client.query("SELECT id FROM workspaces WHERE id = $1 FOR UPDATE", [
           input.workspaceId,
         ]);
         const current = await client.query(
-          "SELECT status FROM quizzes WHERE workspace_id = $1 AND id = $2 FOR UPDATE",
+          `SELECT status, draft_revision, last_edited_by
+           FROM quizzes WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
           [input.workspaceId, input.quizId],
         );
         if (!current.rows[0]) throw new Error("Quiz not found");
+        const currentDraftRevision = Number(current.rows[0].draft_revision);
+        if (expectedDraftRevision !== undefined && currentDraftRevision !== expectedDraftRevision) {
+          throw new QuizDraftRevisionConflictError(
+            input.quizId,
+            expectedDraftRevision,
+            currentDraftRevision,
+            current.rows[0].last_edited_by ? String(current.rows[0].last_edited_by) : null,
+          );
+        }
+        const contentSchemaVersion = input.contentSchemaVersion ?? ROUND_CONTENT_SCHEMA_VERSION;
+        const content = upcastRoundContent(input.content, contentSchemaVersion);
         if (current.rows[0].status !== "published" && maxPublishedQuizzes !== null) {
           const count = await client.query(
             "SELECT count(*)::integer AS count FROM quizzes WHERE workspace_id = $1 AND status = 'published'",
@@ -1552,8 +1958,11 @@ export class PostgresRepository implements Repository {
           }
         }
         const result = await client.query(
-          `INSERT INTO quiz_versions (id, workspace_id, quiz_id, version, content, content_hash, published_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `INSERT INTO quiz_versions (
+             id, workspace_id, quiz_id, version, content, content_schema_version,
+             content_hash, source_draft_revision, published_at
+           )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (quiz_id, content_hash) DO UPDATE SET content_hash = EXCLUDED.content_hash
          RETURNING *`,
           [
@@ -1561,15 +1970,19 @@ export class PostgresRepository implements Repository {
             input.workspaceId,
             input.quizId,
             input.version,
-            JSON.stringify(input.content),
+            JSON.stringify(content),
+            contentSchemaVersion,
             input.contentHash,
+            currentDraftRevision,
             input.publishedAt,
           ],
         );
         const version = mapVersion(result.rows[0]!);
         await client.query(
-          "UPDATE quizzes SET current_version_id = $3, status = 'published', updated_at = now() WHERE workspace_id = $1 AND id = $2",
-          [input.workspaceId, input.quizId, version.id],
+          `UPDATE quizzes SET current_version_id = $3, status = 'published',
+             published_draft_revision = $4, updated_at = now()
+           WHERE workspace_id = $1 AND id = $2`,
+          [input.workspaceId, input.quizId, version.id, currentDraftRevision],
         );
         return version;
       },
@@ -3742,11 +4155,90 @@ export class PostgresRepository implements Repository {
     return result.rows.map(mapMediaAsset);
   }
 
+  async listMediaReferences(workspaceId: string, mediaId?: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT * FROM media_references
+       WHERE workspace_id = $1 AND ($2::uuid IS NULL OR media_id = $2)
+       ORDER BY created_at, owner_type, owner_id`,
+      [workspaceId, mediaId ?? null],
+    );
+    return result.rows.map(mapMediaReference);
+  }
+
+  async replaceMediaReferences(
+    workspaceId: string,
+    ownerType: MediaReferenceOwnerType,
+    ownerId: string,
+    mediaIds: string[],
+    createdAt = new Date(),
+  ) {
+    return this.transaction(
+      async (client) => {
+        const uniqueMediaIds = [...new Set(mediaIds)];
+        if (uniqueMediaIds.length > 0) {
+          const existing = await client.query<{ id: string }>(
+            `SELECT id FROM media_assets
+             WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
+            [workspaceId, uniqueMediaIds],
+          );
+          const existingIds = new Set(existing.rows.map(({ id }) => String(id)));
+          const invalidMediaId = uniqueMediaIds.find((mediaId) => !existingIds.has(mediaId));
+          if (invalidMediaId) {
+            throw new Error(`Media asset ${invalidMediaId} is unavailable in this workspace`);
+          }
+        }
+        await client.query(
+          `DELETE FROM media_references
+           WHERE workspace_id = $1 AND owner_type = $2 AND owner_id = $3`,
+          [workspaceId, ownerType, ownerId],
+        );
+        if (uniqueMediaIds.length > 0) {
+          await client.query(
+            `INSERT INTO media_references
+               (workspace_id, media_id, owner_type, owner_id, created_at)
+             SELECT $1, asset.id, $2, $3, $5
+             FROM media_assets asset
+             WHERE asset.workspace_id = $1 AND asset.id = ANY($4::uuid[])
+             ON CONFLICT DO NOTHING`,
+            [workspaceId, ownerType, ownerId, uniqueMediaIds, createdAt],
+          );
+        }
+        const result = await client.query(
+          `SELECT * FROM media_references
+           WHERE workspace_id = $1 AND owner_type = $2 AND owner_id = $3
+           ORDER BY created_at, media_id`,
+          [workspaceId, ownerType, ownerId],
+        );
+        return result.rows.map(mapMediaReference);
+      },
+      { workspaceId },
+    );
+  }
+
   async listStaleMedia(cutoff: Date, limit = 100) {
     const result = await this.systemQuery(
-      `SELECT * FROM media_assets
-       WHERE scan_status <> 'clean' AND created_at <= $1
+      `SELECT asset.* FROM media_assets asset
+       WHERE asset.scan_status <> 'clean' AND asset.created_at <= $1
+         AND NOT EXISTS (
+           SELECT 1 FROM media_references reference
+           WHERE reference.workspace_id = asset.workspace_id AND reference.media_id = asset.id
+         )
        ORDER BY created_at, id LIMIT $2`,
+      [cutoff, limit],
+    );
+    return result.rows.map(mapMediaAsset);
+  }
+
+  async listUnattachedMedia(cutoff: Date, limit = 100) {
+    const result = await this.systemQuery(
+      `SELECT asset.* FROM media_assets asset
+       WHERE asset.created_at <= $1
+         AND NOT EXISTS (
+           SELECT 1 FROM media_references reference
+           WHERE reference.workspace_id = asset.workspace_id AND reference.media_id = asset.id
+         )
+       ORDER BY asset.created_at, asset.id LIMIT $2`,
       [cutoff, limit],
     );
     return result.rows.map(mapMediaAsset);
@@ -3769,7 +4261,13 @@ export class PostgresRepository implements Repository {
   async deleteMediaAsset(workspaceId: string, mediaId: string) {
     const result = await this.workspaceQuery(
       workspaceId,
-      "DELETE FROM media_assets WHERE workspace_id = $1 AND id = $2 RETURNING id",
+      `DELETE FROM media_assets asset
+       WHERE asset.workspace_id = $1 AND asset.id = $2
+         AND NOT EXISTS (
+           SELECT 1 FROM media_references reference
+           WHERE reference.workspace_id = asset.workspace_id AND reference.media_id = asset.id
+         )
+       RETURNING id`,
       [workspaceId, mediaId],
     );
     return result.rowCount === 1;
@@ -5052,29 +5550,97 @@ export class PostgresRepository implements Repository {
         const queryWorkspaceData = async (sql: string) =>
           workspaceIds.length ? client.query(sql, [workspaceIds]) : { rows: [] };
         const quizzes = await queryWorkspaceData(
-          `SELECT id, workspace_id, title, description, status, draft, current_version_id,
-                  folder_id, tags, created_at, updated_at
+          `SELECT id, workspace_id, title, description, status, draft, draft_revision,
+                  draft_schema_version, published_draft_revision, last_edited_by,
+                  current_version_id, folder_id, tags, created_at, updated_at
            FROM quizzes WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
+        );
+        const quizDraftHistory = await queryWorkspaceData(
+          `SELECT id, workspace_id, quiz_id, revision, draft, draft_schema_version,
+                  saved_by, mutation_id, created_at
+           FROM quiz_draft_history WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY quiz_id, revision`,
         );
         const folders = await queryWorkspaceData(
           `SELECT id, workspace_id, name, created_at, updated_at
            FROM folders WHERE workspace_id = ANY($1::uuid[]) ORDER BY workspace_id, lower(name), id`,
         );
         const quizVersions = await queryWorkspaceData(
-          `SELECT id, workspace_id, quiz_id, version, content, content_hash, published_at
+          `SELECT id, workspace_id, quiz_id, version, content, content_schema_version,
+                  content_hash, published_at
            FROM quiz_versions WHERE workspace_id = ANY($1::uuid[])
            ORDER BY quiz_id, version`,
+        );
+        const presentations = await queryWorkspaceData(
+          `SELECT id, workspace_id, title, description, status, draft, draft_revision,
+                  draft_schema_version, current_version_id, published_draft_revision,
+                  last_edited_by, folder_id, created_at, updated_at, archived_at
+           FROM presentations WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY created_at, id`,
+        );
+        const libraryFavorites = await client.query(
+          `SELECT workspace_id, user_id, artifact_type, artifact_id, created_at
+           FROM library_favorites WHERE user_id = $1
+           ORDER BY created_at, artifact_type, artifact_id`,
+          [userId],
+        );
+        const presentationVersions = await queryWorkspaceData(
+          `SELECT id, workspace_id, presentation_id, version, content, content_schema_version,
+                  content_hash,
+                  source_draft_revision, published_at
+           FROM presentation_versions WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY presentation_id, version`,
+        );
+        const presentationDraftHistory = await queryWorkspaceData(
+          `SELECT id, workspace_id, presentation_id, revision, draft, draft_schema_version,
+                  saved_by, mutation_id, created_at
+           FROM presentation_draft_history WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY presentation_id, revision`,
         );
         const mediaAssets = await queryWorkspaceData(
           `SELECT id, workspace_id, object_key, mime_type, size_bytes, scan_status, alt_text,
                   created_at
            FROM media_assets WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
         );
+        const mediaReferences = await queryWorkspaceData(
+          `SELECT workspace_id, media_id, owner_type, owner_id, created_at
+           FROM media_references WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY created_at, media_id, owner_type, owner_id`,
+        );
         const sessions = await queryWorkspaceData(
           `SELECT id, workspace_id, quiz_version_id, host_id, code, state, version, seq,
                   deadline, settings, state_snapshot, ended_at, deleted_at, expires_at,
                   retention_expires_at, created_at, updated_at
            FROM game_sessions WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
+        );
+        const presentationSessions = await queryWorkspaceData(
+          `SELECT id, workspace_id, presentation_id, presentation_version_id, title,
+                  content_snapshot, join_code, status, phase, current_block_index, revision,
+                  created_by, created_at, updated_at, finished_at, live_expires_at,
+                  retention_expires_at
+           FROM presentation_live_sessions WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY created_at, id`,
+        );
+        const presentationSessionIds = presentationSessions.rows.map((row) => row.id);
+        const presentationSessionParticipants = presentationSessionIds.length
+          ? await client.query(
+              `SELECT id, workspace_id, session_id, nickname, joined_at, last_seen_at
+               FROM presentation_live_participants
+               WHERE session_id = ANY($1::uuid[]) ORDER BY joined_at, id`,
+              [presentationSessionIds],
+            )
+          : { rows: [] };
+        const presentationSessionResponses = await queryWorkspaceData(
+          `SELECT id, workspace_id, session_id, participant_id, block_id, question_id,
+                  response, correct, score, response_ms, submitted_at
+           FROM presentation_live_responses WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY submitted_at, id`,
+        );
+        const presentationSessionTimeline = await queryWorkspaceData(
+          `SELECT id, workspace_id, session_id, sequence, event_type, block_index, block_id,
+                  occurred_at
+           FROM presentation_session_timeline WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY session_id, sequence`,
         );
         const sessionIds = sessions.rows.map((row) => row.id);
         const participants = sessionIds.length
@@ -5202,6 +5768,34 @@ export class PostgresRepository implements Repository {
                   metadata, created_at
            FROM audit_events WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
         );
+        const collaborationGroups = await queryWorkspaceData(
+          `SELECT id, workspace_id, name, description, created_by, created_at, updated_at
+           FROM collaboration_groups WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY created_at, id`,
+        );
+        const collaborationGroupMembers = await client.query(
+          `SELECT workspace_id, group_id, user_id, role, joined_at
+           FROM collaboration_group_members
+           WHERE workspace_id = ANY($1::uuid[]) OR user_id = $2
+           ORDER BY workspace_id, group_id, joined_at`,
+          [workspaceIds, userId],
+        );
+        const collaborationGroupArtifacts = await queryWorkspaceData(
+          `SELECT id, workspace_id, group_id, artifact_type, artifact_id, added_by, created_at
+           FROM collaboration_group_artifacts WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY created_at, id`,
+        );
+        const collaborationGroupMessages = await queryWorkspaceData(
+          `SELECT id, workspace_id, group_id, author_id, body, created_at
+           FROM collaboration_group_messages WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY created_at, id`,
+        );
+        const collaborationGroupSchedule = await queryWorkspaceData(
+          `SELECT id, workspace_id, group_id, artifact_type, artifact_id, kind, scheduled_for,
+                  note, created_by, created_at
+           FROM collaboration_group_schedule WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY scheduled_for, id`,
+        );
         const consentRecords = await client.query(
           `SELECT document_type, document_version, accepted_at
            FROM consent_records WHERE user_id = $1 ORDER BY accepted_at`,
@@ -5212,10 +5806,56 @@ export class PostgresRepository implements Repository {
           workspaceMemberships: membershipResult.rows,
           workspaces: workspaceResult.rows,
           folders: folders.rows,
-          quizzes: quizzes.rows,
-          quizVersions: quizVersions.rows,
+          quizzes: quizzes.rows.map((row) => ({
+            ...row,
+            draft: upcastRoundDraft(
+              row.draft,
+              Number(row.draft_schema_version ?? ROUND_DRAFT_SCHEMA_VERSION),
+            ),
+          })),
+          quizDraftHistory: quizDraftHistory.rows.map((row) => ({
+            ...row,
+            draft: upcastRoundDraft(
+              row.draft,
+              Number(row.draft_schema_version ?? ROUND_DRAFT_SCHEMA_VERSION),
+            ),
+          })),
+          quizVersions: quizVersions.rows.map((row) => ({
+            ...row,
+            content: upcastRoundContent(
+              row.content,
+              Number(row.content_schema_version ?? ROUND_CONTENT_SCHEMA_VERSION),
+            ),
+          })),
+          presentations: presentations.rows.map((row) => ({
+            ...row,
+            draft: upcastPresentationDraft(
+              row.draft,
+              Number(row.draft_schema_version ?? PRESENTATION_DRAFT_SCHEMA_VERSION),
+            ),
+          })),
+          presentationVersions: presentationVersions.rows.map((row) => ({
+            ...row,
+            content: upcastPresentationContent(
+              row.content,
+              Number(row.content_schema_version ?? PRESENTATION_CONTENT_SCHEMA_VERSION),
+            ),
+          })),
+          presentationDraftHistory: presentationDraftHistory.rows.map((row) => ({
+            ...row,
+            draft: upcastPresentationDraft(
+              row.draft,
+              Number(row.draft_schema_version ?? PRESENTATION_DRAFT_SCHEMA_VERSION),
+            ),
+          })),
+          libraryFavorites: libraryFavorites.rows,
           mediaAssets: mediaAssets.rows,
+          mediaReferences: mediaReferences.rows,
           sessions: sessions.rows,
+          presentationSessions: presentationSessions.rows,
+          presentationSessionParticipants: presentationSessionParticipants.rows,
+          presentationSessionResponses: presentationSessionResponses.rows,
+          presentationSessionTimeline: presentationSessionTimeline.rows,
           participants: participants.rows,
           answers: answers.rows,
           reports: reports.rows,
@@ -5238,6 +5878,11 @@ export class PostgresRepository implements Repository {
           billing: subscriptions.rows,
           consentRecords: consentRecords.rows,
           auditEvents: auditEvents.rows,
+          collaborationGroups: collaborationGroups.rows,
+          collaborationGroupMembers: collaborationGroupMembers.rows,
+          collaborationGroupArtifacts: collaborationGroupArtifacts.rows,
+          collaborationGroupMessages: collaborationGroupMessages.rows,
+          collaborationGroupSchedule: collaborationGroupSchedule.rows,
         };
       },
       { system: true },
@@ -5254,6 +5899,38 @@ export class PostgresRepository implements Repository {
         for (const row of workspaceResult.rows) {
           await client.query("DELETE FROM workspaces WHERE id = $1", [row.workspace_id]);
         }
+        const groupOwnerships = await client.query<{ group_id: string }>(
+          `SELECT group_id FROM collaboration_group_members
+           WHERE user_id = $1 AND role = 'owner'`,
+          [userId],
+        );
+        for (const { group_id: groupId } of groupOwnerships.rows) {
+          const otherOwner = await client.query(
+            `SELECT 1 FROM collaboration_group_members
+             WHERE group_id = $1 AND user_id <> $2 AND role = 'owner'
+             LIMIT 1`,
+            [groupId, userId],
+          );
+          if (otherOwner.rows[0]) continue;
+          const successor = await client.query<{ user_id: string }>(
+            `SELECT user_id FROM collaboration_group_members
+             WHERE group_id = $1 AND user_id <> $2
+             ORDER BY joined_at, user_id
+             LIMIT 1`,
+            [groupId, userId],
+          );
+          if (successor.rows[0]) {
+            await client.query(
+              `UPDATE collaboration_group_members SET role = 'owner'
+               WHERE group_id = $1 AND user_id = $2`,
+              [groupId, successor.rows[0].user_id],
+            );
+          } else {
+            await client.query("DELETE FROM collaboration_groups WHERE id = $1", [groupId]);
+          }
+        }
+        await client.query("DELETE FROM collaboration_group_members WHERE user_id = $1", [userId]);
+        await client.query("DELETE FROM library_favorites WHERE user_id = $1", [userId]);
         await client.query("DELETE FROM external_identities WHERE user_id = $1", [userId]);
         await client.query("DELETE FROM workspace_members WHERE user_id = $1", [userId]);
         await client.query("DELETE FROM consent_records WHERE user_id = $1", [userId]);
@@ -5286,13 +5963,17 @@ export class PostgresRepository implements Repository {
           "DELETE FROM game_sessions WHERE retention_expires_at <= $1 RETURNING id",
           [now],
         );
+        const presentationResult = await client.query(
+          "DELETE FROM presentation_live_sessions WHERE retention_expires_at <= $1 RETURNING id",
+          [now],
+        );
         await client.query("DELETE FROM auth_magic_tokens WHERE expires_at <= $1", [now]);
         await client.query("DELETE FROM creator_sessions WHERE expires_at <= $1", [now]);
         await client.query("DELETE FROM authoring_jobs WHERE expires_at <= $1", [now]);
         await client.query("DELETE FROM federated_auth_transactions WHERE expires_at <= $1", [now]);
         await client.query("DELETE FROM lti_login_transactions WHERE expires_at <= $1", [now]);
         await client.query("DELETE FROM lti_launches WHERE expires_at <= $1", [now]);
-        return result.rows.map((row) => String(row.id));
+        return [...result.rows, ...presentationResult.rows].map((row) => String(row.id));
       },
       { system: true },
     );

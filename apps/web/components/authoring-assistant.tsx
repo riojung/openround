@@ -5,7 +5,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { AuthoringJob, AuthoringSourceType } from "@openround/contracts";
 import { apiFetch, humanError } from "../lib/api";
-import { recordCreationEvent } from "./workspace/product-events";
+import {
+  authoringProposalSelectionCount,
+  defaultAuthoringProposalSelection,
+  toggleContentSlideProposal,
+  toggleQuestionProposal,
+  type AuthoringProposalSelection,
+} from "../lib/authoring-proposals";
+import { recordAuthoringEvent, recordCreationEvent } from "./workspace/product-events";
 
 interface AuthoringStatus {
   enabled: boolean;
@@ -19,6 +26,13 @@ interface AuthoringAssistantProps {
   plain?: boolean;
   trackCreation?: boolean;
   terminology?: "legacy" | "round";
+  artifactType?: "round" | "presentation";
+  insertionTarget?: {
+    presentationId: string;
+    expectedRevision: number;
+    afterBlockId: string | null;
+    onInserted: (insertedBlockIds: string[]) => void;
+  };
 }
 
 const sourceTypes: Record<
@@ -67,6 +81,8 @@ export function AuthoringAssistant({
   plain = false,
   trackCreation = false,
   terminology = "legacy",
+  artifactType = "round",
+  insertionTarget,
 }: AuthoringAssistantProps) {
   const router = useRouter();
   const [status, setStatus] = useState<AuthoringStatus | null>(null);
@@ -77,6 +93,9 @@ export function AuthoringAssistant({
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [applyingId, setApplyingId] = useState("");
+  const [proposalSelections, setProposalSelections] = useState<
+    Record<string, AuthoringProposalSelection>
+  >({});
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(plain);
   const mounted = useRef(true);
@@ -113,7 +132,7 @@ export function AuthoringAssistant({
     event.preventDefault();
     setBusy(true);
     setError("");
-    if (trackCreation) recordCreationEvent("creation_started", "source");
+    if (trackCreation) recordCreationEvent("creation_started", "source", artifactType);
     try {
       let body: Record<string, unknown>;
       if (sourceMode === "pasted_text") {
@@ -150,16 +169,78 @@ export function AuthoringAssistant({
     setApplyingId(job.id);
     setError("");
     try {
-      const result = await apiFetch<{ quiz: { id: string } }>(
-        `/v1/authoring/jobs/${job.id}/apply`,
-        { method: "POST", body: "{}" },
+      const selection = proposalSelections[job.id] ?? defaultAuthoringProposalSelection(job);
+      const presentationSelection = {
+        ...(job.output?.contentSlideProposals
+          ? { selectedContentSlideIds: selection.selectedContentSlideIds }
+          : {}),
+        selectedQuestionIds: selection.selectedQuestionIds,
+      };
+      const result = await apiFetch<{
+        quiz?: { id: string };
+        presentation?: { id: string };
+        insertedBlockIds?: string[];
+      }>(
+        insertionTarget
+          ? `/v1/presentations/${insertionTarget.presentationId}/blocks/source-proposals`
+          : artifactType === "presentation"
+            ? `/v1/authoring/jobs/${job.id}/apply-presentation`
+            : `/v1/authoring/jobs/${job.id}/apply`,
+        {
+          method: "POST",
+          body: JSON.stringify(
+            insertionTarget
+              ? {
+                  authoringJobId: job.id,
+                  ...presentationSelection,
+                  afterBlockId: insertionTarget.afterBlockId,
+                  expectedRevision: insertionTarget.expectedRevision,
+                  mutationId: crypto.randomUUID(),
+                }
+              : artifactType === "presentation"
+                ? presentationSelection
+                : {},
+          ),
+        },
       );
-      if (trackCreation) recordCreationEvent("creation_completed", "source");
-      router.push(`/quiz/${result.quiz.id}`);
+      if (trackCreation) {
+        recordCreationEvent("creation_completed", "source", artifactType);
+        if (authoringProposalSelectionCount(selection) > 0) {
+          recordAuthoringEvent("first_block_created", artifactType);
+        }
+      }
+      if (insertionTarget && result.insertedBlockIds) {
+        insertionTarget.onInserted(result.insertedBlockIds);
+        setApplyingId("");
+      } else if (artifactType === "presentation" && result.presentation) {
+        router.push(`/presentation/${result.presentation.id}`);
+      } else if (result.quiz) {
+        router.push(`/quiz/${result.quiz.id}`);
+      } else {
+        throw new Error("The review draft could not be opened.");
+      }
     } catch (caught) {
       setError(humanError(caught));
       setApplyingId("");
     }
+  }
+
+  function selectionFor(job: AuthoringJob) {
+    return proposalSelections[job.id] ?? defaultAuthoringProposalSelection(job);
+  }
+
+  function updateContentSelection(job: AuthoringJob, proposalId: string) {
+    setProposalSelections((current) => ({
+      ...current,
+      [job.id]: toggleContentSlideProposal(job, current[job.id], proposalId),
+    }));
+  }
+
+  function updateQuestionSelection(job: AuthoringJob, questionId: string) {
+    setProposalSelections((current) => ({
+      ...current,
+      [job.id]: toggleQuestionProposal(job, current[job.id], questionId),
+    }));
   }
 
   const allowance = status
@@ -175,12 +256,19 @@ export function AuthoringAssistant({
       open={expanded}
     >
       <summary>
-        Draft {terminology === "round" ? "questions" : "checkpoints"} from a trusted source
+        {insertionTarget
+          ? "Insert from a trusted source"
+          : artifactType === "presentation"
+            ? "Draft presentation blocks from a trusted source"
+            : `Draft ${terminology === "round" ? "questions" : "checkpoints"} from a trusted source`}
       </summary>
       <p className="muted">
-        OpenRound can propose a main {terminology === "round" ? "question" : "checkpoint"} and
-        linked recheck from pasted text or a private PDF, Word, or PowerPoint file. Every proposal
-        includes source citations and remains an unpublished draft until you review it.
+        {artifactType === "presentation"
+          ? "OpenRound can propose cited content slides plus a linked Recovery question pair."
+          : `OpenRound can propose a main ${terminology === "round" ? "question" : "checkpoint"} and linked recheck.`}
+        Sources may be pasted text or a private PDF, Word, or PowerPoint file. Files are security
+        scanned before retention. Every proposal includes citations and remains an unpublished draft
+        until you review it.
       </p>
       <p className="notice" aria-live="polite">
         {allowance}
@@ -272,73 +360,133 @@ export function AuthoringAssistant({
       {jobs.length ? (
         <div className="authoring-job-list" aria-label="Recent authoring proposals">
           <h3>Recent proposals</h3>
-          {jobs.map((job) => (
-            <article className="card" key={job.id}>
-              <div className="button-row authoring-job-heading">
-                <div>
-                  <strong>{job.sourceName}</strong>
-                  <p className="muted">
-                    {statusLabel(job.status)} · attempt {job.attempts}
-                  </p>
+          {jobs.map((job) => {
+            const selection = selectionFor(job);
+            return (
+              <article className="card" key={job.id}>
+                <div className="button-row authoring-job-heading">
+                  <div>
+                    <strong>{job.sourceName}</strong>
+                    <p className="muted">
+                      {statusLabel(job.status)} · attempt {job.attempts}
+                    </p>
+                  </div>
+                  <span className="status-pill">{job.status}</span>
                 </div>
-                <span className="status-pill">{job.status}</span>
-              </div>
-              {job.error ? (
-                <p className="error" role="status">
-                  Proposal could not be created: {job.error}
-                </p>
-              ) : null}
-              {job.output ? (
-                <div className="authoring-proposal">
-                  <h4>{job.output.checkpointSet.title}</h4>
-                  {job.output.checkpointSet.questions.map((question) => (
-                    <section key={question.id}>
-                      <p>
-                        <strong>
-                          {question.delivery === "recheck"
-                            ? "Linked recheck"
-                            : terminology === "round"
-                              ? "Main question"
-                              : "Main checkpoint"}
-                          :
-                        </strong>{" "}
-                        {question.prompt}
+                {job.error ? (
+                  <p className="error" role="status">
+                    Proposal could not be created: {job.error}
+                  </p>
+                ) : null}
+                {job.output ? (
+                  <div className="authoring-proposal">
+                    <h4>{job.output.checkpointSet.title}</h4>
+                    {artifactType === "presentation" && job.output.contentSlideProposals?.length ? (
+                      <fieldset className="authoring-proposal-options">
+                        <legend>Proposed content slides</legend>
+                        {job.output.contentSlideProposals.map((proposal) => (
+                          <label className="authoring-proposal-option" key={proposal.id}>
+                            <input
+                              checked={selection.selectedContentSlideIds.includes(proposal.id)}
+                              onChange={() => updateContentSelection(job, proposal.id)}
+                              type="checkbox"
+                            />
+                            <span>
+                              <strong>{proposal.title}</strong>
+                              {proposal.body ? <small>{proposal.body}</small> : null}
+                              <small>
+                                {proposal.layout.replace("_", " ")} ·{" "}
+                                {proposal.citations[0]?.locator}
+                              </small>
+                            </span>
+                          </label>
+                        ))}
+                      </fieldset>
+                    ) : null}
+                    {artifactType === "presentation" ? (
+                      <p className="muted">
+                        Recovery questions stay paired when either question is selected.
                       </p>
-                      <ul>
-                        {job.output?.citations
-                          .filter((citation) => citation.checkpointId === question.id)
-                          .map((citation) => (
-                            <li key={`${citation.locator}-${citation.excerpt}`}>
-                              <strong>{citation.locator}:</strong> “{citation.excerpt}”
-                            </li>
+                    ) : null}
+                    {job.output.checkpointSet.questions.map((question) => (
+                      <section className="authoring-question-proposal" key={question.id}>
+                        {artifactType === "presentation" ? (
+                          <input
+                            aria-label={`Include ${question.prompt}`}
+                            checked={selection.selectedQuestionIds.includes(question.id)}
+                            onChange={() => updateQuestionSelection(job, question.id)}
+                            type="checkbox"
+                          />
+                        ) : null}
+                        <div>
+                          <p>
+                            <strong>
+                              {question.delivery === "recheck"
+                                ? "Linked recheck"
+                                : terminology === "round"
+                                  ? "Main question"
+                                  : "Main checkpoint"}
+                              :
+                            </strong>{" "}
+                            {question.prompt}
+                          </p>
+                          <ul>
+                            {job.output?.citations
+                              .filter((citation) => citation.checkpointId === question.id)
+                              .map((citation) => (
+                                <li key={`${citation.locator}-${citation.excerpt}`}>
+                                  <strong>{citation.locator}:</strong> “{citation.excerpt}”
+                                </li>
+                              ))}
+                          </ul>
+                        </div>
+                      </section>
+                    ))}
+                    <p className="muted">
+                      Generated by {job.output.provider} / {job.output.model}. Check every answer,
+                      rationale, and citation against the source before publishing.
+                    </p>
+                    {job.output.conversionNotes?.length ? (
+                      <div className="notice">
+                        <strong>Conversion review</strong>
+                        <ul>
+                          {job.output.conversionNotes.map((note) => (
+                            <li key={note}>{note}</li>
                           ))}
-                      </ul>
-                    </section>
-                  ))}
-                  <p className="muted">
-                    Generated by {job.output.provider} / {job.output.model}. Check every answer,
-                    rationale, and citation against the source before publishing.
-                  </p>
-                  {job.appliedQuizId ? (
-                    <Link className="button-quiet" href={`/quiz/${job.appliedQuizId}`}>
-                      Open review draft
-                    </Link>
-                  ) : canEdit ? (
-                    <button
-                      className="button"
-                      disabled={applyingId === job.id}
-                      onClick={() => void apply(job)}
-                      type="button"
-                    >
-                      {applyingId === job.id
-                        ? "Creating draft…"
-                        : "Create unpublished review draft"}
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-            </article>
-          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {artifactType === "round" && job.appliedQuizId ? (
+                      <Link className="button-quiet" href={`/quiz/${job.appliedQuizId}`}>
+                        Open review draft
+                      </Link>
+                    ) : canEdit ? (
+                      <button
+                        className="button"
+                        disabled={
+                          applyingId === job.id ||
+                          (artifactType === "presentation" &&
+                            authoringProposalSelectionCount(selection) === 0)
+                        }
+                        onClick={() => void apply(job)}
+                        type="button"
+                      >
+                        {applyingId === job.id
+                          ? insertionTarget
+                            ? "Inserting blocks…"
+                            : "Creating draft…"
+                          : insertionTarget
+                            ? `Insert ${authoringProposalSelectionCount(selection)} selected blocks`
+                            : artifactType === "presentation"
+                              ? "Create unpublished Presentation"
+                              : "Create unpublished review draft"}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
         </div>
       ) : null}
     </details>

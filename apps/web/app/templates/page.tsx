@@ -13,7 +13,7 @@ function TemplatesWorkspace() {
     <WorkspaceShell
       actions={
         canEdit ? (
-          <Link className="button" href="/create#blank">
+          <Link className="button" href="/create?start=blank">
             Start blank
           </Link>
         ) : null

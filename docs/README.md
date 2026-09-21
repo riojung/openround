@@ -7,6 +7,7 @@ education and workplace learning. Use this index to choose the shortest path for
 
 | I want to…                                                | Read                                                                       |
 | --------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Get guidance that matches my enabled workspace            | Sign in and open the in-product `/help` page                               |
 | Run OpenRound locally and complete a first round          | [Quick start](quick-start.md)                                              |
 | Create, host, join, recover, and review understanding     | [User guide](user-guide.md)                                                |
 | Understand product behavior and interaction choices       | [Product and experience design](design.md)                                 |
@@ -42,3 +43,8 @@ education and workplace learning. Use this index to choose the shortest path for
 ## Release boundary
 
 The Compose stack is suitable for local evaluation and community-operated deployments after the operator replaces secrets and completes the readiness checklist. The repository does not by itself establish legal approval, an availability commitment, school-contract readiness, external security assurance, or production capacity evidence.
+
+The signed-in `/help` page is available in the default Compose profile and adapts its written
+steps and destinations to the active rollout. Its two captioned professional-builder videos are
+shown only when the workspace shell, Round Builder v2, Presentations, Groups, Discover, and
+practice assignments are all enabled for that allowlisted workspace.

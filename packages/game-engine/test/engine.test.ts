@@ -365,7 +365,7 @@ describe("game engine", () => {
     expect(resumed.state.deadlineMs).toBe(27_000);
   });
 
-  it("never exposes an answer key before reveal", () => {
+  it("never exposes answer keys or facilitator metadata in participant questions", () => {
     const { state } = fixture();
     const started = applyHostCommand(state, {
       action: "start",
@@ -377,6 +377,9 @@ describe("game engine", () => {
     const snapshot = snapshotForRole(started.state, { role: "participant" });
 
     expect(snapshot.correctChoiceId).toBeUndefined();
+    expect(snapshot.correctResponse).toBeUndefined();
+    expect(snapshot.question).not.toHaveProperty("purpose");
+    expect(snapshot.question).not.toHaveProperty("linkedRecheckAvailable");
     expect(JSON.stringify(snapshot.question)).not.toContain("isCorrect");
     expect(JSON.stringify(snapshot.question)).not.toContain("Private facilitator guide");
     expect(JSON.stringify(snapshot.question)).not.toContain("sourceCitations");
@@ -980,6 +983,7 @@ describe("game engine", () => {
     });
     expect(preRevealSnapshot).toMatchObject({
       phase: "intervention",
+      answerRevealed: false,
       intervention: { type: "peer_discussion", finishedAt: null },
     });
     expect(preRevealSnapshot.correctResponse).toBeUndefined();
@@ -1001,14 +1005,35 @@ describe("game engine", () => {
       newRoundId: randomUUID,
       newInterventionId: randomUUID,
     });
-    expect(
-      snapshotForRole(explaining.state, { role: "participant", participantId: learner.id }),
-    ).toMatchObject({
+    const participantReveal = snapshotForRole(explaining.state, {
+      role: "participant",
+      participantId: learner.id,
+    });
+    expect(participantReveal).toMatchObject({
       phase: "intervention",
+      answerRevealed: true,
       questionPosition: 0,
       myCorrect: false,
-      correctResponse: { kind: "choice", choiceIds: [mainCorrect] },
       explanation: "Use the safe procedure.",
+    });
+    expect(participantReveal).not.toHaveProperty("correctChoiceId");
+    expect(participantReveal).not.toHaveProperty("correctResponse");
+    expect(participantReveal.question).not.toHaveProperty("purpose");
+    expect(participantReveal.question).not.toHaveProperty("linkedRecheckAvailable");
+
+    const presenterReveal = snapshotForRole(explaining.state, { role: "presenter" });
+    expect(presenterReveal).not.toHaveProperty("correctChoiceId");
+    expect(presenterReveal).not.toHaveProperty("correctResponse");
+    expect(presenterReveal.question).toMatchObject({
+      purpose: "diagnostic",
+      linkedRecheckAvailable: true,
+    });
+
+    expect(snapshotForRole(explaining.state, { role: "host" })).toMatchObject({
+      answerRevealed: true,
+      correctChoiceId: mainCorrect,
+      correctResponse: { kind: "choice", choiceIds: [mainCorrect] },
+      question: { purpose: "diagnostic", linkedRecheckAvailable: true },
     });
 
     const discussed = applyHostCommand(intervention.state, {

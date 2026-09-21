@@ -100,7 +100,7 @@ describe("realtime authorization", () => {
     expect(httpServer.listening).toBe(true);
   });
 
-  it("builds the complete private participant snapshot for a reveal broadcast", () => {
+  it("builds a private participant reveal without broadcasting the answer key", () => {
     const participantId = crypto.randomUUID();
     const correctChoiceId = crypto.randomUUID();
     const wrongChoiceId = crypto.randomUUID();
@@ -174,12 +174,25 @@ describe("realtime authorization", () => {
       }).state;
     }
 
-    expect(snapshotSelector(state)("participant", participantId)).toMatchObject({
+    const selectSnapshot = snapshotSelector(state);
+    const participantSnapshot = selectSnapshot("participant", participantId);
+    expect(participantSnapshot).toMatchObject({
+      answerRevealed: true,
       myParticipantId: participantId,
       myCorrect: false,
       feedback: "Review the explanation and try the recheck.",
-      correctResponse: { kind: "choice", choiceIds: [correctChoiceId] },
       participants: [expect.objectContaining({ id: participantId, nickname: "Private learner" })],
+    });
+    expect(participantSnapshot).not.toHaveProperty("correctChoiceId");
+    expect(participantSnapshot).not.toHaveProperty("correctResponse");
+    expect(participantSnapshot.question).not.toHaveProperty("purpose");
+    expect(participantSnapshot.question).not.toHaveProperty("linkedRecheckAvailable");
+
+    expect(selectSnapshot("presenter")).not.toHaveProperty("correctResponse");
+    expect(selectSnapshot("presenter")).not.toHaveProperty("correctChoiceId");
+    expect(selectSnapshot("host")).toMatchObject({
+      correctChoiceId,
+      correctResponse: { kind: "choice", choiceIds: [correctChoiceId] },
     });
   });
 

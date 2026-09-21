@@ -1,0 +1,323 @@
+.hero {
+  position: relative;
+  display: grid;
+  min-height: 270px;
+  align-items: end;
+  overflow: hidden;
+  border-radius: 1.45rem;
+  background:
+    radial-gradient(circle at 86% 14%, rgba(255, 196, 113, 0.45), transparent 12rem),
+    radial-gradient(circle at 70% 120%, rgba(64, 205, 178, 0.42), transparent 18rem),
+    linear-gradient(135deg, #0b2239 0%, #123e59 52%, #087375 100%);
+  box-shadow: 0 22px 60px rgba(11, 34, 57, 0.18);
+  color: #ffffff;
+  padding: clamp(1.45rem, 4vw, 2.6rem);
+}
+
+.hero::after {
+  position: absolute;
+  width: 210px;
+  height: 210px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 46% 54% 64% 36%;
+  content: "";
+  right: 7%;
+  top: -35%;
+  transform: rotate(18deg);
+}
+
+.heroContent {
+  position: relative;
+  z-index: 1;
+  max-width: 690px;
+}
+
+.heroEyebrow {
+  margin: 0 0 0.7rem;
+  color: #a6eee1;
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.hero h2 {
+  max-width: 620px;
+  margin: 0;
+  font-size: clamp(2rem, 4.8vw, 3.7rem);
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+
+.hero p:not(.heroEyebrow) {
+  max-width: 620px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 1rem;
+  line-height: 1.6;
+  margin: 1rem 0 0;
+}
+
+.heroActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 1.4rem;
+}
+
+.heroPrimary,
+.heroSecondary {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.72rem;
+  font-size: 0.9rem;
+  font-weight: 800;
+  padding: 0.7rem 1rem;
+  text-decoration: none;
+}
+
+.heroPrimary {
+  background: #ffffff;
+  color: #0b2239;
+}
+
+.heroSecondary {
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.section {
+  margin-top: 2rem;
+}
+
+.sectionHeading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.sectionHeading h2 {
+  margin: 0;
+  font-size: clamp(1.45rem, 2.7vw, 2rem);
+  letter-spacing: -0.035em;
+}
+
+.sectionHeading p {
+  max-width: 650px;
+  color: #627d98;
+  line-height: 1.55;
+  margin: 0.35rem 0 0;
+}
+
+.quickGrid,
+.cardGrid,
+.methodGrid,
+.benefitGrid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.quickCard,
+.featureCard,
+.methodCard,
+.benefitCard {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border: 1px solid #d6e2ea;
+  border-radius: 1.1rem;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 12px 32px rgba(16, 42, 67, 0.055);
+  color: #102a43;
+  padding: 1.2rem;
+  text-decoration: none;
+}
+
+.quickCard {
+  min-height: 158px;
+}
+
+.quickCard:hover,
+.methodCard:hover {
+  border-color: #78b9b4;
+  box-shadow: 0 16px 36px rgba(16, 42, 67, 0.1);
+  transform: translateY(-2px);
+}
+
+.quickCard,
+.methodCard {
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.cardIcon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 0.8rem;
+  background: #dff3f1;
+  color: #055d5f;
+  font-size: 0.92rem;
+  font-weight: 900;
+}
+
+.cardIcon[data-tone="coral"] {
+  background: #fff0e8;
+  color: #b54708;
+}
+
+.cardIcon[data-tone="violet"] {
+  background: #eee8ff;
+  color: #6941c6;
+}
+
+.quickCard h3,
+.featureCard h3,
+.methodCard h2,
+.benefitCard h3 {
+  margin: 0.9rem 0 0.35rem;
+  letter-spacing: -0.025em;
+}
+
+.quickCard p,
+.featureCard p,
+.methodCard p,
+.benefitCard p {
+  color: #627d98;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.cardLink {
+  color: #087375;
+  font-size: 0.84rem;
+  font-weight: 820;
+  margin-top: auto;
+  padding-top: 1rem;
+}
+
+.featureCard {
+  min-height: 190px;
+}
+
+.featureCard small,
+.methodCard small {
+  color: #087375;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.methodCard {
+  min-height: 230px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.methodCard:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.methodCard .cardIcon {
+  margin-bottom: 0.2rem;
+}
+
+.emptyCanvas {
+  display: grid;
+  min-height: 390px;
+  place-items: center;
+  border: 1px dashed #b8c9d3;
+  border-radius: 1.25rem;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(8, 115, 117, 0.08), transparent 12rem), #ffffff;
+  padding: 2rem;
+  text-align: center;
+}
+
+.emptyCanvas > div {
+  max-width: 570px;
+}
+
+.emptyMark {
+  display: grid;
+  width: 72px;
+  height: 72px;
+  place-items: center;
+  border-radius: 1.3rem;
+  background: #dff3f1;
+  color: #055d5f;
+  font-size: 1.4rem;
+  font-weight: 900;
+  margin: 0 auto 1.2rem;
+  transform: rotate(-4deg);
+}
+
+.emptyCanvas h2 {
+  margin: 0;
+  font-size: clamp(1.5rem, 3vw, 2.2rem);
+  letter-spacing: -0.035em;
+}
+
+.emptyCanvas p {
+  color: #627d98;
+  line-height: 1.6;
+  margin: 0.75rem 0 1.25rem;
+}
+
+.notice {
+  border: 1px solid #d9d2f2;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, #f7f4ff, #ffffff);
+  color: #4a3f72;
+  line-height: 1.55;
+  padding: 1rem 1.1rem;
+}
+
+.notice strong {
+  color: #40356b;
+}
+
+@media (max-width: 920px) {
+  .quickGrid,
+  .cardGrid,
+  .methodGrid,
+  .benefitGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .hero {
+    min-height: 340px;
+  }
+
+  .quickGrid,
+  .cardGrid,
+  .methodGrid,
+  .benefitGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .sectionHeading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quickCard,
+  .methodCard {
+    transition: none;
+  }
+}

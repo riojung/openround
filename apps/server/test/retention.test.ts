@@ -63,6 +63,41 @@ describe("retention service", () => {
     ]);
   });
 
+  it("removes clean unattached uploads after seven days but preserves referenced assets", async () => {
+    const repository = new MemoryRepository();
+    const workspaceId = randomUUID();
+    const now = new Date("2026-09-20T12:00:00.000Z");
+    const orphan = media(workspaceId, "clean", new Date(now.getTime() - 8 * 86_400_000));
+    const referenced = media(workspaceId, "clean", new Date(now.getTime() - 30 * 86_400_000));
+    await repository.createMediaAsset(orphan);
+    await repository.createMediaAsset(referenced);
+    await repository.replaceMediaReferences(
+      workspaceId,
+      "quiz_draft",
+      randomUUID(),
+      [referenced.id],
+      now,
+    );
+    const deleted: string[] = [];
+    const retention = new RetentionService(
+      repository,
+      {
+        configured: true,
+        deleteAsset: async (asset) => {
+          deleted.push(asset.id);
+        },
+      },
+      24,
+    );
+
+    expect(await retention.run(now)).toEqual(
+      expect.objectContaining({ purgedMedia: 1, failedMedia: 0 }),
+    );
+    expect(deleted).toEqual([orphan.id]);
+    expect(await repository.getMediaAsset(workspaceId, orphan.id)).toBeNull();
+    expect(await repository.getMediaAsset(workspaceId, referenced.id)).not.toBeNull();
+  });
+
   it("retains metadata when object deletion fails or storage is unavailable", async () => {
     const repository = new MemoryRepository();
     const asset = media(randomUUID(), "pending", new Date("2026-09-01T00:00:00.000Z"));

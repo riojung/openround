@@ -13,6 +13,7 @@ import {
   type HostAction,
   type InterventionType,
   type ParticipantView,
+  type ParticipantQuestion,
   type PublicQuestion,
   type QuestionDraft,
   type QuizDraft,
@@ -977,15 +978,12 @@ export function leaderboard(state: GameState): ParticipantView[] {
   }));
 }
 
-export function publicQuestion(question: QuestionDraft | undefined): PublicQuestion | null {
-  if (!question) return null;
+function sharedQuestion(question: QuestionDraft): ParticipantQuestion {
   const common = {
     id: question.id,
     type: question.type,
     prompt: question.prompt,
-    purpose: questionPurpose(question),
     confidence: questionConfidence(question),
-    linkedRecheckAvailable: Boolean(question.linkedRecheckQuestionId),
     timeLimitSeconds: question.timeLimitSeconds,
     basePoints: question.basePoints,
     mediaId: question.mediaId,
@@ -1009,6 +1007,23 @@ export function publicQuestion(question: QuestionDraft | undefined): PublicQuest
       minLabel: question.minLabel,
       maxLabel: question.maxLabel,
     },
+  };
+}
+
+/** Learner-safe question projection for live Round snapshots. */
+export function participantQuestion(
+  question: QuestionDraft | undefined,
+): ParticipantQuestion | null {
+  return question ? sharedQuestion(question) : null;
+}
+
+/** Facilitator question projection. Kept as the legacy publicQuestion API for follow-ups. */
+export function publicQuestion(question: QuestionDraft | undefined): PublicQuestion | null {
+  if (!question) return null;
+  return {
+    ...sharedQuestion(question),
+    purpose: questionPurpose(question),
+    linkedRecheckAvailable: Boolean(question.linkedRecheckQuestionId),
   };
 }
 
@@ -1076,7 +1091,7 @@ export function snapshotForRole(
     state.roundKind === "main"
       ? state.questionIndex
       : ((state.sourceRoundId ? state.rounds[state.sourceRoundId]?.position : undefined) ?? null);
-  const expected = revealed ? correctResponse(question) : undefined;
+  const expected = options.role === "host" && revealed ? correctResponse(question) : undefined;
   const selectedFeedback =
     revealed && participantAnswer && question && isChoiceQuestion(question)
       ? (question.choices.find((choice) => choice.id === participantAnswer.choiceId)?.feedback ??
@@ -1097,13 +1112,15 @@ export function snapshotForRole(
     version: state.version,
     seq: state.seq,
     phase: state.phase,
+    answerRevealed: revealed,
     roundId: state.roundId,
     roundKind: state.roundKind,
     sourceRoundId: state.sourceRoundId,
     questionIndex: state.questionIndex,
     questionPosition: mainQuestionPosition(state.quiz, sourceQuestionIndex),
     questionCount: state.quiz.questions.filter((item) => questionDelivery(item) === "main").length,
-    question: publicQuestion(question),
+    question:
+      options.role === "participant" ? participantQuestion(question) : publicQuestion(question),
     deadline: state.deadlineMs ? new Date(state.deadlineMs).toISOString() : null,
     participants: visibleParticipants,
     answerCount: Object.values(state.answers).filter((answer) => answer.roundId === state.roundId)
@@ -1118,13 +1135,15 @@ export function snapshotForRole(
     myResponse: participantAnswer?.response ?? null,
     myConfidence: participantAnswer?.confidence ?? null,
     myCorrect: revealed ? (participantAnswer?.correct ?? null) : undefined,
-    correctChoiceId:
-      expected?.kind === "choice" && expected.choiceIds.length === 1
-        ? expected.choiceIds[0]!
-        : revealed
-          ? null
-          : undefined,
-    correctResponse: expected,
+    ...(options.role === "host" && revealed
+      ? {
+          correctChoiceId:
+            expected?.kind === "choice" && expected.choiceIds.length === 1
+              ? expected.choiceIds[0]!
+              : null,
+          correctResponse: expected ?? null,
+        }
+      : {}),
     explanation: revealed ? (question?.explanation ?? "") : undefined,
     feedback: selectedFeedback,
     intervention: state.intervention

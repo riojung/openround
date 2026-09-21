@@ -28,6 +28,7 @@ export interface ExtractedSource {
   sourceType: AuthoringSourceType;
   sections: ExtractedSection[];
   characterCount: number;
+  truncated?: boolean;
 }
 
 function cleanText(value: string) {
@@ -44,6 +45,10 @@ function cleanText(value: string) {
 }
 
 function enforceTextLimit(sections: ExtractedSection[]) {
+  const originalCharacterCount = sections.reduce(
+    (total, section) => total + cleanText(section.text).length,
+    0,
+  );
   let remaining = MAX_EXTRACTED_CHARACTERS;
   const limited: ExtractedSection[] = [];
   for (const section of sections) {
@@ -57,6 +62,7 @@ function enforceTextLimit(sections: ExtractedSection[]) {
   return {
     sections: limited,
     characterCount: limited.reduce((total, section) => total + section.text.length, 0),
+    truncated: originalCharacterCount > MAX_EXTRACTED_CHARACTERS,
   };
 }
 

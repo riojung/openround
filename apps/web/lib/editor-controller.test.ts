@@ -53,26 +53,33 @@ describe("editor reducer/controller", () => {
     expect(changed.selectedQuestionId).toBe(loaded.selectedQuestionId);
   });
 
-  it("restores exactly one structural snapshot and clears the undo slot", () => {
+  it("restores a snapshot and makes it available to redo", () => {
     const original = draft();
     const changed = { ...original, questions: [] };
     const state = {
       ...initialEditorControllerState,
       draft: changed,
       selectedQuestionId: null,
-      structuralUndo: {
-        draft: original,
-        selectedQuestionId: original.questions[0]!.id,
-        message: "Question deleted.",
-      },
+      undoStack: [
+        {
+          draft: original,
+          selectedQuestionId: original.questions[0]!.id,
+          message: "Question deleted.",
+        },
+      ],
     };
     const restored = editorControllerReducer(state, { type: "undo" });
     expect(restored.draft).toBe(original);
     expect(restored.selectedQuestionId).toBe(original.questions[0]?.id);
-    expect(restored.structuralUndo).toBeNull();
+    expect(restored.undoStack).toEqual([]);
+    expect(restored.redoStack).toHaveLength(1);
+
+    const redone = editorControllerReducer(restored, { type: "redo" });
+    expect(redone.draft).toBe(changed);
+    expect(redone.selectedQuestionId).toBeNull();
   });
 
-  it("invalidates a structural undo snapshot after a later draft edit", () => {
+  it("records later draft edits in bounded history and clears redo", () => {
     const original = draft();
     const structurallyChanged = { ...original, questions: [] };
     const stateWithUndo = editorControllerReducer(
@@ -97,10 +104,57 @@ describe("editor reducer/controller", () => {
       type: "draft",
       value: (current) => (current ? { ...current, title: "Edited after delete" } : current),
     });
-    const undoAttempt = editorControllerReducer(edited, { type: "undo" });
+    expect(edited.undoStack).toHaveLength(2);
+    expect(edited.redoStack).toEqual([]);
 
-    expect(edited.structuralUndo).toBeNull();
-    expect(undoAttempt.draft?.title).toBe("Edited after delete");
-    expect(undoAttempt.draft?.questions).toEqual([]);
+    const undoEdit = editorControllerReducer(edited, { type: "undo" });
+    expect(undoEdit.draft?.title).toBe("Recovery Round");
+    expect(undoEdit.draft?.questions).toEqual([]);
+
+    const undoDelete = editorControllerReducer(undoEdit, { type: "undo" });
+    expect(undoDelete.draft).toBe(original);
+  });
+
+  it("coalesces a burst of text edits into one undo step", () => {
+    const loaded = editorControllerReducer(initialEditorControllerState, {
+      type: "load",
+      draft: draft(),
+    });
+    const firstEdit = editorControllerReducer(loaded, {
+      type: "draft",
+      occurredAt: 1_000,
+      value: (current) => (current ? { ...current, title: "R" } : current),
+    });
+    const secondEdit = editorControllerReducer(firstEdit, {
+      type: "draft",
+      occurredAt: 1_500,
+      value: (current) => (current ? { ...current, title: "Ro" } : current),
+    });
+
+    expect(secondEdit.undoStack).toHaveLength(1);
+    expect(secondEdit.draft?.title).toBe("Ro");
+    expect(editorControllerReducer(secondEdit, { type: "undo" }).draft?.title).toBe(
+      "Recovery Round",
+    );
+  });
+
+  it("starts a new undo step after the coalescing window", () => {
+    const loaded = editorControllerReducer(initialEditorControllerState, {
+      type: "load",
+      draft: draft(),
+    });
+    const firstEdit = editorControllerReducer(loaded, {
+      type: "draft",
+      occurredAt: 1_000,
+      value: (current) => (current ? { ...current, title: "First" } : current),
+    });
+    const secondEdit = editorControllerReducer(firstEdit, {
+      type: "draft",
+      occurredAt: 2_000,
+      value: (current) => (current ? { ...current, title: "Second" } : current),
+    });
+
+    expect(secondEdit.undoStack).toHaveLength(2);
+    expect(editorControllerReducer(secondEdit, { type: "undo" }).draft?.title).toBe("First");
   });
 });

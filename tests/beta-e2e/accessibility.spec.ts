@@ -23,9 +23,12 @@ async function createPublishedPracticeSource(page: Page) {
     data: {},
   });
   expect(starter.status()).toBe(201);
-  const quizId = (await starter.json()).quiz.id as string;
+  const created = (await starter.json()) as {
+    quiz: { id: string; draftRevision?: number };
+  };
+  const quizId = created.quiz.id;
   const published = await page.request.post(`${apiUrl}/v1/quizzes/${quizId}/publish`, {
-    data: {},
+    data: { expectedDraftRevision: created.quiz.draftRevision ?? 0 },
   });
   expect(published.ok()).toBeTruthy();
   return quizId;
@@ -49,6 +52,14 @@ async function createPracticeAssignment(page: Page, quizId: string) {
   return { followupId: creation.followup.id, genericUrl: creation.genericUrl };
 }
 
+async function createPresentation(page: Page) {
+  const response = await page.request.post(`${apiUrl}/v1/presentations`, {
+    data: { title: "Accessible presentation", description: "Builder accessibility check" },
+  });
+  expect(response.status()).toBe(201);
+  return (await response.json()).presentation.id as string;
+}
+
 async function expectNoHorizontalOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
@@ -68,6 +79,51 @@ test("beta workspace and creation surfaces pass automated accessibility checks",
   await page.goto("/templates");
   await expect(page.getByRole("heading", { name: "Templates", level: 1 })).toBeVisible();
   await expectNoAxeViolations(page);
+});
+
+test("professional workspace destinations pass automated accessibility checks", async ({
+  page,
+}) => {
+  await signIn(page);
+  const destinations = [
+    ["/home", "Home"],
+    ["/library", "Library"],
+    ["/sessions", "Sessions"],
+    ["/assignments", "Assignments"],
+    ["/results", "Results"],
+    ["/discover", "Discover"],
+    ["/groups", "Groups"],
+    ["/activity", "Activity inbox"],
+    ["/account", "Workspace settings"],
+  ] as const;
+
+  for (const [path, heading] of destinations) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
+    await expectNoAxeViolations(page);
+  }
+});
+
+test("Presentation Builder dialogs and drawers pass automated accessibility checks", async ({
+  page,
+}) => {
+  await signIn(page);
+  await createPublishedPracticeSource(page);
+  const presentationId = await createPresentation(page);
+
+  await page.goto(`/presentation/${presentationId}`);
+  await expect(page.getByLabel("Presentation title")).toHaveValue("Accessible presentation");
+  await expectNoAxeViolations(page);
+
+  await page.getByRole("button", { name: "Preview" }).click();
+  await expect(page.getByRole("dialog", { name: "Presentation preview" })).toBeVisible();
+  await expectNoAxeViolations(page);
+  await page.getByRole("button", { name: "Close preview" }).click();
+
+  await page.getByRole("button", { name: "From published Round" }).click();
+  await expect(page.getByRole("dialog", { name: "Insert from a published Round" })).toBeVisible();
+  await expectNoAxeViolations(page);
+  await page.getByRole("button", { name: "Cancel" }).click();
 });
 
 test("practice assignment and management surfaces pass automated accessibility checks", async ({
