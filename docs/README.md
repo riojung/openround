@@ -24,6 +24,8 @@ education and workplace learning. Use this index to choose the shortest path for
   Canadian beta and GA promotion gates; [evidence templates](evidence/README.md) cover human and
   provider verification.
 - [Production readiness](runbooks/production-readiness.md) is the promotion checklist for a public environment.
+- [Build, service, and deployment](runbooks/deployment.md) is the command reference for product
+  images, local service lifecycle, and digest-pinned Fly.io promotion.
 - [Canadian staging readiness](runbooks/staging-readiness.md),
   [repository governance](runbooks/repository-governance.md),
   [backup and restore](runbooks/backup-restore.md), [upgrade](runbooks/upgrade.md),
@@ -42,7 +44,12 @@ education and workplace learning. Use this index to choose the shortest path for
 
 ## Release boundary
 
-The Compose stack is suitable for local evaluation and community-operated deployments after the operator replaces secrets and completes the readiness checklist. The repository does not by itself establish legal approval, an availability commitment, school-contract readiness, external security assurance, or production capacity evidence.
+The Compose stack is for local development and evaluation only. Hosted staging and production
+promotion uses the Fly.io deployment path, digest-pinned images, separate runtime and migration
+credentials, and the applicable readiness evidence. The repository and deployment scripts do not
+by themselves establish that an environment has been provisioned or deployed, nor do they
+establish legal approval, an availability commitment, school-contract readiness, external
+security assurance, or production capacity evidence.
 
 The signed-in `/help` page is available in the default Compose profile and adapts its written
 steps and destinations to the active rollout. Its two captioned professional-builder videos are

@@ -64,6 +64,7 @@ Legal text, trademark clearance, external penetration testing, school agreements
 | [Competitive strategy and roadmap](docs/competitive-strategy-and-roadmap.md)         | Market comparison, differentiation, and post-P0 phases                  |
 | [Architecture and protocol](docs/architecture.md)                                    | Components, data flows, correctness, security, and scale gates          |
 | [Institution integrations](docs/institution-integrations.md)                         | Configure and validate creator OIDC, LTI, audit, and pilot gates        |
+| [Build, service, and deployment runbook](docs/runbooks/deployment.md)                | Build images, operate local services, and promote hosted releases       |
 | [Documentation index](docs/README.md)                                                | API, status, privacy, release, and operations references                |
 
 ## Quick start with Docker
@@ -143,6 +144,45 @@ env \
 Open <http://localhost:3000>. The `.env.example` host names target the Compose network and should
 not be copied unchanged into a host-native process. See the [quick start](docs/quick-start.md#optional-native-developer-mode)
 for details; use the complete Compose profile above when testing durable PostgreSQL/Valkey behavior.
+
+## Product build and operations
+
+Use the checked-in lifecycle scripts as the stable operator interface. Compose is a local
+development and evaluation tool only; staging and production deployments target the checked-in
+Fly.io profiles and immutable image digests.
+
+Build the development product images, then start and inspect the local core services:
+
+```bash
+./scripts/product-build.sh development
+./scripts/service.sh development start --profile core --no-build
+./scripts/service.sh development status --profile core
+./scripts/service.sh development logs --profile core --follow
+./scripts/service.sh development stop --profile core
+```
+
+`service.sh` also supports `restart`, the `media` and `observability` profiles, and `--no-build`
+when the required images already exist. It intentionally refuses staging or production service
+lifecycle operations: hosted environments are not managed with Compose.
+
+A hosted build requires an HTTPS public API URL, registry prefix, and `--push`. For example:
+
+```bash
+./scripts/product-build.sh staging \
+  --api-url https://openround-ca-staging-server.fly.dev \
+  --registry ghcr.io/riojung/openround/openround \
+  --push
+```
+
+Production images are built through the protected tag-triggered release workflow so keyless
+signing has the required GitHub Actions identity. Building or pushing an image does not deploy it
+or establish that a staging or production environment exists. Hosted promotion uses
+`./scripts/deploy.sh` with a non-secret environment config, the build manifest, separate runtime
+and migration environment files, and an explicit `<environment>:<build-id>` confirmation. A
+production promotion additionally requires `--backup-reference`.
+
+See the [deployment runbook](docs/runbooks/deployment.md) for the complete command reference,
+credential boundaries, preflight and migration sequence, readiness gates, and rollback policy.
 
 ## Quality commands
 

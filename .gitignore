@@ -14,3 +14,6 @@ test-results-beta/
 *.tsbuildinfo
 *.log
 data/
+.deploy/
+*.runtime.env
+*.migration.env

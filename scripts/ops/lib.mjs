@@ -1,0 +1,682 @@
+import { spawn } from "node:child_process";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep } from "node:path";
+import process from "node:process";
+import { URL } from "node:url";
+
+export const ENVIRONMENTS = Object.freeze(["development", "staging", "production"]);
+export const HOSTED_ENVIRONMENTS = Object.freeze(["staging", "production"]);
+export const DEV_COMPOSE_PROJECT = "openround";
+export const DEV_COMPOSE_PROFILES = Object.freeze({
+  core: Object.freeze(["compose.yaml"]),
+  media: Object.freeze(["compose.yaml", "compose.media.yaml"]),
+  observability: Object.freeze([
+    "compose.yaml",
+    "compose.media.yaml",
+    "compose.observability.yaml",
+  ]),
+});
+export const DEV_COMPOSE_FILES = DEV_COMPOSE_PROFILES.core;
+export const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
+export const DIGEST_REFERENCE_PATTERN =
+  /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[a-f0-9]{64}$/;
+
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const IMAGE_REPOSITORY_PATTERN =
+  /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+const APP_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
+const CONFIG_KEYS = new Set([
+  "schemaVersion",
+  "environment",
+  "deploymentMode",
+  "publicWebUrl",
+  "publicApiUrl",
+  "imageRepository",
+  "imagePlatform",
+  "billingMode",
+  "fly",
+  "health",
+  "requireSigning",
+  "requireReadinessGate",
+  "readinessTarget",
+  "cosignIdentityRegexp",
+  "cosignOidcIssuer",
+]);
+const FLY_KEYS = new Set(["serverApp", "webApp", "serverConfig", "webConfig"]);
+const HEALTH_KEYS = new Set(["timeoutSeconds", "intervalSeconds", "requestTimeoutSeconds"]);
+const MANIFEST_KEYS = new Set([
+  "schemaVersion",
+  "environment",
+  "buildId",
+  "createdAt",
+  "nextPublicApiUrl",
+  "imagePlatform",
+  "source",
+  "images",
+]);
+const SOURCE_KEYS = new Set(["commit", "dirty"]);
+const IMAGES_KEYS = new Set(["server", "web"]);
+const IMAGE_KEYS = new Set(["repository", "tag", "digest", "ref", "signed"]);
+
+export function normalizeEnvironment(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "dev") return "development";
+  if (ENVIRONMENTS.includes(normalized)) return normalized;
+  throw new Error(
+    `Unsupported environment ${JSON.stringify(value)}; expected development, staging, or production`,
+  );
+}
+
+export function isHostedEnvironment(environment) {
+  return HOSTED_ENVIRONMENTS.includes(normalizeEnvironment(environment));
+}
+
+export function assertFullGitSha(value, label = "build ID") {
+  if (!SHA_PATTERN.test(String(value ?? ""))) {
+    throw new Error(`${label} must be a full 40- or 64-character lowercase Git SHA`);
+  }
+  return value;
+}
+
+export function isDigestReference(value) {
+  return DIGEST_REFERENCE_PATTERN.test(String(value ?? ""));
+}
+
+export function assertDigestReference(value, label = "image reference") {
+  if (!isDigestReference(value)) {
+    throw new Error(`${label} must be an immutable repository@sha256 digest reference`);
+  }
+  return value;
+}
+
+export function assertPathWithin(path, parent, label = "path") {
+  const absolutePath = resolve(path);
+  const absoluteParent = resolve(parent);
+  const child = relative(absoluteParent, absolutePath);
+  if (!child || child === ".." || child.startsWith(`..${sep}`)) {
+    throw new Error(`${label} must be inside ${absoluteParent}`);
+  }
+  return absolutePath;
+}
+
+export function expectedRollbackConfirmation(environment, targetBuildId, sourceBuildId) {
+  const normalized = normalizeEnvironment(environment);
+  assertFullGitSha(targetBuildId, "rollback target build ID");
+  assertFullGitSha(sourceBuildId, "rollback source build ID");
+  if (targetBuildId === sourceBuildId) {
+    throw new Error("Rollback target and source build IDs must differ");
+  }
+  return `rollback:${normalized}:${targetBuildId}:from:${sourceBuildId}`;
+}
+
+export function validateRollbackConfirmation(value, environment, targetBuildId, sourceBuildId) {
+  const expected = expectedRollbackConfirmation(environment, targetBuildId, sourceBuildId);
+  if (value !== expected) throw new Error(`Rollback confirmation must exactly match ${expected}`);
+  return true;
+}
+
+export function parseCliArguments(argv, { valueOptions = [], booleanOptions = [] } = {}) {
+  const values = new Map();
+  const flags = new Set();
+  const positionals = [];
+  const valueNames = new Set(valueOptions);
+  const booleanNames = new Set(booleanOptions);
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--") {
+      positionals.push(...argv.slice(index + 1));
+      break;
+    }
+    if (!argument.startsWith("--")) {
+      positionals.push(argument);
+      continue;
+    }
+    const equalsAt = argument.indexOf("=");
+    const name = equalsAt === -1 ? argument.slice(2) : argument.slice(2, equalsAt);
+    if (booleanNames.has(name)) {
+      if (equalsAt !== -1) throw new Error(`--${name} does not accept a value`);
+      flags.add(name);
+      continue;
+    }
+    if (!valueNames.has(name)) throw new Error(`Unknown option --${name}`);
+    const value = equalsAt === -1 ? argv[++index] : argument.slice(equalsAt + 1);
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`--${name} requires a value`);
+    }
+    if (values.has(name)) throw new Error(`--${name} may be provided only once`);
+    values.set(name, value);
+  }
+  return { values, flags, positionals };
+}
+
+export function resolveEnvironmentArgument(parsed, { allowMissing = false } = {}) {
+  const explicit = parsed.values.get("environment");
+  const positional = parsed.positionals[0];
+  if (
+    explicit &&
+    positional &&
+    normalizeEnvironment(explicit) !== normalizeEnvironment(positional)
+  ) {
+    throw new Error("The positional environment conflicts with --environment");
+  }
+  const selected = explicit ?? positional;
+  if (!selected && allowMissing) return undefined;
+  if (!selected) throw new Error("An environment is required");
+  return normalizeEnvironment(selected);
+}
+
+export function composeArgv(action, { follow = false, noBuild = false, profile = "core" } = {}) {
+  const files = DEV_COMPOSE_PROFILES[profile];
+  if (!files) throw new Error(`Unsupported Compose profile ${JSON.stringify(profile)}`);
+  const prefix = ["compose", "--project-name", DEV_COMPOSE_PROJECT];
+  for (const file of files) prefix.push("--file", file);
+  if (profile === "observability") prefix.push("--profile", "observability");
+  switch (action) {
+    case "start":
+      return [...prefix, "up", "--detach", ...(noBuild ? ["--no-build"] : ["--build"]), "--wait"];
+    case "stop":
+      return [...prefix, "stop"];
+    case "restart":
+      return [
+        ...prefix,
+        "up",
+        "--detach",
+        "--force-recreate",
+        ...(noBuild ? ["--no-build"] : ["--build"]),
+        "--wait",
+      ];
+    case "status":
+      return [...prefix, "ps"];
+    case "logs":
+      return [...prefix, "logs", ...(follow ? ["--follow"] : []), "--tail", "200"];
+    default:
+      throw new Error(`Unsupported service action ${JSON.stringify(action)}`);
+  }
+}
+
+export const buildComposeArgv = composeArgv;
+
+export function composeBuildArgv(profile = "core") {
+  const files = DEV_COMPOSE_PROFILES[profile];
+  if (!files) throw new Error(`Unsupported Compose profile ${JSON.stringify(profile)}`);
+  const args = ["compose", "--project-name", DEV_COMPOSE_PROJECT];
+  for (const file of files) args.push("--file", file);
+  if (profile === "observability") args.push("--profile", "observability");
+  return [...args, "build", "server", "web"];
+}
+
+function assertExactKeys(object, allowed, label) {
+  if (!object || typeof object !== "object" || Array.isArray(object)) {
+    throw new Error(`${label} must be an object`);
+  }
+  for (const key of Object.keys(object)) {
+    if (!allowed.has(key)) throw new Error(`${label} contains unsupported key ${key}`);
+  }
+}
+
+function assertHttpsUrl(value, label) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${label} must be a valid URL`);
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.hash) {
+    throw new Error(`${label} must be a credential-free HTTPS URL without a fragment`);
+  }
+  return url.toString();
+}
+
+function assertHttpsOrigin(value, label) {
+  const url = new URL(assertHttpsUrl(value, label));
+  if (url.pathname !== "/" || url.search) {
+    throw new Error(`${label} must be a credential-free HTTPS URL origin without a path or query`);
+  }
+  return url.origin;
+}
+
+function assertRepositoryRelativePath(value, label) {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    isAbsolute(value) ||
+    value.split(/[\\/]/).includes("..")
+  ) {
+    throw new Error(`${label} must be a repository-relative path without parent traversal`);
+  }
+  return value;
+}
+
+export function validateDeployConfig(input, expectedEnvironment) {
+  assertExactKeys(input, CONFIG_KEYS, "deployment config");
+  if (input.schemaVersion !== 1) throw new Error("deployment config schemaVersion must be 1");
+  const environment = normalizeEnvironment(input.environment);
+  if (expectedEnvironment && environment !== normalizeEnvironment(expectedEnvironment)) {
+    throw new Error(`deployment config environment ${environment} does not match target`);
+  }
+  if (!IMAGE_REPOSITORY_PATTERN.test(String(input.imageRepository ?? ""))) {
+    throw new Error("deployment config imageRepository is invalid");
+  }
+  if (environment === "development") {
+    if (input.deploymentMode !== "compose") {
+      throw new Error("development deploymentMode must be compose");
+    }
+    for (const key of ["publicWebUrl", "publicApiUrl"]) {
+      const url = new URL(input[key]);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error(`${key} must use HTTP(S)`);
+    }
+    if (input.fly !== undefined) throw new Error("development config must not define fly settings");
+  } else {
+    if (input.deploymentMode !== "fly") throw new Error("hosted deploymentMode must be fly");
+    if (input.imagePlatform !== "linux/amd64") {
+      throw new Error("hosted deployment imagePlatform must be linux/amd64");
+    }
+    input.publicWebUrl = assertHttpsOrigin(input.publicWebUrl, "publicWebUrl");
+    input.publicApiUrl = assertHttpsOrigin(input.publicApiUrl, "publicApiUrl");
+    if (!new Set(["disabled", "stripe"]).has(input.billingMode)) {
+      throw new Error("hosted deployment billingMode must be disabled or stripe");
+    }
+    assertExactKeys(input.fly, FLY_KEYS, "deployment config fly");
+    for (const key of ["serverApp", "webApp"]) {
+      if (!APP_NAME_PATTERN.test(String(input.fly[key] ?? ""))) {
+        throw new Error(`deployment config fly.${key} is invalid`);
+      }
+    }
+    for (const key of ["serverConfig", "webConfig"]) {
+      assertRepositoryRelativePath(input.fly[key], `deployment config fly.${key}`);
+    }
+  }
+  assertExactKeys(input.health, HEALTH_KEYS, "deployment config health");
+  for (const key of HEALTH_KEYS) {
+    if (!Number.isInteger(input.health[key]) || input.health[key] <= 0) {
+      throw new Error(`deployment config health.${key} must be a positive integer`);
+    }
+  }
+  if (input.health.intervalSeconds > input.health.timeoutSeconds) {
+    throw new Error("health intervalSeconds must not exceed timeoutSeconds");
+  }
+  if (
+    typeof input.requireSigning !== "boolean" ||
+    typeof input.requireReadinessGate !== "boolean"
+  ) {
+    throw new Error("deployment signing and readiness requirements must be booleans");
+  }
+  if (environment === "production") {
+    if (!input.requireSigning) throw new Error("production must require image signing");
+    if (!input.requireReadinessGate) throw new Error("production must require a readiness gate");
+  }
+  if (input.requireReadinessGate && !/^[a-z0-9-]+$/.test(String(input.readinessTarget ?? ""))) {
+    throw new Error("readinessTarget is required when the readiness gate is enabled");
+  }
+  if (input.requireSigning) {
+    if (typeof input.cosignIdentityRegexp !== "string" || !input.cosignIdentityRegexp) {
+      throw new Error("cosignIdentityRegexp is required when signing is enabled");
+    }
+    if (!input.cosignIdentityRegexp.startsWith("^") || !input.cosignIdentityRegexp.endsWith("$")) {
+      throw new Error("cosignIdentityRegexp must be anchored at both ends");
+    }
+    try {
+      new RegExp(input.cosignIdentityRegexp);
+    } catch {
+      throw new Error("cosignIdentityRegexp must be a valid regular expression");
+    }
+    assertHttpsUrl(input.cosignOidcIssuer, "cosignOidcIssuer");
+  }
+  return input;
+}
+
+export function parseFlyTomlEnvironment(content) {
+  const environment = {};
+  let inEnvironment = false;
+  for (const [index, sourceLine] of String(content).split(/\r?\n/).entries()) {
+    const line = sourceLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line.startsWith("[")) {
+      inEnvironment = line === "[env]";
+      continue;
+    }
+    if (!inEnvironment) continue;
+    const match = line.match(/^([A-Z][A-Z0-9_]*)\s*=\s*("(?:[^"\\]|\\.)*")\s*$/);
+    if (!match) throw new Error(`Fly [env] line ${index + 1} must use KEY = "value" syntax`);
+    const [, key, encodedValue] = match;
+    if (Object.hasOwn(environment, key)) throw new Error(`Fly [env] contains duplicate key ${key}`);
+    const value = JSON.parse(encodedValue);
+    if (typeof value !== "string") throw new Error(`Fly [env] ${key} must be a string`);
+    environment[key] = value;
+  }
+  if (Object.keys(environment).length === 0) throw new Error("Fly config must define [env]");
+  return environment;
+}
+
+export function validateFlyRuntimeEnvironment(environment, config) {
+  const expected = {
+    NODE_ENV: "production",
+    HOST: "0.0.0.0",
+    PORT: "4000",
+    WEB_ORIGIN: config.publicWebUrl,
+    PUBLIC_API_URL: config.publicApiUrl,
+    COOKIE_SECURE: "true",
+    RUN_MIGRATIONS: "false",
+    ALLOW_IN_MEMORY: "false",
+    COMMUNITY_MODE: "false",
+    BILLING_MODE: config.billingMode,
+    METRICS_ENABLED: "false",
+    S3_REGION: "ca-central-1",
+    SESSION_MUTATION_LEASE_TTL_MS: "15000",
+    SESSION_MUTATION_LEASE_WAIT_MS: "5000",
+    OPENROUND_MIGRATIONS_DIR: "/app/migrations",
+  };
+  const disabledFeatureKeys = [
+    "FEATURE_SIGNUPS",
+    "FEATURE_ROUND_EXPERIENCES",
+    "FEATURE_AUDIENCE_PULSE",
+    "FEATURE_ROOM_CHAT",
+    "FEATURE_UX_BETA",
+    "FEATURE_RECOVERY_REHEARSAL",
+    "FEATURE_PRACTICE_ASSIGNMENTS",
+    "FEATURE_WORKSPACE_SHELL",
+    "FEATURE_BUILDER_V2",
+    "FEATURE_PRESENTATIONS",
+    "FEATURE_GROUPS",
+    "FEATURE_DISCOVER",
+  ];
+  const allowed = new Set([
+    ...Object.keys(expected),
+    ...disabledFeatureKeys,
+    "FEATURE_SESSION_CREATION",
+    "FEATURE_MEDIA_UPLOADS",
+  ]);
+  for (const key of Object.keys(environment)) {
+    if (!allowed.has(key)) throw new Error(`Fly [env] contains unsupported key ${key}`);
+  }
+  for (const [key, value] of Object.entries(expected)) {
+    if (environment[key] !== value) throw new Error(`Fly [env] ${key} must be ${value}`);
+  }
+  for (const key of disabledFeatureKeys) {
+    if (environment[key] !== "false") throw new Error(`Fly [env] ${key} must be false`);
+  }
+  for (const key of ["FEATURE_SESSION_CREATION", "FEATURE_MEDIA_UPLOADS"]) {
+    if (environment[key] !== undefined && environment[key] !== "true") {
+      throw new Error(`Fly [env] ${key} must remain enabled when explicitly configured`);
+    }
+  }
+  return environment;
+}
+
+export function validateFlyWebEnvironment(environment, config) {
+  const expected = {
+    NODE_ENV: "production",
+    NEXT_PUBLIC_API_URL: config.publicApiUrl,
+  };
+  for (const key of Object.keys(environment)) {
+    if (!Object.hasOwn(expected, key)) {
+      throw new Error(`Fly web [env] contains unsupported key ${key}`);
+    }
+  }
+  for (const [key, value] of Object.entries(expected)) {
+    if (environment[key] !== value) throw new Error(`Fly web [env] ${key} must be ${value}`);
+  }
+  return environment;
+}
+
+export function validateBuildManifest(input, expected = {}) {
+  assertExactKeys(input, MANIFEST_KEYS, "build manifest");
+  if (input.schemaVersion !== 1) throw new Error("build manifest schemaVersion must be 1");
+  const environment = normalizeEnvironment(input.environment);
+  if (expected.environment && environment !== normalizeEnvironment(expected.environment)) {
+    throw new Error(`build manifest environment ${environment} does not match target`);
+  }
+  assertFullGitSha(input.buildId);
+  if (expected.buildId && input.buildId !== expected.buildId) {
+    throw new Error("build manifest buildId does not match the requested build");
+  }
+  if (Number.isNaN(Date.parse(input.createdAt)))
+    throw new Error("build manifest createdAt is invalid");
+  if (input.imagePlatform !== "linux/amd64") {
+    throw new Error("build manifest imagePlatform must be linux/amd64");
+  }
+  if (expected.imagePlatform && input.imagePlatform !== expected.imagePlatform) {
+    throw new Error("build manifest imagePlatform does not match the target config");
+  }
+  assertExactKeys(input.source, SOURCE_KEYS, "build manifest source");
+  if (input.source.commit !== input.buildId)
+    throw new Error("source commit and buildId must match");
+  if (input.source.dirty !== false)
+    throw new Error("hosted build manifest must record a clean source");
+  assertExactKeys(input.images, IMAGES_KEYS, "build manifest images");
+  for (const component of ["server", "web"]) {
+    const image = input.images[component];
+    assertExactKeys(image, IMAGE_KEYS, `build manifest images.${component}`);
+    if (!IMAGE_REPOSITORY_PATTERN.test(String(image.repository ?? ""))) {
+      throw new Error(`images.${component}.repository is invalid`);
+    }
+    if (
+      image.repository !==
+      `${expected.imageRepository ?? image.repository.replace(/-(server|web)$/, "")}-${component}`
+    ) {
+      throw new Error(`images.${component}.repository does not match the target repository`);
+    }
+    if (!DIGEST_PATTERN.test(String(image.digest ?? ""))) {
+      throw new Error(`images.${component}.digest must be sha256`);
+    }
+    if (image.ref !== `${image.repository}@${image.digest}`) {
+      throw new Error(`images.${component}.ref must exactly match repository and digest`);
+    }
+    assertDigestReference(image.ref, `images.${component}.ref`);
+    const expectedTag = `${image.repository}:${environment}-${input.buildId}`;
+    if (image.tag !== expectedTag) {
+      throw new Error(`images.${component}.tag must be ${expectedTag}`);
+    }
+    if (typeof image.signed !== "boolean")
+      throw new Error(`images.${component}.signed must be boolean`);
+    if (expected.requireSigning && image.signed !== true) {
+      throw new Error(`images.${component} must be signed for this target`);
+    }
+  }
+  if (expected.publicApiUrl && input.nextPublicApiUrl !== expected.publicApiUrl) {
+    throw new Error("build manifest NEXT_PUBLIC_API_URL does not match the target config");
+  }
+  return input;
+}
+
+export function extractBuildxDigest(metadata) {
+  const digest = metadata?.["containerimage.digest"] ?? metadata?.containerimage?.digest;
+  if (!DIGEST_PATTERN.test(String(digest ?? ""))) {
+    throw new Error("Docker Buildx metadata did not contain a valid container image digest");
+  }
+  return digest;
+}
+
+export function parseEnvFileKeys(content, label = "environment file") {
+  const keys = [];
+  const seen = new Set();
+  const lines = String(content)
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (trimmed.startsWith("export ")) {
+      throw new Error(`${label}:${index + 1} must not use shell export syntax`);
+    }
+    const equalsAt = trimmed.indexOf("=");
+    if (equalsAt < 1) throw new Error(`${label}:${index + 1} must use KEY=value syntax`);
+    const key = trimmed.slice(0, equalsAt).trim();
+    if (!ENV_KEY_PATTERN.test(key)) throw new Error(`${label}:${index + 1} has an invalid key`);
+    if (seen.has(key)) throw new Error(`${label} contains duplicate key ${key}`);
+    seen.add(key);
+    keys.push(key);
+  }
+  return keys;
+}
+
+export function validateEnvFileKeys(keysOrContent, kind) {
+  const keys = Array.isArray(keysOrContent) ? keysOrContent : parseEnvFileKeys(keysOrContent, kind);
+  const unique = new Set(keys);
+  if (unique.size !== keys.length) throw new Error(`${kind} environment contains duplicate keys`);
+  if (kind === "runtime") {
+    if (unique.has("DATABASE_MIGRATION_URL")) {
+      throw new Error("runtime environment must not contain DATABASE_MIGRATION_URL");
+    }
+    if (keys.length === 0) throw new Error("runtime environment must not be empty");
+  } else if (kind === "migration") {
+    const allowed = new Set(["DATABASE_MIGRATION_URL", "OPENROUND_MIGRATIONS_DIR"]);
+    for (const key of keys) {
+      if (!allowed.has(key)) throw new Error(`migration environment must not contain ${key}`);
+    }
+    if (!unique.has("DATABASE_MIGRATION_URL")) {
+      throw new Error("migration environment requires DATABASE_MIGRATION_URL");
+    }
+  } else {
+    throw new Error(`Unknown environment file kind ${JSON.stringify(kind)}`);
+  }
+  return keys;
+}
+
+export function assertNoEnvironmentKeyOverlap(
+  firstKeys,
+  secondKeys,
+  firstLabel = "first environment",
+  secondLabel = "second environment",
+) {
+  const second = new Set(secondKeys);
+  const overlap = [...new Set(firstKeys)].filter((key) => second.has(key)).sort();
+  if (overlap.length > 0) {
+    throw new Error(`${firstLabel} and ${secondLabel} must not both define: ${overlap.join(", ")}`);
+  }
+  return true;
+}
+
+export function expectedProductionConfirmation(buildId) {
+  assertFullGitSha(buildId);
+  return `production:${buildId}`;
+}
+
+export function expectedDeploymentConfirmation(environment, buildId) {
+  const normalized = normalizeEnvironment(environment);
+  assertFullGitSha(buildId);
+  return `${normalized}:${buildId}`;
+}
+
+export function validateDeploymentConfirmation(value, environment, buildId) {
+  const expected = expectedDeploymentConfirmation(environment, buildId);
+  if (value !== expected) throw new Error(`Deployment confirmation must exactly match ${expected}`);
+  return true;
+}
+
+export function validateProductionConfirmation(value, buildId) {
+  const expected = expectedProductionConfirmation(buildId);
+  if (value !== expected) throw new Error(`Production confirmation must exactly match ${expected}`);
+  return true;
+}
+
+export const assertProductionConfirmation = validateProductionConfirmation;
+
+export async function readStrictJson(path, validator, ...validatorArguments) {
+  let parsed;
+  try {
+    parsed = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    throw new Error(`Could not read valid JSON from ${path}: ${error.message}`, { cause: error });
+  }
+  return validator(parsed, ...validatorArguments);
+}
+
+export async function assertPrivateIgnoredEnvFile(path, kind, repositoryRoot) {
+  const absolute = resolve(repositoryRoot, path);
+  const relativePath = relative(repositoryRoot, absolute);
+  if (!relativePath || relativePath.startsWith(`..${sep}`) || relativePath === "..") {
+    throw new Error(`${kind} environment file must be inside the repository`);
+  }
+  const metadata = await lstat(absolute);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error(`${kind} environment file must be a regular, non-symlink file`);
+  }
+  if ((metadata.mode & 0o777) !== 0o600) {
+    throw new Error(`${kind} environment file must have mode 0600`);
+  }
+  const canonicalRoot = await realpath(repositoryRoot);
+  const canonicalPath = await realpath(absolute);
+  if (!canonicalPath.startsWith(`${canonicalRoot}${sep}`)) {
+    throw new Error(`${kind} environment file resolves outside the repository`);
+  }
+  const content = await readFile(canonicalPath, "utf8");
+  const keys = validateEnvFileKeys(parseEnvFileKeys(content, `${kind} environment`), kind);
+  return { absolute: canonicalPath, relative: relative(repositoryRoot, canonicalPath), keys };
+}
+
+export async function run(command, args, options = {}) {
+  if (!Array.isArray(args) || args.some((argument) => typeof argument !== "string")) {
+    throw new Error("Command arguments must be a string array");
+  }
+  if (options.dryRun) {
+    const printable = [command, ...args].map(shellDisplayToken).join(" ");
+    process.stdout.write(`[dry-run] ${printable}\n`);
+    return { code: 0, stdout: "", stderr: "" };
+  }
+  return await new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
+      shell: false,
+    });
+    let stdout = "";
+    let stderr = "";
+    if (options.capture) {
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => (stdout += chunk));
+      child.stderr.on("data", (chunk) => (stderr += chunk));
+    }
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === 0) return resolvePromise({ code, stdout, stderr });
+      const detail = signal ? `signal ${signal}` : `exit ${code}`;
+      const error = new Error(`${command} failed with ${detail}`);
+      error.exitCode = code;
+      error.stdout = stdout;
+      error.stderr = stderr;
+      reject(error);
+    });
+  });
+}
+
+export function shellDisplayToken(value) {
+  const token = String(value);
+  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(token) ? token : `'${token.replaceAll("'", "'\\''")}'`;
+}
+
+export async function assertCommandAvailable(command, { cwd, dryRun = false } = {}) {
+  if (dryRun) return;
+  const versionArguments =
+    command === "cosign" || command === "flyctl" ? ["version"] : ["--version"];
+  await run(command, versionArguments, { cwd, capture: true });
+}
+
+export async function isIgnoredByGit(path, repositoryRoot) {
+  try {
+    await run("git", ["check-ignore", "--quiet", "--", path], {
+      cwd: repositoryRoot,
+      capture: true,
+    });
+    return true;
+  } catch (error) {
+    if (error.exitCode === 1) return false;
+    throw error;
+  }
+}
+
+export async function ensureIgnoredEnvFile(pathInfo, repositoryRoot, kind) {
+  if (!(await isIgnoredByGit(pathInfo.relative, repositoryRoot))) {
+    throw new Error(`${kind} environment file must be ignored by Git`);
+  }
+}
+
+export async function fileMode(path) {
+  return (await stat(path)).mode & 0o777;
+}
