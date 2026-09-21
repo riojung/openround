@@ -51,8 +51,9 @@ ruleset insight before marking the release gate complete.
    commit. The release preflight looks up successful runs for the exact tagged commit and rejects
    stale ledger links; retain target-region readiness separately with the deployment evidence.
 3. Create a signed, protected, `v`-prefixed semantic-version tag from `main`. Do not add `+build`
-   metadata because the release tag is also the immutable OCI image tag.
-4. Let the release workflow build immutable images, provenance, SBOMs, and scan results. Do not
+   metadata because the release policy accepts semantic-version tag identities only; images receive
+   the commit-derived `production-<full-commit>` tag and are promoted by immutable digest.
+4. Let the release workflow build images, provenance, SBOMs, and scan results. Do not
    retag or use `latest` in production.
 5. Verify signatures and digests before promotion; retain the workflow URL and digest in the
    release record.

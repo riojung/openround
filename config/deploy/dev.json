@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "environment": "development",
+  "deploymentMode": "compose",
+  "publicWebUrl": "http://localhost:8080",
+  "publicApiUrl": "http://localhost:8080",
+  "imageRepository": "openround",
+  "health": {
+    "timeoutSeconds": 180,
+    "intervalSeconds": 3,
+    "requestTimeoutSeconds": 5
+  },
+  "requireSigning": false,
+  "requireReadinessGate": false
+}

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "environment": "staging",
+  "deploymentMode": "fly",
+  "publicWebUrl": "https://openround-ca-staging-web.fly.dev",
+  "publicApiUrl": "https://openround-ca-staging-server.fly.dev",
+  "imageRepository": "ghcr.io/riojung/openround/openround",
+  "imagePlatform": "linux/amd64",
+  "billingMode": "disabled",
+  "fly": {
+    "serverApp": "openround-ca-staging-server",
+    "webApp": "openround-ca-staging-web",
+    "serverConfig": "config/deploy/fly/staging-server.toml",
+    "webConfig": "config/deploy/fly/staging-web.toml"
+  },
+  "health": {
+    "timeoutSeconds": 300,
+    "intervalSeconds": 5,
+    "requestTimeoutSeconds": 8
+  },
+  "requireSigning": false,
+  "requireReadinessGate": false
+}

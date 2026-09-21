@@ -126,61 +126,151 @@ jobs:
   images:
     needs: preflight
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        component: [server, web]
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
-        id: build
+      - uses: sigstore/cosign-installer@v3
+      - name: Install Trivy CLI
+        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
         with:
-          context: .
-          file: apps/${{ matrix.component }}/Dockerfile
-          build-args: OPENROUND_BUILD_ID=${{ needs.preflight.outputs.candidate_commit }}
-          labels: org.opencontainers.image.revision=${{ needs.preflight.outputs.candidate_commit }}
-          provenance: mode=max
-          push: true
-          sbom: true
-          tags: ghcr.io/${{ github.repository }}/openround-${{ matrix.component }}:${{ github.ref_name }}
-      - name: Record immutable image digest
+          version: v0.68.2
+          cache: true
+      - run: pnpm install --frozen-lockfile
+      - name: Build and push unsigned release candidates
+        id: build
         run: |
-          mkdir -p artifacts/release/${{ matrix.component }}
-          printf '%s\n' '${{ steps.build.outputs.digest }}' > artifacts/release/${{ matrix.component }}/digest.txt
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD)" = "${{ needs.preflight.outputs.candidate_commit }}"
+          ./scripts/product-build.sh production \
+            --api-url https://openround-ca-server.fly.dev \
+            --registry "ghcr.io/${GITHUB_REPOSITORY}/openround" \
+            --push \
+            --prepare \
+            --manifest artifacts/deploy/production/build-manifest.json
+      - name: Record immutable release references
+        id: manifest
+        if: always()
+        env:
+          EXPECTED_COMMIT: ${{ needs.preflight.outputs.candidate_commit }}
+        run: |
+          set -euo pipefail
+          manifest=artifacts/deploy/production/build-manifest.json
+          test "$(jq -r '.buildId' "$manifest")" = "$EXPECTED_COMMIT"
+          test "$(jq -r '.imagePlatform' "$manifest")" = "linux/amd64"
+          for component in server web; do
+            mkdir -p "artifacts/release/$component"
+            jq -r ".images.$component.digest" "$manifest" \
+              > "artifacts/release/$component/digest.txt"
+            image_ref="$(jq -r ".images.$component.ref" "$manifest")"
+            printf '%s\n' "$image_ref" > "artifacts/release/$component/ref.txt"
+            echo "${component}_ref=$image_ref" >> "$GITHUB_OUTPUT"
+          done
       - uses: aquasecurity/trivy-action@v0.36.0
+        name: Scan server image
+        id: server_scan
+        if: always() && steps.manifest.outcome == 'success'
         with:
           scan-type: image
-          image-ref: ghcr.io/${{ github.repository }}/openround-${{ matrix.component }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ steps.manifest.outputs.server_ref }}
           format: sarif
-          output: artifacts/release/${{ matrix.component }}/trivy.sarif
+          output: artifacts/release/server/trivy.sarif
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: 1
+          limit-severities-for-sarif: true
+          skip-setup-trivy: true
       - uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: always() && hashFiles('artifacts/release/server/trivy.sarif') != ''
         with:
-          sarif_file: artifacts/release/${{ matrix.component }}/trivy.sarif
-          category: openround-${{ matrix.component }}-image
-      - uses: sigstore/cosign-installer@v3
-      - run: cosign sign --yes ghcr.io/${{ github.repository }}/openround-${{ matrix.component }}@${{ steps.build.outputs.digest }}
-      - name: Verify keyless image signature
-        run: >-
-          cosign verify
-          --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}"
-          --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
-          --output json
-          "ghcr.io/${GITHUB_REPOSITORY}/openround-${{ matrix.component }}@${{ steps.build.outputs.digest }}"
-          > artifacts/release/${{ matrix.component }}/cosign-verification.json
-      - name: Upload image release evidence
+          sarif_file: artifacts/release/server/trivy.sarif
+          category: openround-server-image
+      - uses: aquasecurity/trivy-action@v0.36.0
+        name: Scan web image
+        id: web_scan
+        if: always() && steps.manifest.outcome == 'success'
+        with:
+          scan-type: image
+          image-ref: ${{ steps.manifest.outputs.web_ref }}
+          format: sarif
+          output: artifacts/release/web/trivy.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+          limit-severities-for-sarif: true
+          skip-setup-trivy: true
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always() && hashFiles('artifacts/release/web/trivy.sarif') != ''
+        with:
+          sarif_file: artifacts/release/web/trivy.sarif
+          category: openround-web-image
+      - name: Scan, sign, and verify release images
+        id: finalize
+        if: >-
+          always() &&
+          steps.build.outcome == 'success' &&
+          steps.manifest.outcome == 'success' &&
+          steps.server_scan.outcome == 'success' &&
+          steps.web_scan.outcome == 'success'
+        run: |
+          set -euo pipefail
+          ./scripts/product-build.sh production \
+            --api-url https://openround-ca-server.fly.dev \
+            --registry "ghcr.io/${GITHUB_REPOSITORY}/openround" \
+            --finalize \
+            --manifest artifacts/deploy/production/build-manifest.json
+      - name: Record signature verification evidence
+        if: >-
+          always() &&
+          steps.finalize.outcome == 'success' &&
+          steps.manifest.outcome == 'success' &&
+          steps.server_scan.outcome == 'success' &&
+          steps.web_scan.outcome == 'success'
+        run: |
+          set -euo pipefail
+          for component in server web; do
+            image_ref="$(cat "artifacts/release/$component/ref.txt")"
+            cosign verify \
+              --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --output json \
+              "$image_ref" \
+              > "artifacts/release/$component/cosign-verification.json"
+          done
+      - name: Upload server release evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: release-evidence-${{ matrix.component }}-${{ github.ref_name }}
-          path: artifacts/release/${{ matrix.component }}/
+          name: release-evidence-server-${{ github.ref_name }}
+          path: artifacts/release/server/
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Upload web release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-web-${{ github.ref_name }}
+          path: artifacts/release/web/
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Upload deployment manifest
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-deployment-manifest-${{ github.ref_name }}
+          path: artifacts/deploy/production/build-manifest.json
           if-no-files-found: warn
           retention-days: 90

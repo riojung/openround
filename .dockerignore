@@ -1,4 +1,15 @@
 .git
+.DS_Store
+.deploy
+.env
+.env.*
+**/.env
+**/.env.*
+*.runtime.env
+**/*.runtime.env
+*.migration.env
+**/*.migration.env
+artifacts
 .next
 **/.next
 .turbo
@@ -9,6 +20,9 @@ data
 node_modules
 **/node_modules
 playwright-report
+playwright-report-beta
 test-results
+test-results-beta
 **/dist
+*.tsbuildinfo
 *.log
