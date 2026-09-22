@@ -2,17 +2,17 @@
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--line, #dfe6f1);
+  border-bottom: 1px solid var(--ui-border-subtle);
   padding-bottom: 12px;
 }
 
 .filter,
 .filterActive {
   flex: 0 0 auto;
-  border: 1px solid #cbd7ea;
+  border: 1px solid var(--ui-border);
   border-radius: 999px;
-  background: #fff;
-  color: #34415c;
+  background: var(--ui-surface);
+  color: var(--ui-text-subtle);
   padding: 8px 13px;
   font: inherit;
   font-weight: 720;
@@ -20,9 +20,9 @@
 }
 
 .filterActive {
-  border-color: #225dce;
-  background: #e9f1ff;
-  color: #123d98;
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-ink);
 }
 
 .feed {
@@ -36,18 +36,18 @@
   grid-template-columns: 44px minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
-  border: 1px solid #dbe3ef;
+  border: 1px solid var(--ui-border);
   border-radius: 16px;
-  background: #fff;
-  color: #18243d;
+  background: var(--ui-surface);
+  color: var(--ui-text);
   padding: 15px;
   text-decoration: none;
-  box-shadow: 0 8px 24px rgba(35, 59, 100, 0.05);
+  box-shadow: var(--ui-shadow-sm);
 }
 
 .item:hover {
-  border-color: #8eaddf;
-  box-shadow: 0 12px 30px rgba(35, 59, 100, 0.1);
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-md);
 }
 
 .kind {
@@ -56,24 +56,24 @@
   height: 42px;
   place-items: center;
   border-radius: 12px;
-  background: #e9f1ff;
-  color: #1e58c4;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-ink);
   font-weight: 850;
 }
 
 .kind[data-kind="assignment"] {
-  background: #e9faf4;
-  color: #08775b;
+  background: var(--ui-success-bg);
+  color: var(--ui-success-text);
 }
 
 .kind[data-kind="result"] {
-  background: #f1ebff;
-  color: #6430b8;
+  background: var(--ui-violet-bg);
+  color: var(--ui-violet-text);
 }
 
 .kind[data-kind="schedule"] {
-  background: #fff4db;
-  color: #8a5a00;
+  background: var(--ui-warning-bg);
+  color: var(--ui-warning-text);
 }
 
 .copy {
@@ -91,7 +91,7 @@
 
 .copy small,
 .item time {
-  color: #61708a;
+  color: var(--ui-text-muted);
   font-size: 0.84rem;
 }
 
@@ -99,7 +99,7 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #44526b;
+  color: var(--ui-text-subtle);
   font-size: 0.74rem;
   font-weight: 800;
   letter-spacing: 0.035em;
@@ -108,8 +108,8 @@
 
 .eyebrow i {
   border-radius: 999px;
-  background: #dff8ee;
-  color: #08775b;
+  background: var(--ui-success-bg);
+  color: var(--ui-success-text);
   padding: 2px 6px;
   font-style: normal;
 }
@@ -118,9 +118,9 @@
 .loading,
 .empty {
   margin-top: 20px;
-  border: 1px solid #dbe3ef;
+  border: 1px solid var(--ui-border);
   border-radius: 18px;
-  background: #fff;
+  background: var(--ui-surface);
   padding: 22px;
 }
 
@@ -145,13 +145,17 @@
 }
 
 .empty > span {
-  color: #3d6dcc;
+  color: var(--ui-accent);
   font-size: 2.4rem;
 }
 
 .empty h2,
 .empty p {
   margin: 0;
+}
+
+.empty h2 {
+  color: var(--ui-text-strong);
 }
 
 @media (max-width: 680px) {

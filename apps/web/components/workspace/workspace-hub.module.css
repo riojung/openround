@@ -6,11 +6,16 @@
   overflow: hidden;
   border-radius: 1.45rem;
   background:
-    radial-gradient(circle at 86% 14%, rgba(255, 196, 113, 0.45), transparent 12rem),
-    radial-gradient(circle at 70% 120%, rgba(64, 205, 178, 0.42), transparent 18rem),
-    linear-gradient(135deg, #0b2239 0%, #123e59 52%, #087375 100%);
-  box-shadow: 0 22px 60px rgba(11, 34, 57, 0.18);
-  color: #ffffff;
+    radial-gradient(circle at 86% 14%, var(--ui-hero-glow-warm), transparent 12rem),
+    radial-gradient(circle at 70% 120%, var(--ui-hero-glow-teal), transparent 18rem),
+    linear-gradient(
+      135deg,
+      var(--ui-hero-start) 0%,
+      var(--ui-hero-mid) 52%,
+      var(--ui-hero-end) 100%
+    );
+  box-shadow: var(--ui-shadow-lg);
+  color: var(--ui-on-hero);
   padding: clamp(1.45rem, 4vw, 2.6rem);
 }
 
@@ -18,7 +23,7 @@
   position: absolute;
   width: 210px;
   height: 210px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid var(--ui-on-hero-border);
   border-radius: 46% 54% 64% 36%;
   content: "";
   right: 7%;
@@ -34,7 +39,7 @@
 
 .heroEyebrow {
   margin: 0 0 0.7rem;
-  color: #a6eee1;
+  color: var(--ui-on-hero-muted);
   font-size: 0.72rem;
   font-weight: 850;
   letter-spacing: 0.12em;
@@ -44,6 +49,7 @@
 .hero h2 {
   max-width: 620px;
   margin: 0;
+  color: var(--ui-on-hero);
   font-size: clamp(2rem, 4.8vw, 3.7rem);
   letter-spacing: -0.055em;
   line-height: 0.98;
@@ -51,7 +57,7 @@
 
 .hero p:not(.heroEyebrow) {
   max-width: 620px;
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--ui-on-hero-muted);
   font-size: 1rem;
   line-height: 1.6;
   margin: 1rem 0 0;
@@ -78,14 +84,14 @@
 }
 
 .heroPrimary {
-  background: #ffffff;
-  color: #0b2239;
+  background: var(--ui-on-hero);
+  color: var(--ui-hero-start);
 }
 
 .heroSecondary {
-  border: 1px solid rgba(255, 255, 255, 0.36);
-  background: rgba(255, 255, 255, 0.1);
-  color: #ffffff;
+  border: 1px solid var(--ui-on-hero-border);
+  background: var(--ui-on-hero-surface);
+  color: var(--ui-on-hero);
 }
 
 .section {
@@ -102,13 +108,14 @@
 
 .sectionHeading h2 {
   margin: 0;
+  color: var(--ui-text-strong);
   font-size: clamp(1.45rem, 2.7vw, 2rem);
   letter-spacing: -0.035em;
 }
 
 .sectionHeading p {
   max-width: 650px;
-  color: #627d98;
+  color: var(--ui-text-muted);
   line-height: 1.55;
   margin: 0.35rem 0 0;
 }
@@ -129,11 +136,11 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  border: 1px solid #d6e2ea;
+  border: 1px solid var(--ui-border);
   border-radius: 1.1rem;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 12px 32px rgba(16, 42, 67, 0.055);
-  color: #102a43;
+  background: var(--ui-surface-translucent);
+  box-shadow: var(--ui-shadow-sm);
+  color: var(--ui-text-strong);
   padding: 1.2rem;
   text-decoration: none;
 }
@@ -144,8 +151,8 @@
 
 .quickCard:hover,
 .methodCard:hover {
-  border-color: #78b9b4;
-  box-shadow: 0 16px 36px rgba(16, 42, 67, 0.1);
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-md);
   transform: translateY(-2px);
 }
 
@@ -163,20 +170,20 @@
   height: 42px;
   place-items: center;
   border-radius: 0.8rem;
-  background: #dff3f1;
-  color: #055d5f;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-ink);
   font-size: 0.92rem;
   font-weight: 900;
 }
 
 .cardIcon[data-tone="coral"] {
-  background: #fff0e8;
-  color: #b54708;
+  background: var(--ui-warning-bg);
+  color: var(--ui-warning-text);
 }
 
 .cardIcon[data-tone="violet"] {
-  background: #eee8ff;
-  color: #6941c6;
+  background: var(--ui-violet-bg);
+  color: var(--ui-violet-text);
 }
 
 .quickCard h3,
@@ -184,6 +191,7 @@
 .methodCard h2,
 .benefitCard h3 {
   margin: 0.9rem 0 0.35rem;
+  color: var(--ui-text-strong);
   letter-spacing: -0.025em;
 }
 
@@ -191,13 +199,13 @@
 .featureCard p,
 .methodCard p,
 .benefitCard p {
-  color: #627d98;
+  color: var(--ui-text-muted);
   line-height: 1.5;
   margin: 0;
 }
 
 .cardLink {
-  color: #087375;
+  color: var(--ui-accent);
   font-size: 0.84rem;
   font-weight: 820;
   margin-top: auto;
@@ -210,7 +218,7 @@
 
 .featureCard small,
 .methodCard small {
-  color: #087375;
+  color: var(--ui-accent);
   font-size: 0.68rem;
   font-weight: 850;
   letter-spacing: 0.08em;
@@ -237,10 +245,10 @@
   display: grid;
   min-height: 390px;
   place-items: center;
-  border: 1px dashed #b8c9d3;
+  border: 1px dashed var(--ui-border-strong);
   border-radius: 1.25rem;
   background:
-    radial-gradient(circle at 50% 42%, rgba(8, 115, 117, 0.08), transparent 12rem), #ffffff;
+    radial-gradient(circle at 50% 42%, var(--ui-accent-soft), transparent 12rem), var(--ui-surface);
   padding: 2rem;
   text-align: center;
 }
@@ -255,8 +263,8 @@
   height: 72px;
   place-items: center;
   border-radius: 1.3rem;
-  background: #dff3f1;
-  color: #055d5f;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-ink);
   font-size: 1.4rem;
   font-weight: 900;
   margin: 0 auto 1.2rem;
@@ -265,27 +273,28 @@
 
 .emptyCanvas h2 {
   margin: 0;
+  color: var(--ui-text-strong);
   font-size: clamp(1.5rem, 3vw, 2.2rem);
   letter-spacing: -0.035em;
 }
 
 .emptyCanvas p {
-  color: #627d98;
+  color: var(--ui-text-muted);
   line-height: 1.6;
   margin: 0.75rem 0 1.25rem;
 }
 
 .notice {
-  border: 1px solid #d9d2f2;
+  border: 1px solid var(--ui-border-strong);
   border-radius: 1rem;
-  background: linear-gradient(135deg, #f7f4ff, #ffffff);
-  color: #4a3f72;
+  background: linear-gradient(135deg, var(--ui-violet-bg), var(--ui-surface));
+  color: var(--ui-violet-text);
   line-height: 1.55;
   padding: 1rem 1.1rem;
 }
 
 .notice strong {
-  color: #40356b;
+  color: var(--ui-violet-text);
 }
 
 @media (max-width: 920px) {

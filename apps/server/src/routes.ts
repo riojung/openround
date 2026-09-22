@@ -26,6 +26,7 @@ import {
   EmbedPolicySchema,
   HostCommandSchema,
   FollowupAnswerSubmitSchema,
+  FollowupPurposeSchema,
   FederatedIdentitySchema,
   OidcStartSchema,
   OidcStatusSchema,
@@ -212,6 +213,7 @@ const ReportHistoryQuerySchema = z.object({
 });
 const FollowupHistoryQuerySchema = z.object({
   ...HistoryQueryBase,
+  purpose: FollowupPurposeSchema.optional(),
   status: z.enum(["scheduled", "open", "closed", "expired"]).optional(),
   quizId: z.string().uuid().optional(),
 });
@@ -2691,6 +2693,7 @@ export async function registerRoutes(
             },
           }
         : {}),
+      ...(query.purpose ? { purpose: query.purpose } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.quizId ? { quizId: query.quizId } : {}),
       ...(query.from ? { from: new Date(query.from) } : {}),

@@ -1,4 +1,48 @@
 :root {
+  --ui-canvas: #f6f8f7;
+  --ui-canvas-glow: rgba(8, 115, 117, 0.09);
+  --ui-surface: #ffffff;
+  --ui-surface-raised: #ffffff;
+  --ui-surface-soft: #f5f9f8;
+  --ui-surface-hover: #eef7f5;
+  --ui-surface-translucent: rgba(255, 255, 255, 0.94);
+  --ui-border: #d6e2ea;
+  --ui-border-subtle: #e6ecef;
+  --ui-border-strong: #a9bbc7;
+  --ui-text: #102a43;
+  --ui-text-strong: #0b2239;
+  --ui-text-subtle: #486581;
+  --ui-text-muted: #526d82;
+  --ui-accent: #087375;
+  --ui-accent-hover: #055d5f;
+  --ui-accent-soft: #dff3f1;
+  --ui-accent-ink: #055d5f;
+  --ui-focus: #2c7fb8;
+  --ui-on-accent: #ffffff;
+  --ui-overlay: rgba(11, 34, 57, 0.52);
+  --ui-shadow-sm: 0 10px 26px rgba(16, 42, 67, 0.055);
+  --ui-shadow-md: 0 16px 38px rgba(16, 42, 67, 0.1);
+  --ui-shadow-lg: 0 22px 60px rgba(16, 42, 67, 0.2);
+  --ui-success-bg: #dcfce7;
+  --ui-success-text: #166534;
+  --ui-warning-bg: #fff3c4;
+  --ui-warning-text: #8a4b08;
+  --ui-danger-bg: #fff1f0;
+  --ui-danger-text: #991b1b;
+  --ui-danger-border: #fecaca;
+  --ui-violet-bg: #efe9ff;
+  --ui-violet-text: #6941c6;
+  --ui-skeleton-base: #e8eef2;
+  --ui-skeleton-highlight: #f6f9fb;
+  --ui-hero-start: #0b2239;
+  --ui-hero-mid: #123e59;
+  --ui-hero-end: #087375;
+  --ui-hero-glow-warm: rgba(255, 196, 113, 0.24);
+  --ui-hero-glow-teal: rgba(64, 205, 178, 0.32);
+  --ui-on-hero: #ffffff;
+  --ui-on-hero-muted: #d7e9e8;
+  --ui-on-hero-border: rgba(255, 255, 255, 0.25);
+  --ui-on-hero-surface: rgba(255, 255, 255, 0.1);
   --ink: #102a43;
   --ink-soft: #486581;
   --navy: #0b2239;
@@ -26,6 +70,54 @@
     "Segoe UI",
     sans-serif;
   font-synthesis: none;
+}
+
+html[data-color-mode="dark"] {
+  --ui-canvas: #07151d;
+  --ui-canvas-glow: rgba(76, 199, 188, 0.08);
+  --ui-surface: #0d2530;
+  --ui-surface-raised: #12303b;
+  --ui-surface-soft: #102c34;
+  --ui-surface-hover: #173a43;
+  --ui-surface-translucent: rgba(13, 37, 48, 0.94);
+  --ui-border: #2a4b55;
+  --ui-border-subtle: #213b44;
+  --ui-border-strong: #4a6871;
+  --ui-text: #f1f8f7;
+  --ui-text-strong: #f7fbfa;
+  --ui-text-subtle: #c4d3d5;
+  --ui-text-muted: #aac0c3;
+  --ui-accent: #4cc7bc;
+  --ui-accent-hover: #76dad0;
+  --ui-accent-soft: #153f41;
+  --ui-accent-ink: #96e7de;
+  --ui-focus: #70cfea;
+  --ui-on-accent: #07191b;
+  --ui-overlay: rgba(0, 7, 10, 0.72);
+  --ui-shadow-sm: 0 10px 28px rgba(0, 0, 0, 0.2);
+  --ui-shadow-md: 0 18px 42px rgba(0, 0, 0, 0.27);
+  --ui-shadow-lg: 0 24px 70px rgba(0, 0, 0, 0.36);
+  --ui-success-bg: #133b31;
+  --ui-success-text: #8ae1bf;
+  --ui-warning-bg: #412f16;
+  --ui-warning-text: #f4c66d;
+  --ui-danger-bg: #45201f;
+  --ui-danger-text: #ffb4ae;
+  --ui-danger-border: #7b3a36;
+  --ui-violet-bg: #30264d;
+  --ui-violet-text: #d5c3ff;
+  --ui-skeleton-base: #17313a;
+  --ui-skeleton-highlight: #21414a;
+  --ui-hero-start: #06131d;
+  --ui-hero-mid: #0b3141;
+  --ui-hero-end: #065b5d;
+  --ui-hero-glow-warm: rgba(255, 196, 113, 0.16);
+  --ui-hero-glow-teal: rgba(76, 199, 188, 0.24);
+  --ui-on-hero: #f7fbfa;
+  --ui-on-hero-muted: #d3e5e4;
+  --ui-on-hero-border: rgba(213, 240, 237, 0.28);
+  --ui-on-hero-surface: rgba(210, 241, 237, 0.1);
+  color-scheme: dark;
 }
 
 * {
@@ -69,7 +161,7 @@ select {
 }
 
 :focus-visible {
-  outline: 3px solid #2c7fb8;
+  outline: 3px solid var(--ui-focus);
 }
 
 button {
@@ -1084,20 +1176,21 @@ h3 {
 }
 
 .notice {
-  background: #eef7fa;
-  border-color: #2c7fb8;
+  background: var(--ui-accent-soft);
+  border-color: var(--ui-accent);
+  color: var(--ui-accent-ink);
 }
 
 .error {
-  background: #fff1f0;
-  border-color: var(--danger);
-  color: #7a271a;
+  background: var(--ui-danger-bg);
+  border-color: var(--ui-danger-border);
+  color: var(--ui-danger-text);
 }
 
 .success {
-  background: #ecfdf3;
-  border-color: var(--success);
-  color: #05603a;
+  background: var(--ui-success-bg);
+  border-color: var(--ui-success-text);
+  color: var(--ui-success-text);
 }
 
 .auth-origin {

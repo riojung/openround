@@ -54,6 +54,7 @@ import type {
   FollowupAttemptRecord,
   FollowupRecord,
   FollowupHistoryRecord,
+  FollowupHistoryListOptions,
   FederatedAuthTransactionRecord,
   HistoryCursor,
   ExternalIdentityRecord,
@@ -4746,18 +4747,7 @@ export class PostgresRepository implements Repository {
     return result.rows[0] ? mapFollowup(result.rows[0]) : null;
   }
 
-  async listFollowupHistory(
-    workspaceId: string,
-    options: {
-      cursor?: HistoryCursor;
-      limit: number;
-      status?: FollowupHistoryRecord["status"];
-      quizId?: string;
-      from?: Date;
-      to?: Date;
-      now: Date;
-    },
-  ) {
+  async listFollowupHistory(workspaceId: string, options: FollowupHistoryListOptions) {
     const result = await this.workspaceQuery(
       workspaceId,
       `SELECT followups.*,
@@ -4779,28 +4769,30 @@ export class PostgresRepository implements Repository {
         AND followup_attempts.workspace_id = followups.workspace_id
        WHERE followups.workspace_id = $1
          AND ($2::timestamptz IS NULL OR (followups.created_at, followups.id) < ($2, $3::uuid))
-         AND ($4::uuid IS NULL OR quiz_versions.quiz_id = $4)
-         AND ($5::timestamptz IS NULL OR followups.created_at >= $5)
-         AND ($6::timestamptz IS NULL OR followups.created_at <= $6)
+         AND ($4::text IS NULL OR followups.purpose = $4)
+         AND ($5::uuid IS NULL OR quiz_versions.quiz_id = $5)
+         AND ($6::timestamptz IS NULL OR followups.created_at >= $6)
+         AND ($7::timestamptz IS NULL OR followups.created_at <= $7)
          AND (
-           $7::text IS NULL
-           OR ($7 = 'expired' AND followups.expires_at <= $8)
-           OR ($7 = 'closed' AND followups.expires_at > $8
-               AND (followups.closed_at IS NOT NULL OR followups.closes_at <= $8))
-           OR ($7 = 'scheduled' AND followups.expires_at > $8
-               AND followups.closed_at IS NULL AND followups.closes_at > $8
-               AND followups.opens_at > $8)
-           OR ($7 = 'open' AND followups.expires_at > $8
-               AND followups.closed_at IS NULL AND followups.closes_at > $8
-               AND followups.opens_at <= $8)
+           $8::text IS NULL
+           OR ($8 = 'expired' AND followups.expires_at <= $9)
+           OR ($8 = 'closed' AND followups.expires_at > $9
+               AND (followups.closed_at IS NOT NULL OR followups.closes_at <= $9))
+           OR ($8 = 'scheduled' AND followups.expires_at > $9
+               AND followups.closed_at IS NULL AND followups.closes_at > $9
+               AND followups.opens_at > $9)
+           OR ($8 = 'open' AND followups.expires_at > $9
+               AND followups.closed_at IS NULL AND followups.closes_at > $9
+               AND followups.opens_at <= $9)
          )
        GROUP BY followups.id, quiz_versions.quiz_id
        ORDER BY followups.created_at DESC, followups.id DESC
-       LIMIT $9`,
+       LIMIT $10`,
       [
         workspaceId,
         options.cursor?.cursorCreatedAt ?? options.cursor?.createdAt ?? null,
         options.cursor?.id ?? null,
+        options.purpose ?? null,
         options.quizId ?? null,
         options.from ?? null,
         options.to ?? null,

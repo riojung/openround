@@ -1,0 +1,93 @@
+.account {
+  color: var(--ui-text);
+}
+
+.account :global(.panel) {
+  border-color: var(--ui-border);
+  background: var(--ui-surface-translucent);
+  box-shadow: var(--ui-shadow-sm);
+  color: var(--ui-text);
+}
+
+.account :global(.panel h2),
+.account :global(.panel h3) {
+  color: var(--ui-text-strong);
+}
+
+.account :global(.eyebrow) {
+  color: var(--ui-accent-ink);
+}
+
+.account :global(.muted),
+.account :global(.identity-row small),
+.account :global(.compact-definition-list dt),
+.account :global(.report-table th),
+.account :global(.institution-registration-list li span) {
+  color: var(--ui-text-muted);
+}
+
+.account :global(.compact-definition-list div),
+.account :global(.workspace-invitations),
+.account :global(.report-table th),
+.account :global(.report-table td) {
+  border-color: var(--ui-border-subtle);
+}
+
+.account :global(.field > span) {
+  color: var(--ui-text-strong);
+}
+
+.account :global(.input),
+.account :global(.textarea),
+.account :global(.select) {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-surface-raised);
+  color: var(--ui-text);
+}
+
+.account :global(.input::placeholder),
+.account :global(.textarea::placeholder) {
+  color: var(--ui-text-muted);
+  opacity: 1;
+}
+
+.account :global(.input:focus),
+.account :global(.textarea:focus),
+.account :global(.select:focus) {
+  border-color: var(--ui-focus);
+}
+
+.account :global(.identity-row),
+.account :global(.workspace-invitations li),
+.account :global(.institution-registration-list li) {
+  border-color: var(--ui-border);
+  background: var(--ui-surface-soft);
+}
+
+.account :global(.button) {
+  background: var(--ui-accent);
+  color: var(--ui-on-accent);
+}
+
+.account :global(.button:hover:not(:disabled)) {
+  background: var(--ui-accent-hover);
+}
+
+.account :global(.button-quiet) {
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-ink);
+}
+
+.account :global(.button-danger) {
+  background: var(--ui-danger-bg);
+  color: var(--ui-danger-text);
+}
+
+.account :global(.color-input) {
+  border-color: var(--ui-border);
+  background: var(--ui-surface-raised);
+}
+
+.account :global(.danger-panel) {
+  border-color: var(--ui-danger-border);
+}

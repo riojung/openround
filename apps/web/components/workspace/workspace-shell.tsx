@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Brand } from "../brand";
 import { humanError } from "../../lib/api";
+import { ColorModeMenu } from "./color-mode-menu";
 import {
   useWorkspace,
   WorkspaceProvider,
@@ -399,6 +400,7 @@ export function WorkspaceShell({
           </form>
           <div className={styles.topActions}>
             {canEdit && productFeatures ? <CreateMenu productFeatures={productFeatures} /> : null}
+            <ColorModeMenu />
             <Link className={styles.utilityAction} href="/activity" title="Activity inbox">
               <ShellIcon name="activity" />
               <span className={styles.utilityLabel}>Activity</span>

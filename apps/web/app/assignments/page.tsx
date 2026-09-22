@@ -24,7 +24,7 @@ function AssignmentsWorkspace() {
     const controller = new AbortController();
     setLoading(true);
     setError("");
-    void apiFetch<CursorPage<FollowupSummary>>("/v1/followups?limit=100", {
+    void apiFetch<CursorPage<FollowupSummary>>("/v1/followups?purpose=assignment&limit=50", {
       signal: controller.signal,
     })
       .then((page) => {

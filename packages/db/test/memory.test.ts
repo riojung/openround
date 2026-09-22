@@ -406,6 +406,80 @@ describe("memory repository", () => {
     expect(repository.followupAccess.size).toBe(0);
   });
 
+  it("filters follow-up purpose before applying history pagination", async () => {
+    const repository = new MemoryRepository();
+    const workspaceId = randomUUID();
+    const quizId = randomUUID();
+    const versionId = randomUUID();
+    const assignmentId = randomUUID();
+    const now = new Date("2026-09-18T12:00:00.000Z");
+    const content = publishableRound("Purpose-filtered history");
+    repository.versions.set(versionId, {
+      id: versionId,
+      workspaceId,
+      quizId,
+      version: 1,
+      content,
+      contentHash: randomUUID(),
+      publishedAt: new Date(now.getTime() - 120_000),
+    });
+    repository.followups.set(assignmentId, {
+      id: assignmentId,
+      workspaceId,
+      purpose: "assignment",
+      sourceQuizVersionId: versionId,
+      sourceSessionId: null,
+      sourceReportId: null,
+      title: "Older assignment",
+      content,
+      conceptKeys: [],
+      timeMode: "flex",
+      genericTokenHash: randomUUID(),
+      opensAt: new Date(now.getTime() - 60_000),
+      closesAt: new Date(now.getTime() + 60_000),
+      expiresAt: new Date(now.getTime() + 120_000),
+      closedAt: null,
+      createdBy: null,
+      createdAt: new Date(now.getTime() - 60_000),
+    });
+    for (let index = 0; index < 51; index += 1) {
+      const recoveryId = randomUUID();
+      repository.followups.set(recoveryId, {
+        id: recoveryId,
+        workspaceId,
+        purpose: "recovery",
+        sourceQuizVersionId: versionId,
+        sourceSessionId: randomUUID(),
+        sourceReportId: randomUUID(),
+        title: `Newer recovery ${index + 1}`,
+        content,
+        conceptKeys: ["purpose-filter"],
+        timeMode: "flex",
+        genericTokenHash: randomUUID(),
+        opensAt: new Date(now.getTime() - 60_000),
+        closesAt: new Date(now.getTime() + 60_000),
+        expiresAt: new Date(now.getTime() + 120_000),
+        closedAt: null,
+        createdBy: null,
+        createdAt: new Date(now.getTime() - index),
+      });
+    }
+
+    const mixedPage = await repository.listFollowupHistory(workspaceId, { limit: 50, now });
+    expect(mixedPage.hasMore).toBe(true);
+    expect(mixedPage.items.map(({ id }) => id)).not.toContain(assignmentId);
+
+    const assignmentPage = await repository.listFollowupHistory(workspaceId, {
+      limit: 50,
+      purpose: "assignment",
+      now,
+    });
+    expect(assignmentPage).toMatchObject({
+      hasMore: false,
+      items: [expect.objectContaining({ id: assignmentId, purpose: "assignment" })],
+    });
+  });
+
   it("retains only allowlisted product event fields until their expiry", async () => {
     const repository = new MemoryRepository();
     const now = new Date("2026-09-18T12:00:00.000Z");

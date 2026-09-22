@@ -312,7 +312,7 @@ moderation, kick/ban, retention, export, and deletion are enforced server-side.
   one-attempt links exactly once.
 - `GET /v1/followups` — tenant-scoped recovery-follow-up and standalone-assignment summaries and
   attempt counts; filters are
-  `status=scheduled|open|closed|expired`, `quizId`, `from`, and `to`.
+  `purpose=recovery|assignment`, `status=scheduled|open|closed|expired`, `quizId`, `from`, and `to`.
 - `GET /v1/followups/{id}` — creator view, immutable Round/version context, aggregate progress, and
   access management; bearer tokens and answer bodies are never returned.
 - `POST /v1/followups/{id}/personal-passes` — create a labelled, revocable, single-attempt link for

@@ -313,6 +313,24 @@ describe("P0 beta creator APIs", () => {
     ]);
     expect(created.body).not.toContain("tokenHash");
 
+    const assignmentHistory = await app.inject({
+      method: "GET",
+      url: "/v1/followups?purpose=assignment&limit=1",
+      headers: { cookie: signedIn.cookie },
+    });
+    expect(assignmentHistory.statusCode, assignmentHistory.body).toBe(200);
+    expect(assignmentHistory.json()).toMatchObject({
+      items: [{ id: creation.followup.id, purpose: "assignment" }],
+      nextCursor: null,
+    });
+    const recoveryHistory = await app.inject({
+      method: "GET",
+      url: "/v1/followups?purpose=recovery&limit=1",
+      headers: { cookie: signedIn.cookie },
+    });
+    expect(recoveryHistory.statusCode, recoveryHistory.body).toBe(200);
+    expect(recoveryHistory.json()).toMatchObject({ items: [], nextCursor: null });
+
     const detail = await app.inject({
       method: "GET",
       url: `/v1/followups/${creation.followup.id}`,
