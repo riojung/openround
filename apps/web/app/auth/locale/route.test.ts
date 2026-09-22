@@ -10,7 +10,7 @@ describe("locale redirect bridge", () => {
       ),
     );
 
-    expect(response.headers.get("location")).toBe("https://app.openround.example/home?welcome=1");
+    expect(response.headers.get("location")).toBe("/home?welcome=1");
     expect(response.cookies.get("openround-locale")?.value).toBe("ja-JP");
     expect(response.headers.get("set-cookie")).toContain("SameSite=lax");
     expect(response.headers.get("set-cookie")).toContain("Secure");
@@ -23,7 +23,7 @@ describe("locale redirect bridge", () => {
       ),
     );
 
-    expect(response.headers.get("location")).toBe("https://app.openround.example/dashboard");
+    expect(response.headers.get("location")).toBe("/dashboard");
     expect(response.cookies.get("openround-locale")).toBeUndefined();
   });
 
@@ -34,6 +34,17 @@ describe("locale redirect bridge", () => {
       ),
     );
 
-    expect(response.headers.get("location")).toBe("https://app.openround.example/dashboard");
+    expect(response.headers.get("location")).toBe("/dashboard");
+  });
+
+  it("preserves the browser-facing host by emitting a relative redirect", () => {
+    const response = GET(
+      new NextRequest(
+        "http://localhost:3200/auth/locale?locale=fr-FR&returnTo=%2Fdashboard%3Fwelcome%3D1",
+        { headers: { host: "192.168.1.142:8080" } },
+      ),
+    );
+
+    expect(response.headers.get("location")).toBe("/dashboard?welcome=1");
   });
 });

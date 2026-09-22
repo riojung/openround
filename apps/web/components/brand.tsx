@@ -15,7 +15,12 @@ export function Brand({
     .join("");
 
   return (
-    <Link className="brand" href="/" style={inverted ? { color: "white" } : undefined}>
+    <Link
+      aria-label={name}
+      className="brand"
+      href="/"
+      style={inverted ? { color: "white" } : undefined}
+    >
       <span className="brand-mark" aria-hidden="true">
         {initials || "OR"}
       </span>

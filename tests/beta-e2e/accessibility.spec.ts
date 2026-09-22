@@ -97,7 +97,7 @@ test("workspace Create flyout stays inside the mobile viewport @mobile", async (
   expect(page.viewportSize()).toEqual({ width: 390, height: 844 });
   await page.goto("/home");
 
-  await page.getByRole("banner").getByText("Create", { exact: true }).click();
+  await page.getByRole("banner").getByRole("button", { name: "Create", exact: true }).click();
   const createFlyout = page.getByText("Create new", { exact: true }).locator("..");
   await expect(createFlyout).toBeVisible();
   const createFlyoutBox = await createFlyout.boundingBox();
@@ -221,7 +221,7 @@ test("Presentation Builder dialogs and drawers pass automated accessibility chec
   await expect(page.getByLabel("Presentation title")).toHaveValue("Accessible presentation");
   await expectNoAxeViolations(page);
 
-  await page.getByRole("button", { name: "+ Question", exact: true }).click();
+  await page.getByRole("button", { name: "+ Add question", exact: true }).click();
   const questionPrompt = page.getByLabel("Question prompt");
   await questionPrompt.focus();
   await expect(questionPrompt).toHaveCSS("background-color", "rgba(255, 255, 255, 0.94)");

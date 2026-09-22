@@ -10,14 +10,14 @@ function safeReturnPath(value: string | null) {
 
 export function GET(request: NextRequest) {
   const locale = SupportedLocaleSchema.safeParse(request.nextUrl.searchParams.get("locale"));
-  let destination = new URL(
-    safeReturnPath(request.nextUrl.searchParams.get("returnTo")),
-    request.nextUrl.origin,
-  );
-  if (destination.origin !== request.nextUrl.origin) {
-    destination = new URL("/dashboard", request.nextUrl.origin);
-  }
-  const response = NextResponse.redirect(destination);
+  // Keep this redirect relative so the browser preserves the exact public host that received
+  // the bridge request. Next's development server can canonicalize `nextUrl.origin` to
+  // `localhost`, which otherwise drops host-bound auth cookies when the app was opened through
+  // `127.0.0.1` or a LAN address. `safeReturnPath` only returns a validated local path.
+  const response = new NextResponse(null, {
+    status: 307,
+    headers: { location: safeReturnPath(request.nextUrl.searchParams.get("returnTo")) },
+  });
   if (locale.success) {
     response.cookies.set(LOCALE_COOKIE_NAME, locale.data, {
       path: "/",

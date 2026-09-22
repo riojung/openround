@@ -122,7 +122,7 @@ test("creator starts a blank Round with the selected first response type", async
   await expect(page.getByLabel("Title")).toHaveValue("Beta blank Round");
   await expect(page.getByLabel("Question prompt")).toBeFocused();
   await expect(
-    page.getByRole("region", { name: "Selected question editor" }).locator(".status-pill"),
+    page.getByRole("region", { name: "Question 1" }).locator(".status-pill"),
   ).toContainText("Numeric response");
 });
 
@@ -365,7 +365,7 @@ test("starter rehearsal completes privately with bounded telemetry", async ({ pa
   await advanceRehearsal(page, "question_open", "Collect synthetic responses", "responses");
   await advanceRehearsal(page, "responses", "Lock answers", "diagnosis");
   await advanceRehearsal(page, "diagnosis", "Reveal answer", "revealed");
-  await advanceRehearsal(page, "revealed", "Address the misconception", "intervention");
+  await advanceRehearsal(page, "revealed", "Explain or reinforce", "intervention");
   await advanceRehearsal(page, "intervention", "Finish intervention", "verify");
   await advanceRehearsal(page, "verify", "Open linked recheck", "recheck");
 
@@ -512,7 +512,9 @@ test("creator assigns immutable practice and manages accountless progress", asyn
   await expect(page).toHaveTitle("Assign practice · OpenRound");
   await expect(page.getByRole("heading", { name: publishedTitle, level: 2 })).toBeVisible();
   await expect(page.getByText("Published v1", { exact: true })).toBeVisible();
-  await expect(page.getByText("main question", { exact: true }).locator("..")).toContainText("1");
+  await expect(page.getByText("main question(s)", { exact: true }).locator("..")).toContainText(
+    "1",
+  );
   await expect(page.getByText(/newer draft edits/i)).toBeVisible();
   await expect(page.getByText(/Conditional live rechecks are not repeated/i)).toBeVisible();
 
@@ -1157,7 +1159,7 @@ test("source and import starts reach real review drafts through mocked external 
     text: "This deterministic source contains enough grounded material to propose one question and a review draft.",
   });
   const proposal = page.getByRole("article").filter({ hasText: "Fixture source" });
-  await expect(proposal.getByText("Ready to review")).toBeVisible();
+  await expect(proposal.getByText("Ready to review", { exact: true })).toBeVisible();
   const sourceCompleted = waitForCreationEvent(page, "creation_completed", "source");
   await proposal.getByRole("button", { name: "Create unpublished review draft" }).click();
   expect((await sourceCompleted).status()).toBe(202);
