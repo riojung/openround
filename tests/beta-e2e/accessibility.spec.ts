@@ -141,10 +141,12 @@ test("professional workspace destinations pass automated accessibility checks", 
 test("workspace appearance follows, overrides, and persists the system color mode", async ({
   page,
 }) => {
-  await page.emulateMedia({ colorScheme: "dark" });
   await signIn(page);
   await page.goto("/home");
 
+  // Firefox does not preserve a media override across the authentication
+  // navigation, so apply it after the final workspace document has loaded.
+  await page.emulateMedia({ colorScheme: "dark" });
   await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
   await expect(page.locator("html")).toHaveAttribute("data-color-mode-preference", "system");
 
