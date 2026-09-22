@@ -580,7 +580,12 @@
   }
 
   .topActions {
+    position: relative;
     grid-area: actions;
+  }
+
+  .createMenu {
+    position: static;
   }
 
   .utilityAction {

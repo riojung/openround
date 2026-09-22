@@ -92,6 +92,25 @@ test("beta workspace and creation surfaces pass automated accessibility checks",
   await expectNoAxeViolations(page);
 });
 
+test("workspace Create flyout stays inside the mobile viewport @mobile", async ({ page }) => {
+  await signIn(page);
+  expect(page.viewportSize()).toEqual({ width: 390, height: 844 });
+  await page.goto("/home");
+
+  await page.getByRole("banner").getByText("Create", { exact: true }).click();
+  const createFlyout = page.getByText("Create new", { exact: true }).locator("..");
+  await expect(createFlyout).toBeVisible();
+  const createFlyoutBox = await createFlyout.boundingBox();
+  expect(createFlyoutBox).not.toBeNull();
+  expect(createFlyoutBox!.x).toBeGreaterThanOrEqual(0);
+  expect(createFlyoutBox!.x + createFlyoutBox!.width).toBeLessThanOrEqual(
+    page.viewportSize()!.width,
+  );
+  await expect(page.getByRole("link", { name: /^Round\b/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^Presentation\b/ })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+});
+
 test("professional workspace destinations pass automated accessibility checks", async ({
   page,
 }) => {
