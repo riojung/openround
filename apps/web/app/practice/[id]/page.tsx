@@ -230,6 +230,7 @@ function PracticeManagementContent() {
       eyebrow="Practice"
       requireBeta={false}
       title={detail?.followup.title ?? "Manage practice"}
+      titleLanguage={detail?.followup.title ? "" : "en-CA"}
     >
       {error ? (
         <p className="error" ref={errorRef} role="alert" tabIndex={-1}>

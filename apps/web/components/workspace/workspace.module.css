@@ -574,6 +574,17 @@
     grid-area: brand;
   }
 
+  .mobileBrand :global(.brand) > span:last-child,
+  .createButton > span:not(.chevron) {
+    display: none;
+  }
+
+  .createButton {
+    width: 44px;
+    justify-content: center;
+    padding-inline: 0;
+  }
+
   .globalSearch {
     width: 100%;
     grid-area: search;
@@ -590,10 +601,6 @@
 
   .utilityAction {
     display: none;
-  }
-
-  .createButton {
-    padding-inline: 0.72rem;
   }
 
   .createButton .chevron {

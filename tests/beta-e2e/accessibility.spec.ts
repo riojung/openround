@@ -97,7 +97,7 @@ test("workspace Create flyout stays inside the mobile viewport @mobile", async (
   expect(page.viewportSize()).toEqual({ width: 390, height: 844 });
   await page.goto("/home");
 
-  await page.getByRole("banner").getByText("Create", { exact: true }).click();
+  await page.getByRole("banner").getByRole("button", { name: "Create", exact: true }).click();
   const createFlyout = page.getByText("Create new", { exact: true }).locator("..");
   await expect(createFlyout).toBeVisible();
   const createFlyoutBox = await createFlyout.boundingBox();
@@ -150,7 +150,7 @@ test("workspace appearance follows, overrides, and persists the system color mod
   await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
   await expect(page.locator("html")).toHaveAttribute("data-color-mode-preference", "system");
 
-  await page.getByLabel("Appearance: system").click();
+  await page.getByLabel("Appearance: System").click();
   const systemOption = page.getByRole("radio", { name: "System" });
   const lightOption = page.getByRole("radio", { name: "Light" });
   const darkOption = page.getByRole("radio", { name: "Dark" });
@@ -178,12 +178,12 @@ test("workspace appearance follows, overrides, and persists the system color mod
   await expect(lightOption).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute("data-color-mode", "light");
   await page.keyboard.press("Escape");
-  await expect(page.getByLabel("Appearance: light")).toBeFocused();
+  await expect(page.getByLabel("Appearance: Light")).toBeFocused();
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-color-mode", "light");
   await expect(page.locator("html")).toHaveAttribute("data-color-mode-preference", "light");
 
-  await page.getByLabel("Appearance: light").click();
+  await page.getByLabel("Appearance: Light").click();
   await page.getByRole("radio", { name: "Dark" }).click();
   await page.emulateMedia({ colorScheme: "light" });
   for (const [path, heading] of workspaceDestinations) {
@@ -203,7 +203,7 @@ test("workspace appearance follows, overrides, and persists the system color mod
     await expectNoAxeViolations(page);
   }
 
-  await page.getByLabel("Appearance: dark").click();
+  await page.getByLabel("Appearance: Dark").click();
   await page.getByRole("radio", { name: "System" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-color-mode", "light");
   await page.emulateMedia({ colorScheme: "dark" });
@@ -221,7 +221,7 @@ test("Presentation Builder dialogs and drawers pass automated accessibility chec
   await expect(page.getByLabel("Presentation title")).toHaveValue("Accessible presentation");
   await expectNoAxeViolations(page);
 
-  await page.getByRole("button", { name: "+ Question", exact: true }).click();
+  await page.getByRole("button", { name: "+ Add question", exact: true }).click();
   const questionPrompt = page.getByLabel("Question prompt");
   await questionPrompt.focus();
   await expect(questionPrompt).toHaveCSS("background-color", "rgba(255, 255, 255, 0.94)");
@@ -331,7 +331,7 @@ test("mobile beta creation surface passes automated accessibility checks @mobile
   await page.goto("/create");
   await expect(page.getByRole("heading", { name: "How do you want to start?" })).toBeVisible();
   await expectNoAxeViolations(page);
-  await page.getByLabel("Appearance: system").click();
+  await page.getByLabel("Appearance: System").click();
   await page.getByRole("radio", { name: "Dark" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
   await expectNoAxeViolations(page);

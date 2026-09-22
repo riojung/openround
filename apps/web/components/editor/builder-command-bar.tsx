@@ -1,16 +1,9 @@
 import Link from "next/link";
 import { Brand } from "../brand";
+import { useLocale } from "../locale-provider";
 import styles from "./round-builder.module.css";
 
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
-
-function saveStateLabel(saveState: SaveState) {
-  if (saveState === "saving") return "Saving…";
-  if (saveState === "saved") return "Saved";
-  if (saveState === "conflict") return "Edit conflict";
-  if (saveState === "error") return "Save failed";
-  return "Ready";
-}
 
 export function BuilderCommandBar({
   title,
@@ -51,12 +44,23 @@ export function BuilderCommandBar({
   onToggleQuestionMap: () => void;
   onToggleInspector: () => void;
 }) {
+  const { t } = useLocale();
+  const saveStateLabel =
+    saveState === "saving"
+      ? t("delivery.common.saving")
+      : saveState === "saved"
+        ? t("delivery.common.saved")
+        : saveState === "error"
+          ? t("delivery.builder.saveFailed")
+          : saveState === "conflict"
+            ? t("delivery.builder.editConflict")
+            : t("delivery.builder.ready");
   return (
     <header className={styles.commandBar}>
       <Brand />
       <div className={styles.titleGroup}>
         <label className="sr-only" htmlFor="quiz-title">
-          Title
+          {t("create.round.blank.titleLabel")}
         </label>
         <input
           aria-invalid={!title.trim()}
@@ -64,7 +68,7 @@ export function BuilderCommandBar({
           id="quiz-title"
           maxLength={160}
           onChange={(event) => onTitleChange(event.target.value)}
-          placeholder="Untitled Round"
+          placeholder={t("delivery.builder.titlePlaceholder")}
           value={title}
         />
         {status ? <span className="status-pill">{status}</span> : null}
@@ -77,7 +81,7 @@ export function BuilderCommandBar({
             onClick={onToggleQuestionMap}
             type="button"
           >
-            Questions
+            {t("delivery.builder.questions")}
           </button>
           <button
             aria-expanded={inspectorOpen}
@@ -85,33 +89,33 @@ export function BuilderCommandBar({
             onClick={onToggleInspector}
             type="button"
           >
-            Inspector
+            {t("delivery.builder.inspector")}
           </button>
         </div>
         <span className={styles.saveState} data-state={saveState} role="status">
           <span className={styles.saveDot} aria-hidden="true" />
-          {saveStateLabel(saveState)}
+          {saveStateLabel}
         </span>
         <div className={styles.historyActions}>
           <Link className={styles.iconButton} href="/dashboard">
-            Dashboard
+            {t("delivery.builder.dashboard")}
           </Link>
           <button
-            aria-label="Undo last edit"
+            aria-label={t("delivery.builder.undoLastEdit")}
             className={styles.iconButton}
             disabled={!canUndo}
             onClick={onUndo}
-            title="Undo"
+            title={t("delivery.builder.undo")}
             type="button"
           >
             ↶
           </button>
           <button
-            aria-label="Redo last edit"
+            aria-label={t("delivery.builder.redoLastEdit")}
             className={styles.iconButton}
             disabled={!canRedo}
             onClick={onRedo}
-            title="Redo"
+            title={t("delivery.builder.redo")}
             type="button"
           >
             ↷
@@ -123,11 +127,11 @@ export function BuilderCommandBar({
           onClick={onPreview}
           type="button"
         >
-          Preview
+          {t("delivery.common.preview")}
         </button>
         {assignHref ? (
           <Link className="button-quiet small-button" href={assignHref}>
-            Assign practice
+            {t("delivery.builder.assignPractice")}
           </Link>
         ) : null}
         <button

@@ -56,11 +56,11 @@ export default function LtiLinkPage() {
 
   return (
     <>
-      <header className="shell topbar">
+      <header className="shell topbar" lang="en-CA">
         <Brand />
         <Link href="/">Home</Link>
       </header>
-      <main className="shell auth-wrap" id="main">
+      <main className="shell auth-wrap" id="main" lang="en-CA">
         <section className="join-card auth-card" aria-labelledby="lti-link-title">
           <p className="eyebrow">Institution connection</p>
           <h1 id="lti-link-title">Link this LMS identity</h1>

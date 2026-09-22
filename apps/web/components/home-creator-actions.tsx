@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../lib/api";
+import { useLocale } from "./locale-provider";
 
 export function HomeCreatorActions() {
+  const { t } = useLocale();
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -25,13 +27,13 @@ export function HomeCreatorActions() {
     <div className="hero-actions">
       <Link className="button" href={signedIn === false ? "/signin" : "/dashboard"}>
         {signedIn === true
-          ? "Manage checkpoint sets"
+          ? t("delivery.landing.manage")
           : signedIn === false
-            ? "Create a free checkpoint set"
-            : "Create or manage checkpoint sets"}
+            ? t("delivery.landing.create")
+            : t("delivery.landing.createOrManage")}
       </Link>
       <Link className="button-quiet" href="#how-it-works">
-        See how it works
+        {t("delivery.landing.howItWorks")}
       </Link>
     </div>
   );

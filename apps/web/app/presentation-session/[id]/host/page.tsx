@@ -4,12 +4,14 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Brand } from "../../../../components/brand";
+import { useLocale } from "../../../../components/locale-provider";
 import { PresentationMedia } from "../../../../components/presentation-live/presentation-media";
 import { WorkspaceProvider } from "../../../../components/workspace/workspace-provider";
 import { WorkspaceFeatureGate } from "../../../../components/workspace/workspace-shell";
 import { recordAuthoringEvent } from "../../../../components/workspace/product-events";
 import styles from "../../../../components/presentation-live/presentation-live.module.css";
 import { apiFetch, humanError } from "../../../../lib/api";
+import { formatNumber } from "../../../../lib/i18n/format";
 import {
   shouldApplyLiveSnapshot,
   type LiveSnapshotFence,
@@ -63,23 +65,36 @@ interface HostSnapshot {
   leaderboard: Array<{ id: string; nickname: string; score: number; rank: number }>;
 }
 
-function advanceLabel(snapshot: HostSnapshot) {
-  if (snapshot.phase === "lobby") return "Start Presentation";
-  if (snapshot.phase === "question_open") return "Reveal and close question";
+function advanceMessageKey(
+  snapshot: HostSnapshot,
+):
+  | "live.presentationSession.advance.start"
+  | "live.presentationSession.advance.reveal"
+  | "live.presentationSession.advance.intervention"
+  | "live.presentationSession.advance.continueRecheck"
+  | "live.presentationSession.advance.finish"
+  | "live.presentationSession.advance.next" {
+  if (snapshot.phase === "lobby") return "live.presentationSession.advance.start";
+  if (snapshot.phase === "question_open") return "live.presentationSession.advance.reveal";
   if (
     snapshot.phase === "question_reveal" &&
     snapshot.currentBlock?.kind === "question" &&
     snapshot.currentBlock.question.delivery !== "recheck" &&
     snapshot.currentBlock.question.linkedRecheckQuestionId
   ) {
-    return "Present intervention";
+    return "live.presentationSession.advance.intervention";
   }
-  if (snapshot.phase === "intervention") return "Continue to recheck";
-  if (snapshot.currentBlockIndex >= snapshot.blockCount - 1) return "Finish Presentation";
-  return "Next block";
+  if (snapshot.phase === "intervention") {
+    return "live.presentationSession.advance.continueRecheck";
+  }
+  if (snapshot.currentBlockIndex >= snapshot.blockCount - 1) {
+    return "live.presentationSession.advance.finish";
+  }
+  return "live.presentationSession.advance.next";
 }
 
 function PresentationHostContent() {
+  const { locale, t } = useLocale();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [snapshot, setSnapshot] = useState<HostSnapshot | null>(null);
@@ -168,38 +183,42 @@ function PresentationHostContent() {
       <header className={styles.topbar}>
         <Brand />
         <div className="button-row">
-          <Link href="/sessions">Sessions</Link>
+          <Link href="/sessions">{t("live.common.sessions")}</Link>
           {snapshot?.phase === "finished" ? (
             <Link className="button small-button" href={`/presentation-session/${id}/report`}>
-              View report
+              {t("live.presentationSession.viewReport")}
             </Link>
           ) : null}
         </div>
       </header>
       <div className={styles.stage}>
         {error ? (
-          <p className="error" role="alert">
+          <p className="error" lang="en-CA" role="alert">
             {error}
           </p>
         ) : null}
         {!snapshot ? (
-          <section className={styles.canvas}>Loading live Presentation…</section>
+          <section className={styles.canvas}>{t("live.presentationSession.loading")}</section>
         ) : (
           <div className={styles.hostGrid}>
             <section className={styles.canvas} aria-live="polite">
               <div className={styles.canvasContent}>
                 {snapshot.phase === "lobby" ? (
                   <>
-                    <span className={styles.statusPill}>Waiting room</span>
-                    <h1>{snapshot.title}</h1>
-                    <p>Participants can join now. Start when the room is ready.</p>
+                    <span className={styles.statusPill}>
+                      {t("live.presentationSession.waitingRoom")}
+                    </span>
+                    <h1 lang="">{snapshot.title}</h1>
+                    <p>{t("live.presentationSession.participantsCanJoin")}</p>
                   </>
                 ) : null}
                 {block?.kind === "content" ? (
                   <>
-                    <span className={styles.statusPill}>Content slide</span>
-                    <h1>{block.title}</h1>
-                    <p>{block.body}</p>
+                    <span className={styles.statusPill}>
+                      {t("live.presentationSession.contentSlide")}
+                    </span>
+                    <h1 lang="">{block.title}</h1>
+                    <p lang="">{block.body}</p>
                     <PresentationMedia
                       altText={block.mediaAlt}
                       mediaId={block.mediaId}
@@ -211,19 +230,23 @@ function PresentationHostContent() {
                   <>
                     <span className={styles.statusPill}>
                       {snapshot.phase === "intervention"
-                        ? "Recovery intervention"
+                        ? t("live.presentationSession.recoveryIntervention")
                         : snapshot.phase === "question_reveal"
-                          ? "Response review"
+                          ? t("live.presentationSession.responseReview")
                           : snapshot.acceptingResponses
-                            ? "Question open"
-                            : "Time ended"}
+                            ? t("live.presentationSession.questionOpen")
+                            : t("live.presentationSession.timeEnded")}
                     </span>
                     {remainingSeconds !== null ? (
                       <p className={styles.timer} aria-live="off">
-                        {remainingSeconds}s
+                        {formatNumber(locale, remainingSeconds, {
+                          style: "unit",
+                          unit: "second",
+                          unitDisplay: "narrow",
+                        })}
                       </p>
                     ) : null}
-                    <h1>{block.question.prompt}</h1>
+                    <h1 lang="">{block.question.prompt}</h1>
                     <PresentationMedia
                       altText={block.question.mediaAlt}
                       mediaId={block.question.mediaId}
@@ -241,29 +264,32 @@ function PresentationHostContent() {
                                 : undefined
                             }
                             key={choice.id}
+                            lang=""
                           >
                             {choice.label}
                           </div>
                         ))}
                       </div>
                     ) : block.question.type === "numeric" ? (
-                      <p>Participants enter a numeric response.</p>
+                      <p>{t("live.presentationSession.numericResponse")}</p>
                     ) : (
-                      <p>Participants choose a rating.</p>
+                      <p>{t("live.presentationSession.ratingResponse")}</p>
                     )}
                     {(snapshot.phase === "question_reveal" || snapshot.phase === "intervention") &&
                     block.question.explanation ? (
-                      <p className="notice">{block.question.explanation}</p>
+                      <p className="notice" lang="">
+                        {block.question.explanation}
+                      </p>
                     ) : null}
                   </>
                 ) : null}
                 {snapshot.phase === "finished" ? (
                   <>
-                    <span className={styles.statusPill}>Complete</span>
-                    <h1>Presentation finished</h1>
-                    <p>The report separates assessed questions from content-only slides.</p>
+                    <span className={styles.statusPill}>{t("live.common.complete")}</span>
+                    <h1>{t("live.presentationSession.finished")}</h1>
+                    <p>{t("live.presentationSession.completeDescription")}</p>
                     <Link className="button" href={`/presentation-session/${id}/report`}>
-                      Open session report
+                      {t("live.presentationSession.openReport")}
                     </Link>
                   </>
                 ) : null}
@@ -271,27 +297,32 @@ function PresentationHostContent() {
             </section>
             <aside className={styles.sideCard}>
               <div>
-                <span className={styles.statusPill}>Join code</span>
+                <span className={styles.statusPill}>{t("live.presentationSession.joinCode")}</span>
                 <p className={styles.joinCode}>{snapshot.code}</p>
-                <Link href={`/presentation/join?code=${snapshot.code}`}>Open participant join</Link>
+                <Link href={`/presentation/join?code=${snapshot.code}`}>
+                  {t("live.presentationSession.openJoin")}
+                </Link>
               </div>
               <div className={styles.metricRow}>
                 <div className={styles.metric}>
-                  <strong>{snapshot.participantCount}</strong>
-                  <span>Participants</span>
+                  <strong>{formatNumber(locale, snapshot.participantCount)}</strong>
+                  <span>{t("live.common.participants")}</span>
                 </div>
                 <div className={styles.metric}>
-                  <strong>{snapshot.responseCount}</strong>
-                  <span>Responses now</span>
+                  <strong>{formatNumber(locale, snapshot.responseCount)}</strong>
+                  <span>{t("live.presentationSession.responsesNow")}</span>
                 </div>
               </div>
               <p>
-                Block {Math.max(snapshot.currentBlockIndex + 1, 0)} of {snapshot.blockCount}
+                {t("live.presentationSession.blockProgress", {
+                  current: formatNumber(locale, Math.max(snapshot.currentBlockIndex + 1, 0)),
+                  total: formatNumber(locale, snapshot.blockCount),
+                })}
               </p>
               {block?.kind === "content" && block.speakerNotes ? (
                 <div className="notice">
-                  <strong>Speaker notes</strong>
-                  <p>{block.speakerNotes}</p>
+                  <strong>{t("live.presentationSession.speakerNotes")}</strong>
+                  <p lang="">{block.speakerNotes}</p>
                 </div>
               ) : null}
               {snapshot.phase !== "finished" ? (
@@ -301,7 +332,7 @@ function PresentationHostContent() {
                   onClick={() => void advance()}
                   type="button"
                 >
-                  {busy ? "Updating…" : advanceLabel(snapshot)}
+                  {busy ? t("live.common.updating") : t(advanceMessageKey(snapshot))}
                 </button>
               ) : null}
               <button
@@ -310,16 +341,21 @@ function PresentationHostContent() {
                 onClick={() => void navigator.clipboard?.writeText(joinUrl)}
                 type="button"
               >
-                Copy join link
+                {t("live.presentationSession.copyJoinLink")}
               </button>
               {snapshot.participants.length ? (
                 <details>
-                  <summary>Leaderboard · {snapshot.participants.length} joined</summary>
+                  <summary>
+                    {t("live.common.leaderboard")} ·{" "}
+                    {t("live.common.joinedCount", {
+                      count: formatNumber(locale, snapshot.participants.length),
+                    })}
+                  </summary>
                   <ol className={styles.leaderboard}>
                     {snapshot.leaderboard.map((participant) => (
                       <li key={participant.id}>
-                        <span>{participant.nickname}</span>
-                        <strong>{participant.score.toLocaleString()}</strong>
+                        <span lang="">{participant.nickname}</span>
+                        <strong>{formatNumber(locale, participant.score)}</strong>
                       </li>
                     ))}
                   </ol>

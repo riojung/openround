@@ -71,11 +71,11 @@ export default function LtiSelectPage() {
 
   return (
     <>
-      <header className="shell topbar">
+      <header className="shell topbar" lang="en-CA">
         <Brand />
         <Link href="/dashboard">Dashboard</Link>
       </header>
-      <main className="shell page-main" id="main">
+      <main className="shell page-main" id="main" lang="en-CA">
         <div className="page-heading">
           <div>
             <p className="eyebrow">LTI deep linking</p>
@@ -102,7 +102,7 @@ export default function LtiSelectPage() {
                 value={selectedQuizId}
               >
                 {quizzes.map((quiz) => (
-                  <option key={quiz.id} value={quiz.id}>
+                  <option key={quiz.id} lang="" value={quiz.id}>
                     {quiz.title}
                   </option>
                 ))}

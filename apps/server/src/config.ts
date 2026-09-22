@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { z } from "zod";
+import { LOCALE_COOKIE_NAME } from "@openround/contracts";
 
 const booleanString = z
   .enum(["true", "false"])
@@ -182,6 +183,13 @@ export const ConfigSchema = z
       .default("info"),
   })
   .superRefine((config, ctx) => {
+    if (config.COOKIE_NAME === LOCALE_COOKIE_NAME) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["COOKIE_NAME"],
+        message: `Must differ from the ${LOCALE_COOKIE_NAME} preference cookie`,
+      });
+    }
     if (config.TEST_INITIAL_WORKSPACE_ID && config.NODE_ENV !== "test") {
       ctx.addIssue({
         code: "custom",

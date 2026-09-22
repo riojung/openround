@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { QuestionDraft, QuizDraft } from "@openround/contracts";
+import { withEnglishLocale } from "../../test-utils/english-locale";
 import { DeliveryScoring } from "./delivery-scoring";
 import { DiagnosticDetails } from "./diagnostic-details";
 import { MediaEditor } from "./media-editor";
@@ -9,6 +11,14 @@ import { QuestionNavigator } from "./question-navigator";
 import { ResponseEditor } from "./response-editor";
 
 const noopUpdate = () => undefined;
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/quiz/test-round",
+}));
+
+function renderLocalized(node: ReactNode) {
+  return renderToStaticMarkup(withEnglishLocale(node));
+}
 
 const choiceQuestion: QuestionDraft = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -56,13 +66,14 @@ const draft: QuizDraft = {
 
 describe("editor views", () => {
   it("keeps stable-id navigation and the beta Insert menu labels", () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderLocalized(
       <QuestionNavigator
         canReuseQuestions
         draft={draft}
         insertType="numeric"
         onAddQuestion={() => undefined}
         onInsertTypeChange={() => undefined}
+        onMoveQuestion={() => undefined}
         onOpenQuestionReuse={() => undefined}
         onSelectQuestion={() => undefined}
         questionReuseOpen={false}
@@ -80,11 +91,13 @@ describe("editor views", () => {
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).toContain('aria-current="true"');
     expect(markup).toContain("Which model fits the new evidence?");
+    expect(markup).toContain('<span lang="">Which model fits the new evidence?</span>');
     expect(markup).toContain("Single select · recheck");
+    expect(markup).toMatch(/aria-label="Question 1 actions"[^>]*lang="en-CA"/);
   });
 
   it("preserves the feature-off checkpoint navigator", () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderLocalized(
       <QuestionNavigator
         draft={draft}
         insertType="single_select"
@@ -106,7 +119,7 @@ describe("editor views", () => {
   });
 
   it("renders diagnostic details as a beta disclosure without exposing IDs as labels", () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderLocalized(
       <DiagnosticDetails
         onUpdateQuestion={noopUpdate}
         question={choiceQuestion}
@@ -118,12 +131,13 @@ describe("editor views", () => {
     expect(markup).toContain('id="question-diagnostic-details"');
     expect(markup).toContain("Diagnostic details and recheck link");
     expect(markup).toContain("Paired recheck question");
+    expect(markup).toMatch(/<option lang="" value="22222222-2222-4222-8222-222222222222"[^>]*>/);
     expect(markup).toContain("Which model fits the new evidence?");
     expect(markup).not.toContain(`>${recheckQuestion.id}<`);
   });
 
   it("keeps legacy diagnostic controls expanded when the beta is off", () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderLocalized(
       <DiagnosticDetails
         onUpdateQuestion={noopUpdate}
         question={choiceQuestion}
@@ -137,7 +151,7 @@ describe("editor views", () => {
   });
 
   it("renders each response editor with its existing labels", () => {
-    const choiceMarkup = renderToStaticMarkup(
+    const choiceMarkup = renderLocalized(
       <ResponseEditor
         onStructuralChange={() => undefined}
         onUpdateChoiceQuestion={noopUpdate}
@@ -146,7 +160,7 @@ describe("editor views", () => {
         uxBeta
       />,
     );
-    const numericMarkup = renderToStaticMarkup(
+    const numericMarkup = renderLocalized(
       <ResponseEditor
         onStructuralChange={() => undefined}
         onUpdateChoiceQuestion={noopUpdate}
@@ -161,7 +175,7 @@ describe("editor views", () => {
         uxBeta
       />,
     );
-    const ratingMarkup = renderToStaticMarkup(
+    const ratingMarkup = renderLocalized(
       <ResponseEditor
         onStructuralChange={() => undefined}
         onUpdateChoiceQuestion={noopUpdate}
@@ -180,6 +194,11 @@ describe("editor views", () => {
 
     expect(choiceMarkup).toContain("Choices and correct answer");
     expect(choiceMarkup).toContain('aria-label="Mark choice 1 correct"');
+    expect(choiceMarkup).toContain('lang="en-CA" type="radio"');
+    expect(choiceMarkup).toContain(
+      'aria-labelledby="answer-label-33333333-3333-4333-8333-333333333333"',
+    );
+    expect(choiceMarkup).toContain('lang="" maxLength="180"');
     expect(choiceMarkup).toContain("Diagnostic rationale and feedback");
     expect(numericMarkup).toContain("Correct value");
     expect(numericMarkup).toContain("Absolute tolerance");
@@ -189,7 +208,7 @@ describe("editor views", () => {
   });
 
   it("keeps media, delivery, scoring, and participant preview semantics", () => {
-    const mediaMarkup = renderToStaticMarkup(
+    const mediaMarkup = renderLocalized(
       <MediaEditor
         mediaPreviewUrl="https://example.test/scanned.png"
         mediaState="idle"
@@ -201,19 +220,22 @@ describe("editor views", () => {
         uxBeta
       />,
     );
-    const deliveryMarkup = renderToStaticMarkup(
+    const deliveryMarkup = renderLocalized(
       <DeliveryScoring onUpdateQuestion={noopUpdate} question={choiceQuestion} />,
     );
-    const previewMarkup = renderToStaticMarkup(<ParticipantPreview question={choiceQuestion} />);
+    const previewMarkup = renderLocalized(<ParticipantPreview question={choiceQuestion} />);
 
     expect(mediaMarkup).toContain('id="media-alt"');
     expect(mediaMarkup).toContain('id="media-upload"');
     expect(mediaMarkup).toContain('alt="Two models side by side"');
+    expect(mediaMarkup).toMatch(/<img[^>]*lang=""[^>]*width="640"/);
     expect(mediaMarkup).toContain("Remove image");
     expect(deliveryMarkup).toContain("Time limit");
     expect(deliveryMarkup).toContain("Base points");
     expect(deliveryMarkup).toContain('id="explanation"');
     expect(previewMarkup).toContain('aria-label="Participant preview"');
+    expect(previewMarkup).toContain('<span lang="">Which model fits?</span>');
+    expect(previewMarkup).toContain('<span lang="">Model A</span>');
     expect(previewMarkup).toContain("Confidence will be requested before Submit.");
     expect(previewMarkup).toContain("Submit answer");
   });

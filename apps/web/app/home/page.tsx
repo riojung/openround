@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, humanError } from "../../lib/api";
+import { useLocale } from "../../components/locale-provider";
 import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
 import { HomeFirstRunActions } from "./home-first-run-actions";
 import { professionalBuilderGuidesAvailable } from "../../lib/help-guide-availability";
+import { pluralCategory } from "../../lib/i18n/format";
 import styles from "./home.module.css";
 
 type ArtifactType = "round" | "presentation";
@@ -81,26 +83,48 @@ interface HomeSummary {
   };
 }
 
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
+type Translator = ReturnType<typeof useLocale>["t"];
 
-function formatDate(value: string) {
-  return dateFormatter.format(new Date(value));
-}
-
-function typeLabel(type: ArtifactType) {
-  return type === "round" ? "Round" : "Presentation";
+function localizedProgress(label: string, t: Translator) {
+  if (label === "Lobby") return t("pages.home.sessions.lobby");
+  if (label === "Complete") return t("pages.common.completed");
+  const question = /^Question (\d+) of (\d+)$/.exec(label);
+  if (question) {
+    return t("pages.home.sessions.questionProgress", {
+      current: question[1] ?? "",
+      total: question[2] ?? "",
+    });
+  }
+  const block = /^Block (\d+) of (\d+)$/.exec(label);
+  if (block) {
+    return t("pages.home.sessions.blockProgress", {
+      current: block[1] ?? "",
+      total: block[2] ?? "",
+    });
+  }
+  return label;
 }
 
 function HomeWorkspace() {
+  const { locale, t } = useLocale();
   const { canEdit, creator, productFeatures } = useWorkspace();
   const [summary, setSummary] = useState<HomeSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const dateFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+    [locale],
+  );
+  const formatDate = useCallback(
+    (value: string) => dateFormatter.format(new Date(value)),
+    [dateFormatter],
+  );
 
   const loadSummary = useCallback(async () => {
     if (!creator) return;
@@ -122,52 +146,53 @@ function HomeWorkspace() {
   const activeSessions = summary?.sessions.filter((session) => session.status === "active") ?? [];
   const firstName = creator?.email.split("@", 1)[0]?.replace(/[._-]+/g, " ") || "there";
   const createHref = productFeatures?.builderV2 ? "/create" : "/dashboard";
-  const artifactLabel = productFeatures?.presentations ? "Round or Presentation" : "Round";
+  const artifactLabel = productFeatures?.presentations
+    ? t("home.createRoundOrPresentation")
+    : t("home.createRound");
 
   return (
     <WorkspaceShell
       actions={
         canEdit ? (
-          <Link className="button" href={createHref}>
-            Create
+          <Link className="button" href={createHref} lang={locale}>
+            {t("common.create")}
           </Link>
         ) : null
       }
-      description="Your current work, delivery, and evidence in one workspace view."
-      eyebrow="Overview"
+      description={t("home.description")}
+      eyebrow={t("home.eyebrow")}
       requireBeta={false}
-      title="Home"
+      title={t("home.title")}
+      translationLevel="full"
     >
-      <section className={styles.hero}>
+      <section className={styles.hero} lang={locale}>
         <div>
-          <p className={styles.eyebrow}>Welcome back, {firstName}</p>
-          <h2>Make the next learning decision visible.</h2>
-          <p>
-            Continue authoring, return to a live room, or review what changed after an intervention.
-          </p>
+          <p className={styles.eyebrow}>{t("home.welcome", { name: firstName })}</p>
+          <h2>{t("home.headline")}</h2>
+          <p>{t("home.introduction")}</p>
           <div className={styles.heroActions}>
             {canEdit ? (
               <Link className={styles.primaryAction} href={createHref}>
-                Create a {artifactLabel}
+                {artifactLabel}
               </Link>
             ) : null}
             <Link className={styles.secondaryAction} href="/library">
-              Open Library
+              {t("home.openLibrary")}
             </Link>
           </div>
         </div>
-        <div aria-label="Workspace snapshot" className={styles.snapshot}>
+        <div aria-label={t("home.snapshotLabel")} className={styles.snapshot}>
           <div>
             <strong>{summary?.totals.artifacts ?? "—"}</strong>
-            <span>Artifacts</span>
+            <span>{t("home.snapshot.artifacts")}</span>
           </div>
           <div>
             <strong>{summary?.totals.activeSessions ?? "—"}</strong>
-            <span>Live now</span>
+            <span>{t("home.snapshot.live")}</span>
           </div>
           <div>
             <strong>{summary?.totals.activeAssignments ?? "—"}</strong>
-            <span>Assignments</span>
+            <span>{t("home.snapshot.assignments")}</span>
           </div>
         </div>
       </section>
@@ -175,17 +200,17 @@ function HomeWorkspace() {
       {error ? (
         <section className={styles.errorState} role="alert">
           <div>
-            <strong>Home could not be refreshed</strong>
-            <p>{error}</p>
+            <strong>{t("pages.home.refreshError")}</strong>
+            <p lang="en-CA">{error}</p>
           </div>
           <button className="button-quiet" onClick={() => void loadSummary()} type="button">
-            Try again
+            {t("pages.common.tryAgain")}
           </button>
         </section>
       ) : null}
 
       {loading && !summary ? (
-        <section aria-label="Loading workspace summary" className={styles.loadingGrid}>
+        <section aria-label={t("pages.home.loading")} className={styles.loadingGrid}>
           <span />
           <span />
           <span />
@@ -196,35 +221,35 @@ function HomeWorkspace() {
         <section className={styles.onboarding}>
           <div className={styles.sectionHeading}>
             <div>
-              <p className={styles.eyebrow}>Get oriented</p>
-              <h2>From a trusted source to useful evidence</h2>
-              <p>Three steps establish a reusable workflow without requiring learner accounts.</p>
+              <p className={styles.eyebrow}>{t("pages.home.onboarding.eyebrow")}</p>
+              <h2>{t("pages.home.onboarding.title")}</h2>
+              <p>{t("pages.home.onboarding.description")}</p>
             </div>
           </div>
           <ol className={styles.onboardingSteps}>
             <li>
               <span>1</span>
               <div>
-                <strong>Create from a source or template</strong>
+                <strong>{t("pages.home.onboarding.createTitle")}</strong>
                 <p>
                   {productFeatures?.presentations
-                    ? "Start a Round for assessment or a Presentation for mixed instruction."
-                    : "Start a Round for assessment, evidence, and linked recovery."}
+                    ? t("pages.home.onboarding.createWithPresentations")
+                    : t("pages.home.onboarding.createRound")}
                 </p>
               </div>
             </li>
             <li>
               <span>2</span>
               <div>
-                <strong>Publish and facilitate</strong>
-                <p>Participants join without workspace accounts from any connected device.</p>
+                <strong>{t("pages.home.onboarding.publishTitle")}</strong>
+                <p>{t("pages.home.onboarding.publishDescription")}</p>
               </div>
             </li>
             <li>
               <span>3</span>
               <div>
-                <strong>Review and recover</strong>
-                <p>Use response evidence and linked rechecks to decide what happens next.</p>
+                <strong>{t("pages.home.onboarding.reviewTitle")}</strong>
+                <p>{t("pages.home.onboarding.reviewDescription")}</p>
               </div>
             </li>
           </ol>
@@ -242,11 +267,11 @@ function HomeWorkspace() {
             <section className={styles.section}>
               <div className={styles.sectionHeading}>
                 <div>
-                  <p className={styles.eyebrow}>Authoring</p>
-                  <h2>Recent work</h2>
-                  <p>Continue a draft or move a published artifact into delivery.</p>
+                  <p className={styles.eyebrow}>{t("pages.home.authoring.eyebrow")}</p>
+                  <h2>{t("pages.home.authoring.title")}</h2>
+                  <p>{t("pages.home.authoring.description")}</p>
                 </div>
-                <Link href="/library">View Library</Link>
+                <Link href="/library">{t("pages.common.viewLibrary")}</Link>
               </div>
               {summary.recentArtifacts.length ? (
                 <div className={styles.artifactGrid}>
@@ -256,26 +281,54 @@ function HomeWorkspace() {
                       key={`${artifact.artifactType}:${artifact.id}`}
                     >
                       <div className={styles.cardTopline}>
-                        <span className={styles.typePill} data-type={artifact.artifactType}>
-                          {typeLabel(artifact.artifactType)}
+                        <span
+                          className={styles.typePill}
+                          data-type={artifact.artifactType}
+                          lang={locale}
+                        >
+                          {t(
+                            artifact.artifactType === "round"
+                              ? "common.round"
+                              : "common.presentation",
+                          )}
                         </span>
                         <span className={styles.statusPill} data-status={artifact.status}>
-                          {artifact.status}
+                          {t(`pages.common.status.${artifact.status}`)}
                         </span>
                       </div>
-                      <h3>
+                      <h3 lang="">
                         <Link href={artifact.editHref}>{artifact.title}</Link>
                       </h3>
                       <p className={styles.description}>
-                        {artifact.description || "No description added yet."}
+                        {artifact.description ? (
+                          <span lang="">{artifact.description}</span>
+                        ) : (
+                          t("pages.common.noDescription")
+                        )}
                       </p>
                       <p className={styles.metadata}>
-                        {artifact.itemCount}{" "}
-                        {artifact.artifactType === "round" ? "questions" : "blocks"} · Updated{" "}
-                        {formatDate(artifact.updatedAt)}
+                        {t(
+                          artifact.artifactType === "round"
+                            ? pluralCategory(locale, artifact.itemCount) === "one"
+                              ? "pages.home.authoring.questionCount.one"
+                              : "pages.home.authoring.questionCount.other"
+                            : "pages.home.authoring.blockCount",
+                          { count: artifact.itemCount },
+                        )}{" "}
+                        ·{" "}
+                        <time dateTime={artifact.updatedAt} lang={locale}>
+                          {t("pages.common.updated", { date: formatDate(artifact.updatedAt) })}
+                        </time>
                       </p>
                       <Link className={styles.cardAction} href={artifact.actionHref}>
-                        {artifact.actionLabel} →
+                        {t(
+                          artifact.status === "published"
+                            ? artifact.artifactType === "round"
+                              ? "pages.home.authoring.hostRound"
+                              : "pages.home.authoring.hostPresentation"
+                            : "pages.home.authoring.continueEditing",
+                        )}{" "}
+                        →
                       </Link>
                     </article>
                   ))}
@@ -283,10 +336,13 @@ function HomeWorkspace() {
               ) : (
                 <div className={styles.compactEmpty}>
                   <p>
-                    Your recently edited {productFeatures?.presentations ? "artifacts" : "Rounds"}
-                    will appear here.
+                    {productFeatures?.presentations
+                      ? t("pages.home.authoring.emptyArtifacts")
+                      : t("pages.home.authoring.emptyRounds")}
                   </p>
-                  {canEdit ? <Link href={createHref}>Choose a starting method</Link> : null}
+                  {canEdit ? (
+                    <Link href={createHref}>{t("pages.home.authoring.chooseMethod")}</Link>
+                  ) : null}
                 </div>
               )}
             </section>
@@ -294,11 +350,11 @@ function HomeWorkspace() {
             <section className={styles.section}>
               <div className={styles.sectionHeading}>
                 <div>
-                  <p className={styles.eyebrow}>Evidence</p>
-                  <h2>Recent result highlights</h2>
-                  <p>Fast signals for deciding where a closer review is useful.</p>
+                  <p className={styles.eyebrow}>{t("pages.home.results.eyebrow")}</p>
+                  <h2>{t("pages.home.results.title")}</h2>
+                  <p>{t("pages.home.results.description")}</p>
                 </div>
-                <Link href="/results">View Results</Link>
+                <Link href="/results">{t("pages.common.viewResults")}</Link>
               </div>
               {summary.resultHighlights.length ? (
                 <div className={styles.resultList}>
@@ -309,12 +365,26 @@ function HomeWorkspace() {
                       key={`${result.artifactType}:${result.id}`}
                     >
                       <div>
-                        <span className={styles.typePill} data-type={result.artifactType}>
-                          {typeLabel(result.artifactType)}
+                        <span
+                          className={styles.typePill}
+                          data-type={result.artifactType}
+                          lang={locale}
+                        >
+                          {t(
+                            result.artifactType === "round"
+                              ? "common.round"
+                              : "common.presentation",
+                          )}
                         </span>
-                        <h3>{result.title}</h3>
+                        <h3 lang="">{result.title}</h3>
                         <p>
-                          {formatDate(result.createdAt)} · {result.participantCount} participants
+                          <time dateTime={result.createdAt} lang={locale}>
+                            {formatDate(result.createdAt)}
+                          </time>{" "}
+                          ·{" "}
+                          {t("pages.common.participantCount", {
+                            count: result.participantCount,
+                          })}
                         </p>
                       </div>
                       <div className={styles.resultMetrics}>
@@ -322,13 +392,17 @@ function HomeWorkspace() {
                           <strong>
                             {result.accuracyPercent === null ? "—" : `${result.accuracyPercent}%`}
                           </strong>
-                          {result.artifactType === "round" ? "Initial accuracy" : "Accuracy"}
+                          {t(
+                            result.artifactType === "round"
+                              ? "pages.common.initialAccuracy"
+                              : "pages.common.accuracy",
+                          )}
                         </span>
                         <span>
                           <strong>
                             {result.recoveryPercent === null ? "—" : `${result.recoveryPercent}%`}
                           </strong>
-                          Recovery
+                          {t("pages.common.recovery")}
                         </span>
                       </div>
                     </Link>
@@ -336,21 +410,21 @@ function HomeWorkspace() {
                 </div>
               ) : (
                 <div className={styles.compactEmpty}>
-                  <p>Complete a live session to see response and recovery evidence here.</p>
-                  <Link href="/sessions">Open Sessions</Link>
+                  <p>{t("pages.home.results.empty")}</p>
+                  <Link href="/sessions">{t("pages.common.openSessions")}</Link>
                 </div>
               )}
             </section>
           </div>
 
-          <aside className={styles.sideColumn} aria-label="Current activity">
+          <aside className={styles.sideColumn} aria-label={t("pages.home.currentActivity")}>
             <section className={styles.sidePanel}>
               <div className={styles.sideHeading}>
                 <div>
-                  <p className={styles.eyebrow}>Delivery</p>
-                  <h2>Sessions</h2>
+                  <p className={styles.eyebrow}>{t("pages.home.sessions.eyebrow")}</p>
+                  <h2>{t("pages.common.sessions")}</h2>
                 </div>
-                <Link href="/sessions">All</Link>
+                <Link href="/sessions">{t("pages.common.all")}</Link>
               </div>
               {summary.sessions.length ? (
                 <div className={styles.activityList}>
@@ -366,27 +440,41 @@ function HomeWorkspace() {
                           data-active={session.status === "active"}
                         />
                         <span>
-                          {session.status === "active" ? "Live now" : formatDate(session.createdAt)}
+                          {session.status === "active" ? (
+                            t("pages.common.liveNow")
+                          ) : (
+                            <time dateTime={session.createdAt} lang={locale}>
+                              {formatDate(session.createdAt)}
+                            </time>
+                          )}
                         </span>
-                        <span>{typeLabel(session.artifactType)}</span>
+                        <span lang={locale}>
+                          {t(
+                            session.artifactType === "round"
+                              ? "common.round"
+                              : "common.presentation",
+                          )}
+                        </span>
                       </div>
-                      <strong>{session.title}</strong>
+                      <strong lang="">{session.title}</strong>
                       <small>
-                        {session.participantCount} participants · {session.progressLabel}
+                        {t("pages.common.participantCount", {
+                          count: session.participantCount,
+                        })}{" "}
+                        · {localizedProgress(session.progressLabel, t)}
                       </small>
                     </Link>
                   ))}
                 </div>
               ) : (
                 <div className={styles.compactEmpty}>
-                  <p>No hosted sessions yet.</p>
-                  <Link href="/library">Choose an artifact</Link>
+                  <p>{t("pages.home.sessions.empty")}</p>
+                  <Link href="/library">{t("pages.home.sessions.chooseArtifact")}</Link>
                 </div>
               )}
               {activeSessions.length ? (
                 <p className={styles.notice}>
-                  {activeSessions.length} session{activeSessions.length === 1 ? " is" : "s are"}{" "}
-                  active.
+                  {t("pages.home.sessions.activeCount", { count: activeSessions.length })}
                 </p>
               ) : null}
             </section>
@@ -394,10 +482,10 @@ function HomeWorkspace() {
             <section className={styles.sidePanel}>
               <div className={styles.sideHeading}>
                 <div>
-                  <p className={styles.eyebrow}>Self-paced</p>
-                  <h2>Assignments</h2>
+                  <p className={styles.eyebrow}>{t("pages.home.assignments.eyebrow")}</p>
+                  <h2>{t("pages.common.assignments")}</h2>
                 </div>
-                <Link href="/assignments">All</Link>
+                <Link href="/assignments">{t("pages.common.all")}</Link>
               </div>
               {summary.assignments.length ? (
                 <div className={styles.activityList}>
@@ -409,22 +497,26 @@ function HomeWorkspace() {
                     >
                       <div className={styles.activityTopline}>
                         <span className={styles.statusPill} data-status={assignment.status}>
-                          {assignment.status}
+                          {t(`pages.common.status.${assignment.status}`)}
                         </span>
-                        <span>Closes {formatDate(assignment.closesAt)}</span>
+                        <time dateTime={assignment.closesAt} lang={locale}>
+                          {t("pages.common.closes", { date: formatDate(assignment.closesAt) })}
+                        </time>
                       </div>
-                      <strong>{assignment.title}</strong>
+                      <strong lang="">{assignment.title}</strong>
                       <small>
-                        {assignment.completedAttemptCount} of {assignment.attemptCount} attempts
-                        complete
+                        {t("pages.home.assignments.attemptsComplete", {
+                          completed: assignment.completedAttemptCount,
+                          total: assignment.attemptCount,
+                        })}
                       </small>
                     </Link>
                   ))}
                 </div>
               ) : (
                 <div className={styles.compactEmpty}>
-                  <p>No active or upcoming Round assignments.</p>
-                  <Link href="/library">Assign a published Round</Link>
+                  <p>{t("pages.home.assignments.empty")}</p>
+                  <Link href="/library">{t("pages.home.assignments.assignRound")}</Link>
                 </div>
               )}
             </section>
@@ -433,32 +525,36 @@ function HomeWorkspace() {
               <section className={styles.sidePanel}>
                 <div className={styles.sideHeading}>
                   <div>
-                    <p className={styles.eyebrow}>Groups</p>
-                    <h2>Upcoming</h2>
+                    <p className={styles.eyebrow}>{t("pages.common.groups")}</p>
+                    <h2>{t("pages.common.upcoming")}</h2>
                   </div>
-                  <Link href="/groups">All</Link>
+                  <Link href="/groups">{t("pages.common.all")}</Link>
                 </div>
                 {summary.groupSchedule.length ? (
                   <div className={styles.activityList}>
                     {summary.groupSchedule.map((item) => (
                       <Link className={styles.scheduleItem} href={item.href} key={item.id}>
-                        <time dateTime={item.scheduledFor}>
+                        <time dateTime={item.scheduledFor} lang={locale}>
                           <strong>
-                            {new Date(item.scheduledFor).toLocaleDateString(undefined, {
+                            {new Date(item.scheduledFor).toLocaleDateString(locale, {
                               day: "numeric",
                             })}
                           </strong>
                           <span>
-                            {new Date(item.scheduledFor).toLocaleDateString(undefined, {
+                            {new Date(item.scheduledFor).toLocaleDateString(locale, {
                               month: "short",
                             })}
                           </span>
                         </time>
                         <div>
-                          <strong>{item.artifactTitle}</strong>
+                          <strong lang="">{item.artifactTitle}</strong>
                           <small>
-                            {item.groupName} ·{" "}
-                            {item.kind === "live_session" ? "Live session" : "Round assignment"}
+                            <span lang="">{item.groupName}</span> ·{" "}
+                            {t(
+                              item.kind === "live_session"
+                                ? "pages.common.liveSession"
+                                : "pages.common.roundAssignment",
+                            )}
                           </small>
                         </div>
                       </Link>
@@ -466,8 +562,8 @@ function HomeWorkspace() {
                   </div>
                 ) : (
                   <div className={styles.compactEmpty}>
-                    <p>Shared group plans will appear here.</p>
-                    <Link href="/groups">Open Groups</Link>
+                    <p>{t("pages.home.groups.empty")}</p>
+                    <Link href="/groups">{t("pages.common.openGroups")}</Link>
                   </div>
                 )}
               </section>

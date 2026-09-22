@@ -119,7 +119,7 @@ test("creator and participant complete a live round", async ({ browser }, testIn
 
   await participant.getByRole("button", { name: "Show an example" }).click();
   await expect(creator.locator(".participant-pulse-table tbody tr").first()).toContainText(
-    "need example",
+    "Show an example",
   );
   await expect(participant.getByText(/room sees totals only/i)).toBeVisible();
 
@@ -284,7 +284,7 @@ test("incomplete questions autosave with actionable guidance", async ({ page }, 
     .getByRole("textbox", { name: "Checkpoint prompt", exact: true })
     .fill("Which number comes after 41?");
   for (const [index, answer] of ["40", "41", "42", "43"].entries()) {
-    await page.getByRole("textbox", { name: `Choice ${index + 1}`, exact: true }).fill(answer);
+    await page.getByRole("textbox", { name: `Answer ${index + 1}`, exact: true }).fill(answer);
   }
   await expect(guidance).toHaveCount(0);
   await expect(page.getByRole("status")).toContainText("Saved", { timeout: 10_000 });

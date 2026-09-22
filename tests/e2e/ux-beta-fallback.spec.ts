@@ -30,9 +30,9 @@ test("feature-off creator remains on the legacy dashboard", async ({ page }, tes
   await page.goto(`/quiz/${legacyQuizId}/rehearse`);
   await expect(page.getByTestId("rehearsal-unavailable")).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "This practice lab isn’t available for your workspace." }),
+    page.getByRole("heading", { name: "Recovery Rehearsal is not available" }),
   ).toBeVisible();
-  await expect(page.getByText(/No synthetic room was started/)).toBeVisible();
+  await expect(page.getByText(/No session or learner record was created/)).toBeVisible();
 
   const starterResponse = await page.request.post(`${apiUrl}/v1/starters/misconception-check/use`, {
     data: {},

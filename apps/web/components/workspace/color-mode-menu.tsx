@@ -17,12 +17,14 @@ import {
   type ColorModePreference,
   type ResolvedColorMode,
 } from "../../lib/color-mode";
+import type { MessageKey } from "../../lib/i18n/catalog";
+import { useLocale } from "../locale-provider";
 import styles from "./color-mode-menu.module.css";
 
-const options: Array<{ value: ColorModePreference; label: string }> = [
-  { value: "system", label: "System" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
+const options: Array<{ value: ColorModePreference; label: MessageKey }> = [
+  { value: "system", label: "appearance.system" },
+  { value: "light", label: "appearance.light" },
+  { value: "dark", label: "appearance.dark" },
 ];
 
 function readPreference(): ColorModePreference {
@@ -66,11 +68,15 @@ function ModeIcon({ mode }: { mode: ColorModePreference | ResolvedColorMode }) {
 }
 
 export function ColorModeMenu() {
+  const { t } = useLocale();
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const triggerRef = useRef<HTMLElement>(null);
   const [preference, setPreference] = useState<ColorModePreference>("system");
   const [resolved, setResolved] = useState<ResolvedColorMode>("light");
+  const preferenceLabel = t(
+    options.find((option) => option.value === preference)?.label ?? "appearance.system",
+  );
 
   useLayoutEffect(() => {
     const current = readPreference();
@@ -156,17 +162,17 @@ export function ColorModeMenu() {
   return (
     <details className={styles.menu} onKeyDown={closeOnEscape} ref={detailsRef}>
       <summary
-        aria-label={`Appearance: ${preference}`}
+        aria-label={t("appearance.trigger", { mode: preferenceLabel })}
         className={styles.trigger}
         ref={triggerRef}
         role="button"
-        title={`Appearance: ${preference}`}
+        title={t("appearance.trigger", { mode: preferenceLabel })}
       >
         <ModeIcon mode={resolved} />
       </summary>
       <div className={styles.panel}>
-        <p className={styles.label}>Appearance</p>
-        <div aria-label="Interface appearance" className={styles.options} role="radiogroup">
+        <p className={styles.label}>{t("appearance.label")}</p>
+        <div aria-label={t("appearance.groupLabel")} className={styles.options} role="radiogroup">
           {options.map((option, index) => (
             <button
               aria-checked={preference === option.value}
@@ -182,7 +188,7 @@ export function ColorModeMenu() {
               type="button"
             >
               <ModeIcon mode={option.value} />
-              <span>{option.label}</span>
+              <span>{t(option.label)}</span>
               <span aria-hidden="true" className={styles.check}>
                 {preference === option.value ? "✓" : ""}
               </span>

@@ -2,6 +2,7 @@ import type { QuestionDraft } from "@openround/contracts";
 import { BetaDisclosure } from "./beta-disclosure";
 import { responseTypeLabel } from "./question-labels";
 import type { QuestionUpdater } from "./types";
+import { useLocale } from "../locale-provider";
 
 export function DiagnosticDetails({
   question,
@@ -14,16 +15,17 @@ export function DiagnosticDetails({
   uxBeta: boolean;
   onUpdateQuestion: QuestionUpdater;
 }) {
+  const { t } = useLocale();
   return (
     <BetaDisclosure
       className="editor-disclosure"
       enabled={uxBeta}
       id="question-diagnostic-details"
-      summary="Diagnostic details and recheck link"
+      summary={t("delivery.builder.diagnosticDetailsAndRecheck")}
     >
       <div className="toolbar">
         <label className="field" style={{ flex: "1 1 180px" }}>
-          <span>Purpose</span>
+          <span lang="en-CA">Purpose</span>
           <select
             className="select"
             onChange={(event) =>
@@ -37,13 +39,19 @@ export function DiagnosticDetails({
               (question.type === "poll" || question.type === "rating" ? "opinion" : "diagnostic")
             }
           >
-            <option value="diagnostic">Diagnostic</option>
-            <option value="practice">Practice</option>
-            <option value="opinion">Opinion</option>
+            <option lang="en-CA" value="diagnostic">
+              Diagnostic
+            </option>
+            <option lang="en-CA" value="practice">
+              Practice
+            </option>
+            <option lang="en-CA" value="opinion">
+              Opinion
+            </option>
           </select>
         </label>
         <label className="field" style={{ flex: "1 1 180px" }}>
-          <span>Confidence prompt</span>
+          <span>{t("delivery.builder.confidence")}</span>
           <select
             className="select"
             disabled={question.type === "poll" || question.type === "rating"}
@@ -55,15 +63,22 @@ export function DiagnosticDetails({
             }
             value={question.confidence ?? "off"}
           >
-            <option value="off">Off</option>
-            <option value="optional">Optional</option>
-            <option value="required">Required</option>
+            <option lang="en-CA" value="off">
+              Off
+            </option>
+            <option lang="en-CA" value="optional">
+              Optional
+            </option>
+            <option lang="en-CA" value="required">
+              Required
+            </option>
           </select>
         </label>
         <label className="field" style={{ flex: "2 1 280px" }}>
-          <span>Concept keys</span>
+          <span>{t("delivery.builder.concepts")}</span>
           <input
             className="input"
+            lang={(question.conceptKeys ?? []).length > 0 ? "" : "en-CA"}
             onChange={(event) =>
               onUpdateQuestion((item) => ({
                 ...item,
@@ -76,7 +91,7 @@ export function DiagnosticDetails({
             placeholder="fractions, rate-vs-total"
             value={(question.conceptKeys ?? []).join(", ")}
           />
-          <small className="muted">
+          <small className="muted" lang="en-CA">
             Comma-separated keys using letters, numbers, dots, dashes, or underscores.
           </small>
         </label>
@@ -85,7 +100,11 @@ export function DiagnosticDetails({
       question.type !== "poll" &&
       question.type !== "rating" ? (
         <label className="field">
-          <span>{uxBeta ? "Paired recheck question" : "Linked recheck"}</span>
+          <span>
+            {uxBeta
+              ? t("delivery.builder.pairedRecheckQuestion")
+              : t("delivery.builder.linkedRecheck")}
+          </span>
           <select
             className="select"
             onChange={(event) =>
@@ -96,17 +115,25 @@ export function DiagnosticDetails({
             }
             value={question.linkedRecheckQuestionId ?? ""}
           >
-            <option value="">{uxBeta ? "No paired recheck" : "No linked recheck"}</option>
+            <option lang="en-CA" value="">
+              {uxBeta ? "No paired recheck" : "No linked recheck"}
+            </option>
             {questions
               .filter(
                 (candidate) =>
                   candidate.id !== question.id && (candidate.delivery ?? "main") === "recheck",
               )
-              .map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.prompt || `Untitled ${responseTypeLabel(candidate.type)}`}
-                </option>
-              ))}
+              .map((candidate) =>
+                candidate.prompt ? (
+                  <option key={candidate.id} lang="" value={candidate.id}>
+                    {candidate.prompt}
+                  </option>
+                ) : (
+                  <option key={candidate.id} lang="en-CA" value={candidate.id}>
+                    Untitled {responseTypeLabel(candidate.type)}
+                  </option>
+                ),
+              )}
           </select>
         </label>
       ) : null}

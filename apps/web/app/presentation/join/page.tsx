@@ -5,10 +5,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 import type { PublicFeatures } from "@openround/contracts";
 import { Brand } from "../../../components/brand";
+import { useLocale } from "../../../components/locale-provider";
 import styles from "../../../components/presentation-live/presentation-live.module.css";
 import { apiFetch, humanError } from "../../../lib/api";
 
 function PresentationJoinForm() {
+  const { t } = useLocale();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [code, setCode] = useState(() =>
@@ -58,19 +60,17 @@ function PresentationJoinForm() {
 
   return (
     <section className={styles.joinCard}>
-      <span className={styles.statusPill}>Guest participation</span>
-      <h1>Join a Presentation</h1>
-      <p>
-        No workspace account is needed. Your nickname and responses belong only to this session.
-      </p>
+      <span className={styles.statusPill}>{t("delivery.join.eyebrow")}</span>
+      <h1>{t("delivery.join.presentationTitle")}</h1>
+      <p>{t("delivery.join.presentationDescription")}</p>
       {available === false ? (
         <p className="error" role="status">
-          Presentation rooms are not available right now. You can still join an active Round.
+          {t("delivery.join.presentationUnavailable")}
         </p>
       ) : null}
       <form className={styles.formStack} onSubmit={join}>
         <label>
-          Seven-digit code
+          {t("delivery.join.codeLabel")}
           <input
             autoComplete="one-time-code"
             inputMode="numeric"
@@ -82,18 +82,19 @@ function PresentationJoinForm() {
           />
         </label>
         <label>
-          Nickname
+          {t("delivery.join.nickname")}
           <input
             autoComplete="nickname"
+            lang=""
             maxLength={32}
             onChange={(event) => setNickname(event.target.value)}
-            placeholder="How the facilitator will see you"
+            placeholder={t("delivery.join.nicknamePlaceholder")}
             required
             value={nickname}
           />
         </label>
         {error ? (
-          <p className="error" role="alert">
+          <p className="error" lang="en-CA" role="alert">
             {error}
           </p>
         ) : null}
@@ -102,24 +103,34 @@ function PresentationJoinForm() {
           disabled={available !== true || busy || code.length !== 7 || !nickname.trim()}
           type="submit"
         >
-          {available === null ? "Checking availability…" : busy ? "Joining…" : "Join Presentation"}
+          {available === null
+            ? t("delivery.common.loading")
+            : busy
+              ? t("delivery.join.joining")
+              : t("delivery.join.presentationTitle")}
         </button>
       </form>
       <p>
-        Joining a Round instead? <Link href="/join">Use the Round join page</Link>.
+        {t("live.presentationJoin.roundInsteadBefore")}{" "}
+        <Link href="/join">{t("live.presentationJoin.roundInsteadLink")}</Link>.
       </p>
     </section>
   );
 }
 
 export default function PresentationJoinPage() {
+  const { t } = useLocale();
   return (
     <main className={styles.page}>
       <div className={styles.topbar}>
         <Brand />
-        <Link href="/">OpenRound</Link>
+        <Link href="/" lang="en-CA">
+          OpenRound
+        </Link>
       </div>
-      <Suspense fallback={<section className={styles.joinCard}>Loading join form…</section>}>
+      <Suspense
+        fallback={<section className={styles.joinCard}>{t("delivery.common.loading")}</section>}
+      >
         <PresentationJoinForm />
       </Suspense>
     </main>

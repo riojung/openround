@@ -1,12 +1,22 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import type {
   Entitlements,
+  SupportedLocale,
   WorkspaceProductFeatures as ContractWorkspaceProductFeatures,
 } from "@openround/contracts";
 import { apiFetch, humanError } from "../../lib/api";
+import { useLocale } from "../locale-provider";
 
 export interface WorkspaceCreator {
   userId: string;
@@ -15,6 +25,8 @@ export interface WorkspaceCreator {
   segment: "education" | "workplace";
   role: "owner" | "editor" | "viewer";
   plan: "free" | "pro" | "team";
+  locale: SupportedLocale;
+  localePreferenceSet: boolean;
 }
 
 export type WorkspaceProductFeatures = ContractWorkspaceProductFeatures;
@@ -41,6 +53,11 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({ children }: Readonly<{ children: React.ReactNode }>) {
   const router = useRouter();
+  const { locale, loadError: localeLoadError, setLocale } = useLocale();
+  const localeRef = useRef(locale);
+  const localeLoadErrorRef = useRef(localeLoadError);
+  localeRef.current = locale;
+  localeLoadErrorRef.current = localeLoadError;
   const [creator, setCreator] = useState<WorkspaceCreator | null>(null);
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [productFeatures, setProductFeatures] = useState<WorkspaceProductFeatures | null>(null);
@@ -54,6 +71,29 @@ export function WorkspaceProvider({ children }: Readonly<{ children: React.React
       setCreator(account.creator);
       setEntitlements(account.entitlements);
       setProductFeatures(account.productFeatures);
+      try {
+        if (account.creator.localePreferenceSet) {
+          if (account.creator.locale !== localeRef.current) {
+            await setLocale(account.creator.locale);
+            localeRef.current = account.creator.locale;
+          }
+        } else if (!localeLoadErrorRef.current) {
+          const inheritedLocale = localeRef.current;
+          await apiFetch<{ locale: SupportedLocale }>("/v1/account/locale", {
+            method: "PUT",
+            body: JSON.stringify({ locale: inheritedLocale }),
+          });
+          setCreator((current) =>
+            current?.userId === account.creator.userId
+              ? { ...current, locale: inheritedLocale, localePreferenceSet: true }
+              : current,
+          );
+        }
+      } catch {
+        // Locale initialization must never turn a valid authenticated workspace into an error
+        // state. Catalog failures remain visible in the language menu and an inherited account
+        // preference is retried on the next account refresh.
+      }
     } catch (caught) {
       if ((caught as { status?: number }).status === 401) {
         router.replace("/signin");
@@ -63,7 +103,7 @@ export function WorkspaceProvider({ children }: Readonly<{ children: React.React
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, [router, setLocale]);
 
   useEffect(() => {
     void refreshAccount();

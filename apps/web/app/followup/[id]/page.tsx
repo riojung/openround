@@ -259,7 +259,7 @@ export default function FollowupPage() {
   const assignment = snapshot?.purpose === "assignment";
 
   return (
-    <div className="live-shell">
+    <div className="live-shell" lang="en-CA">
       <header className="shell live-topbar">
         <Brand inverted />
         {snapshot ? (
@@ -306,15 +306,21 @@ export default function FollowupPage() {
                 <Countdown deadline={snapshot.deadline} />
               ) : null}
             </div>
-            <p className="eyebrow">{snapshot.title}</p>
-            <h1 style={{ fontSize: "clamp(2rem, 7vw, 4rem)" }}>{snapshot.question.prompt}</h1>
-            <QuestionMedia
-              altText={snapshot.question.mediaAlt}
-              credential={attemptToken}
-              mediaId={snapshot.question.mediaId}
-              mode="followup"
-              sessionId={id}
-            />
+            <p className="eyebrow" lang="">
+              {snapshot.title}
+            </p>
+            <h1 lang="" style={{ fontSize: "clamp(2rem, 7vw, 4rem)" }}>
+              {snapshot.question.prompt}
+            </h1>
+            <div lang="">
+              <QuestionMedia
+                altText={snapshot.question.mediaAlt}
+                credential={attemptToken}
+                mediaId={snapshot.question.mediaId}
+                mode="followup"
+                sessionId={id}
+              />
+            </div>
             {["single_select", "true_false", "multi_select", "poll"].includes(
               snapshot.question.type,
             ) ? (
@@ -340,14 +346,16 @@ export default function FollowupPage() {
                       <span aria-hidden="true" style={{ marginRight: 10 }}>
                         {String.fromCharCode(65 + index)}.
                       </span>
-                      {choice.label}
+                      <span lang="">{choice.label}</span>
                     </button>
                   );
                 })}
               </div>
             ) : snapshot.question.type === "numeric" ? (
               <label className="field">
-                <span>Numeric response {snapshot.question.unit ?? ""}</span>
+                <span>
+                  Numeric response <span lang="">{snapshot.question.unit ?? ""}</span>
+                </span>
                 <input
                   className="input"
                   disabled={snapshot.phase !== "question_open" || busy}
@@ -379,7 +387,7 @@ export default function FollowupPage() {
                     </button>
                   ))}
                 </div>
-                <p className="muted">
+                <p className="muted" lang="">
                   {snapshot.question.rating.minLabel} · {snapshot.question.rating.maxLabel}
                 </p>
               </fieldset>
@@ -429,8 +437,8 @@ export default function FollowupPage() {
                       ? "Correct"
                       : "Review this question"}
                 </strong>
-                {snapshot.explanation ? <div>{snapshot.explanation}</div> : null}
-                {snapshot.feedback ? <div>{snapshot.feedback}</div> : null}
+                {snapshot.explanation ? <div lang="">{snapshot.explanation}</div> : null}
+                {snapshot.feedback ? <div lang="">{snapshot.feedback}</div> : null}
                 <button
                   className="button"
                   disabled={busy}

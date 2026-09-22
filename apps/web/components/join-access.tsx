@@ -10,6 +10,7 @@ import {
   normalizeJoinBase,
   selectJoinBase,
 } from "../lib/join-url";
+import { useLocale } from "./locale-provider";
 
 const storageKey = "openround:join-base";
 
@@ -22,6 +23,7 @@ export function JoinAccess({
   editable?: boolean;
   size?: number;
 }) {
+  const { t } = useLocale();
   const [base, setBase] = useState("");
   const [automaticBase, setAutomaticBase] = useState("");
   const [candidate, setCandidate] = useState("");
@@ -65,9 +67,9 @@ export function JoinAccess({
     if (!joinUrl) return;
     try {
       await navigator.clipboard.writeText(joinUrl);
-      setCopyStatus("Join link copied.");
+      setCopyStatus(t("live.joinAccess.linkCopied"));
     } catch {
-      setCopyStatus("Copy was blocked. Select and copy the link above.");
+      setCopyStatus(t("live.joinAccess.copyBlocked"));
     }
   }
 
@@ -94,7 +96,7 @@ export function JoinAccess({
     const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
     triggerDownload(url, "svg");
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    setCopyStatus("QR code downloaded as SVG.");
+    setCopyStatus(t("live.joinAccess.svgDownloaded"));
   }
 
   function downloadPng() {
@@ -109,7 +111,7 @@ export function JoinAccess({
       const context = canvas.getContext("2d");
       if (!context) {
         URL.revokeObjectURL(sourceUrl);
-        setCopyStatus("PNG conversion is not supported in this browser. Download SVG instead.");
+        setCopyStatus(t("live.joinAccess.pngUnsupported"));
         return;
       }
       context.fillStyle = "#ffffff";
@@ -118,18 +120,18 @@ export function JoinAccess({
       canvas.toBlob((blob) => {
         URL.revokeObjectURL(sourceUrl);
         if (!blob) {
-          setCopyStatus("PNG conversion failed. Download SVG instead.");
+          setCopyStatus(t("live.joinAccess.pngFailed"));
           return;
         }
         const pngUrl = URL.createObjectURL(blob);
         triggerDownload(pngUrl, "png");
         window.setTimeout(() => URL.revokeObjectURL(pngUrl), 0);
-        setCopyStatus("QR code downloaded as PNG.");
+        setCopyStatus(t("live.joinAccess.pngDownloaded"));
       }, "image/png");
     };
     image.onerror = () => {
       URL.revokeObjectURL(sourceUrl);
-      setCopyStatus("PNG conversion failed. Download SVG instead.");
+      setCopyStatus(t("live.joinAccess.pngFailed"));
     };
     image.src = sourceUrl;
   }
@@ -138,14 +140,14 @@ export function JoinAccess({
     event.preventDefault();
     const normalized = normalizeJoinBase(candidate);
     if (!normalized) {
-      setAddressError("Enter an HTTP or HTTPS address, such as http://192.168.1.20:8080.");
+      setAddressError(t("live.joinAccess.invalidAddress"));
       return;
     }
     window.localStorage.setItem(storageKey, normalized);
     setBase(normalized);
     setCandidate(normalized);
     setAddressError("");
-    setCopyStatus("QR code updated.");
+    setCopyStatus(t("live.joinAccess.qrUpdated"));
   }
 
   function resetAddress() {
@@ -153,17 +155,17 @@ export function JoinAccess({
     setBase(automaticBase);
     setCandidate(automaticBase);
     setAddressError("");
-    setCopyStatus("Using the configured join address.");
+    setCopyStatus(t("live.joinAccess.configuredAddress"));
   }
 
   return (
-    <section className="join-access" aria-label="Join this round by QR code or direct link">
-      <p className="eyebrow">Scan to join</p>
+    <section className="join-access" aria-label={t("live.joinAccess.sectionAria")}>
+      <p className="eyebrow">{t("live.joinAccess.scanToJoin")}</p>
       {joinUrl ? (
         <>
           <div className="join-qr-frame" ref={qrFrame}>
             <QRCodeSVG
-              aria-label={`QR code for round ${code.split("").join(" ")}`}
+              aria-label={t("live.joinAccess.qrAria", { code: code.split("").join(" ") })}
               bgColor="#ffffff"
               fgColor="#0b2239"
               size={size}
@@ -171,7 +173,7 @@ export function JoinAccess({
             />
           </div>
           <a
-            aria-label="Open the prefilled participant join link"
+            aria-label={t("live.joinAccess.openLinkAria")}
             className="join-url"
             data-testid="join-url"
             href={joinUrl}
@@ -187,34 +189,31 @@ export function JoinAccess({
                 onClick={() => void copyJoinLink()}
                 type="button"
               >
-                Copy join link
+                {t("live.joinAccess.copyLink")}
               </button>
               <button className="button-quiet small-button" onClick={downloadSvg} type="button">
-                Download QR SVG
+                {t("live.joinAccess.downloadSvg")}
               </button>
               <button className="button-quiet small-button" onClick={downloadPng} type="button">
-                Download QR PNG
+                {t("live.joinAccess.downloadPng")}
               </button>
             </div>
           ) : null}
         </>
       ) : (
-        <p className="muted">Preparing the join link…</p>
+        <p className="muted">{t("live.joinAccess.preparing")}</p>
       )}
       {deviceLocal ? (
-        <p className="notice join-address-notice">
-          A localhost QR works only on this computer. Use this computer's Wi-Fi/LAN address or a
-          public HTTPS address before participants scan it.
-        </p>
+        <p className="notice join-address-notice">{t("live.joinAccess.localhostWarning")}</p>
       ) : (
-        <p className="muted join-address-note">Participants can scan this QR or open the link.</p>
+        <p className="muted join-address-note">{t("live.joinAccess.scanOrOpen")}</p>
       )}
       {editable ? (
         <details className="join-address-settings" open={deviceLocal}>
-          <summary>Change join address</summary>
+          <summary>{t("live.joinAccess.changeAddress")}</summary>
           <form className="join-address-form" onSubmit={updateAddress}>
             <label className="field" htmlFor="join-base-address">
-              <span>Network or public product address</span>
+              <span>{t("live.joinAccess.addressLabel")}</span>
               <input
                 className="input"
                 id="join-base-address"
@@ -232,10 +231,10 @@ export function JoinAccess({
             ) : null}
             <div className="button-row">
               <button className="button small-button" type="submit">
-                Update QR
+                {t("live.joinAccess.updateQr")}
               </button>
               <button className="button-quiet small-button" onClick={resetAddress} type="button">
-                Reset address
+                {t("live.joinAccess.resetAddress")}
               </button>
             </div>
           </form>

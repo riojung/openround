@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { useLocale } from "../locale-provider";
 import styles from "./video-guide.module.css";
 
 export interface VideoGuideProps {
@@ -26,6 +27,7 @@ export function VideoGuide({
   tryHref,
   tryLabel,
 }: VideoGuideProps) {
+  const { t } = useLocale();
   const titleId = `${id}-title`;
   const descriptionId = `${id}-description`;
 
@@ -38,15 +40,15 @@ export function VideoGuide({
     >
       <div className={styles.heading}>
         <div className={styles.meta}>
-          <span>Video guide</span>
-          <span>Duration {duration}</span>
+          <span>{t("pages.help.videoGuide")}</span>
+          <span>{t("pages.help.duration", { duration })}</span>
         </div>
         <h3 id={titleId}>{title}</h3>
         <p id={descriptionId}>{description}</p>
       </div>
 
       <video
-        aria-label={`${title} video`}
+        aria-label={t("pages.help.videoLabel", { title })}
         className={styles.video}
         controls
         height={720}
@@ -57,13 +59,13 @@ export function VideoGuide({
       >
         <source src={videoSrc} type="video/mp4" />
         <track default kind="captions" label="English" src={captionsSrc} srcLang="en" />
-        Your browser does not support embedded video. <a href={videoSrc}>Open the video file</a>.
+        {t("pages.help.videoUnsupported")} <a href={videoSrc}>{t("pages.help.openVideo")}</a>.
       </video>
 
       <div className={styles.footer}>
         <details className={styles.transcript}>
-          <summary>Read transcript for {title}</summary>
-          <div className={styles.transcriptBody}>
+          <summary>{t("pages.help.readTranscript", { title })}</summary>
+          <div className={styles.transcriptBody} lang="en-CA">
             {transcript.map((paragraph, index) => (
               <p key={`${id}-transcript-${index}`}>{paragraph}</p>
             ))}

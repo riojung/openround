@@ -23,13 +23,13 @@ test("creator can return home, manage checkpoint sets, and sign out on a narrow 
   await expect(page).toHaveURL(/\/quiz\//);
   await page.getByRole("link", { name: "OpenRound" }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("link", { name: "Manage checkpoint sets" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Manage Rounds" })).toBeVisible();
 
   await page.getByRole("button", { name: "Menu" }).click();
   await expect(page.getByText(/Signed in as/)).toBeVisible();
   await page
     .getByRole("navigation", { name: "Mobile navigation" })
-    .getByRole("link", { name: "My checkpoint sets", exact: true })
+    .getByRole("link", { name: "My Rounds", exact: true })
     .click();
   await expect(page).toHaveURL(/\/dashboard/);
   await expect(

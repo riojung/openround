@@ -6,47 +6,76 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { QuestionType } from "@openround/contracts";
 import { AuthoringAssistant } from "../../components/authoring-assistant";
 import { CheckpointSetImport } from "../../components/checkpoint-set-import";
+import { useLocale } from "../../components/locale-provider";
 import { StarterGallery } from "../../components/workspace/starter-gallery";
 import { questionTypeOptions } from "../../components/workspace/workspace-model";
 import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
 import styles from "../../components/workspace/workspace-content.module.css";
 import { apiFetch, humanError } from "../../lib/api";
+import type { MessageKey } from "../../lib/i18n/catalog";
 import { recordCreationEvent } from "../../components/workspace/product-events";
 
 type StartMethod = "starters" | "source" | "import" | "blank";
 
 const starts: Array<{
   id: StartMethod;
-  title: string;
-  description: string;
-  badge: string;
+  titleKey: MessageKey;
+  descriptionKey: MessageKey;
+  badgeKey: MessageKey;
 }> = [
   {
     id: "starters",
-    title: "Use a starter",
-    description: "Begin with a focused, editable Round built for a familiar moment.",
-    badge: "Fastest start",
+    titleKey: "create.round.method.starter.title",
+    descriptionKey: "create.round.method.starter.description",
+    badgeKey: "create.common.fastestStart",
   },
   {
     id: "source",
-    title: "Create from a source",
-    description: "Turn trusted text, PDF, Word, or PowerPoint material into a review draft.",
-    badge: "Source-grounded",
+    titleKey: "create.round.method.source.title",
+    descriptionKey: "create.round.method.source.description",
+    badgeKey: "create.common.sourceGrounded",
   },
   {
     id: "import",
-    title: "Import existing work",
-    description: "Validate OpenRound JSON, CSV, bulk text, or a QTI 3 package.",
-    badge: "Portable",
+    titleKey: "create.round.method.import.title",
+    descriptionKey: "create.round.method.import.description",
+    badgeKey: "create.round.method.import.badge",
   },
   {
     id: "blank",
-    title: "Start blank",
-    description: "Choose the first response type, then name the Round now or in the editor.",
-    badge: "Full control",
+    titleKey: "create.round.method.blank.title",
+    descriptionKey: "create.round.method.blank.description",
+    badgeKey: "create.common.fullControl",
   },
 ];
+
+const questionTypeKeys: Record<QuestionType, { label: MessageKey; description: MessageKey }> = {
+  single_select: {
+    label: "questionType.single_select.label",
+    description: "questionType.single_select.description",
+  },
+  true_false: {
+    label: "questionType.true_false.label",
+    description: "questionType.true_false.description",
+  },
+  multi_select: {
+    label: "questionType.multi_select.label",
+    description: "questionType.multi_select.description",
+  },
+  numeric: {
+    label: "questionType.numeric.label",
+    description: "questionType.numeric.description",
+  },
+  rating: {
+    label: "questionType.rating.label",
+    description: "questionType.rating.description",
+  },
+  poll: {
+    label: "questionType.poll.label",
+    description: "questionType.poll.description",
+  },
+};
 
 function startMethod(value: string | null): StartMethod | null {
   return starts.some((start) => start.id === value) ? (value as StartMethod) : null;
@@ -55,6 +84,7 @@ function startMethod(value: string | null): StartMethod | null {
 function CreateContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { t } = useLocale();
   const { canEdit, entitlements } = useWorkspace();
   const [legacyHashMethod, setLegacyHashMethod] = useState<StartMethod | null>(null);
   const [title, setTitle] = useState("");
@@ -76,7 +106,10 @@ function CreateContent() {
     try {
       const response = await apiFetch<{ quiz: { id: string } }>("/v1/quizzes", {
         method: "POST",
-        body: JSON.stringify({ title: title.trim() || "Untitled Round", description: "" }),
+        body: JSON.stringify({
+          title: title.trim() || "Untitled Round",
+          description: "",
+        }),
       });
       recordCreationEvent("creation_completed", "blank", "round");
       router.push(`/quiz/${response.quiz.id}?insert=${questionType}`);
@@ -89,10 +122,10 @@ function CreateContent() {
   if (!canEdit) {
     return (
       <div className={styles.emptyState}>
-        <h2>This workspace role is read-only</h2>
-        <p>Viewers can browse Rounds and templates, but only owners and editors can create one.</p>
+        <h2>{t("create.common.readOnlyTitle")}</h2>
+        <p>{t("create.round.readOnlyDescription")}</p>
         <Link className="button-quiet" href="/templates">
-          Browse templates
+          {t("create.round.browseTemplates")}
         </Link>
       </div>
     );
@@ -102,45 +135,44 @@ function CreateContent() {
     <>
       {!selectedMethod ? (
         <>
-          <nav className={styles.startGrid} aria-label="Ways to create a Round">
+          <nav className={styles.startGrid} aria-label={t("create.round.waysLabel")}>
             {starts.map((start, index) => (
               <Link className={styles.startCard} href={`/create?start=${start.id}`} key={start.id}>
                 <span className={styles.startNumber} aria-hidden="true">
                   {index + 1}
                 </span>
-                <span className={styles.startBadge}>{start.badge}</span>
-                <h2>{start.title}</h2>
-                <p>{start.description}</p>
-                <span className={styles.startLink}>Choose this path →</span>
+                <span className={styles.startBadge}>{t(start.badgeKey)}</span>
+                <h2>{t(start.titleKey)}</h2>
+                <p>{t(start.descriptionKey)}</p>
+                <span className={styles.startLink}>{t("create.round.choosePath")}</span>
               </Link>
             ))}
           </nav>
-          <aside aria-label="Creation review guidance" className={styles.launcherNote}>
-            <strong>Built for review, not instant publishing.</strong>
-            <span>
-              Source-assisted proposals keep citations attached and stay as drafts until a person
-              verifies them.
-            </span>
+          <aside aria-label={t("create.round.review.label")} className={styles.launcherNote}>
+            <strong>{t("create.round.review.title")}</strong>
+            <span>{t("create.round.review.description")}</span>
           </aside>
         </>
       ) : (
         <div className={styles.focusedCreate}>
           <div className={styles.methodToolbar}>
             <Link className="button-quiet small-button" href="/create">
-              ← All starting points
+              {t("create.common.allStartingPoints")}
             </Link>
-            <span>{starts.find((start) => start.id === selectedMethod)?.badge}</span>
+            <span>
+              {t(starts.find((start) => start.id === selectedMethod)?.badgeKey ?? "common.create")}
+            </span>
           </div>
 
           {selectedMethod === "starters" ? (
             <section className={styles.panel} id="starters">
               <div className={styles.sectionHeader}>
                 <div>
-                  <p className="eyebrow">Fastest start</p>
-                  <h2>Use a Recovery starter</h2>
-                  <p>Every starter becomes an independent draft you can change freely.</p>
+                  <p className="eyebrow">{t("create.common.fastestStart")}</p>
+                  <h2>{t("create.round.starter.title")}</h2>
+                  <p>{t("create.round.starter.description")}</p>
                 </div>
-                <Link href="/templates">See all templates</Link>
+                <Link href="/templates">{t("create.round.starter.allTemplates")}</Link>
               </div>
               <StarterGallery compact />
             </section>
@@ -150,29 +182,31 @@ function CreateContent() {
             <section className={styles.panel} id="source">
               <div className={styles.sectionHeader}>
                 <div>
-                  <p className="eyebrow">Grounded authoring</p>
-                  <h2>Create from a trusted source</h2>
-                  <p>
-                    Proposals stay unpublished until a person verifies every answer and citation.
-                  </p>
+                  <p className="eyebrow">{t("create.round.source.eyebrow")}</p>
+                  <h2>{t("create.round.source.title")}</h2>
+                  <p>{t("create.round.source.description")}</p>
                 </div>
               </div>
-              <AuthoringAssistant canEdit plain terminology="round" trackCreation />
+              <div lang="en-CA">
+                <AuthoringAssistant canEdit plain terminology="round" trackCreation />
+              </div>
             </section>
           ) : null}
 
           {selectedMethod === "import" ? (
             <section className={styles.panel} id="import">
-              <CheckpointSetImport
-                enabled={Boolean(entitlements?.csvExport)}
-                onImported={async (quiz) => {
-                  router.push(`/quiz/${quiz.id}`);
-                }}
-                onUpgrade={() => router.push("/pricing")}
-                plain
-                terminology="round"
-                trackCreation
-              />
+              <div lang="en-CA">
+                <CheckpointSetImport
+                  enabled={Boolean(entitlements?.csvExport)}
+                  onImported={async (quiz) => {
+                    router.push(`/quiz/${quiz.id}`);
+                  }}
+                  onUpgrade={() => router.push("/pricing")}
+                  plain
+                  terminology="round"
+                  trackCreation
+                />
+              </div>
             </section>
           ) : null}
 
@@ -180,14 +214,14 @@ function CreateContent() {
             <section className={styles.panel} id="blank">
               <div className={styles.sectionHeader}>
                 <div>
-                  <p className="eyebrow">Full control</p>
-                  <h2>Start a blank Round</h2>
-                  <p>Choose the response you want to write first. You can mix types later.</p>
+                  <p className="eyebrow">{t("create.common.fullControl")}</p>
+                  <h2>{t("create.round.blank.title")}</h2>
+                  <p>{t("create.round.blank.description")}</p>
                 </div>
               </div>
               <form className={styles.blankForm} onSubmit={createBlank}>
                 <fieldset>
-                  <legend>First response type</legend>
+                  <legend>{t("create.round.blank.firstResponse")}</legend>
                   <div className={styles.typeGrid}>
                     {questionTypeOptions.map((option) => (
                       <label className={styles.typeChoice} key={option.type}>
@@ -199,31 +233,31 @@ function CreateContent() {
                           value={option.type}
                         />
                         <span>
-                          <strong>{option.label}</strong>
-                          <small>{option.description}</small>
+                          <strong>{t(questionTypeKeys[option.type].label)}</strong>
+                          <small>{t(questionTypeKeys[option.type].description)}</small>
                         </span>
                       </label>
                     ))}
                   </div>
                 </fieldset>
                 <label className="field">
-                  <span>Round title (optional for now)</span>
+                  <span>{t("create.round.blank.titleLabel")}</span>
                   <input
                     className="input"
                     maxLength={160}
                     onChange={(event) => setTitle(event.target.value)}
-                    placeholder="You can name the Round in the editor"
+                    placeholder={t("create.round.blank.titlePlaceholder")}
                     value={title}
                   />
                 </label>
                 {error ? (
-                  <p className="error" role="alert">
+                  <p className="error" lang="en-CA" role="alert">
                     {error}
                   </p>
                 ) : null}
                 <div>
                   <button className="button" disabled={busy} type="submit">
-                    {busy ? "Creating Round…" : "Create Round and write question"}
+                    {busy ? t("create.round.blank.creating") : t("create.round.blank.submit")}
                   </button>
                 </div>
               </form>
@@ -236,18 +270,20 @@ function CreateContent() {
 }
 
 export default function CreatePage() {
+  const { t } = useLocale();
   return (
     <WorkspaceProvider>
       <WorkspaceShell
         actions={
           <Link className="button-quiet" href="/library">
-            Back to Rounds
+            {t("create.round.backToRounds")}
           </Link>
         }
-        description="Choose the shortest path from an idea or trusted source to a ready-to-run Round."
-        eyebrow="Create"
+        description={t("create.round.description")}
+        eyebrow={t("create.round.eyebrow")}
         requiredFeature="builderV2"
-        title="How do you want to start?"
+        title={t("create.round.title")}
+        translationLevel="full"
       >
         <CreateContent />
       </WorkspaceShell>

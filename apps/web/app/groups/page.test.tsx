@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { withEnglishLocale } from "../../test-utils/english-locale";
 
 const fixtures = vi.hoisted(() => ({
   canEdit: true,
@@ -43,6 +44,10 @@ vi.mock("../../components/workspace/workspace-shell", () => ({
   ),
 }));
 
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/groups",
+}));
+
 import GroupsPage from "./page";
 
 describe("Groups workspace", () => {
@@ -51,7 +56,7 @@ describe("Groups workspace", () => {
   });
 
   it("presents a professional collaboration workspace with creation and selection", () => {
-    const markup = renderToStaticMarkup(<GroupsPage />);
+    const markup = renderToStaticMarkup(withEnglishLocale(<GroupsPage />));
 
     expect(markup).toContain("Groups");
     expect(markup).toContain("Create group");
@@ -62,7 +67,7 @@ describe("Groups workspace", () => {
 
   it("keeps read-only members inside the group workspace without offering creation", () => {
     fixtures.canEdit = false;
-    const markup = renderToStaticMarkup(<GroupsPage />);
+    const markup = renderToStaticMarkup(withEnglishLocale(<GroupsPage />));
 
     expect(markup).toContain("Facilitator collaboration");
     expect(markup).toContain('placeholder="Search groups"');

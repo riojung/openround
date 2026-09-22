@@ -26,6 +26,7 @@ import {
   saveBuilderRecovery,
   type BuilderRecoverySnapshot,
 } from "../../lib/builder-recovery";
+import { formatDateTime } from "../../lib/i18n/format";
 import {
   changePresentationQuestionType,
   createContentBlock,
@@ -41,6 +42,7 @@ import { AuthoringAssistant } from "../authoring-assistant";
 import { ResponseEditor } from "../editor/response-editor";
 import { MediaEditor } from "../editor/media-editor";
 import { isChoiceQuestion } from "../editor/types";
+import { useLocale } from "../locale-provider";
 import { questionTypeOptions, responseTypeLabel } from "../workspace/workspace-model";
 import { recordAuthoringEvent } from "../workspace/product-events";
 import styles from "./presentation-builder.module.css";
@@ -90,16 +92,14 @@ const slideLayouts: Array<{ id: ContentSlideLayout; label: string }> = [
   { id: "section", label: "Section" },
   { id: "callout", label: "Callout" },
 ];
-
-function blockLabel(block: PresentationBlockDraft, index: number) {
-  if (block.kind === "content") return block.title.trim() || `Content slide ${index + 1}`;
-  return block.question.prompt.trim() || `Question ${index + 1}`;
-}
-
-function blockKindLabel(block: PresentationBlockDraft) {
-  if (block.kind === "content") return "Content";
-  return `${(block.question.delivery ?? "main") === "recheck" ? "Recheck" : "Question"} · ${responseTypeLabel(block.question.type)}`;
-}
+const questionTypeMessageKeys = {
+  single_select: "delivery.builder.type.single_select",
+  true_false: "delivery.builder.type.true_false",
+  multi_select: "delivery.builder.type.multi_select",
+  numeric: "delivery.builder.type.numeric",
+  rating: "delivery.builder.type.rating",
+  poll: "delivery.builder.type.poll",
+} as const satisfies Record<QuestionType, string>;
 
 function updateBlock(
   draft: PresentationDraft,
@@ -164,9 +164,9 @@ function AuthenticatedMedia({ mediaId, altText }: { mediaId: string; altText: st
     };
   }, [mediaId]);
   return source ? (
-    <img alt={altText ?? ""} className={styles.builderMedia} src={source} />
+    <img alt={altText ?? ""} className={styles.builderMedia} lang="" src={source} />
   ) : (
-    <div className={styles.mediaPlaceholder} role="status">
+    <div className={styles.mediaPlaceholder} lang="en-CA" role="status">
       Loading instructional image…
     </div>
   );
@@ -190,12 +190,15 @@ function PresentationPreview({
       role="dialog"
       aria-modal="true"
       aria-label="Presentation preview"
+      lang="en-CA"
       onKeyDown={(event) => handleModalKeyDown(event, onClose)}
       tabIndex={-1}
     >
       <div className={styles.previewStage}>
         <div className={styles.previewBar}>
-          <strong>{draft.title || "Untitled presentation"}</strong>
+          <strong lang={draft.title ? "" : "en-CA"}>
+            {draft.title || "Untitled presentation"}
+          </strong>
           <span>{draft.blocks.length ? `${index + 1} / ${draft.blocks.length}` : "No slides"}</span>
           <button className={styles.iconButton} onClick={onClose} type="button">
             Close preview
@@ -207,8 +210,8 @@ function PresentationPreview({
           ) : block.kind === "content" ? (
             <article className={`${styles.previewContent} ${styles[`layout_${block.layout}`]}`}>
               <span className={styles.previewEyebrow}>{block.layout.replace("_", " ")}</span>
-              <h1>{block.title || "Untitled slide"}</h1>
-              {block.body ? <p>{block.body}</p> : null}
+              <h1 lang={block.title ? "" : "en-CA"}>{block.title || "Untitled slide"}</h1>
+              {block.body ? <p lang="">{block.body}</p> : null}
               {block.mediaId ? (
                 <AuthenticatedMedia altText={block.mediaAlt} mediaId={block.mediaId} />
               ) : null}
@@ -216,13 +219,17 @@ function PresentationPreview({
           ) : (
             <article className={styles.previewQuestion}>
               <span className={styles.previewEyebrow}>Audience question</span>
-              <h1>{block.question.prompt || "Untitled question"}</h1>
+              <h1 lang={block.question.prompt ? "" : "en-CA"}>
+                {block.question.prompt || "Untitled question"}
+              </h1>
               {"choices" in block.question ? (
                 <div className={styles.previewChoices}>
                   {block.question.choices.map((choice, choiceIndex) => (
                     <div key={choice.id}>
                       <span>{String.fromCharCode(65 + choiceIndex)}</span>
-                      {choice.label || `Answer ${choiceIndex + 1}`}
+                      <span lang={choice.label ? "" : "en-CA"}>
+                        {choice.label || `Answer ${choiceIndex + 1}`}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -258,6 +265,7 @@ function PresentationPreview({
 }
 
 export function PresentationBuilder({ presentationId }: { presentationId: string }) {
+  const { locale, t } = useLocale();
   const router = useRouter();
   const recoveryKey = `presentation:${presentationId}`;
   const [record, setRecord] = useState<PresentationRecord | null>(null);
@@ -675,7 +683,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
     if (!draft) return;
     setError("");
     try {
-      const title = `${draft.title.trim() || "Untitled Presentation"} — recovered copy`;
+      const title = `${draft.title.trim() || t("delivery.presentationBuilder.untitled")} — ${formatDateTime(locale, Date.now())}`;
       const created = await apiFetch<{ presentation: PresentationRecord }>("/v1/presentations", {
         method: "POST",
         body: JSON.stringify({ title, description: draft.description ?? "" }),
@@ -882,7 +890,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
     return (
       <main className={styles.loading}>
         <div className={styles.loadingMark} aria-hidden="true" />
-        <p>{error || "Opening presentation builder…"}</p>
+        <p lang={error ? "en-CA" : undefined}>
+          {error || t("delivery.presentationBuilder.opening")}
+        </p>
       </main>
     );
   }
@@ -890,37 +900,57 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
   const questionBlocks = draft.blocks.flatMap((block) =>
     block.kind === "question" ? [block.question] : [],
   );
+  const builderTitleMarker = "__OPENROUND_PRESENTATION_TITLE__";
+  const builderTitleParts = t("delivery.presentationBuilder.builderTitle", {
+    title: builderTitleMarker,
+  }).split(builderTitleMarker);
   const inspectorTabs: Array<{ id: InspectorTab; label: string }> =
     selectedBlock?.kind === "content"
       ? [
-          { id: "content", label: "Content" },
-          { id: "layout", label: "Layout" },
-          { id: "media", label: "Media" },
-          { id: "notes", label: "Notes" },
-          { id: "accessibility", label: "Access" },
-          { id: "readiness", label: `Ready ${issues.length ? `(${issues.length})` : "✓"}` },
+          { id: "content", label: t("delivery.presentationBuilder.content") },
+          { id: "layout", label: t("delivery.presentationBuilder.layout") },
+          { id: "media", label: t("delivery.builder.media") },
+          { id: "notes", label: t("delivery.presentationBuilder.notes") },
+          { id: "accessibility", label: t("delivery.presentationBuilder.access") },
+          {
+            id: "readiness",
+            label: issues.length
+              ? t("delivery.presentationBuilder.readyCount", { count: issues.length })
+              : t("delivery.presentationBuilder.readyComplete"),
+          },
         ]
       : [
-          { id: "build", label: "Build" },
-          { id: "diagnose", label: "Diagnose" },
-          { id: "recover", label: "Recover" },
-          { id: "readiness", label: `Ready ${issues.length ? `(${issues.length})` : "✓"}` },
+          { id: "build", label: t("delivery.builder.build") },
+          { id: "diagnose", label: t("delivery.builder.diagnose") },
+          { id: "recover", label: t("delivery.builder.recover") },
+          {
+            id: "readiness",
+            label: issues.length
+              ? t("delivery.presentationBuilder.readyCount", { count: issues.length })
+              : t("delivery.presentationBuilder.readyComplete"),
+          },
         ];
 
   return (
     <div className={styles.builder}>
       <a className={styles.skipLink} href="#presentation-canvas">
-        Skip to slide canvas
+        {t("delivery.presentationBuilder.skipCanvas")}
       </a>
       <header className={styles.commandBar}>
-        <h1 className="sr-only">Presentation Builder: {draft.title}</h1>
+        <h1 className="sr-only">
+          {builderTitleParts[0]}
+          <span lang={draft.title ? "" : locale}>
+            {draft.title || t("delivery.presentationBuilder.untitled")}
+          </span>
+          {builderTitleParts.slice(1).join(builderTitleMarker)}
+        </h1>
         <div className={styles.commandStart}>
           <Link
             className={styles.exitLink}
             href="/library?type=presentations"
             onClick={guardBuilderExit}
           >
-            ← Library
+            ← {t("delivery.presentationBuilder.library")}
           </Link>
           <button
             aria-expanded={mapOpen}
@@ -928,45 +958,48 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
             onClick={() => setMapOpen((value) => !value)}
             type="button"
           >
-            {mapOpen ? "Hide map" : "Show map"}
+            {mapOpen
+              ? t("delivery.presentationBuilder.hideMap")
+              : t("delivery.presentationBuilder.showMap")}
           </button>
         </div>
         <label className={styles.titleField}>
-          <span className="sr-only">Presentation title</span>
+          <span className="sr-only">{t("delivery.presentationBuilder.titleLabel")}</span>
           <input
+            lang={draft.title.trim() ? "" : locale}
             maxLength={160}
             onChange={(event) =>
               commit((current) => ({ ...current, title: event.target.value }), "presentation:title")
             }
-            placeholder="Untitled presentation"
+            placeholder={t("delivery.presentationBuilder.untitled")}
             value={draft.title}
           />
         </label>
         <div className={styles.commandActions}>
           <span className={`${styles.saveStatus} ${styles[`save_${saveState}`]}`} role="status">
             {saveState === "saving"
-              ? "Saving…"
+              ? t("delivery.common.saving")
               : saveState === "dirty"
-                ? "Unsaved"
+                ? t("delivery.presentationBuilder.unsaved")
                 : saveState === "error"
-                  ? "Save failed"
+                  ? t("delivery.builder.saveFailed")
                   : saveState === "conflict"
-                    ? "Newer version exists"
-                    : "Saved"}
+                    ? t("delivery.presentationBuilder.newerVersion")
+                    : t("delivery.common.saved")}
           </span>
           <button disabled={!undoStack.length} onClick={undo} type="button">
-            Undo
+            {t("delivery.builder.undo")}
           </button>
           <button disabled={!redoStack.length} onClick={redo} type="button">
-            Redo
+            {t("delivery.builder.redo")}
           </button>
           <button onClick={() => setPreviewOpen(true)} type="button">
-            Preview
+            {t("delivery.common.preview")}
           </button>
           <button className={styles.publishButton} onClick={() => void publish()} type="button">
             {record.status === "published" && !record.hasUnpublishedChanges
-              ? "Published"
-              : "Publish"}
+              ? t("delivery.presentationBuilder.published")
+              : t("delivery.common.publish")}
           </button>
           <button
             aria-expanded={inspectorOpen}
@@ -974,15 +1007,21 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
             onClick={() => setInspectorOpen((value) => !value)}
             type="button"
           >
-            {inspectorOpen ? "Hide inspector" : "Open inspector"}
+            {inspectorOpen
+              ? t("delivery.presentationBuilder.hideInspector")
+              : t("delivery.presentationBuilder.openInspector")}
           </button>
         </div>
       </header>
 
       {recovery ? (
-        <div className={styles.recoveryBanner} role="status">
+        <div className={styles.recoveryBanner} lang="en-CA" role="status">
           <span>
-            A newer local edit from {new Date(recovery.savedAt).toLocaleString()} is available.
+            A newer local edit from{" "}
+            <time dateTime={recovery.savedAt} lang={locale}>
+              {formatDateTime(locale, recovery.savedAt)}
+            </time>{" "}
+            is available.
           </span>
           <button
             onClick={() => {
@@ -1005,16 +1044,21 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
         </div>
       ) : null}
       {draft.sourceDisclosure ? (
-        <div className={styles.sourceBanner} role="note">
+        <div className={styles.sourceBanner} lang="en-CA" role="note">
           <span>
-            <strong>Grounded source:</strong> {draft.sourceDisclosure.sourceName} · generated by{" "}
-            {draft.sourceDisclosure.provider} / {draft.sourceDisclosure.model}. Verify citations
-            before publishing.
+            <strong>Grounded source:</strong>{" "}
+            <span lang="">{draft.sourceDisclosure.sourceName}</span> · generated by{" "}
+            <span lang="">
+              {draft.sourceDisclosure.provider} / {draft.sourceDisclosure.model}
+            </span>
+            . Verify citations before publishing.
           </span>
           {draft.sourceDisclosure.conversionNotes?.length ? (
             <ul>
               {draft.sourceDisclosure.conversionNotes.map((note) => (
-                <li key={note}>{note}</li>
+                <li key={note} lang="">
+                  {note}
+                </li>
               ))}
             </ul>
           ) : null}
@@ -1022,21 +1066,21 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
       ) : null}
       {error ? (
         <div className={styles.errorBanner} role="alert">
-          <span>{error}</span>
+          <span lang="en-CA">{error}</span>
           {saveState === "error" ? (
             <button onClick={() => void enqueueSave(draft)} type="button">
-              Retry save
+              {t("delivery.builder.retrySave")}
             </button>
           ) : null}
           {saveState === "conflict" ? (
             <>
-              <button onClick={() => void reloadLatestDraft()} type="button">
+              <button lang="en-CA" onClick={() => void reloadLatestDraft()} type="button">
                 Reload current
               </button>
-              <button onClick={preserveLocalCopy} type="button">
+              <button lang="en-CA" onClick={preserveLocalCopy} type="button">
                 Preserve local copy
               </button>
-              <button onClick={() => void duplicateLocalDraft()} type="button">
+              <button lang="en-CA" onClick={() => void duplicateLocalDraft()} type="button">
                 Duplicate as new
               </button>
             </>
@@ -1047,13 +1091,29 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
       <div
         className={`${styles.workspace} ${mapOpen ? "" : styles.mapClosed} ${inspectorOpen ? "" : styles.inspectorClosed}`}
       >
-        <aside className={styles.map} aria-label="Presentation map">
+        <aside
+          className={styles.map}
+          aria-label={t("delivery.presentationBuilder.presentationMap")}
+        >
           <div className={styles.mapHeader}>
             <div>
-              <span className={styles.eyebrow}>Presentation map</span>
-              <strong>{draft.blocks.length} blocks</strong>
+              <span className={styles.eyebrow}>
+                {t("delivery.presentationBuilder.presentationMap")}
+              </span>
+              <strong>
+                {t(
+                  draft.blocks.length === 1
+                    ? "delivery.presentationBuilder.blockCount.one"
+                    : "delivery.presentationBuilder.blockCount.other",
+                  { count: draft.blocks.length },
+                )}
+              </strong>
             </div>
-            <button onClick={() => setMapOpen(false)} type="button" aria-label="Collapse map">
+            <button
+              onClick={() => setMapOpen(false)}
+              type="button"
+              aria-label={t("delivery.presentationBuilder.collapseMap")}
+            >
               ‹
             </button>
           </div>
@@ -1068,40 +1128,69 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                 >
                   <span className={styles.blockNumber}>{index + 1}</span>
                   <span className={styles.blockText}>
-                    <small>{blockKindLabel(block)}</small>
-                    <strong>{blockLabel(block, index)}</strong>
+                    <small>
+                      {block.kind === "content"
+                        ? t("delivery.presentation.contentSlide")
+                        : `${t(
+                            (block.question.delivery ?? "main") === "recheck"
+                              ? "delivery.builder.recheck"
+                              : "delivery.presentation.interactiveQuestion",
+                          )} · ${t(questionTypeMessageKeys[block.question.type])}`}
+                    </small>
+                    <strong
+                      lang={
+                        (block.kind === "content" ? block.title : block.question.prompt).trim()
+                          ? ""
+                          : undefined
+                      }
+                    >
+                      {(block.kind === "content" ? block.title : block.question.prompt).trim() ||
+                        t(
+                          block.kind === "content"
+                            ? "delivery.builder.slide"
+                            : "delivery.builder.question",
+                          { number: index + 1 },
+                        )}
+                    </strong>
                   </span>
                   {issuesByBlock.has(block.id) ? (
                     <span
                       className={styles.issueBadge}
-                      aria-label={`${issuesByBlock.get(block.id)} issues`}
+                      aria-label={t(
+                        issuesByBlock.get(block.id) === 1
+                          ? "delivery.builder.issueCount.one"
+                          : "delivery.builder.issueCount.other",
+                        { count: issuesByBlock.get(block.id) ?? 0 },
+                      )}
                     >
                       {issuesByBlock.get(block.id)}
                     </span>
                   ) : (
-                    <span className={styles.readyBadge} aria-label="Ready">
+                    <span className={styles.readyBadge} aria-label={t("delivery.builder.ready")}>
                       ✓
                     </span>
                   )}
                 </button>
                 {block.kind === "question" && block.question.linkedRecheckQuestionId ? (
-                  <span className={styles.recoveryLink}>↳ paired recovery</span>
+                  <span className={styles.recoveryLink}>
+                    ↳ {t("delivery.presentationBuilder.pairedRecovery")}
+                  </span>
                 ) : null}
               </li>
             ))}
           </ol>
           <div className={styles.addActions}>
             <button onClick={() => addBlock(createContentBlock())} type="button">
-              + Content slide
+              + {t("delivery.presentation.contentSlide")}
             </button>
             <button onClick={() => addBlock(createQuestionBlock())} type="button">
-              + Question
+              + {t("delivery.builder.addQuestion")}
             </button>
             <button disabled={!roundSources.length} onClick={openRoundImport} type="button">
-              + From published Round
+              + {t("delivery.presentationBuilder.fromPublishedRound")}
             </button>
             <button onClick={() => void openSourceImport()} type="button">
-              + From trusted source
+              + {t("delivery.presentationBuilder.fromTrustedSource")}
             </button>
           </div>
         </aside>
@@ -1113,37 +1202,39 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
               onClick={() => setMapOpen(true)}
               type="button"
             >
-              Open map
+              {t("delivery.presentationBuilder.openMap")}
             </button>
           ) : null}
           {!selectedBlock ? (
             <section className={styles.emptyCanvas}>
               <span className={styles.emptyGlyph}>✦</span>
-              <h1>Build an interactive story</h1>
-              <p>Add a content slide to explain, or a question to hear from the room.</p>
+              <h1>{t("delivery.presentationBuilder.emptyTitle")}</h1>
+              <p>{t("delivery.presentationBuilder.emptyDescription")}</p>
               <div>
                 <button onClick={() => addBlock(createContentBlock())} type="button">
-                  Add content slide
+                  {t("delivery.presentationBuilder.addContentSlide")}
                 </button>
                 <button onClick={() => addBlock(createQuestionBlock())} type="button">
-                  Add audience question
+                  {t("delivery.presentationBuilder.addAudienceQuestion")}
                 </button>
                 <button disabled={!roundSources.length} onClick={openRoundImport} type="button">
-                  Reuse from a Round
+                  {t("delivery.presentationBuilder.reuseRound")}
                 </button>
                 <button onClick={() => void openSourceImport()} type="button">
-                  Insert trusted source
+                  {t("delivery.presentationBuilder.insertTrustedSource")}
                 </button>
               </div>
             </section>
           ) : selectedBlock.kind === "content" ? (
             <section
               className={`${styles.slideCanvas} ${styles[`canvas_${selectedBlock.layout}`]}`}
+              lang="en-CA"
             >
               <span className={styles.canvasEyebrow}>{selectedBlock.layout.replace("_", " ")}</span>
               <input
                 aria-label="Slide title"
                 className={styles.canvasTitle}
+                lang={selectedBlock.title.trim() ? "" : "en-CA"}
                 maxLength={160}
                 onChange={(event) =>
                   updateSelected(
@@ -1158,6 +1249,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
               <textarea
                 aria-label="Slide body"
                 className={styles.canvasBody}
+                lang={selectedBlock.body.trim() ? "" : "en-CA"}
                 maxLength={4000}
                 onChange={(event) =>
                   updateSelected(
@@ -1185,12 +1277,13 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
           ) : (
             <section className={styles.questionCanvas}>
               <div className={styles.questionMeta}>
-                <span>Interactive question</span>
-                <span>{selectedBlock.question.timeLimitSeconds} seconds</span>
+                <span>{t("delivery.presentation.interactiveQuestion")}</span>
+                <span lang="en-CA">{selectedBlock.question.timeLimitSeconds} seconds</span>
               </div>
               <textarea
                 aria-label="Question prompt"
                 className={styles.questionPrompt}
+                lang={selectedBlock.question.prompt.trim() ? "" : "en-CA"}
                 maxLength={500}
                 onChange={(event) =>
                   updateQuestion(
@@ -1226,7 +1319,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
             </section>
           )}
           {selectedBlock ? (
-            <div className={styles.canvasToolbar} aria-label="Selected block actions">
+            <div className={styles.canvasToolbar} aria-label="Selected block actions" lang="en-CA">
               <button
                 disabled={draft.blocks[0]?.id === selectedBlock.id}
                 onClick={() =>
@@ -1270,11 +1363,14 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
           ) : null}
         </main>
 
-        <aside className={styles.inspector} aria-label="Block inspector">
+        <aside
+          className={styles.inspector}
+          aria-label={t("delivery.presentationBuilder.blockInspector")}
+        >
           <div
             className={styles.inspectorTabs}
             role="tablist"
-            aria-label="Inspector sections"
+            aria-label={t("delivery.presentationBuilder.inspectorSections")}
             onKeyDown={moveInspectorTab}
           >
             {inspectorTabs.map((tab) => (
@@ -1304,8 +1400,19 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
           >
             {inspectorTab === "readiness" ? (
               <section>
-                <p className={styles.eyebrow}>Publish readiness</p>
-                <h2>{issues.length ? `${issues.length} things to resolve` : "Ready to publish"}</h2>
+                <p className={styles.eyebrow}>
+                  {t("delivery.presentationBuilder.publishReadiness")}
+                </p>
+                <h2>
+                  {issues.length
+                    ? t(
+                        issues.length === 1
+                          ? "delivery.presentationBuilder.thingsToResolve.one"
+                          : "delivery.presentationBuilder.thingsToResolve.other",
+                        { count: issues.length },
+                      )
+                    : t("delivery.presentationBuilder.readyToPublish")}
+                </h2>
                 {issues.length ? (
                   <ul className={styles.issueList}>
                     {issues.map((issue, index) => (
@@ -1326,8 +1433,8 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                           }}
                           type="button"
                         >
-                          <span>Needs attention</span>
-                          {issue.message}
+                          <span>{t("delivery.builder.needsAttention")}</span>
+                          <span lang="en-CA">{issue.message}</span>
                         </button>
                       </li>
                     ))}
@@ -1335,21 +1442,22 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                 ) : (
                   <div className={styles.readyPanel}>
                     <span>✓</span>
-                    <p>Every block has the information needed for a safe live session.</p>
+                    <p>{t("delivery.presentationBuilder.everyBlockReady")}</p>
                   </div>
                 )}
               </section>
             ) : !selectedBlock ? (
-              <p>Select a block to edit its properties.</p>
+              <p>{t("delivery.presentationBuilder.selectBlock")}</p>
             ) : selectedBlock.kind === "content" ? (
               <section>
-                <p className={styles.eyebrow}>Content slide</p>
+                <p className={styles.eyebrow}>{t("delivery.presentation.contentSlide")}</p>
                 <h2>{inspectorTabs.find((tab) => tab.id === inspectorTab)?.label}</h2>
                 {inspectorTab === "content" ? (
                   <>
                     <label className={styles.field}>
-                      <span>Slide title</span>
+                      <span lang="en-CA">Slide title</span>
                       <input
+                        lang={selectedBlock.title.trim() ? "" : "en-CA"}
                         maxLength={160}
                         onChange={(event) =>
                           updateSelected(
@@ -1364,8 +1472,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                       />
                     </label>
                     <label className={styles.field}>
-                      <span>Body</span>
+                      <span lang="en-CA">Body</span>
                       <textarea
+                        lang={selectedBlock.body.trim() ? "" : "en-CA"}
                         maxLength={4000}
                         onChange={(event) =>
                           updateSelected(
@@ -1383,8 +1492,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                 ) : inspectorTab === "layout" ? (
                   <>
                     <label className={styles.field}>
-                      <span>Structured layout</span>
+                      <span lang="en-CA">Structured layout</span>
                       <select
+                        lang="en-CA"
                         onChange={(event) =>
                           updateSelected((block) =>
                             block.kind === "content"
@@ -1401,15 +1511,16 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                         ))}
                       </select>
                     </label>
-                    <p className={styles.helpText}>
+                    <p className={styles.helpText} lang="en-CA">
                       Layouts adapt automatically for the host, audience, and mobile screens.
                     </p>
                   </>
                 ) : inspectorTab === "media" ? (
                   <>
                     <label className={styles.field}>
-                      <span>Image alternative text</span>
+                      <span lang="en-CA">Image alternative text</span>
                       <textarea
+                        lang={selectedBlock.mediaAlt?.trim() ? "" : "en-CA"}
                         maxLength={300}
                         onChange={(event) =>
                           updateSelected(
@@ -1425,7 +1536,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                       />
                     </label>
                     <label className={styles.field}>
-                      <span>Instructional image</span>
+                      <span lang="en-CA">Instructional image</span>
                       <input
                         accept="image/jpeg,image/png,image/webp"
                         disabled={!mediaUploadsEnabled || mediaState !== "idle"}
@@ -1436,13 +1547,13 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                         type="file"
                       />
                     </label>
-                    <p className={styles.helpText}>
+                    <p className={styles.helpText} lang="en-CA">
                       {mediaUploadsEnabled
                         ? "JPEG, PNG, or WebP up to 10 MB. Uploads are quarantined and scanned."
                         : "Uploads are unavailable until malware scanning is configured."}
                     </p>
                     {mediaState !== "idle" ? (
-                      <p className={styles.helpText} role="status">
+                      <p className={styles.helpText} lang="en-CA" role="status">
                         {mediaState === "uploading"
                           ? "Uploading to quarantine…"
                           : "Checking image safety…"}
@@ -1450,9 +1561,10 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                     ) : null}
                     {mediaPreviewUrl ? (
                       <div className={styles.inspectorMedia}>
-                        <img alt={selectedBlock.mediaAlt ?? ""} src={mediaPreviewUrl} />
+                        <img alt={selectedBlock.mediaAlt ?? ""} lang="" src={mediaPreviewUrl} />
                         <button
                           className={styles.dangerButton}
+                          lang="en-CA"
                           onClick={removeSelectedImage}
                           type="button"
                         >
@@ -1463,8 +1575,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                   </>
                 ) : inspectorTab === "notes" ? (
                   <label className={styles.field}>
-                    <span>Speaker notes</span>
+                    <span lang="en-CA">Speaker notes</span>
                     <textarea
+                      lang={selectedBlock.speakerNotes.trim() ? "" : "en-CA"}
                       maxLength={2000}
                       onChange={(event) =>
                         updateSelected(
@@ -1482,8 +1595,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                 ) : (
                   <>
                     <label className={styles.field}>
-                      <span>Image alternative text</span>
+                      <span lang="en-CA">Image alternative text</span>
                       <textarea
+                        lang={selectedBlock.mediaAlt?.trim() ? "" : "en-CA"}
                         disabled={!selectedBlock.mediaId}
                         maxLength={300}
                         onChange={(event) =>
@@ -1499,7 +1613,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                         value={selectedBlock.mediaAlt ?? ""}
                       />
                     </label>
-                    <p className={styles.helpText}>
+                    <p className={styles.helpText} lang="en-CA">
                       Slide titles remain the primary heading. OpenRound preserves reading order
                       across host, participant, tablet, and mobile layouts.
                     </p>
@@ -1508,18 +1622,12 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
               </section>
             ) : (
               <section>
-                <p className={styles.eyebrow}>Interactive block</p>
-                <h2>
-                  {inspectorTab === "build"
-                    ? "Build"
-                    : inspectorTab === "diagnose"
-                      ? "Diagnose"
-                      : "Recover"}
-                </h2>
+                <p className={styles.eyebrow}>{t("delivery.presentation.interactiveQuestion")}</p>
+                <h2>{inspectorTabs.find((tab) => tab.id === inspectorTab)?.label}</h2>
                 {inspectorTab === "build" ? (
                   <>
                     <label className={styles.field}>
-                      <span>Response type</span>
+                      <span>{t("delivery.builder.questionType")}</span>
                       <select
                         onChange={(event) => {
                           const type = event.target.value as QuestionType;
@@ -1531,14 +1639,15 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                       >
                         {questionTypeOptions.map((option) => (
                           <option key={option.type} value={option.type}>
-                            {option.label}
+                            {t(questionTypeMessageKeys[option.type])}
                           </option>
                         ))}
                       </select>
                     </label>
                     <label className={styles.field}>
-                      <span>Time limit</span>
+                      <span>{t("delivery.builder.timeLimit")}</span>
                       <select
+                        lang="en-CA"
                         onChange={(event) =>
                           updateQuestion((question) => ({
                             ...question,
@@ -1555,7 +1664,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                       </select>
                     </label>
                     <label className={styles.field}>
-                      <span>Points</span>
+                      <span>{t("delivery.builder.points")}</span>
                       <select
                         disabled={
                           selectedBlock.question.type === "poll" ||
@@ -1590,8 +1699,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                 ) : inspectorTab === "diagnose" ? (
                   <>
                     <label className={styles.field}>
-                      <span>Purpose</span>
+                      <span lang="en-CA">Purpose</span>
                       <select
+                        lang="en-CA"
                         onChange={(event) =>
                           updateQuestion((question) => ({
                             ...question,
@@ -1606,8 +1716,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                       </select>
                     </label>
                     <label className={styles.field}>
-                      <span>Confidence prompt</span>
+                      <span>{t("delivery.builder.confidence")}</span>
                       <select
+                        lang="en-CA"
                         disabled={
                           selectedBlock.question.type === "poll" ||
                           selectedBlock.question.type === "rating"
@@ -1626,8 +1737,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                       </select>
                     </label>
                     <label className={styles.field}>
-                      <span>Concept keys</span>
+                      <span>{t("delivery.builder.concepts")}</span>
                       <input
+                        lang={(selectedBlock.question.conceptKeys ?? []).length ? "" : "en-CA"}
                         onChange={(event) =>
                           updateQuestion(
                             (question) => ({
@@ -1648,8 +1760,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                 ) : (
                   <>
                     <label className={styles.field}>
-                      <span>Delivery role</span>
+                      <span lang="en-CA">Delivery role</span>
                       <select
+                        lang="en-CA"
                         onChange={(event) =>
                           updateQuestion((question) => ({
                             ...question,
@@ -1668,7 +1781,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                     </label>
                     {(selectedBlock.question.delivery ?? "main") === "main" ? (
                       <label className={styles.field}>
-                        <span>Paired recheck</span>
+                        <span>{t("delivery.builder.pairedRecheckQuestion")}</span>
                         <select
                           onChange={(event) =>
                             updateQuestion((question) => ({
@@ -1678,7 +1791,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                           }
                           value={selectedBlock.question.linkedRecheckQuestionId ?? ""}
                         >
-                          <option value="">No paired recheck</option>
+                          <option lang="en-CA" value="">
+                            No paired recheck
+                          </option>
                           {questionBlocks
                             .filter(
                               (question) =>
@@ -1686,7 +1801,11 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                                 (question.delivery ?? "main") === "recheck",
                             )
                             .map((question) => (
-                              <option key={question.id} value={question.id}>
+                              <option
+                                key={question.id}
+                                lang={question.prompt ? "" : "en-CA"}
+                                value={question.id}
+                              >
                                 {question.prompt || "Untitled recheck"}
                               </option>
                             ))}
@@ -1694,8 +1813,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                       </label>
                     ) : null}
                     <label className={styles.field}>
-                      <span>Reveal explanation</span>
+                      <span>{t("delivery.builder.explanation")}</span>
                       <textarea
+                        lang={selectedBlock.question.explanation.trim() ? "" : "en-CA"}
                         maxLength={1000}
                         onChange={(event) =>
                           updateQuestion(
@@ -1730,7 +1850,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
           onKeyDown={(event) => handleModalKeyDown(event, () => setRoundImportOpen(false))}
           tabIndex={-1}
         >
-          <section className={styles.importDialog}>
+          <section className={styles.importDialog} lang="en-CA">
             <div>
               <p className={styles.eyebrow}>Independent question copies</p>
               <h2 id="round-import-title">Insert from a published Round</h2>
@@ -1746,7 +1866,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                 value={selectedRoundId}
               >
                 {roundSources.map((round) => (
-                  <option key={round.id} value={round.id}>
+                  <option key={round.id} lang="" value={round.id}>
                     {round.title}
                   </option>
                 ))}
@@ -1763,7 +1883,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                     type="checkbox"
                   />
                   <span>
-                    <strong>{question.prompt || "Untitled question"}</strong>
+                    <strong lang={question.prompt ? "" : "en-CA"}>
+                      {question.prompt || "Untitled question"}
+                    </strong>
                     <small>
                       {responseTypeLabel(question.type)} · {question.delivery ?? "main"}
                     </small>
@@ -1804,7 +1926,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
           onKeyDown={(event) => handleModalKeyDown(event, () => setSourceImportOpen(false))}
           tabIndex={-1}
         >
-          <section className={`${styles.importDialog} ${styles.sourceImportDialog}`}>
+          <section className={`${styles.importDialog} ${styles.sourceImportDialog}`} lang="en-CA">
             <div className={styles.sourceImportHeading}>
               <div>
                 <p className={styles.eyebrow}>Review before insertion</p>
@@ -1818,21 +1940,23 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                 Close
               </button>
             </div>
-            <AuthoringAssistant
-              artifactType="presentation"
-              canEdit
-              insertionTarget={{
-                presentationId,
-                expectedRevision: revisionRef.current,
-                afterBlockId: selectedBlockId,
-                onInserted: (insertedBlockIds) => {
-                  setSourceImportOpen(false);
-                  void reloadLatestDraft(insertedBlockIds[0]);
-                },
-              }}
-              plain
-              terminology="round"
-            />
+            <div lang={locale}>
+              <AuthoringAssistant
+                artifactType="presentation"
+                canEdit
+                insertionTarget={{
+                  presentationId,
+                  expectedRevision: revisionRef.current,
+                  afterBlockId: selectedBlockId,
+                  onInserted: (insertedBlockIds) => {
+                    setSourceImportOpen(false);
+                    void reloadLatestDraft(insertedBlockIds[0]);
+                  },
+                }}
+                plain
+                terminology="round"
+              />
+            </div>
           </section>
         </div>
       ) : null}

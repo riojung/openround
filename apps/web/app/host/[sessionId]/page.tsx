@@ -24,6 +24,7 @@ import {
   RecoveryCompass,
 } from "../../../components/host-command-center";
 import { JoinAccess } from "../../../components/join-access";
+import { useLocale } from "../../../components/locale-provider";
 import { ParticipantIdentity } from "../../../components/participant-avatar";
 import { QuestionMedia } from "../../../components/question-media";
 import { ResponseDistributionView } from "../../../components/response-distribution";
@@ -58,6 +59,37 @@ type Ack<T> = { data?: T; error?: { code: string; message: string } };
 const ACK_TIMEOUT_MS = 10_000;
 const SYNC_GRACE_MS = 5_000;
 
+const HOST_PHASE_MESSAGE_KEYS = {
+  Lobby: "live.host.phase.lobby",
+  "Question open": "live.host.phase.questionOpen",
+  "Recheck open": "live.host.phase.recheckOpen",
+  Paused: "live.host.phase.paused",
+  Diagnose: "live.host.phase.diagnose",
+  "Recheck locked": "live.host.phase.recheckLocked",
+  "Recheck evidence": "live.host.phase.recheckEvidence",
+  "Verify recovery": "live.host.phase.verifyRecovery",
+  "Choose the next step": "live.host.phase.chooseNext",
+  "Intervention in progress": "live.host.phase.intervention",
+  Standings: "live.host.phase.standings",
+  Complete: "live.host.phase.complete",
+} as const;
+
+const LEGACY_COMMAND_MESSAGE_KEYS = {
+  "Start round": "live.host.command.startRound",
+  "Lock answers": "live.host.command.lockAnswers",
+  Pause: "live.host.command.pause",
+  Resume: "live.host.command.resume",
+  "Reveal answer": "live.host.command.revealAnswer",
+  "Show standings": "live.host.command.showStandings",
+  "Continue after recheck": "live.host.command.continueAfterRecheck",
+  "Finish round": "live.host.command.finishRound",
+  "Finish intervention": "live.host.command.finishIntervention",
+  "Start peer discussion": "live.host.command.startDiscussion",
+  "Work an example": "live.host.command.example",
+  "Open linked recheck": "live.host.command.openLinkedRecheck",
+  "Recheck by revote": "live.host.command.recheckByRevote",
+} as const;
+
 function hostCredential(sessionId: string) {
   const storageKey = hostCredentialStorageKey(sessionId);
   const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -72,7 +104,18 @@ function hostCredential(sessionId: string) {
 
 export default function HostPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const { locale, t } = useLocale();
   const socket = useMemo(createRealtimeClient, []);
+  const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const timeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }),
+    [locale],
+  );
   const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
   const snapshotRef = useRef<SessionSnapshot | null>(null);
   const [connected, setConnected] = useState(false);
@@ -571,6 +614,10 @@ export default function HostPage() {
       })
     : null;
   const phaseView = phaseController?.view() ?? null;
+  const phaseMessageKey = phaseView
+    ? HOST_PHASE_MESSAGE_KEYS[phaseView.phaseLabel as keyof typeof HOST_PHASE_MESSAGE_KEYS]
+    : undefined;
+  const localizedPhaseLabel = phaseMessageKey ? t(phaseMessageKey) : phaseView?.phaseLabel;
   function runPhaseCommand(item: HostPhaseCommand) {
     phaseController?.execute(item);
   }
@@ -580,6 +627,13 @@ export default function HostPage() {
   const uxBeta = snapshot?.uxBeta === true;
   const legacyPhaseActions = snapshot ? getLegacyPhaseActions(snapshot) : [];
   const legacyRecoveryActions = snapshot ? getLegacyRecoveryActions(snapshot) : [];
+  const legacyCommandLabel = (item: LegacyHostCommand) => {
+    const messageKey =
+      LEGACY_COMMAND_MESSAGE_KEYS[item.label as keyof typeof LEGACY_COMMAND_MESSAGE_KEYS];
+    return (
+      <span lang={messageKey ? locale : "en-CA"}>{messageKey ? t(messageKey) : item.label}</span>
+    );
+  };
 
   return (
     <div
@@ -592,16 +646,24 @@ export default function HostPage() {
       style={experienceThemeStyle(snapshot?.experienceTheme)}
     >
       <header className="shell live-topbar" inert={audienceOpen}>
-        <Brand inverted name={snapshot?.brandTheme?.organizationName} />
+        <span lang="">
+          <Brand inverted name={snapshot?.brandTheme?.organizationName} />
+        </span>
         <div className="button-row">
           <ExperiencePreferences />
-          <span className="connection" data-connected={connected} role="status">
+          <span
+            className="connection"
+            data-connected={connected}
+            lang={connected ? locale : "en-CA"}
+            role="status"
+          >
             <span className="connection-dot" aria-hidden="true" />
-            {connected ? "Connected" : "Reconnecting…"}
+            {connected ? t("live.common.connected") : "Reconnecting…"}
           </span>
           <button
             className="button-quiet small-button"
             disabled={presenterPending}
+            lang="en-CA"
             onClick={() => void presenter()}
             type="button"
           >
@@ -616,24 +678,33 @@ export default function HostPage() {
         style={uxBeta ? undefined : { padding: "26px 0 70px" }}
       >
         <p aria-atomic="true" aria-live="polite" className="sr-only">
-          {phaseView ? `Host phase: ${phaseView.phaseLabel}.` : "Connecting host controls."}
+          {phaseView ? (
+            <>
+              <span lang="en-CA">Host phase: </span>
+              <span lang={phaseMessageKey ? locale : "en-CA"}>{localizedPhaseLabel}</span>.
+            </>
+          ) : (
+            <span lang="en-CA">Connecting host controls.</span>
+          )}
         </p>
         {error ? (
-          <p className="error" role="alert">
+          <p className="error" lang="en-CA" role="alert">
             {error}
           </p>
         ) : null}
         {!snapshot ? (
-          <section className="live-card">
+          <section className="live-card" lang="en-CA">
             <p>Synchronizing host controls…</p>
             <Link href="/dashboard">Return to dashboard</Link>
           </section>
         ) : (
           <>
             {uxBeta ? (
-              <section aria-label="Room readiness" className="room-readiness">
+              <section aria-label="Room readiness" className="room-readiness" lang="en-CA">
                 <span>
-                  <strong>{connected ? "Connected" : "Reconnecting"}</strong>
+                  <strong lang={connected ? locale : "en-CA"}>
+                    {connected ? t("live.common.connected") : "Reconnecting"}
+                  </strong>
                   <small>connection</small>
                 </span>
                 <span>
@@ -641,35 +712,37 @@ export default function HostPage() {
                   <small>round code</small>
                 </span>
                 <span>
-                  <strong>{snapshot.participants.length}</strong>
-                  <small>joined</small>
+                  <strong>{numberFormatter.format(snapshot.participants.length)}</strong>
+                  <small lang={locale}>{t("live.host.joined")}</small>
                 </span>
                 <span>
-                  <strong>{snapshot.answerCount}</strong>
-                  <small>answered</small>
+                  <strong>{numberFormatter.format(snapshot.answerCount)}</strong>
+                  <small lang={locale}>{t("live.host.answered")}</small>
                 </span>
                 <span>
-                  <strong>
-                    {snapshot.deadline
-                      ? new Date(snapshot.deadline).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          second: "2-digit",
-                        })
-                      : "None"}
+                  <strong
+                    lang={
+                      snapshot.questionPosition === null || snapshot.questionPosition === undefined
+                        ? locale
+                        : undefined
+                    }
+                  >
+                    {snapshot.deadline ? timeFormatter.format(new Date(snapshot.deadline)) : "None"}
                   </strong>
                   <small>deadline</small>
                 </span>
                 <span>
                   <strong>
                     {snapshot.questionPosition === null || snapshot.questionPosition === undefined
-                      ? "Lobby"
-                      : `${snapshot.questionPosition + 1}/${snapshot.questionCount}`}
+                      ? t("live.host.phase.lobby")
+                      : `${numberFormatter.format(snapshot.questionPosition + 1)}/${numberFormatter.format(snapshot.questionCount)}`}
                   </strong>
                   <small>progress</small>
                 </span>
                 <span>
-                  <strong>{phaseView?.phaseLabel ?? snapshot.phase.replaceAll("_", " ")}</strong>
+                  <strong lang={phaseMessageKey ? locale : "en-CA"}>
+                    {localizedPhaseLabel ?? snapshot.phase.replaceAll("_", " ")}
+                  </strong>
                   <small>phase</small>
                 </span>
               </section>
@@ -678,24 +751,33 @@ export default function HostPage() {
               <HostStage enhanced={uxBeta}>
                 {snapshot.phase === "lobby" ? (
                   <>
-                    <p className="eyebrow">Round code</p>
-                    <h1 className="live-lobby-heading">Join this round</h1>
+                    <p className="eyebrow" lang="en-CA">
+                      Round code
+                    </p>
+                    <h1 className="live-lobby-heading" lang="en-CA">
+                      Join this round
+                    </h1>
                     <div
                       className="session-code"
                       aria-label={`Round code ${snapshot.code.split("").join(" ")}`}
+                      lang="en-CA"
                     >
                       {snapshot.code}
                     </div>
-                    <p className="lead">Share the code or QR. Start when the room is ready.</p>
-                    <ul className="roster" aria-label="Participant roster">
+                    <p className="lead" lang="en-CA">
+                      Share the code or QR. Start when the room is ready.
+                    </p>
+                    <ul className="roster" aria-label="Participant roster" lang="en-CA">
                       {snapshot.participants.map((participant) => (
                         <li key={participant.id}>
                           <span>
-                            <ParticipantIdentity
-                              avatarId={participant.avatarId}
-                              nickname={participant.nickname}
-                            />
-                            {participant.connected ? "" : " · offline"}
+                            <span lang="">
+                              <ParticipantIdentity
+                                avatarId={participant.avatarId}
+                                nickname={participant.nickname}
+                              />
+                            </span>
+                            {participant.connected ? "" : ` · ${t("live.audience.offline")}`}
                           </span>
                           <button
                             aria-label={`Remove ${participant.nickname}`}
@@ -704,7 +786,7 @@ export default function HostPage() {
                             onClick={() => command("kick", { participantId: participant.id })}
                             type="button"
                           >
-                            Remove
+                            {t("live.audience.remove")}
                           </button>
                         </li>
                       ))}
@@ -717,12 +799,14 @@ export default function HostPage() {
                       className="page-heading"
                       style={{ alignItems: "center", marginBottom: 18 }}
                     >
-                      <span className="status-pill">{snapshot.phase.replaceAll("_", " ")}</span>
+                      <span className="status-pill" lang={phaseMessageKey ? locale : "en-CA"}>
+                        {localizedPhaseLabel ?? snapshot.phase.replaceAll("_", " ")}
+                      </span>
                       {snapshot.phase === "question_open" ? (
                         <Countdown deadline={snapshot.deadline} />
                       ) : null}
                     </div>
-                    <h1 style={{ fontSize: "clamp(2rem, 6vw, 4rem)" }}>
+                    <h1 lang="" style={{ fontSize: "clamp(2rem, 6vw, 4rem)" }}>
                       {snapshot.question.prompt}
                     </h1>
                     <QuestionMedia
@@ -745,33 +829,50 @@ export default function HostPage() {
                             key={choice.id}
                           >
                             <span aria-hidden="true">{String.fromCharCode(65 + index)}.</span>{" "}
-                            {choice.label}
+                            <span lang="">{choice.label}</span>
                           </div>
                         ))}
                       </div>
                     ) : snapshot.question.type === "numeric" ? (
-                      <p className="notice">
+                      <p className="notice" lang="en-CA">
                         Participants enter a numeric response
-                        {snapshot.question.unit ? ` in ${snapshot.question.unit}` : ""}.
+                        {snapshot.question.unit ? (
+                          <>
+                            {" "}
+                            in <span lang="">{snapshot.question.unit}</span>
+                          </>
+                        ) : (
+                          ""
+                        )}
+                        .
                         {snapshot.correctResponse?.kind === "numeric"
                           ? ` Accepted value: ${snapshot.correctResponse.value}.`
                           : ""}
                       </p>
                     ) : snapshot.question.rating ? (
-                      <p className="notice">
-                        Rating {snapshot.question.rating.min}–{snapshot.question.rating.max}:{" "}
-                        {snapshot.question.rating.minLabel} to {snapshot.question.rating.maxLabel}.
+                      <p className="notice" lang="en-CA">
+                        Rating {numberFormatter.format(snapshot.question.rating.min)}–
+                        {numberFormatter.format(snapshot.question.rating.max)}:{" "}
+                        <span lang="">{snapshot.question.rating.minLabel}</span> to{" "}
+                        <span lang="">{snapshot.question.rating.maxLabel}</span>.
                       </p>
                     ) : null}
-                    {snapshot.explanation ? <p className="notice">{snapshot.explanation}</p> : null}
+                    {snapshot.explanation ? (
+                      <p className="notice" lang="">
+                        {snapshot.explanation}
+                      </p>
+                    ) : null}
                   </>
                 ) : null}
                 {snapshot.phase === "finished" ? (
                   <>
-                    <p className="eyebrow">Round complete</p>
-                    <h1 style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}>Results are ready.</h1>
-                    <p className="lead">
-                      {snapshot.participants.length} participants completed this live round.
+                    <p className="eyebrow">{t("live.presenter.roundComplete")}</p>
+                    <h1 lang="en-CA" style={{ fontSize: "clamp(2.5rem, 7vw, 5rem)" }}>
+                      Results are ready.
+                    </h1>
+                    <p className="lead" lang="en-CA">
+                      {numberFormatter.format(snapshot.participants.length)} participants completed
+                      this live round.
                     </p>
                     {reportId ? (
                       <Link className="button" href={`/report/${reportId}`}>
@@ -789,7 +890,7 @@ export default function HostPage() {
                   <ResponseDistributionView distribution={snapshot.responseDistribution} />
                 ) : null}
                 {!uxBeta && legacyRecoveryActions.length > 0 ? (
-                  <div className="host-controls" style={{ marginBottom: 18 }}>
+                  <div className="host-controls" lang="en-CA" style={{ marginBottom: 18 }}>
                     <strong>
                       {snapshot.phase === "question_locked"
                         ? "Recover understanding"
@@ -803,19 +904,19 @@ export default function HostPage() {
                         onClick={() => runLegacyCommand(item)}
                         type="button"
                       >
-                        {item.label}
+                        {legacyCommandLabel(item)}
                       </button>
                     ))}
                   </div>
                 ) : null}
                 {snapshot.phase === "intervention" && snapshot.intervention ? (
-                  <p className="notice">
+                  <p className="notice" lang="en-CA">
                     Active intervention: {snapshot.intervention.type.replaceAll("_", " ")}. Finish
                     it before revealing or rechecking.
                   </p>
                 ) : null}
                 {!uxBeta ? (
-                  <div className="host-controls">
+                  <div className="host-controls" lang="en-CA">
                     {legacyPhaseActions.map((item) => (
                       <button
                         className={item.className}
@@ -827,7 +928,7 @@ export default function HostPage() {
                         onClick={() => runLegacyCommand(item)}
                         type="button"
                       >
-                        {item.label}
+                        {legacyCommandLabel(item)}
                       </button>
                     ))}
                     {snapshot.phase === "lobby" ? (
@@ -860,18 +961,20 @@ export default function HostPage() {
                     {snapshot.participants.slice(0, 5).map((participant) => (
                       <li key={participant.id}>
                         <strong>
-                          <ParticipantIdentity
-                            avatarId={participant.avatarId}
-                            nickname={participant.nickname}
-                          />
+                          <span lang="">
+                            <ParticipantIdentity
+                              avatarId={participant.avatarId}
+                              nickname={participant.nickname}
+                            />
+                          </span>
                         </strong>{" "}
-                        · {participant.score}
+                        · {numberFormatter.format(participant.score)}
                       </li>
                     ))}
                   </ol>
                 ) : null}
                 {staffManagementAvailable ? (
-                  <details className="staff-management">
+                  <details className="staff-management" lang="en-CA">
                     <summary>Round staff</summary>
                     <p className="muted">
                       Cohosts can run this round. Presenter credentials remain read-only. Links
@@ -884,6 +987,7 @@ export default function HostPage() {
                           <input
                             className="input"
                             id="cohost-label"
+                            lang=""
                             maxLength={80}
                             onChange={(event) => setCohostLabel(event.target.value)}
                             placeholder="Teaching assistant"
@@ -945,7 +1049,7 @@ export default function HostPage() {
                         {staffCredentials.map((credential) => (
                           <li key={credential.id}>
                             <span>
-                              <strong>{credential.label || credential.role}</strong> ·{" "}
+                              <strong lang="">{credential.label || credential.role}</strong> ·{" "}
                               {credential.role}
                               {credential.revokedAt ? " · revoked" : ""}
                             </span>
@@ -993,7 +1097,7 @@ export default function HostPage() {
                 busy={commandPending}
                 fallback={
                   reportId ? (
-                    <Link className="button" href={`/report/${reportId}`}>
+                    <Link className="button" href={`/report/${reportId}`} lang="en-CA">
                       Open report
                     </Link>
                   ) : null
@@ -1004,6 +1108,7 @@ export default function HostPage() {
                       aria-controls="host-audience-drawer"
                       aria-expanded={audienceOpen}
                       className="button-quiet"
+                      lang="en-CA"
                       onClick={() => setAudienceOpen((open) => !open)}
                       ref={audienceButtonRef}
                       type="button"
@@ -1014,6 +1119,7 @@ export default function HostPage() {
                       <button
                         className="button-quiet"
                         disabled={commandPending}
+                        lang="en-CA"
                         onClick={() =>
                           command(snapshot.lobbyLocked ? "unlock_lobby" : "lock_lobby")
                         }
@@ -1034,6 +1140,7 @@ export default function HostPage() {
                     <button
                       className="button-danger"
                       disabled={commandPending}
+                      lang="en-CA"
                       onClick={() => window.confirm("End this session now?") && command("end")}
                       type="button"
                     >
@@ -1061,8 +1168,12 @@ export default function HostPage() {
         >
           <div className="audience-drawer-heading">
             <div>
-              <p className="eyebrow">Audience</p>
-              <h2 id="audience-drawer-title">Participants and conversation</h2>
+              <p className="eyebrow" lang="en-CA">
+                Audience
+              </p>
+              <h2 id="audience-drawer-title" lang="en-CA">
+                Participants and conversation
+              </h2>
             </div>
             <button
               aria-label="Close audience tools"
@@ -1074,12 +1185,13 @@ export default function HostPage() {
               ref={audienceCloseRef}
               type="button"
             >
-              Close
+              {t("delivery.site.close")}
             </button>
           </div>
           <div
             aria-label="Audience views"
             className="audience-tabs"
+            lang="en-CA"
             onKeyDown={(event) => {
               if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
               event.preventDefault();
@@ -1101,7 +1213,10 @@ export default function HostPage() {
               tabIndex={audienceTab === "participants" ? 0 : -1}
               type="button"
             >
-              Participants ({snapshot.participants.length})
+              <span lang={locale}>
+                {t("live.common.participants")} (
+                {numberFormatter.format(snapshot.participants.length)})
+              </span>
             </button>
             <button
               aria-controls="host-audience-panel"
@@ -1112,7 +1227,7 @@ export default function HostPage() {
               tabIndex={audienceTab === "pulse" ? 0 : -1}
               type="button"
             >
-              Pulse
+              <span lang={locale}>{t("live.audience.pulseShort")}</span>
             </button>
             <button
               aria-controls="host-qna-panel"
@@ -1134,7 +1249,7 @@ export default function HostPage() {
               tabIndex={audienceTab === "chat" ? 0 : -1}
               type="button"
             >
-              Chat
+              <span lang={locale}>{t("live.audience.chat")}</span>
             </button>
           </div>
           <div
@@ -1155,7 +1270,9 @@ export default function HostPage() {
                 view={audienceTab === "qna" ? "participants" : audienceTab}
               />
             ) : (
-              <p className="muted">Audience controls close when the round finishes.</p>
+              <p className="muted" lang="en-CA">
+                Audience controls close when the round finishes.
+              </p>
             )}
           </div>
           <div

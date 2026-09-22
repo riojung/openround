@@ -335,6 +335,8 @@ export class MemoryRepository implements Repository {
         userId,
         workspaceId,
         email: token.email,
+        locale: "en-CA",
+        localePreferenceSet: false,
         segment: token.segment,
         role: "owner",
         plan,
@@ -400,6 +402,14 @@ export class MemoryRepository implements Repository {
     if (!session || session.revoked || session.expiresAt <= now) return null;
     const user = this.users.get(session.userId);
     return user && !user.deletedAt ? this.contextFor(user, session.activeWorkspaceId) : null;
+  }
+
+  async updateUserLocale(userId: string, locale: CreatorContext["locale"]) {
+    const user = this.users.get(userId);
+    if (!user || user.deletedAt) return null;
+    user.locale = locale;
+    user.localePreferenceSet = true;
+    return user.locale;
   }
 
   async listWorkspaces(userId: string): Promise<WorkspaceSummaryRecord[]> {
@@ -540,6 +550,8 @@ export class MemoryRepository implements Repository {
         userId: crypto.randomUUID(),
         workspaceId: invitation.workspaceId,
         email: invitation.email,
+        locale: "en-CA",
+        localePreferenceSet: false,
         segment: workspace.segment,
         role: invitation.role,
         plan: this.plans.get(invitation.workspaceId) ?? "free",
@@ -598,6 +610,8 @@ export class MemoryRepository implements Repository {
       userId: user.userId,
       workspaceId,
       email: user.email,
+      locale: user.locale,
+      localePreferenceSet: user.localePreferenceSet,
       segment: workspace.segment,
       role: workspaceId === user.workspaceId ? user.role : membership.role,
       plan: this.plans.get(workspaceId) ?? "free",
@@ -3511,7 +3525,13 @@ export class MemoryRepository implements Repository {
     ) as Record<string, unknown>;
     return Object.assign(
       {
-        profile: { id: user.userId, email: user.email, segment: user.segment },
+        profile: {
+          id: user.userId,
+          email: user.email,
+          locale: user.locale,
+          localePreferenceSet: user.localePreferenceSet,
+          segment: user.segment,
+        },
         workspaceMemberships,
         workspaces: await Promise.all(
           ownedWorkspaceIdList.map(async (workspaceId) => ({
@@ -3646,6 +3666,8 @@ export class MemoryRepository implements Repository {
     );
     user.deletedAt = new Date();
     user.email = `deleted-${userId.slice(0, 8)}@invalid.local`;
+    user.locale = "en-CA";
+    user.localePreferenceSet = false;
     for (const [tokenHash, session] of this.creatorSessions) {
       if (session.userId === userId) this.creatorSessions.delete(tokenHash);
     }

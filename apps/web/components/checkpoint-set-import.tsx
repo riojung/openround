@@ -3,6 +3,8 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import type { ImportValidationReport } from "@openround/contracts";
 import { API_URL } from "../lib/api";
+import { formatNumber } from "../lib/i18n/format";
+import { useLocale } from "./locale-provider";
 import { recordAuthoringEvent, recordCreationEvent } from "./workspace/product-events";
 
 type ImportFormat = ImportValidationReport["format"];
@@ -51,32 +53,37 @@ export function CheckpointSetImport({
   trackCreation = false,
   terminology = "legacy",
 }: CheckpointSetImportProps) {
+  const { locale, t } = useLocale();
   const [format, setFormat] = useState<ImportFormat>("openround_json");
   const [title, setTitle] = useState("");
   const [data, setData] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [errorIsRaw, setErrorIsRaw] = useState(false);
   const [validation, setValidation] = useState<ImportValidationReport | null>(null);
 
   async function chooseFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
     if (!file) return;
     setError("");
+    setErrorIsRaw(false);
     setMessage("");
     setValidation(null);
     const fileLimit = format === "qti3" ? 6_000_000 : 2_000_000;
     if (file.size > fileLimit) {
-      setError(`This file is larger than the ${format === "qti3" ? "6" : "2"} MB import limit.`);
+      setError(t("reportRound.import.fileTooLarge", { limit: format === "qti3" ? "6" : "2" }));
+      setErrorIsRaw(false);
       event.currentTarget.value = "";
       return;
     }
     try {
       setData(format === "qti3" ? await fileAsBase64(file) : await file.text());
-      setMessage(`${file.name} is ready to validate.`);
+      setMessage(t("reportRound.import.fileReady", { file: file.name }));
       event.currentTarget.value = "";
     } catch {
-      setError("The selected file could not be read. Try saving it as UTF-8 text.");
+      setError(t("reportRound.import.fileReadError"));
+      setErrorIsRaw(false);
     }
   }
 
@@ -84,6 +91,7 @@ export function CheckpointSetImport({
     event.preventDefault();
     setBusy(true);
     setError("");
+    setErrorIsRaw(false);
     setMessage("");
     setValidation(null);
     if (trackCreation) recordCreationEvent("creation_started", "import", "round");
@@ -102,13 +110,28 @@ export function CheckpointSetImport({
       const result = (await response.json().catch(() => ({}))) as ImportResponse;
       if (result.validation) setValidation(result.validation);
       if (!response.ok || !result.quiz) {
+        if (result.error?.message) {
+          setError(result.error.message);
+          setErrorIsRaw(true);
+          return;
+        }
         throw new Error(
-          result.error?.message ??
-            `The ${terminology === "round" ? "Round" : "checkpoint set"} could not be imported (${response.status}).`,
+          t("reportRound.import.failedStatus", {
+            artifact:
+              terminology === "round" ? t("common.round") : t("reportRound.common.checkpointSet"),
+            status: response.status,
+          }),
         );
       }
       setMessage(
-        `${result.quiz.title} was imported as a draft with ${result.validation?.importedCheckpoints ?? 0} ${terminology === "round" ? "questions" : "checkpoints"}.`,
+        t("reportRound.import.success", {
+          title: result.quiz.title,
+          count: formatNumber(locale, result.validation?.importedCheckpoints ?? 0),
+          items:
+            terminology === "round"
+              ? t("reportRound.common.questions")
+              : t("reportRound.common.checkpoints"),
+        }),
       );
       if (trackCreation) {
         recordCreationEvent("creation_completed", "import", "round");
@@ -123,8 +146,12 @@ export function CheckpointSetImport({
       setError(
         caught instanceof Error
           ? caught.message
-          : `The ${terminology === "round" ? "Round" : "checkpoint set"} could not be imported.`,
+          : t("reportRound.import.failed", {
+              artifact:
+                terminology === "round" ? t("common.round") : t("reportRound.common.checkpointSet"),
+            }),
       );
+      setErrorIsRaw(!(caught instanceof Error));
     } finally {
       setBusy(false);
     }
@@ -137,33 +164,32 @@ export function CheckpointSetImport({
     >
       <div className="portability-heading">
         <div>
-          <p className="eyebrow">Portable by design</p>
+          <p className="eyebrow">{t("reportRound.import.eyebrow")}</p>
           <h2 id="import-heading">
-            Import {terminology === "round" ? "a Round" : "a checkpoint set"}
+            {terminology === "round"
+              ? t("reportRound.import.roundTitle")
+              : t("reportRound.import.legacyTitle")}
           </h2>
         </div>
-        <span className="status-pill">Draft only</span>
+        <span className="status-pill">{t("reportRound.import.draftOnly")}</span>
       </div>
-      <p className="muted">
-        Imports are validated before anything is saved. Unsupported or incomplete content is listed
-        explicitly for review.
-      </p>
+      <p className="muted">{t("reportRound.import.description")}</p>
       {!enabled ? (
         <div className="notice">
           <p>
             {terminology === "round"
-              ? "Round import and export are included with Hosted Pro."
-              : "Import and checkpoint-set exports are included with Hosted Pro."}
+              ? t("reportRound.import.proRound")
+              : t("reportRound.import.proLegacy")}
           </p>
           <button className="button-quiet small-button" onClick={onUpgrade} type="button">
-            Explore Pro
+            {t("workspace.explorePro")}
           </button>
         </div>
       ) : (
         <form onSubmit={submit}>
           <div className="portability-fields">
             <label className="field">
-              <span>Import format</span>
+              <span>{t("reportRound.import.format")}</span>
               <select
                 className="select"
                 onChange={(event) => {
@@ -172,32 +198,35 @@ export function CheckpointSetImport({
                   setValidation(null);
                   setMessage("");
                   setError("");
+                  setErrorIsRaw(false);
                 }}
                 value={format}
               >
                 <option value="openround_json">OpenRound JSON</option>
                 <option value="csv">OpenRound CSV</option>
-                <option value="bulk">Bulk paste</option>
-                <option value="qti3">QTI 3 package</option>
+                <option value="bulk">{t("reportRound.import.bulkPaste")}</option>
+                <option value="qti3">{t("reportRound.import.qtiPackage")}</option>
               </select>
             </label>
             <label className="field">
               <span>
-                {terminology === "round" ? "New Round title (optional)" : "New title (optional)"}
+                {terminology === "round"
+                  ? t("reportRound.import.newRoundTitle")
+                  : t("reportRound.import.newTitle")}
               </span>
               <input
                 className="input"
                 maxLength={160}
                 onChange={(event) => setTitle(event.target.value)}
-                placeholder="Keep the source title"
+                placeholder={t("reportRound.import.keepSourceTitle")}
                 value={title}
               />
             </label>
             <label className="field">
               <span>
                 {format === "qti3"
-                  ? "Choose a QTI 3 ZIP package"
-                  : "Choose a UTF-8 file (optional)"}
+                  ? t("reportRound.import.chooseQti")
+                  : t("reportRound.import.chooseTextFile")}
               </span>
               <input
                 accept={formatAccept[format]}
@@ -209,13 +238,11 @@ export function CheckpointSetImport({
           </div>
           {format === "qti3" ? (
             <p className="notice" role="status">
-              {data
-                ? "QTI package loaded and ready to validate."
-                : "Select a ZIP package to continue."}
+              {data ? t("reportRound.import.qtiReady") : t("reportRound.import.selectZip")}
             </p>
           ) : (
             <label className="field">
-              <span>Import content</span>
+              <span>{t("reportRound.import.content")}</span>
               <textarea
                 aria-describedby="import-format-help"
                 className="textarea portability-source"
@@ -223,8 +250,10 @@ export function CheckpointSetImport({
                 onChange={(event) => setData(event.target.value)}
                 placeholder={
                   format === "bulk"
-                    ? "What is the safest action?\n* Follow the complete procedure\n- Take a shortcut"
-                    : `Paste ${format === "csv" ? "CSV" : "JSON"} content here`
+                    ? t("reportRound.import.bulkExample")
+                    : t("reportRound.import.pasteContent", {
+                        format: format === "csv" ? "CSV" : "JSON",
+                      })
                 }
                 required
                 value={data}
@@ -233,20 +262,24 @@ export function CheckpointSetImport({
           )}
           <p className="muted" id="import-format-help">
             {format === "openround_json"
-              ? `Paste an OpenRound ${terminology === "round" ? "JSON" : "checkpoint-set"} export or choose its .json file.`
+              ? terminology === "round"
+                ? t("reportRound.import.jsonHelpRound")
+                : t("reportRound.import.jsonHelpLegacy")
               : format === "csv"
-                ? "Paste an OpenRound CSV export or choose its .csv file."
+                ? t("reportRound.import.csvHelp")
                 : format === "bulk"
-                  ? `Separate ${terminology === "round" ? "questions" : "checkpoints"} with a blank line. Start choices with '* ' for correct or '- ' for incorrect.`
-                  : "Choose a QTI 3 ZIP package. Selected response, multi-select, true/false, and numeric items are supported."}
+                  ? terminology === "round"
+                    ? t("reportRound.import.bulkHelpRound")
+                    : t("reportRound.import.bulkHelpLegacy")
+                  : t("reportRound.import.qtiHelp")}
           </p>
           <button className="button" disabled={busy || !data.trim()} type="submit">
-            {busy ? "Validating…" : "Validate and import draft"}
+            {busy ? t("reportRound.import.validating") : t("reportRound.import.validate")}
           </button>
         </form>
       )}
       {error ? (
-        <p className="error" role="alert">
+        <p className="error" lang={errorIsRaw ? "en-CA" : undefined} role="alert">
           {error}
         </p>
       ) : null}
@@ -257,14 +290,21 @@ export function CheckpointSetImport({
       ) : null}
       {validation && (validation.errors.length > 0 || validation.warnings.length > 0) ? (
         <div className="import-validation" aria-live="polite">
-          <h3>Validation details</h3>
+          <h3>{t("reportRound.import.validationDetails")}</h3>
           <ul>
             {[...validation.errors, ...validation.warnings].map((item, index) => (
               <li key={`${item.code}-${item.row ?? "set"}-${item.field ?? "content"}-${index}`}>
-                <strong>{item.severity === "error" ? "Error" : "Warning"}:</strong>{" "}
-                {item.row ? `row ${item.row}, ` : ""}
-                {item.field ? `${item.field}: ` : ""}
-                {item.message}
+                <strong>
+                  {item.severity === "error"
+                    ? t("reportRound.import.error")
+                    : t("reportRound.import.warning")}
+                  :
+                </strong>{" "}
+                {item.row
+                  ? `${t("reportRound.import.row", { row: formatNumber(locale, item.row) })}, `
+                  : ""}
+                {item.field ? <span lang="en-CA">{item.field}: </span> : null}
+                <span lang="en-CA">{item.message}</span>
               </li>
             ))}
           </ul>

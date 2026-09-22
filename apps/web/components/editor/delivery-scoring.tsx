@@ -1,5 +1,6 @@
 import type { QuestionDraft } from "@openround/contracts";
 import type { QuestionUpdater } from "./types";
+import { useLocale } from "../locale-provider";
 
 export function DeliveryScoring({
   question,
@@ -8,11 +9,12 @@ export function DeliveryScoring({
   question: QuestionDraft;
   onUpdateQuestion: QuestionUpdater;
 }) {
+  const { t } = useLocale();
   return (
     <>
       <div className="toolbar" style={{ marginTop: 22 }}>
         <label className="field" style={{ flex: "1 1 180px", marginBottom: 0 }}>
-          <span>Time limit</span>
+          <span>{t("delivery.builder.timeLimit")}</span>
           <select
             className="select"
             onChange={(event) =>
@@ -31,7 +33,7 @@ export function DeliveryScoring({
           </select>
         </label>
         <label className="field" style={{ flex: "1 1 180px", marginBottom: 0 }}>
-          <span>Base points</span>
+          <span>{t("delivery.builder.basePoints")}</span>
           <select
             className="select"
             disabled={question.type === "poll" || question.type === "rating"}
@@ -52,7 +54,7 @@ export function DeliveryScoring({
         </label>
       </div>
       <div className="field" style={{ marginTop: 22 }}>
-        <label htmlFor="explanation">Explanation after reveal</label>
+        <label htmlFor="explanation">{t("delivery.builder.explanationAfterReveal")}</label>
         <textarea
           className="textarea"
           id="explanation"

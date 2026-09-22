@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { unlockSoundCues } from "../lib/sound";
+import { useLocale } from "./locale-provider";
 
 type Preferences = { highContrast: boolean; reducedMotion: boolean; muted: boolean };
 
 const defaults: Preferences = { highContrast: false, reducedMotion: false, muted: true };
 
 export function ExperiencePreferences() {
+  const { t } = useLocale();
   const [preferences, setPreferences] = useState(defaults);
 
   useEffect(() => {
@@ -36,7 +38,7 @@ export function ExperiencePreferences() {
 
   return (
     <details className="experience-preferences">
-      <summary>Display &amp; sound</summary>
+      <summary>{t("live.preferences.summary")}</summary>
       <div>
         <label className="checkbox-field">
           <input
@@ -44,7 +46,7 @@ export function ExperiencePreferences() {
             onChange={(event) => update({ highContrast: event.target.checked })}
             type="checkbox"
           />
-          High contrast
+          {t("live.preferences.highContrast")}
         </label>
         <label className="checkbox-field">
           <input
@@ -52,7 +54,7 @@ export function ExperiencePreferences() {
             onChange={(event) => update({ reducedMotion: event.target.checked })}
             type="checkbox"
           />
-          Reduce motion
+          {t("live.preferences.reduceMotion")}
         </label>
         <label className="checkbox-field">
           <input
@@ -63,7 +65,7 @@ export function ExperiencePreferences() {
             }}
             type="checkbox"
           />
-          Mute sound cues
+          {t("live.preferences.muteSound")}
         </label>
       </div>
     </details>

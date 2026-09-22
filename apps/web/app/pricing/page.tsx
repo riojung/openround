@@ -8,7 +8,7 @@ export default function PricingPage() {
   return (
     <>
       <SiteHeader />
-      <main className="shell page-main" id="main">
+      <main className="shell page-main" id="main" lang="en-CA">
         <div className="section-heading">
           <p className="eyebrow">Simple launch pricing</p>
           <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5.4rem)" }}>

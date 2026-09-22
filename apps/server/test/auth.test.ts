@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MemoryRepository } from "@openround/db";
+import { MemoryRepository, type CreatorContext } from "@openround/db";
 import { AuthService } from "../src/auth.js";
 import { ConfigSchema } from "../src/config.js";
 import type { Mailer } from "../src/mailer.js";
@@ -66,6 +66,59 @@ describe("magic-link response exposure", () => {
 
     expect(new URL(debugUrl!).searchParams.get("returnTo")).toBe("/lti/link");
     expect(mailer.messages[0]?.verifyUrl).toBe(debugUrl);
+  });
+
+  it("bridges only explicit account locales while preserving a local destination", () => {
+    const auth = new AuthService(
+      new MemoryRepository(),
+      new CapturingMailer(),
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        WEB_ORIGIN: "https://app.openround.example",
+        PUBLIC_API_URL: "https://api.openround.example",
+      }),
+    );
+    const creator: CreatorContext = {
+      userId: "00000000-0000-4000-8000-000000000001",
+      workspaceId: "00000000-0000-4000-8000-000000000002",
+      email: "locale@example.com",
+      locale: "ja-JP",
+      localePreferenceSet: false,
+      segment: "workplace",
+      role: "owner",
+      plan: "free",
+    };
+
+    expect(auth.localeAwareWebRedirect(creator, "/dashboard?welcome=1")).toBe(
+      "https://app.openround.example/dashboard?welcome=1",
+    );
+    const bridged = new URL(
+      auth.localeAwareWebRedirect(
+        { ...creator, localePreferenceSet: true },
+        "/lti/select?launchId=launch-1#current",
+      ),
+    );
+    expect(bridged.pathname).toBe("/auth/locale");
+    expect(bridged.searchParams.get("locale")).toBe("ja-JP");
+    expect(bridged.searchParams.get("returnTo")).toBe("/lti/select?launchId=launch-1#current");
+    const rejectedExternal = new URL(
+      auth.localeAwareWebRedirect(
+        { ...creator, localePreferenceSet: true },
+        "https://evil.example/steal",
+      ),
+    );
+    expect(rejectedExternal.origin).toBe("https://app.openround.example");
+    expect(rejectedExternal.pathname).toBe("/auth/locale");
+    expect(rejectedExternal.searchParams.get("returnTo")).toBe("/dashboard");
+
+    const rejectedControlCharacter = new URL(
+      auth.localeAwareWebRedirect(
+        { ...creator, localePreferenceSet: true },
+        `/${String.fromCharCode(9)}/evil.example`,
+      ),
+    );
+    expect(rejectedControlCharacter.searchParams.get("returnTo")).toBe("/dashboard");
   });
 
   it("keeps the link out of a hosted production response", async () => {

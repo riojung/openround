@@ -4,8 +4,11 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Brand } from "../brand";
+import { useLocale } from "../locale-provider";
 import { humanError } from "../../lib/api";
+import type { MessageKey } from "../../lib/i18n/catalog";
 import { ColorModeMenu } from "./color-mode-menu";
+import { LanguageMenu } from "./language-menu";
 import {
   useWorkspace,
   WorkspaceProvider,
@@ -31,53 +34,58 @@ type IconName =
 const destinations: Array<{
   href: string;
   icon: IconName;
-  label: string;
+  label: MessageKey;
   match: (path: string) => boolean;
   feature?: "discover" | "groups";
 }> = [
-  { href: "/home", icon: "home", label: "Home", match: (path) => path === "/home" },
+  {
+    href: "/home",
+    icon: "home",
+    label: "workspace.nav.home",
+    match: (path) => path === "/home",
+  },
   {
     href: "/library",
     icon: "library",
-    label: "Library",
+    label: "workspace.nav.library",
     match: (path) => path === "/library" || path === "/dashboard",
   },
   {
     href: "/sessions",
     icon: "sessions",
-    label: "Sessions",
+    label: "workspace.nav.sessions",
     match: (path) => path.startsWith("/sessions"),
   },
   {
     href: "/assignments",
     icon: "assignments",
-    label: "Assignments",
+    label: "workspace.nav.assignments",
     match: (path) => path.startsWith("/assignments") || path.includes("/assign"),
   },
   {
     href: "/results",
     icon: "results",
-    label: "Results",
+    label: "workspace.nav.results",
     match: (path) => path.startsWith("/results") || path.startsWith("/report/"),
   },
   {
     href: "/discover",
     icon: "discover",
-    label: "Discover",
+    label: "workspace.nav.discover",
     match: (path) => path.startsWith("/discover") || path.startsWith("/templates"),
     feature: "discover",
   },
   {
     href: "/groups",
     icon: "groups",
-    label: "Groups",
+    label: "workspace.nav.groups",
     match: (path) => path.startsWith("/groups"),
     feature: "groups",
   },
   {
     href: "/account",
     icon: "workspace",
-    label: "Workspace",
+    label: "workspace.nav.workspace",
     match: (path) => path.startsWith("/account"),
   },
 ];
@@ -189,12 +197,14 @@ function ShellIcon({ name }: { name: IconName }) {
 interface WorkspaceShellProps {
   eyebrow?: string;
   title: string;
+  titleLanguage?: string;
   description?: string;
   actions?: ReactNode;
   children: ReactNode;
   requireBeta?: boolean;
   requiredFeature?: WorkspaceRolloutFeature;
   featureFallbackHref?: string;
+  translationLevel?: "none" | "header" | "full";
 }
 
 export type WorkspaceRolloutFeature =
@@ -202,11 +212,13 @@ export type WorkspaceRolloutFeature =
 
 export function WorkspaceNav({ mobile = false }: { mobile?: boolean }) {
   const pathname = usePathname();
+  const { locale, t } = useLocale();
   const { productFeatures } = useWorkspace();
   return (
     <nav
       className={mobile ? styles.mobileNav : styles.nav}
-      aria-label={mobile ? "Workspace sections" : "Workspace"}
+      aria-label={mobile ? t("workspace.nav.mobileLabel") : t("workspace.nav.label")}
+      lang={locale}
     >
       {destinations
         .filter(
@@ -230,7 +242,7 @@ export function WorkspaceNav({ mobile = false }: { mobile?: boolean }) {
               key={destination.href}
             >
               {!mobile ? <ShellIcon name={destination.icon} /> : null}
-              {destination.label}
+              {t(destination.label)}
             </Link>
           );
         })}
@@ -239,17 +251,22 @@ export function WorkspaceNav({ mobile = false }: { mobile?: boolean }) {
 }
 
 function CreateMenu({ productFeatures }: { productFeatures: WorkspaceProductFeatures }) {
+  const { t } = useLocale();
   return (
     <details className={styles.createMenu}>
-      <summary className={styles.createButton} role="button">
+      <summary
+        aria-label={t("workspace.create.label")}
+        className={styles.createButton}
+        role="button"
+      >
         <ShellIcon name="plus" />
-        <span>Create</span>
+        <span>{t("workspace.create.label")}</span>
         <span className={styles.chevron} aria-hidden="true">
           ▾
         </span>
       </summary>
       <div className={styles.createMenuPanel}>
-        <p className={styles.createMenuLabel}>Create new</p>
+        <p className={styles.createMenuLabel}>{t("workspace.create.new")}</p>
         <Link
           className={styles.createMenuItem}
           href={productFeatures.builderV2 ? "/create" : "/dashboard"}
@@ -258,8 +275,8 @@ function CreateMenu({ productFeatures }: { productFeatures: WorkspaceProductFeat
             <ShellIcon name="assignments" />
           </span>
           <span>
-            <strong>Round</strong>
-            <small>Questions, diagnosis, rechecks, and practice</small>
+            <strong>{t("common.round")}</strong>
+            <small>{t("workspace.create.roundDescription")}</small>
           </span>
         </Link>
         {productFeatures.presentations ? (
@@ -268,8 +285,8 @@ function CreateMenu({ productFeatures }: { productFeatures: WorkspaceProductFeat
               <ShellIcon name="presentation" />
             </span>
             <span>
-              <strong>Presentation</strong>
-              <small>Turn slides or a source into an interactive session</small>
+              <strong>{t("common.presentation")}</strong>
+              <small>{t("workspace.create.presentationDescription")}</small>
             </span>
           </Link>
         ) : null}
@@ -281,14 +298,17 @@ function CreateMenu({ productFeatures }: { productFeatures: WorkspaceProductFeat
 export function WorkspaceShell({
   eyebrow = "Creator workspace",
   title,
+  titleLanguage,
   description,
   actions,
   children,
   requireBeta = true,
   requiredFeature,
   featureFallbackHref = "/dashboard",
+  translationLevel = "none",
 }: WorkspaceShellProps) {
   const router = useRouter();
+  const { locale, t } = useLocale();
   const { creator, productFeatures, loading, error, canEdit, signOut, startUpgrade } =
     useWorkspace();
   const [actionError, setActionError] = useState("");
@@ -311,9 +331,9 @@ export function WorkspaceShell({
 
   if (loading || workspaceAccessUnavailable) {
     return (
-      <main className={styles.loading} id="main">
+      <main className={styles.loading} id="main" lang={locale}>
         <div className={styles.loadingMark} aria-hidden="true" />
-        <p>Loading your workspace…</p>
+        <p>{t("workspace.loading")}</p>
       </main>
     );
   }
@@ -325,16 +345,20 @@ export function WorkspaceShell({
   }
 
   const workspaceLabel = creator
-    ? `${creator.segment === "workplace" ? "Workplace" : "Education"} workspace`
-    : "Current workspace";
+    ? t(
+        creator.segment === "workplace"
+          ? "workspace.switcher.workplace"
+          : "workspace.switcher.education",
+      )
+    : t("workspace.switcher.current");
   const accountInitial = creator?.email?.trim().charAt(0).toUpperCase() || "O";
 
   return (
     <div className={styles.workspace}>
-      <a className={styles.skipLink} href="#main">
-        Skip to main content
+      <a className={styles.skipLink} href="#main" lang={locale}>
+        {t("workspace.skipToMain")}
       </a>
-      <aside className={styles.sidebar}>
+      <aside className={styles.sidebar} lang={locale}>
         <div className={styles.brandWrap}>
           <Brand />
         </div>
@@ -343,7 +367,12 @@ export function WorkspaceShell({
           <p className={styles.identity} title={creator?.email}>
             <strong>{creator?.email}</strong>
             <span>
-              {creator?.role} · {creator?.plan} plan
+              {creator
+                ? t("workspace.identity", {
+                    role: t(`role.${creator.role}`),
+                    plan: t(`plan.${creator.plan}`),
+                  })
+                : null}
             </span>
           </p>
           <div className={styles.accountActions}>
@@ -356,7 +385,7 @@ export function WorkspaceShell({
                 }}
                 type="button"
               >
-                Explore Pro
+                {t("workspace.explorePro")}
               </button>
             ) : null}
             <button
@@ -367,50 +396,55 @@ export function WorkspaceShell({
               }}
               type="button"
             >
-              Sign out
+              {t("workspace.signOut")}
             </button>
           </div>
         </div>
       </aside>
       <div className={styles.contentColumn}>
-        <header className={styles.topHeader}>
+        <header className={styles.topHeader} lang={locale}>
           <div className={styles.mobileBrand}>
             <Brand />
           </div>
           <Link className={styles.workspaceSwitch} href="/account">
             <ShellIcon name="workspace" />
             <span>
-              <small>Workspace</small>
+              <small>{t("workspace.switcher.label")}</small>
               <strong>{workspaceLabel}</strong>
             </span>
           </Link>
           <form className={styles.globalSearch} onSubmit={submitSearch} role="search">
             <label className={styles.srOnly} htmlFor="workspace-search">
-              Search your workspace library
+              {t("workspace.search.label")}
             </label>
             <ShellIcon name="search" />
             <input
               autoComplete="off"
               id="workspace-search"
               onChange={(event) => setGlobalSearch(event.target.value)}
-              placeholder="Search your library"
+              placeholder={t("workspace.search.placeholder")}
               type="search"
               value={globalSearch}
             />
           </form>
           <div className={styles.topActions}>
             {canEdit && productFeatures ? <CreateMenu productFeatures={productFeatures} /> : null}
+            <LanguageMenu />
             <ColorModeMenu />
-            <Link className={styles.utilityAction} href="/activity" title="Activity inbox">
+            <Link
+              className={styles.utilityAction}
+              href="/activity"
+              title={t("workspace.activityTitle")}
+            >
               <ShellIcon name="activity" />
-              <span className={styles.utilityLabel}>Activity</span>
+              <span className={styles.utilityLabel}>{t("workspace.activity")}</span>
             </Link>
-            <Link className={styles.utilityAction} href="/help" title="Help">
+            <Link className={styles.utilityAction} href="/help" title={t("workspace.help")}>
               <ShellIcon name="help" />
-              <span className={styles.utilityLabel}>Help</span>
+              <span className={styles.utilityLabel}>{t("workspace.help")}</span>
             </Link>
             <Link
-              aria-label="Open account and workspace settings"
+              aria-label={t("workspace.accountSettings")}
               className={styles.accountButton}
               href="/account"
               title={creator?.email}
@@ -420,17 +454,29 @@ export function WorkspaceShell({
           </div>
         </header>
         <WorkspaceNav mobile />
-        <main className={styles.main} id="main">
-          <header className={styles.pageHeader}>
+        <main
+          className={styles.main}
+          id="main"
+          lang={translationLevel === "full" ? locale : "en-CA"}
+        >
+          <header
+            className={styles.pageHeader}
+            lang={translationLevel === "none" ? "en-CA" : locale}
+          >
             <div>
               <p className={styles.eyebrow}>{eyebrow}</p>
-              <h1>{title}</h1>
+              <h1 lang={titleLanguage}>{title}</h1>
               {description ? <p className={styles.description}>{description}</p> : null}
             </div>
-            <div className={styles.pageActions}>{actions}</div>
+            <div
+              className={styles.pageActions}
+              lang={translationLevel === "full" ? locale : "en-CA"}
+            >
+              {actions}
+            </div>
           </header>
           {error || actionError ? (
-            <p className="error" role="alert">
+            <p className="error" lang="en-CA" role="alert">
               {error || actionError}
             </p>
           ) : null}
@@ -459,6 +505,7 @@ export function WorkspaceFeatureGate({
   fallbackHref?: string;
 }) {
   const router = useRouter();
+  const { locale, t } = useLocale();
   const { productFeatures, loading, error } = useWorkspace();
   const resolved = productFeatures !== null || Boolean(error);
   const unavailable = resolved && (Boolean(error) || productFeatures?.[feature] !== true);
@@ -469,9 +516,9 @@ export function WorkspaceFeatureGate({
 
   if (loading || !resolved || unavailable) {
     return (
-      <main className={styles.loading} id="main">
+      <main className={styles.loading} id="main" lang={locale}>
         <div className={styles.loadingMark} aria-hidden="true" />
-        <p>Loading your workspace…</p>
+        <p>{t("workspace.loading")}</p>
       </main>
     );
   }

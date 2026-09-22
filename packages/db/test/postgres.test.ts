@@ -186,10 +186,17 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
         ).rejects.toMatchObject({ code: "55000" });
 
         await expect(
+          verificationClient.query<{ locale_explicit: boolean }>(
+            "SELECT locale_explicit FROM users WHERE id = $1",
+            [ownerId],
+          ),
+        ).resolves.toMatchObject({ rows: [{ locale_explicit: false }] });
+
+        await expect(
           verificationClient.query<{ count: string; maximum: number }>(
             "SELECT count(*) AS count, max(version) AS maximum FROM _openround_migrations",
           ),
-        ).resolves.toMatchObject({ rows: [{ count: "30", maximum: 30 }] });
+        ).resolves.toMatchObject({ rows: [{ count: "31", maximum: 31 }] });
 
         await expect(
           verificationClient.query(
@@ -286,6 +293,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 28, name: "authoring_product_events" },
       { version: 29, name: "presentation_live_expiry" },
       { version: 30, name: "presentation_noop_mutations" },
+      { version: 31, name: "user_locale_preference" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -295,7 +303,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("30");
+    expect(bootstrapped.rows[0]?.count).toBe("31");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -339,6 +347,54 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     expect(result).not.toBeNull();
     return result!;
   }
+
+  it("persists an idempotent locale preference for only the selected user", async () => {
+    const first = await creator("locale-first");
+    const second = await creator("locale-second");
+
+    expect(first.locale).toBe("en-CA");
+    expect(first.localePreferenceSet).toBe(false);
+    expect(second.locale).toBe("en-CA");
+    expect(second.localePreferenceSet).toBe(false);
+    await expect(repository.updateUserLocale(first.userId, "zh-TW")).resolves.toBe("zh-TW");
+    await expect(repository.updateUserLocale(first.userId, "zh-TW")).resolves.toBe("zh-TW");
+
+    await expect(
+      repository.getCreatorByUserId(first.userId, first.workspaceId),
+    ).resolves.toMatchObject({ locale: "zh-TW", localePreferenceSet: true });
+    await expect(
+      repository.getCreatorByUserId(second.userId, second.workspaceId),
+    ).resolves.toMatchObject({ locale: "en-CA", localePreferenceSet: false });
+
+    const returningTokenHash = `test-locale-returning-${randomUUID()}`;
+    await repository.createMagicToken({
+      id: randomUUID(),
+      email: first.email,
+      segment: "education",
+      tokenHash: returningTokenHash,
+      policyVersion: "test-v1",
+      expiresAt: new Date(Date.now() + 60_000),
+      consumedAt: null,
+    });
+    await expect(
+      repository.consumeMagicToken(returningTokenHash, new Date()),
+    ).resolves.toMatchObject({ locale: "zh-TW", localePreferenceSet: true });
+    const localeSessionTokenHash = `test-locale-session-${randomUUID()}`;
+    await repository.createCreatorSession({
+      id: randomUUID(),
+      userId: first.userId,
+      tokenHash: localeSessionTokenHash,
+      expiresAt: new Date(Date.now() + 60_000),
+      activeWorkspaceId: first.workspaceId,
+    });
+    await expect(
+      repository.getCreatorBySession(localeSessionTokenHash, new Date()),
+    ).resolves.toMatchObject({ locale: "zh-TW", localePreferenceSet: true });
+    await expect(repository.exportAccount(first.userId)).resolves.toMatchObject({
+      profile: { locale: "zh-TW", localePreferenceSet: true },
+    });
+    await expect(repository.updateUserLocale(randomUUID(), "de-DE")).resolves.toBeNull();
+  });
 
   it("atomically fences draft replacements and revision-bound publishing", async () => {
     const owner = await creator("draft-revision");
@@ -917,6 +973,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       expect.arrayContaining([expect.objectContaining({ token_hash: expect.anything() })]),
     );
 
+    await repository.updateUserLocale(owner.userId, "ko-KR");
     await repository.deleteAccount(owner.userId);
     const system = await runtimePool.connect();
     try {
@@ -937,6 +994,11 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         );
         expect(result.rows[0]?.count, table).toBe("0");
       }
+      const deletedProfile = await system.query<{
+        locale: string;
+        locale_explicit: boolean;
+      }>("SELECT locale, locale_explicit FROM users WHERE id = $1", [owner.userId]);
+      expect(deletedProfile.rows[0]).toEqual({ locale: "en-CA", locale_explicit: false });
       await system.query("ROLLBACK");
     } finally {
       system.release();

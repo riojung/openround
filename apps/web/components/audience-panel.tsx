@@ -16,6 +16,7 @@ import {
 } from "@openround/contracts";
 import { apiFetch, humanError } from "../lib/api";
 import { clientUuid } from "../lib/uuid";
+import { useLocale } from "./locale-provider";
 import { ParticipantIdentity } from "./participant-avatar";
 
 const signalOptions: Array<{ id: AudienceSignal; label: string; icon: string }> = [
@@ -422,6 +423,7 @@ export function AudiencePanel({
   realtimeBatch: AudienceRealtimeBatch | null;
   onKick?: (participantId: string) => void;
 }) {
+  const { t } = useLocale();
   const [data, setData] = useState<AudienceSync | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -446,6 +448,8 @@ export function AudiencePanel({
   const lastSyncRevisionRef = useRef(syncRevision);
   const authorization = useMemo(() => ({ authorization: `Bearer ${token}` }), [token]);
   const refreshKey = `${sessionId}:${token}`;
+  const signalLabel = (signal: AudienceSignal) => t(`live.audience.signal.${signal}`);
+  const reactionLabel = (reaction: ChatReaction) => t(`live.audience.reaction.${reaction}`);
 
   const refresh = useCallback(
     async (forceTrailing = false) => {
@@ -721,36 +725,38 @@ export function AudiencePanel({
   if (!data) {
     return (
       <section className="panel audience-panel" aria-busy="true">
-        <p>{error || "Loading Audience Pulse…"}</p>
+        <p lang={error ? "en-CA" : undefined}>{error || t("live.audience.loading")}</p>
       </section>
     );
   }
 
   return (
-    <section className="panel audience-panel" aria-label="Audience interaction">
+    <section className="panel audience-panel" aria-label={t("live.audience.sectionAria")}>
       <div className="audience-panel-heading">
         <div>
           <p className="eyebrow">
             {view === "participants"
-              ? "Participants"
+              ? t("live.audience.participants")
               : view === "chat"
-                ? "Room chat"
-                : "Audience Pulse"}
+                ? t("live.audience.roomChat")
+                : t("live.audience.pulse")}
           </p>
           <h2>
             {view === "participants"
-              ? "Participant activity"
+              ? t("live.audience.participantActivity")
               : view === "pulse"
-                ? "Room signals"
+                ? t("live.audience.roomSignals")
                 : view === "chat"
-                  ? "Conversation"
-                  : "Room signals and conversation"}
+                  ? t("live.audience.conversation")
+                  : t("live.audience.signalsAndConversation")}
           </h2>
         </div>
-        <span className="status-pill">Live · {data.summary.connectedParticipants} connected</span>
+        <span className="status-pill">
+          {t("live.audience.liveConnected", { count: data.summary.connectedParticipants })}
+        </span>
       </div>
       {error ? (
-        <p className="error" role="alert">
+        <p className="error" lang="en-CA" role="alert">
           {error}
         </p>
       ) : null}
@@ -758,7 +764,7 @@ export function AudiencePanel({
       {role === "moderator" ? (
         <>
           {showPulse || showChat ? (
-            <div className="interaction-settings" aria-label="Audience interaction settings">
+            <div className="interaction-settings" aria-label={t("live.audience.settingsAria")}>
               {showPulse ? (
                 <label className="checkbox-field">
                   <input
@@ -769,7 +775,7 @@ export function AudiencePanel({
                     }
                     type="checkbox"
                   />
-                  Audience Pulse
+                  {t("live.audience.pulse")}
                 </label>
               ) : null}
               {showChat ? (
@@ -783,10 +789,10 @@ export function AudiencePanel({
                       }
                       type="checkbox"
                     />
-                    Room chat
+                    {t("live.audience.roomChat")}
                   </label>
                   <label className="field compact-field">
-                    <span>Chat names</span>
+                    <span>{t("live.audience.chatNames")}</span>
                     <select
                       className="select"
                       disabled={busy || !data.capabilities.roomChat}
@@ -798,12 +804,12 @@ export function AudiencePanel({
                       }
                       value={data.settings.chatIdentityMode}
                     >
-                      <option value="alias_public">Show session aliases</option>
-                      <option value="alias_private">Anonymous to the room</option>
+                      <option value="alias_public">{t("live.audience.showAliases")}</option>
+                      <option value="alias_private">{t("live.audience.anonymousRoom")}</option>
                     </select>
                   </label>
                   <label className="field compact-field">
-                    <span>Slow mode</span>
+                    <span>{t("live.audience.slowMode")}</span>
                     <select
                       className="select"
                       disabled={busy || !data.capabilities.roomChat}
@@ -816,14 +822,14 @@ export function AudiencePanel({
                       }
                       value={data.settings.slowModeSeconds}
                     >
-                      <option value={0}>Off</option>
-                      <option value={5}>5 seconds</option>
-                      <option value={15}>15 seconds</option>
-                      <option value={30}>30 seconds</option>
+                      <option value={0}>{t("live.audience.off")}</option>
+                      <option value={5}>{t("live.audience.seconds", { count: 5 })}</option>
+                      <option value={15}>{t("live.audience.seconds", { count: 15 })}</option>
+                      <option value={30}>{t("live.audience.seconds", { count: 30 })}</option>
                     </select>
                   </label>
                   <label className="field compact-field">
-                    <span>Presenter feed</span>
+                    <span>{t("live.audience.presenterFeed")}</span>
                     <select
                       className="select"
                       disabled={busy || !data.capabilities.roomChat}
@@ -835,9 +841,9 @@ export function AudiencePanel({
                       }
                       value={data.settings.presenterFeedMode}
                     >
-                      <option value="off">Off</option>
-                      <option value="pinned">Pinned only</option>
-                      <option value="live">Live feed</option>
+                      <option value="off">{t("live.audience.off")}</option>
+                      <option value="pinned">{t("live.audience.pinnedOnly")}</option>
+                      <option value="live">{t("live.audience.liveFeed")}</option>
                     </select>
                   </label>
                 </>
@@ -849,11 +855,9 @@ export function AudiencePanel({
           (showChat && !data.capabilities.roomChat) ? (
             <p className="notice">
               {showPulse && !data.capabilities.audiencePulse
-                ? "Audience Pulse is not enabled for this workspace. "
+                ? t("live.audience.pulseUnavailable")
                 : ""}
-              {showChat && !data.capabilities.roomChat
-                ? "Room chat is not enabled for this workspace."
-                : ""}
+              {showChat && !data.capabilities.roomChat ? t("live.audience.chatUnavailable") : ""}
             </p>
           ) : null}
 
@@ -862,15 +866,15 @@ export function AudiencePanel({
               <>
                 <div className="metric">
                   <strong>{data.summary.connectedParticipants}</strong>
-                  <span>connected</span>
+                  <span>{t("live.audience.connected")}</span>
                 </div>
                 <div className="metric">
                   <strong>{data.summary.disconnectedParticipants}</strong>
-                  <span>disconnected</span>
+                  <span>{t("live.audience.disconnected")}</span>
                 </div>
                 <div className="metric">
                   <strong>{data.summary.answeredParticipants}</strong>
-                  <span>answered</span>
+                  <span>{t("live.audience.answered")}</span>
                 </div>
               </>
             ) : null}
@@ -878,11 +882,11 @@ export function AudiencePanel({
               <>
                 <div className="metric">
                   <strong>{data.summary.uniqueSignalers}</strong>
-                  <span>signaled</span>
+                  <span>{t("live.audience.signaled")}</span>
                 </div>
                 <div className="metric">
                   <strong>{data.summary.signalsLastMinute}</strong>
-                  <span>signals / min</span>
+                  <span>{t("live.audience.signalsPerMinute")}</span>
                 </div>
               </>
             ) : null}
@@ -890,11 +894,11 @@ export function AudiencePanel({
               <>
                 <div className="metric">
                   <strong>{data.summary.messagesLastMinute}</strong>
-                  <span>messages / min</span>
+                  <span>{t("live.audience.messagesPerMinute")}</span>
                 </div>
                 <div className="metric">
                   <strong>{data.summary.uniqueChatContributors}</strong>
-                  <span>contributors</span>
+                  <span>{t("live.audience.contributors")}</span>
                 </div>
               </>
             ) : null}
@@ -903,7 +907,7 @@ export function AudiencePanel({
       ) : showPulse && data.settings.signalsEnabled && role === "participant" ? (
         <div className="pulse-compose">
           <p>
-            <strong>How is this landing?</strong>
+            <strong>{t("live.audience.howLanding")}</strong>
           </p>
           <div className="pulse-buttons">
             {signalOptions.map((option) => {
@@ -919,26 +923,24 @@ export function AudiencePanel({
                   type="button"
                 >
                   <span aria-hidden="true">{option.icon}</span>
-                  {option.label}
+                  {signalLabel(option.id)}
                 </button>
               );
             })}
           </div>
-          <small className="muted">
-            The facilitator can see your session alias and signal; the room sees totals only.
-          </small>
+          <small className="muted">{t("live.audience.signalPrivacy")}</small>
         </div>
       ) : null}
 
       {showPulse && data.summary.signalCounts ? (
-        <div className="pulse-distribution" aria-label="Current pulse distribution">
+        <div className="pulse-distribution" aria-label={t("live.audience.distributionAria")}>
           {signalOptions.map((option) => {
             const count = data.summary.signalCounts?.[option.id] ?? 0;
             const denominator = Math.max(1, data.summary.uniqueSignalers);
             return (
               <div className="pulse-stat" key={option.id}>
                 <div>
-                  <span>{option.label}</span>
+                  <span>{signalLabel(option.id)}</span>
                   <strong>{count}</strong>
                 </div>
                 <div className="pulse-meter" aria-hidden="true">
@@ -949,17 +951,15 @@ export function AudiencePanel({
           })}
         </div>
       ) : showPulse && data.summary.uniqueSignalers > 0 ? (
-        <p className="muted">
-          Aggregate Pulse appears after five people signal to protect individual privacy.
-        </p>
+        <p className="muted">{t("live.audience.aggregatePrivacy")}</p>
       ) : null}
 
       {showParticipants && role === "moderator" && data.summary.participants ? (
         <div className="participant-pulse-table">
           <div className="toolbar">
-            <strong>Participant activity</strong>
+            <strong>{t("live.audience.participantActivity")}</strong>
             <label>
-              <span className="sr-only">Filter participants</span>
+              <span className="sr-only">{t("live.audience.filterParticipants")}</span>
               <select
                 className="select compact-select"
                 onChange={(event) =>
@@ -967,15 +967,15 @@ export function AudiencePanel({
                 }
                 value={participantFilter}
               >
-                <option value="all">Everyone</option>
-                <option value="needs_help">Needs help</option>
-                <option value="not_answered">Not answered</option>
-                <option value="disconnected">Disconnected</option>
-                <option value="muted">Muted or banned</option>
+                <option value="all">{t("live.audience.everyone")}</option>
+                <option value="needs_help">{t("live.audience.needsHelp")}</option>
+                <option value="not_answered">{t("live.audience.notAnswered")}</option>
+                <option value="disconnected">{t("live.audience.disconnectedStatus")}</option>
+                <option value="muted">{t("live.audience.mutedOrBanned")}</option>
               </select>
             </label>
             <label>
-              <span className="sr-only">Temporary mute duration</span>
+              <span className="sr-only">{t("live.audience.muteDuration")}</span>
               <select
                 className="select compact-select"
                 onChange={(event) =>
@@ -983,9 +983,9 @@ export function AudiencePanel({
                 }
                 value={muteDurationMinutes}
               >
-                <option value={5}>Mute: 5 min</option>
-                <option value={15}>Mute: 15 min</option>
-                <option value={60}>Mute: 60 min</option>
+                <option value={5}>{t("live.audience.muteMinutes", { count: 5 })}</option>
+                <option value={15}>{t("live.audience.muteMinutes", { count: 15 })}</option>
+                <option value={60}>{t("live.audience.muteMinutes", { count: 60 })}</option>
               </select>
             </label>
           </div>
@@ -993,11 +993,11 @@ export function AudiencePanel({
             <table>
               <thead>
                 <tr>
-                  <th>Alias</th>
-                  <th>Status</th>
-                  <th>Pulse</th>
-                  <th>Chat</th>
-                  <th>Moderation</th>
+                  <th>{t("live.audience.alias")}</th>
+                  <th>{t("live.audience.status")}</th>
+                  <th>{t("live.audience.pulseShort")}</th>
+                  <th>{t("live.audience.chat")}</th>
+                  <th>{t("live.audience.moderation")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1010,10 +1010,17 @@ export function AudiencePanel({
                       />
                     </td>
                     <td>
-                      {participant.connected ? "Connected" : "Offline"} ·{" "}
-                      {participant.answered ? "answered" : "waiting"}
+                      {participant.connected
+                        ? t("live.audience.connectedStatus")
+                        : t("live.audience.offline")}{" "}
+                      ·{" "}
+                      {participant.answered
+                        ? t("live.audience.answered")
+                        : t("live.audience.waiting")}
                     </td>
-                    <td>{participant.currentSignal?.replaceAll("_", " ") ?? "—"}</td>
+                    <td>
+                      {participant.currentSignal ? signalLabel(participant.currentSignal) : "—"}
+                    </td>
                     <td>{participant.chatMessageCount}</td>
                     <td>
                       <div className="button-row">
@@ -1028,7 +1035,9 @@ export function AudiencePanel({
                           }
                           type="button"
                         >
-                          {participant.mutedUntil ? "Unmute" : `Mute ${muteDurationMinutes}m`}
+                          {participant.mutedUntil
+                            ? t("live.audience.unmute")
+                            : t("live.audience.muteCompact", { count: muteDurationMinutes })}
                         </button>
                         <button
                           className="button-danger tiny-button"
@@ -1041,7 +1050,7 @@ export function AudiencePanel({
                           }
                           type="button"
                         >
-                          {participant.banned ? "Restore" : "Ban"}
+                          {participant.banned ? t("live.audience.restore") : t("live.audience.ban")}
                         </button>
                         {onKick ? (
                           <button
@@ -1050,7 +1059,7 @@ export function AudiencePanel({
                             onClick={() => onKick(participant.participantId)}
                             type="button"
                           >
-                            Kick
+                            {t("live.audience.kick")}
                           </button>
                         ) : null}
                       </div>
@@ -1067,14 +1076,19 @@ export function AudiencePanel({
         <div className="chat-section">
           <div className="chat-heading">
             <div>
-              <p className="eyebrow">Room chat</p>
+              <p className="eyebrow">{t("live.audience.roomChat")}</p>
               <h3>
-                {data.settings.chatEnabled ? "Conversation is open" : "Conversation is closed"}
+                {data.settings.chatEnabled
+                  ? t("live.audience.conversationOpen")
+                  : t("live.audience.conversationClosed")}
               </h3>
             </div>
             {role === "moderator" ? (
               <span className="muted">
-                {data.summary.reportedCount} reports · {data.summary.moderationCount} moderated
+                {t("live.audience.moderationSummary", {
+                  reports: data.summary.reportedCount,
+                  moderated: data.summary.moderationCount,
+                })}
               </span>
             ) : null}
           </div>
@@ -1082,45 +1096,51 @@ export function AudiencePanel({
             <form className="chat-compose" onSubmit={sendMessage}>
               {replyTo ? (
                 <div className="chat-replying">
-                  Replying to {replyTo.author.displayName}
+                  {t("live.audience.replyingTo", { name: "" })}
+                  <span lang="">{replyTo.author.displayName}</span>
                   <button onClick={() => setReplyTo(null)} type="button">
-                    Cancel
+                    {t("live.audience.cancel")}
                   </button>
                 </div>
               ) : null}
               <label className="sr-only" htmlFor={`chat-message-${role}`}>
-                Chat message
+                {t("live.audience.chatMessage")}
               </label>
               <input
                 className="input"
                 id={`chat-message-${role}`}
                 maxLength={500}
                 onChange={(event) => setMessage(event.target.value)}
-                placeholder="Write a plain-text message…"
+                placeholder={t("live.audience.messagePlaceholder")}
                 value={message}
               />
               <button className="button" disabled={busy || !message.trim()} type="submit">
-                Send
+                {t("live.audience.send")}
               </button>
             </form>
           ) : null}
-          <ol className="chat-list" aria-label="Room messages">
+          <ol className="chat-list" aria-label={t("live.audience.roomMessages")}>
             {data.chat.messages.map((item) => (
               <li className="chat-message" data-removed={item.status === "removed"} key={item.id}>
                 <div className="chat-message-meta">
                   <span>
-                    <strong>{item.author.displayName}</strong>
-                    {item.author.kind === "staff" ? " · facilitator" : ""}
+                    <strong lang="">{item.author.displayName}</strong>
+                    {item.author.kind === "staff" ? t("live.audience.facilitatorSuffix") : ""}
                   </span>
-                  {item.pinned ? <span className="status-pill">Pinned</span> : null}
+                  {item.pinned ? (
+                    <span className="status-pill">{t("live.audience.pinned")}</span>
+                  ) : null}
                 </div>
-                <p>{item.body}</p>
+                <p lang="">{item.body}</p>
                 {item.status !== "removed" ? (
                   <div className="chat-actions">
                     {role === "participant"
                       ? reactionOptions.map((reaction) => (
                           <button
-                            aria-label={`${reaction.label}: ${item.reactions[reaction.id]}`}
+                            aria-label={t("live.audience.reactionAria", {
+                              reaction: reactionLabel(reaction.id),
+                              count: item.reactions[reaction.id],
+                            })}
                             aria-pressed={item.myReaction === reaction.id}
                             className="reaction-button"
                             disabled={busy}
@@ -1148,7 +1168,7 @@ export function AudiencePanel({
                         onClick={() => setReplyTo(item)}
                         type="button"
                       >
-                        Reply
+                        {t("live.audience.reply")}
                       </button>
                     ) : null}
                     {role === "participant" && !item.author.mine ? (
@@ -1158,7 +1178,9 @@ export function AudiencePanel({
                         onClick={() => void reportMessage(item.id)}
                         type="button"
                       >
-                        {reportedMessages.has(item.id) ? "Reported" : "Report"}
+                        {reportedMessages.has(item.id)
+                          ? t("live.audience.reported")
+                          : t("live.audience.report")}
                       </button>
                     ) : null}
                     {role === "moderator" ? (
@@ -1169,7 +1191,7 @@ export function AudiencePanel({
                           onClick={() => void moderateMessage(item.id, { pinned: !item.pinned })}
                           type="button"
                         >
-                          {item.pinned ? "Unpin" : "Pin"}
+                          {item.pinned ? t("live.audience.unpin") : t("live.audience.pin")}
                         </button>
                         <button
                           className="danger-link"
@@ -1177,7 +1199,7 @@ export function AudiencePanel({
                           onClick={() => void moderateMessage(item.id, { status: "removed" })}
                           type="button"
                         >
-                          Remove
+                          {t("live.audience.remove")}
                         </button>
                       </>
                     ) : null}
@@ -1187,7 +1209,7 @@ export function AudiencePanel({
             ))}
           </ol>
           {data.chat.messages.length === 0 ? (
-            <p className="qna-empty">No room messages yet.</p>
+            <p className="qna-empty">{t("live.audience.noMessages")}</p>
           ) : null}
         </div>
       ) : null}

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useLocale } from "../../components/locale-provider";
 import { useWorkspace } from "../../components/workspace/workspace-provider";
 import { VideoGuide } from "../../components/workspace/video-guide";
 import guideStyles from "../../components/workspace/video-guide.module.css";
@@ -31,6 +32,7 @@ const builderGuideTranscript = [
 ] as const;
 
 export function HelpGuidance() {
+  const { t } = useLocale();
   const { canEdit, productFeatures } = useWorkspace();
   const showProfessionalVideos = professionalBuilderGuidesAvailable(productFeatures);
   const roundBuilderAvailable = professionalRoundBuilderAvailable(productFeatures);
@@ -51,13 +53,13 @@ export function HelpGuidance() {
           <div>
             <h2 id="video-guides-title">
               {showProfessionalVideos
-                ? "Watch, then try it yourself"
-                : "Guidance for your current workspace"}
+                ? t("pages.help.guides.title")
+                : t("pages.help.guides.currentTitle")}
             </h2>
             <p>
               {showProfessionalVideos
-                ? "Start with the one-minute tour, then go deeper into authoring and delivery."
-                : "OpenRound shows only guidance for capabilities that are enabled in this workspace."}
+                ? t("pages.help.guides.description")
+                : t("pages.help.guides.currentDescription")}
             </p>
           </div>
         </div>
@@ -66,26 +68,26 @@ export function HelpGuidance() {
           <div className={guideStyles.grid}>
             <VideoGuide
               captionsSrc="/guides/openround-quick-start.vtt"
-              description="Learn the shortest path from your workspace to a reviewed, published Round."
+              description={t("pages.help.quickStart.description")}
               duration="1:05"
               id="quick-start"
               posterSrc="/guides/openround-quick-start-poster.jpg"
-              title="Quick start: create your first Round"
+              title={t("pages.help.quickStart.title")}
               transcript={quickStartTranscript}
               tryHref={canEdit ? "/create?start=starters" : "/library"}
-              tryLabel={canEdit ? "Try a starter Round" : "Open Library"}
+              tryLabel={canEdit ? t("pages.help.quickStart.try") : t("pages.common.openLibrary")}
               videoSrc="/guides/openround-quick-start.mp4"
             />
             <VideoGuide
               captionsSrc="/guides/openround-builder-guide.vtt"
-              description="Tour the workspace, Round Builder, Presentation Builder, previews, and delivery paths."
+              description={t("pages.help.builder.description")}
               duration="2:55"
               id="round-builder-guide"
               posterSrc="/guides/openround-builder-guide-poster.jpg"
-              title="Workspace and builder guide"
+              title={t("pages.help.builder.title")}
               transcript={builderGuideTranscript}
               tryHref={canEdit ? "/create?start=blank" : "/library"}
-              tryLabel={canEdit ? "Start a blank Round" : "Open Library"}
+              tryLabel={canEdit ? t("pages.help.builder.try") : t("pages.common.openLibrary")}
               videoSrc="/guides/openround-builder-guide.mp4"
             />
           </div>
@@ -93,20 +95,19 @@ export function HelpGuidance() {
           <div className={styles.notice}>
             <strong>
               {roundBuilderAvailable
-                ? "Use the enabled Round Builder"
-                : "Use the classic Round workflow"}
+                ? t("pages.help.enabledBuilder")
+                : t("pages.help.classicWorkflow")}
             </strong>{" "}
-            The combined videos are hidden because they demonstrate capabilities that are not all
-            enabled for this workspace. Your available workflow remains fully supported.
+            {t("pages.help.hiddenVideos")}
             <div className={guideStyles.noticeAction}>
               <Link className="button" href={fallbackHref}>
                 {canEdit
                   ? roundBuilderAvailable
-                    ? "Create a Round"
-                    : "Open Round dashboard"
+                    ? t("pages.library.createRound")
+                    : t("pages.help.openDashboard")
                   : workspaceAvailable
-                    ? "Open Library"
-                    : "Open Round dashboard"}
+                    ? t("pages.common.openLibrary")
+                    : t("pages.help.openDashboard")}
               </Link>
             </div>
           </div>
@@ -116,38 +117,48 @@ export function HelpGuidance() {
       <section className={styles.cardGrid}>
         <Link className={styles.quickCard} href={createHref}>
           <span className={styles.cardIcon}>01</span>
-          <h3>Create your first Round</h3>
+          <h3>{t("pages.help.card.createTitle")}</h3>
           <p>
             {roundBuilderAvailable
-              ? "Choose a starter, trusted source, structural import, or blank Round."
-              : "Open the dashboard, name a checkpoint set, and add the first question."}
+              ? t("pages.help.card.createDescription")
+              : t("pages.help.card.classicDescription")}
           </p>
           <span className={styles.cardLink}>
-            {roundBuilderAvailable ? "Open creation guide →" : "Open Round dashboard →"}
+            {roundBuilderAvailable
+              ? t("pages.help.card.openGuide")
+              : t("pages.help.card.openDashboard")}{" "}
+            →
           </span>
         </Link>
         <Link className={styles.quickCard} href={libraryHref}>
           <span className={styles.cardIcon} data-tone="coral">
             02
           </span>
-          <h3>{assignmentsAvailable ? "Host or assign" : "Host a Round"}</h3>
+          <h3>
+            {assignmentsAvailable
+              ? t("pages.help.card.hostAssignTitle")
+              : t("pages.help.card.hostTitle")}
+          </h3>
           <p>
             {assignmentsAvailable
-              ? "Publish a reusable Round, then choose live delivery or account-free practice."
-              : "Publish a reusable Round, then open a live room for account-free participation."}
+              ? t("pages.help.card.hostAssignDescription")
+              : t("pages.help.card.hostDescription")}
           </p>
           <span className={styles.cardLink}>
-            {workspaceAvailable ? "Open Library →" : "Choose a Round →"}
+            {workspaceAvailable
+              ? t("pages.common.openLibrary")
+              : t("pages.assignments.chooseRound")}{" "}
+            →
           </span>
         </Link>
         <Link className={styles.quickCard} href={resultsHref}>
           <span className={styles.cardIcon} data-tone="violet">
             03
           </span>
-          <h3>Read the Recovery Story</h3>
-          <p>Interpret initial understanding, interventions, rechecks, and unresolved concepts.</p>
+          <h3>{t("pages.help.card.recoveryTitle")}</h3>
+          <p>{t("pages.help.card.recoveryDescription")}</p>
           <span className={styles.cardLink}>
-            {workspaceAvailable ? "Open Results →" : "Open Round dashboard →"}
+            {workspaceAvailable ? t("pages.common.viewResults") : t("pages.help.openDashboard")} →
           </span>
         </Link>
       </section>

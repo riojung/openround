@@ -1,5 +1,6 @@
 import type { QuestionType, QuizDraft } from "@openround/contracts";
-import { editorTypeLabel, responseTypeGuidance } from "./question-labels";
+import { responseTypeGuidance } from "./question-labels";
+import { useLocale } from "../locale-provider";
 import styles from "./round-builder.module.css";
 
 const QUESTION_TYPES: QuestionType[] = [
@@ -46,12 +47,19 @@ export function QuestionNavigator({
   onToggleCollapsed?: () => void;
   questionReuseOpen?: boolean;
 }) {
-  const terminology = uxBeta ? "question" : "checkpoint";
-
+  const { locale, t } = useLocale();
+  const localizedTypeLabels: Record<QuestionType, string> = {
+    single_select: t("delivery.builder.type.single_select"),
+    true_false: t("delivery.builder.type.true_false"),
+    multi_select: t("delivery.builder.type.multi_select"),
+    numeric: t("delivery.builder.type.numeric"),
+    rating: t("delivery.builder.type.rating"),
+    poll: t("delivery.builder.type.poll"),
+  };
   if (!uxBeta) {
     return (
       <aside className="panel">
-        <h2 style={{ fontSize: "1.4rem" }}>Checkpoints</h2>
+        <h2 style={{ fontSize: "1.4rem" }}>{t("delivery.builder.checkpoints")}</h2>
         <div className="question-list">
           {draft.questions.map((item, index) => (
             <button
@@ -61,8 +69,13 @@ export function QuestionNavigator({
               onClick={() => onSelectQuestion(item.id)}
               type="button"
             >
-              <strong>{index + 1}.</strong> {item.prompt || "Untitled checkpoint"}
-              {(item.delivery ?? "main") === "recheck" ? " · recheck" : ""}
+              <strong>{index + 1}.</strong>{" "}
+              {item.prompt ? (
+                <span lang="">{item.prompt}</span>
+              ) : (
+                t("delivery.builder.untitledCheckpoint")
+              )}
+              {(item.delivery ?? "main") === "recheck" ? ` · ${t("delivery.builder.recheck")}` : ""}
             </button>
           ))}
         </div>
@@ -74,7 +87,9 @@ export function QuestionNavigator({
               onClick={() => onAddQuestion(type)}
               type="button"
             >
-              {editorTypeLabel(type, false)}
+              {type === "numeric"
+                ? t("delivery.builder.type.numericLegacy")
+                : localizedTypeLabels[type]}
             </button>
           ))}
         </div>
@@ -83,16 +98,28 @@ export function QuestionNavigator({
   }
 
   return (
-    <aside className={styles.questionMap} data-collapsed={collapsed} aria-label="Question map">
+    <aside
+      className={styles.questionMap}
+      data-collapsed={collapsed}
+      aria-label={t("delivery.builder.questionMap")}
+    >
       <div className={styles.mapHeader}>
         <div>
           <h2 className={collapsed ? "sr-only" : undefined}>
-            {uxBeta ? "Questions" : "Checkpoints"}
+            {uxBeta ? t("delivery.builder.questions") : t("delivery.builder.checkpoints")}
           </h2>
           {!collapsed ? (
             <span className={styles.mapCount}>
-              {draft.questions.length}{" "}
-              {draft.questions.length === 1 ? terminology : `${terminology}s`}
+              {t(
+                uxBeta
+                  ? draft.questions.length === 1
+                    ? "delivery.builder.questionCount.one"
+                    : "delivery.builder.questionCount.other"
+                  : draft.questions.length === 1
+                    ? "delivery.builder.checkpointCount.one"
+                    : "delivery.builder.checkpointCount.other",
+                { count: draft.questions.length },
+              )}
             </span>
           ) : null}
         </div>
@@ -100,6 +127,7 @@ export function QuestionNavigator({
           <button
             aria-label={collapsed ? "Expand question map" : "Collapse question map"}
             className={styles.iconButton}
+            lang="en-CA"
             onClick={onToggleCollapsed}
             title={collapsed ? "Expand question map" : "Collapse question map"}
             type="button"
@@ -114,15 +142,28 @@ export function QuestionNavigator({
           {draft.questions.map((item, index) => (
             <button
               aria-current={item.id === selectedQuestionId}
-              aria-label={`${uxBeta ? "Question" : "Checkpoint"} ${index + 1}: ${item.prompt || `Untitled ${terminology}`}`}
               className={styles.collapsedQuestion}
               data-issue={issueQuestionIds.has(item.id)}
               key={item.id}
               onClick={() => onSelectQuestion(item.id)}
-              title={item.prompt || `Untitled ${terminology}`}
+              title={
+                item.prompt
+                  ? undefined
+                  : uxBeta
+                    ? t("delivery.builder.untitledQuestion")
+                    : t("delivery.builder.untitledCheckpoint")
+              }
               type="button"
             >
-              {index + 1}
+              <span aria-hidden="true">{index + 1}</span>
+              <span className="sr-only">
+                {t("delivery.builder.question", { number: index + 1 })}
+                {item.prompt ? (
+                  <>
+                    : <span lang="">{item.prompt}</span>
+                  </>
+                ) : null}
+              </span>
             </button>
           ))}
         </div>
@@ -141,14 +182,26 @@ export function QuestionNavigator({
                 >
                   <span className={styles.mapNumber}>{index + 1}</span>
                   <span className={styles.mapCopy}>
-                    <strong>{item.prompt || `Untitled ${terminology}`}</strong>
+                    <strong>
+                      {item.prompt ? (
+                        <span lang="">{item.prompt}</span>
+                      ) : uxBeta ? (
+                        t("delivery.builder.untitledQuestion")
+                      ) : (
+                        t("delivery.builder.untitledCheckpoint")
+                      )}
+                    </strong>
                     <small>
-                      {editorTypeLabel(item.type, uxBeta)}
-                      {(item.delivery ?? "main") === "recheck" ? " · recheck" : ""}
+                      {localizedTypeLabels[item.type]}
+                      {(item.delivery ?? "main") === "recheck"
+                        ? ` · ${t("delivery.builder.recheck")}`
+                        : ""}
                     </small>
                   </span>
                   <span
-                    aria-label={hasIssue ? "Needs attention" : "Ready"}
+                    aria-label={
+                      hasIssue ? t("delivery.builder.needsAttention") : t("delivery.builder.ready")
+                    }
                     className={styles.mapStatus}
                     data-issue={hasIssue}
                     role="img"
@@ -157,13 +210,14 @@ export function QuestionNavigator({
                 {onMoveQuestion || onDuplicateQuestion || onDeleteQuestion ? (
                   <div
                     className={styles.mapActions}
-                    aria-label={`${terminology} ${index + 1} actions`}
+                    aria-label={`${uxBeta ? "Question" : "Checkpoint"} ${index + 1} actions`}
                     role="group"
+                    lang="en-CA"
                   >
                     {onMoveQuestion ? (
                       <>
                         <button
-                          aria-label={`Move ${terminology} ${index + 1} up`}
+                          aria-label={`Move ${uxBeta ? "question" : "checkpoint"} ${index + 1} up`}
                           className={styles.mapAction}
                           disabled={index === 0}
                           onClick={() => onMoveQuestion(item.id, -1)}
@@ -173,7 +227,7 @@ export function QuestionNavigator({
                           ↑
                         </button>
                         <button
-                          aria-label={`Move ${terminology} ${index + 1} down`}
+                          aria-label={`Move ${uxBeta ? "question" : "checkpoint"} ${index + 1} down`}
                           className={styles.mapAction}
                           disabled={index === draft.questions.length - 1}
                           onClick={() => onMoveQuestion(item.id, 1)}
@@ -186,20 +240,22 @@ export function QuestionNavigator({
                     ) : null}
                     {onDuplicateQuestion ? (
                       <button
+                        lang={locale}
                         className={styles.mapAction}
                         onClick={() => onDuplicateQuestion(item.id)}
                         type="button"
                       >
-                        Duplicate
+                        {t("delivery.common.duplicate")}
                       </button>
                     ) : null}
                     {onDeleteQuestion ? (
                       <button
+                        lang={locale}
                         className={`${styles.mapAction} ${styles.mapActionDanger}`}
                         onClick={() => onDeleteQuestion(item.id)}
                         type="button"
                       >
-                        Delete
+                        {t("delivery.common.delete")}
                       </button>
                     ) : null}
                   </div>
@@ -213,7 +269,7 @@ export function QuestionNavigator({
       {!collapsed ? (
         <div className={styles.mapInsert}>
           <label className="field" htmlFor="insert-question-type">
-            <span>Add a question</span>
+            <span>{t("delivery.builder.addQuestion")}</span>
             <select
               aria-describedby="insert-question-guidance"
               className="select"
@@ -221,15 +277,14 @@ export function QuestionNavigator({
               onChange={(event) => onInsertTypeChange(event.target.value as QuestionType)}
               value={insertType}
             >
-              <option value="single_select">Single select</option>
-              <option value="true_false">True or false</option>
-              <option value="multi_select">Multiple select</option>
-              <option value="numeric">Numeric response</option>
-              <option value="rating">Rating</option>
-              <option value="poll">Poll</option>
+              {QUESTION_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {localizedTypeLabels[type]}
+                </option>
+              ))}
             </select>
           </label>
-          <p className="muted" id="insert-question-guidance">
+          <p className="muted" id="insert-question-guidance" lang="en-CA">
             {responseTypeGuidance[insertType]}
           </p>
           <button
@@ -237,7 +292,7 @@ export function QuestionNavigator({
             onClick={() => onAddQuestion(insertType)}
             type="button"
           >
-            Add question
+            {t("delivery.builder.addQuestion")}
           </button>
           {canReuseQuestions && onOpenQuestionReuse ? (
             <button
@@ -245,6 +300,7 @@ export function QuestionNavigator({
               aria-expanded={Boolean(questionReuseOpen)}
               className="button-quiet small-button"
               id="open-private-question-bank"
+              lang="en-CA"
               onClick={onOpenQuestionReuse}
               type="button"
             >

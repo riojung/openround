@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { LocalReturnPathSchema } from "@openround/contracts";
 import type { CreatorContext, Repository, Segment } from "@openround/db";
 import type { AppConfig } from "./config.js";
 import type { Mailer } from "./mailer.js";
@@ -105,16 +106,41 @@ export class AuthService {
   }
 
   setSessionCookie(reply: FastifyReply, token: string) {
-    reply.setCookie(this.config.COOKIE_NAME, token, {
+    reply.setCookie(this.config.COOKIE_NAME, token, this.sessionCookieOptions());
+  }
+
+  localeAwareWebRedirect(creator: CreatorContext, returnTo: string) {
+    const webOrigin = new URL(this.config.WEB_ORIGIN);
+    const localReturnTo = LocalReturnPathSchema.safeParse(returnTo);
+    let destination: URL;
+    try {
+      destination = new URL(localReturnTo.success ? localReturnTo.data : "/dashboard", webOrigin);
+    } catch {
+      destination = new URL("/dashboard", webOrigin);
+    }
+    if (destination.origin !== webOrigin.origin) destination = new URL("/dashboard", webOrigin);
+    if (!creator.localePreferenceSet) return destination.href;
+
+    const bridge = new URL("/auth/locale", webOrigin);
+    bridge.searchParams.set("locale", creator.locale);
+    bridge.searchParams.set(
+      "returnTo",
+      `${destination.pathname}${destination.search}${destination.hash}`,
+    );
+    return bridge.href;
+  }
+
+  private sessionCookieOptions() {
+    return {
       path: "/",
       domain: this.config.COOKIE_DOMAIN,
       httpOnly: true,
       secure:
         this.config.COOKIE_SECURE === "true" ||
         (this.config.COOKIE_SECURE === "auto" && this.config.NODE_ENV === "production"),
-      sameSite: "lax",
+      sameSite: "lax" as const,
       maxAge: 30 * 24 * 60 * 60,
-    });
+    };
   }
 
   clearSessionCookie(reply: FastifyReply) {

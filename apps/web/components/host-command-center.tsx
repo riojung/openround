@@ -3,6 +3,42 @@
 import type { ReactNode } from "react";
 import type { SessionSnapshot } from "@openround/contracts";
 import type { HostPhaseCommand, HostPhaseView } from "../lib/host-phase";
+import { useLocale } from "./locale-provider";
+
+const phaseKeys = {
+  Lobby: "live.host.phase.lobby",
+  "Question open": "live.host.phase.questionOpen",
+  "Recheck open": "live.host.phase.recheckOpen",
+  Paused: "live.host.phase.paused",
+  Diagnose: "live.host.phase.diagnose",
+  "Recheck locked": "live.host.phase.recheckLocked",
+  "Recheck evidence": "live.host.phase.recheckEvidence",
+  "Verify recovery": "live.host.phase.verifyRecovery",
+  "Choose the next step": "live.host.phase.chooseNext",
+  "Intervention in progress": "live.host.phase.intervention",
+  Standings: "live.host.phase.standings",
+  Complete: "live.host.phase.complete",
+} as const;
+
+const commandKeys = {
+  "Start round": "live.host.command.startRound",
+  "Lock answers": "live.host.command.lockAnswers",
+  Pause: "live.host.command.pause",
+  Resume: "live.host.command.resume",
+  "Reveal answer": "live.host.command.revealAnswer",
+  "Start peer discussion": "live.host.command.startDiscussion",
+  "Continue after recheck": "live.host.command.continueAfterRecheck",
+  "Finish round": "live.host.command.finishRound",
+  "Next question": "live.host.command.nextQuestion",
+  "Open linked recheck": "live.host.command.openLinkedRecheck",
+  "Recheck by revote": "live.host.command.recheckByRevote",
+  "Explain or reinforce": "live.host.command.explain",
+  "Work an example": "live.host.command.example",
+  "Show standings": "live.host.command.showStandings",
+  "Finish intervention": "live.host.command.finishIntervention",
+  "Reinforce the reasoning": "live.host.command.reinforceReasoning",
+  "Address the misconception": "live.host.command.addressMisconception",
+} as const;
 
 export function HostStage({
   children,
@@ -26,44 +62,51 @@ export function HostStage({
 export function RecoveryCompass({
   snapshot,
   phaseView,
+  displayPhaseLabel,
   showSteps = true,
   synthetic = false,
   children,
 }: {
   snapshot: SessionSnapshot;
   phaseView: HostPhaseView;
+  displayPhaseLabel?: string;
   showSteps?: boolean;
   synthetic?: boolean;
   children?: ReactNode;
 }) {
+  const { t } = useLocale();
   const guidance = phaseView.suggestionKind === "none" ? null : snapshot.insight;
+  const phaseKey = phaseKeys[phaseView.phaseLabel as keyof typeof phaseKeys];
+  const phaseLabel = displayPhaseLabel ?? (phaseKey ? t(phaseKey) : phaseView.phaseLabel);
 
   if (!showSteps) {
     return (
       <aside className="panel">
-        <h2 style={{ fontSize: "1.35rem" }}>Host controls</h2>
+        <h2 style={{ fontSize: "1.35rem" }}>{t("live.host.controls")}</h2>
         <div className="metric-grid" style={{ gridTemplateColumns: "1fr 1fr", marginBottom: 18 }}>
           <div className="metric">
             <strong>{snapshot.participants.length}</strong>
-            <span>joined</span>
+            <span>{t("live.host.joined")}</span>
           </div>
           <div className="metric">
             <strong>{snapshot.answerCount}</strong>
-            <span>answered</span>
+            <span>{t("live.host.answered")}</span>
           </div>
         </div>
         {guidance ? (
           <div className="notice" aria-live="polite" style={{ marginBottom: 18 }}>
-            <p className="eyebrow">Facilitator guidance</p>
+            <p className="eyebrow">{t("live.host.facilitatorGuidance")}</p>
             <strong>{guidance.recommendation.title}</strong>
             <p>{guidance.recommendation.reason}</p>
             <small>
-              Based on {guidance.sampleSize} responses · {guidance.participationPercent}%
-              participation
+              {t("live.host.guidanceBasis", {
+                responses: guidance.sampleSize,
+                participation: guidance.participationPercent,
+              })}
               {guidance.correctnessPercent === null
-                ? " · unscored"
-                : ` · ${guidance.correctnessPercent}% correct`}
-              . This is a deterministic suggestion; use your judgment.
+                ? t("live.host.unscoredSuffix")
+                : t("live.host.correctSuffix", { percent: guidance.correctnessPercent })}
+              {t("live.host.guidanceDisclaimer")}
             </small>
           </div>
         ) : null}
@@ -74,21 +117,21 @@ export function RecoveryCompass({
 
   return (
     <aside
-      aria-label={synthetic ? "Synthetic Recovery Compass" : "Recovery Compass"}
+      aria-label={synthetic ? t("live.host.syntheticCompassAria") : t("live.host.compassAria")}
       className="panel recovery-rail"
       data-synthetic={synthetic || undefined}
       data-testid="recovery-rail"
     >
-      <p className="eyebrow">Recovery Compass</p>
-      <h2 style={{ fontSize: "1.35rem" }}>{phaseView.phaseLabel}</h2>
-      {synthetic ? <p className="synthetic-label">Synthetic evidence · never saved</p> : null}
-      <ol className="recovery-steps" aria-label="Recovery process">
+      <p className="eyebrow">{t("live.host.compass")}</p>
+      <h2 style={{ fontSize: "1.35rem" }}>{phaseLabel}</h2>
+      {synthetic ? <p className="synthetic-label">{t("live.host.syntheticEvidence")}</p> : null}
+      <ol className="recovery-steps" aria-label={t("live.host.recoveryProcess")}>
         {[
-          ["Ask", snapshot.phase !== "lobby"],
-          ["Diagnose", Boolean(snapshot.insight)],
-          ["Act", Boolean(snapshot.intervention)],
-          ["Recheck", snapshot.roundKind !== "main"],
-          ["Prove", snapshot.phase === "finished"],
+          [t("live.host.step.ask"), snapshot.phase !== "lobby"],
+          [t("live.host.step.diagnose"), Boolean(snapshot.insight)],
+          [t("live.host.step.act"), Boolean(snapshot.intervention)],
+          [t("live.host.step.recheck"), snapshot.roundKind !== "main"],
+          [t("live.host.step.prove"), snapshot.phase === "finished"],
         ].map(([label, complete]) => (
           <li data-complete={complete || undefined} key={String(label)}>
             {label}
@@ -98,27 +141,31 @@ export function RecoveryCompass({
       <div className="metric-grid recovery-compass-metrics">
         <div className="metric">
           <strong>{snapshot.participants.length}</strong>
-          <span>{synthetic ? "synthetic learners" : "joined"}</span>
+          <span>{synthetic ? t("live.host.syntheticLearners") : t("live.host.joined")}</span>
         </div>
         <div className="metric">
           <strong>{snapshot.answerCount}</strong>
-          <span>answered</span>
+          <span>{t("live.host.answered")}</span>
         </div>
       </div>
       {guidance ? (
         <div className="notice recovery-guidance" aria-live="polite">
           <p className="eyebrow">
-            {phaseView.suggestionKind === "guidance" ? "Guidance only" : "Facilitator guidance"}
+            {phaseView.suggestionKind === "guidance"
+              ? t("live.host.guidanceOnly")
+              : t("live.host.facilitatorGuidance")}
           </p>
           <strong>{guidance.recommendation.title}</strong>
           <p>{guidance.recommendation.reason}</p>
           <small>
-            Based on {guidance.sampleSize} responses · {guidance.participationPercent}%
-            participation
+            {t("live.host.guidanceBasis", {
+              responses: guidance.sampleSize,
+              participation: guidance.participationPercent,
+            })}
             {guidance.correctnessPercent === null
-              ? " · unscored"
-              : ` · ${guidance.correctnessPercent}% correct`}
-            . This is a deterministic suggestion; use your judgment.
+              ? t("live.host.unscoredSuffix")
+              : t("live.host.correctSuffix", { percent: guidance.correctnessPercent })}
+            {t("live.host.guidanceDisclaimer")}
           </small>
         </div>
       ) : null}
@@ -131,6 +178,7 @@ export function HostCommandBar({
   phaseView,
   busy,
   onCommand,
+  getCommandLabel,
   primary = phaseView.primary,
   secondary = phaseView.secondary,
   primaryDisabled = false,
@@ -143,6 +191,7 @@ export function HostCommandBar({
   phaseView: HostPhaseView;
   busy: boolean;
   onCommand: (command: HostPhaseCommand) => void;
+  getCommandLabel?: (command: HostPhaseCommand) => string;
   primary?: HostPhaseCommand | null;
   secondary?: HostPhaseCommand[];
   primaryDisabled?: boolean;
@@ -152,17 +201,25 @@ export function HostCommandBar({
   synthetic?: boolean;
   inert?: boolean;
 }) {
+  const { t } = useLocale();
+  const commandLabel = (command: HostPhaseCommand | null | undefined) => {
+    if (!command) return "";
+    const commandKey = commandKeys[command.label as keyof typeof commandKeys];
+    return getCommandLabel?.(command) ?? (commandKey ? t(commandKey) : command.label);
+  };
   return (
     <nav
-      aria-label={synthetic ? "Synthetic host commands" : "Host commands"}
+      aria-label={synthetic ? t("live.host.syntheticCommandsAria") : t("live.host.commandsAria")}
       className="host-command-bar"
       data-synthetic={synthetic || undefined}
       data-testid="host-command-bar"
       inert={inert}
     >
       <div>
-        <span className="eyebrow">{synthetic ? "Guided next action" : "Next action"}</span>
-        <strong>{primary?.label ?? "Review results"}</strong>
+        <span className="eyebrow">
+          {synthetic ? t("live.host.guidedNextAction") : t("live.host.nextAction")}
+        </span>
+        <strong>{primary ? commandLabel(primary) : t("live.host.reviewResults")}</strong>
       </div>
       <div className="button-row">
         <div className="host-command-primary">
@@ -173,7 +230,7 @@ export function HostCommandBar({
               onClick={() => onCommand(primary)}
               type="button"
             >
-              {busy ? "Applying…" : primary.label}
+              {busy ? t("live.host.applying") : commandLabel(primary)}
             </button>
           ) : (
             fallback
@@ -189,7 +246,7 @@ export function HostCommandBar({
               onClick={() => onCommand(item)}
               type="button"
             >
-              {item.label}
+              {commandLabel(item)}
             </button>
           ))}
           {trailing}

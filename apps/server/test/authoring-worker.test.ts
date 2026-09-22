@@ -10,6 +10,8 @@ const creator: CreatorContext = {
   userId: randomUUID(),
   workspaceId: randomUUID(),
   email: "facilitator@example.com",
+  locale: "en-CA",
+  localePreferenceSet: false,
   segment: "education",
   role: "owner",
   plan: "pro",

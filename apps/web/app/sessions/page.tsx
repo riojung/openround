@@ -3,15 +3,26 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useLocale } from "../../components/locale-provider";
 import { apiFetch, humanError } from "../../lib/api";
-import { formatCompactDate } from "../../components/workspace/workspace-model";
+import { formatDateTime } from "../../lib/i18n/format";
 import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
+import { SessionPhaseLabel } from "../../components/workspace/session-phase-label";
 import type { CursorPage, SessionSummary } from "../../components/workspace/workspace-types";
 import styles from "../../components/workspace/workspace-content.module.css";
 
 type StatusFilter = "all" | SessionSummary["status"];
 type ArtifactFilter = "all" | "round" | "presentation";
+
+function sessionStatusLabel(
+  status: Exclude<StatusFilter, "all">,
+  t: ReturnType<typeof useLocale>["t"],
+) {
+  return status === "expired"
+    ? t("pages.sessions.accessExpired")
+    : t(`pages.common.status.${status}`);
+}
 
 interface PresentationSessionSummary {
   id: string;
@@ -30,6 +41,7 @@ interface PresentationSessionSummary {
 
 function SessionsContent() {
   const router = useRouter();
+  const { locale, t } = useLocale();
   const { canEdit, productFeatures } = useWorkspace();
   const presentationsEnabled = productFeatures?.presentations === true;
   const [artifactType, setArtifactType] = useState<ArtifactFilter>("all");
@@ -168,7 +180,7 @@ function SessionsContent() {
       <div className={styles.filters}>
         {presentationsEnabled ? (
           <label className="field">
-            <span>Artifact type</span>
+            <span>{t("pages.sessions.artifactType")}</span>
             <select
               className="select"
               onChange={(event) => {
@@ -178,43 +190,43 @@ function SessionsContent() {
               }}
               value={artifactType}
             >
-              <option value="all">Rounds and Presentations</option>
-              <option value="round">Rounds</option>
-              <option value="presentation">Presentations</option>
+              <option value="all">{t("pages.sessions.allArtifacts")}</option>
+              <option value="round">{t("pages.common.rounds")}</option>
+              <option value="presentation">{t("pages.common.presentations")}</option>
             </select>
           </label>
         ) : null}
         <label className="field">
-          <span>Session status</span>
+          <span>{t("pages.sessions.statusLabel")}</span>
           <select
             className="select"
             onChange={(event) => setStatus(event.target.value as StatusFilter)}
             value={status}
           >
-            <option value="all">All sessions</option>
-            <option value="active">Active</option>
-            <option value="finished">Finished</option>
-            <option value="expired">Access expired</option>
+            <option value="all">{t("pages.sessions.allSessions")}</option>
+            <option value="active">{t("pages.common.status.active")}</option>
+            <option value="finished">{t("pages.common.status.finished")}</option>
+            <option value="expired">{t("pages.sessions.accessExpired")}</option>
           </select>
         </label>
         <label className="field">
-          <span>Round</span>
+          <span>{t("pages.common.round")}</span>
           <select
             className="select"
             disabled={artifactType === "presentation"}
             onChange={(event) => setQuizId(event.target.value)}
             value={quizId}
           >
-            <option value="all">All Rounds</option>
+            <option value="all">{t("pages.sessions.allRounds")}</option>
             {rounds.map((round) => (
-              <option key={round.id} value={round.id}>
+              <option key={round.id} lang="" value={round.id}>
                 {round.title}
               </option>
             ))}
           </select>
         </label>
         <label className="field">
-          <span>From</span>
+          <span>{t("pages.common.from")}</span>
           <input
             className="input"
             onChange={(event) => setFromDate(event.target.value)}
@@ -223,7 +235,7 @@ function SessionsContent() {
           />
         </label>
         <label className="field">
-          <span>To</span>
+          <span>{t("pages.common.to")}</span>
           <input
             className="input"
             min={fromDate || undefined}
@@ -234,60 +246,67 @@ function SessionsContent() {
         </label>
       </div>
       {error ? (
-        <p className="error" role="alert">
+        <p className="error" lang="en-CA" role="alert">
           {error}
         </p>
       ) : null}
-      {loading ? <p className={styles.muted}>Loading sessions…</p> : null}
+      {loading ? <p className={styles.muted}>{t("pages.sessions.loading")}</p> : null}
       {!loading && sessions.length === 0 && visiblePresentationSessions.length === 0 ? (
         <div className={styles.emptyState}>
-          <h2>No sessions here yet</h2>
+          <h2>{t("pages.sessions.emptyTitle")}</h2>
           <p>
             {status === "all"
-              ? "Host a published Round or Presentation and its live session will appear here."
-              : `There are no ${status} sessions in this workspace.`}
+              ? t("pages.sessions.emptyDescription")
+              : t("pages.sessions.emptyFiltered", {
+                  status: sessionStatusLabel(status, t),
+                })}
           </p>
           <Link className="button" href="/dashboard">
-            Choose a Round
+            {t("pages.assignments.chooseRound")}
           </Link>
         </div>
       ) : null}
       {visiblePresentationSessions.length ? (
-        <section className={styles.list} aria-label="Presentation sessions">
+        <section className={styles.list} aria-label={t("pages.sessions.presentationListLabel")}>
           {visiblePresentationSessions.map((session) => (
             <article className={styles.listCard} key={session.id}>
               <div className={styles.rowTopline}>
                 <div>
-                  <p className="eyebrow">Presentation</p>
-                  <h2>{session.title}</h2>
+                  <p className="eyebrow">{t("pages.common.presentation")}</p>
+                  <h2 lang="">{session.title}</h2>
                   <p className={styles.summaryLine}>
-                    Started {formatCompactDate(session.createdAt)} · room {session.code}
+                    {t("pages.sessions.startedInRoom", {
+                      date: formatDateTime(locale, session.createdAt),
+                      code: session.code,
+                    })}
                   </p>
                 </div>
                 <span className={styles.status} data-tone={session.status}>
-                  {session.status}
+                  {t(`pages.common.status.${session.status}`)}
                 </span>
               </div>
               <div className={styles.metricGrid}>
                 <div className={styles.metric}>
                   <strong>{session.participantCount}</strong>
-                  <span>Participants</span>
+                  <span>{t("pages.common.participants")}</span>
                 </div>
                 <div className={styles.metric}>
                   <strong>{session.responseCount}</strong>
-                  <span>Current responses</span>
+                  <span>{t("pages.sessions.currentResponses")}</span>
                 </div>
                 <div className={styles.metric}>
                   <strong>
                     {session.currentBlockIndex < 0
-                      ? "Not started"
+                      ? t("pages.common.notStarted")
                       : `${session.currentBlockIndex + 1}/${session.blockCount}`}
                   </strong>
-                  <span>Block progress</span>
+                  <span>{t("pages.sessions.blockProgress")}</span>
                 </div>
                 <div className={styles.metric}>
-                  <strong>{session.phase.replaceAll("_", " ")}</strong>
-                  <span>Last phase</span>
+                  <strong>
+                    <SessionPhaseLabel phase={session.phase} />
+                  </strong>
+                  <span>{t("pages.sessions.lastPhase")}</span>
                 </div>
               </div>
               <div className={styles.listCardActions}>
@@ -296,20 +315,20 @@ function SessionsContent() {
                     className="button small-button"
                     href={`/presentation-session/${session.id}/host`}
                   >
-                    Resume Presentation
+                    {t("pages.sessions.resumePresentation")}
                   </Link>
                 ) : null}
                 <Link
                   className="button-quiet small-button"
                   href={`/presentation-session/${session.id}/report`}
                 >
-                  View report
+                  {t("pages.sessions.viewReport")}
                 </Link>
                 <Link
                   className="button-quiet small-button"
                   href={`/presentation/${session.presentationId}`}
                 >
-                  View Presentation
+                  {t("pages.sessions.viewPresentation")}
                 </Link>
               </div>
             </article>
@@ -317,44 +336,56 @@ function SessionsContent() {
         </section>
       ) : null}
       {artifactType !== "presentation" ? (
-        <section className={styles.list} aria-label="Round session history">
+        <section className={styles.list} aria-label={t("pages.sessions.roundListLabel")}>
           {sessions.map((session) => (
             <article className={styles.listCard} key={session.id}>
               <div className={styles.rowTopline}>
                 <div>
-                  <h2>{session.title}</h2>
+                  <h2 lang="">{session.title}</h2>
                   <p className={styles.summaryLine}>
-                    Started {formatCompactDate(session.createdAt)} · room {session.code}
+                    {t("pages.sessions.startedInRoom", {
+                      date: formatDateTime(locale, session.createdAt),
+                      code: session.code,
+                    })}
                   </p>
                   <p className={styles.summaryLine}>
-                    {session.status === "expired" ? "Access expired" : "Access expires"}{" "}
-                    {formatCompactDate(session.expiresAt)}
+                    {session.status === "expired"
+                      ? t("pages.sessions.accessExpiredOn", {
+                          date: formatDateTime(locale, session.expiresAt),
+                        })
+                      : t("pages.sessions.accessExpiresOn", {
+                          date: formatDateTime(locale, session.expiresAt),
+                        })}
                   </p>
                 </div>
                 <span className={styles.status} data-tone={session.status}>
-                  {session.status === "expired" ? "Access expired" : session.status}
+                  {session.status === "expired"
+                    ? t("pages.sessions.accessExpired")
+                    : t(`pages.common.status.${session.status}`)}
                 </span>
               </div>
               <div className={styles.metricGrid}>
                 <div className={styles.metric}>
                   <strong>{session.participantCount}</strong>
-                  <span>Participants</span>
+                  <span>{t("pages.common.participants")}</span>
                 </div>
                 <div className={styles.metric}>
                   <strong>{session.answerCount}</strong>
-                  <span>Answers received</span>
+                  <span>{t("pages.sessions.answersReceived")}</span>
                 </div>
                 <div className={styles.metric}>
                   <strong>
                     {session.questionPosition === null
-                      ? "Not started"
+                      ? t("pages.common.notStarted")
                       : `${session.questionPosition}/${session.questionCount}`}
                   </strong>
-                  <span>Question progress</span>
+                  <span>{t("pages.sessions.questionProgress")}</span>
                 </div>
                 <div className={styles.metric}>
-                  <strong>{session.phase.replaceAll("_", " ")}</strong>
-                  <span>Last phase</span>
+                  <strong>
+                    <SessionPhaseLabel phase={session.phase} />
+                  </strong>
+                  <span>{t("pages.sessions.lastPhase")}</span>
                 </div>
               </div>
               <div className={styles.listCardActions}>
@@ -365,19 +396,21 @@ function SessionsContent() {
                     onClick={() => void resumeSession(session)}
                     type="button"
                   >
-                    {busyId === session.id ? "Preparing secure resume…" : "Resume session"}
+                    {busyId === session.id
+                      ? t("pages.sessions.preparingResume")
+                      : t("pages.sessions.resumeSession")}
                   </button>
                 ) : null}
                 {session.reportId ? (
                   <Link className="button-quiet small-button" href={`/report/${session.reportId}`}>
-                    View result
+                    {t("pages.sessions.viewResult")}
                   </Link>
                 ) : null}
                 <Link
                   className="button-quiet small-button"
                   href={`/quiz/${session.quizId}/preview`}
                 >
-                  View Round
+                  {t("pages.sessions.viewRound")}
                 </Link>
               </div>
             </article>
@@ -392,7 +425,7 @@ function SessionsContent() {
             onClick={() => void loadMore()}
             type="button"
           >
-            {loadingMore ? "Loading…" : "Load more sessions"}
+            {loadingMore ? t("pages.common.loading") : t("pages.sessions.loadMore")}
           </button>
         </div>
       ) : null}
@@ -401,12 +434,14 @@ function SessionsContent() {
 }
 
 export default function SessionsPage() {
+  const { t } = useLocale();
   return (
     <WorkspaceProvider>
       <WorkspaceShell
-        description="Return to an active room securely or find the evidence produced by a finished session."
-        eyebrow="Live delivery"
-        title="Sessions"
+        description={t("page.sessions.description")}
+        eyebrow={t("page.sessions.eyebrow")}
+        title={t("page.sessions.title")}
+        translationLevel="full"
       >
         <SessionsContent />
       </WorkspaceShell>

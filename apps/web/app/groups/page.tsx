@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useLocale } from "../../components/locale-provider";
 import { apiFetch, humanError } from "../../lib/api";
 import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
@@ -83,8 +84,8 @@ interface LibraryArtifact {
   currentVersionId: string | null;
 }
 
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("en-CA", {
+function formatDateTime(locale: string, value: string) {
+  return new Intl.DateTimeFormat(locale, {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
@@ -104,6 +105,7 @@ function readArtifactKey(value: string): { artifactType: ArtifactType; artifactI
 }
 
 function GroupsContent() {
+  const { locale, t } = useLocale();
   const { canEdit, creator, productFeatures } = useWorkspace();
   const presentationsEnabled = productFeatures?.presentations === true;
   const [groups, setGroups] = useState<GroupSummary[]>([]);
@@ -227,14 +229,14 @@ function GroupsContent() {
   }, [normalizeDetail, selectedId]);
 
   const visibleGroups = useMemo(() => {
-    const normalized = search.trim().toLocaleLowerCase("en-CA");
+    const normalized = search.trim().toLocaleLowerCase(locale);
     return groups.filter(
       (group) =>
         !normalized ||
-        group.name.toLocaleLowerCase("en-CA").includes(normalized) ||
-        group.description.toLocaleLowerCase("en-CA").includes(normalized),
+        group.name.toLocaleLowerCase(locale).includes(normalized) ||
+        group.description.toLocaleLowerCase(locale).includes(normalized),
     );
-  }, [groups, search]);
+  }, [groups, locale, search]);
 
   const shareCandidates = useMemo(() => {
     const shared = new Set(
@@ -283,7 +285,7 @@ function GroupsContent() {
       setShowCreate(false);
       await refreshGroups();
       setSelectedId(response.group.id);
-      setNotice(`${response.group.name} is ready for collaboration.`);
+      setNotice(t("pages.groups.notice.created", { name: response.group.name }));
     });
   }
 
@@ -297,7 +299,7 @@ function GroupsContent() {
       });
       setMemberId("");
       await Promise.all([refreshDetail(detail.id), refreshGroups()]);
-      setNotice("The workspace member was added to this group.");
+      setNotice(t("pages.groups.notice.memberAdded"));
     });
   }
 
@@ -313,7 +315,7 @@ function GroupsContent() {
       });
       setShareKey("");
       await Promise.all([refreshDetail(detail.id), refreshGroups()]);
-      setNotice("The artifact is now shared with this group.");
+      setNotice(t("pages.groups.notice.artifactShared"));
     });
   }
 
@@ -325,7 +327,7 @@ function GroupsContent() {
         setScheduleKey("");
       }
       await Promise.all([refreshDetail(detail.id), refreshGroups()]);
-      setNotice(`${artifact.title} was removed from the group.`);
+      setNotice(t("pages.groups.notice.artifactRemoved", { title: artifact.title }));
     });
   }
 
@@ -339,7 +341,7 @@ function GroupsContent() {
       });
       setMessageBody("");
       await refreshDetail(detail.id);
-      setNotice("Your update was posted.");
+      setNotice(t("pages.groups.notice.posted"));
     });
   }
 
@@ -361,7 +363,7 @@ function GroupsContent() {
       setScheduledFor("");
       setScheduleNote("");
       await Promise.all([refreshDetail(detail.id), refreshGroups()]);
-      setNotice("The activity was added to the group schedule.");
+      setNotice(t("pages.groups.notice.scheduled"));
     });
   }
 
@@ -374,17 +376,18 @@ function GroupsContent() {
             onClick={() => setShowCreate((current) => !current)}
             type="button"
           >
-            {showCreate ? "Close" : "Create group"}
+            {showCreate ? t("pages.common.close") : t("pages.groups.create")}
           </button>
         ) : null
       }
-      description="Curate activities, coordinate facilitators, and plan delivery without requiring learner accounts."
-      eyebrow="Facilitator collaboration"
+      description={t("page.groups.description")}
+      eyebrow={t("page.groups.eyebrow")}
       requiredFeature="groups"
-      title="Groups"
+      title={t("page.groups.title")}
+      translationLevel="full"
     >
       {error ? (
-        <p className="error" role="alert">
+        <p className="error" lang="en-CA" role="alert">
           {error}
         </p>
       ) : null}
@@ -397,27 +400,29 @@ function GroupsContent() {
       {showCreate ? (
         <form className={styles.createPanel} onSubmit={createGroup}>
           <div>
-            <p className={styles.eyebrow}>New facilitator space</p>
-            <h2>Create a group</h2>
-            <p>Start with a clear purpose. You can add workspace members and artifacts next.</p>
+            <p className={styles.eyebrow}>{t("pages.groups.createEyebrow")}</p>
+            <h2>{t("pages.groups.create")}</h2>
+            <p>{t("pages.groups.createDescription")}</p>
           </div>
           <label className={styles.field}>
-            <span>Group name</span>
+            <span>{t("pages.groups.name")}</span>
             <input
               autoFocus
+              lang={groupName ? "" : locale}
               maxLength={120}
               onChange={(event) => setGroupName(event.target.value)}
-              placeholder="Sales onboarding cohort"
+              placeholder={t("pages.groups.namePlaceholder")}
               required
               value={groupName}
             />
           </label>
           <label className={styles.field}>
-            <span>Description</span>
+            <span>{t("pages.common.description")}</span>
             <textarea
+              lang={groupDescription ? "" : locale}
               maxLength={1000}
               onChange={(event) => setGroupDescription(event.target.value)}
-              placeholder="What this group will curate and coordinate"
+              placeholder={t("pages.groups.descriptionPlaceholder")}
               rows={2}
               value={groupDescription}
             />
@@ -427,23 +432,25 @@ function GroupsContent() {
             disabled={busy === "create" || !groupName.trim()}
             type="submit"
           >
-            {busy === "create" ? "Creating…" : "Create group"}
+            {busy === "create" ? t("pages.groups.creating") : t("pages.groups.create")}
           </button>
         </form>
       ) : null}
 
       <div className={styles.workspaceGrid}>
-        <aside className={styles.groupRail} aria-label="Workspace groups">
+        <aside className={styles.groupRail} aria-label={t("pages.groups.workspaceGroups")}>
           <label className={styles.searchField}>
-            <span className="sr-only">Search groups</span>
+            <span className="sr-only">{t("pages.groups.search")}</span>
             <input
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search groups"
+              placeholder={t("pages.groups.search")}
               type="search"
               value={search}
             />
           </label>
-          {loading ? <div className={styles.railLoading} aria-label="Loading groups" /> : null}
+          {loading ? (
+            <div className={styles.railLoading} aria-label={t("pages.groups.loading")} />
+          ) : null}
           {!loading && visibleGroups.length ? (
             <div className={styles.groupList}>
               {visibleGroups.map((group) => (
@@ -460,14 +467,17 @@ function GroupsContent() {
                     {group.name.charAt(0).toUpperCase()}
                   </span>
                   <span className={styles.groupButtonCopy}>
-                    <strong>{group.name}</strong>
+                    <strong lang="">{group.name}</strong>
                     <small>
-                      {group.memberCount} {group.memberCount === 1 ? "member" : "members"} ·{" "}
-                      {group.artifactCount} {group.artifactCount === 1 ? "artifact" : "artifacts"}
+                      {t("pages.groups.memberCount", { count: group.memberCount })} ·{" "}
+                      {t("pages.groups.artifactCount", { count: group.artifactCount })}
                     </small>
                   </span>
                   {group.upcomingCount ? (
-                    <span className={styles.count} aria-label={`${group.upcomingCount} upcoming`}>
+                    <span
+                      className={styles.count}
+                      aria-label={t("pages.groups.upcomingCount", { count: group.upcomingCount })}
+                    >
                       {group.upcomingCount}
                     </span>
                   ) : null}
@@ -476,32 +486,34 @@ function GroupsContent() {
             </div>
           ) : null}
           {!loading && groups.length > 0 && visibleGroups.length === 0 ? (
-            <p className={styles.railEmpty}>No groups match that search.</p>
+            <p className={styles.railEmpty}>{t("pages.groups.noMatch")}</p>
           ) : null}
           {!loading && groups.length === 0 ? (
             <div className={styles.railEmpty}>
-              <strong>No groups yet</strong>
-              <span>Create a focused space for your facilitator team.</span>
+              <strong>{t("pages.groups.emptyRailTitle")}</strong>
+              <span>{t("pages.groups.emptyRailDescription")}</span>
             </div>
           ) : null}
         </aside>
 
         <div className={styles.detailColumn}>
           {detailLoading ? (
-            <div className={styles.detailLoading} aria-label="Loading group" />
+            <div className={styles.detailLoading} aria-label={t("pages.groups.loadingOne")} />
           ) : null}
           {!detailLoading && !detail ? (
             <section className={styles.emptyState}>
               <span aria-hidden="true">G</span>
-              <h2>{groups.length ? "Choose a group" : "Bring your facilitators together"}</h2>
+              <h2>
+                {groups.length ? t("pages.groups.chooseTitle") : t("pages.groups.firstTitle")}
+              </h2>
               <p>
                 {groups.length
-                  ? "Select a group to see its shared artifacts, people, discussion, and schedule."
-                  : "Groups keep curation and planning inside the workspace while learner participation stays account-free."}
+                  ? t("pages.groups.chooseDescription")
+                  : t("pages.groups.firstDescription")}
               </p>
               {canEdit && !groups.length ? (
                 <button className="button" onClick={() => setShowCreate(true)} type="button">
-                  Create your first group
+                  {t("pages.groups.createFirst")}
                 </button>
               ) : null}
             </section>
@@ -560,6 +572,7 @@ function GroupsContent() {
 }
 
 function GroupOverview({ detail }: { detail: GroupDetail }) {
+  const { t } = useLocale();
   return (
     <section className={styles.groupHero}>
       <div className={styles.heroHeading}>
@@ -568,24 +581,30 @@ function GroupOverview({ detail }: { detail: GroupDetail }) {
         </span>
         <div>
           <div className={styles.inlineMeta}>
-            <span className={styles.roleBadge}>{detail.role}</span>
-            <span>Facilitator group</span>
+            <span className={styles.roleBadge}>{t(`pages.groups.role.${detail.role}`)}</span>
+            <span>{t("pages.groups.facilitatorGroup")}</span>
           </div>
-          <h2>{detail.name}</h2>
-          <p>{detail.description || "A shared space for facilitator planning and delivery."}</p>
+          <h2 lang="">{detail.name}</h2>
+          <p>
+            {detail.description ? (
+              <span lang="">{detail.description}</span>
+            ) : (
+              t("pages.groups.defaultDescription")
+            )}
+          </p>
         </div>
       </div>
       <dl className={styles.stats}>
         <div>
-          <dt>Members</dt>
+          <dt>{t("pages.groups.members")}</dt>
           <dd>{detail.members.length}</dd>
         </div>
         <div>
-          <dt>Shared</dt>
+          <dt>{t("pages.groups.shared")}</dt>
           <dd>{detail.artifacts.length}</dd>
         </div>
         <div>
-          <dt>Upcoming</dt>
+          <dt>{t("pages.common.upcoming")}</dt>
           <dd>
             {detail.schedule.filter((item) => new Date(item.scheduledFor) >= new Date()).length}
           </dd>
@@ -616,26 +635,33 @@ function SharedArtifacts({
   shareCandidates,
   shareKey,
 }: SharedArtifactsProps) {
+  const { t } = useLocale();
   return (
     <section className={styles.panel}>
       <SectionHeading
         count={detail.artifacts.length}
-        eyebrow="Curated collection"
-        title="Shared artifacts"
+        eyebrow={t("pages.groups.artifacts.eyebrow")}
+        title={t("pages.groups.artifacts.title")}
       />
       {canEdit ? (
         <form className={styles.compactForm} onSubmit={onShare}>
           <label className={styles.field}>
-            <span>Round or Presentation</span>
+            <span>{t("pages.groups.artifacts.type")}</span>
             <select onChange={(event) => setShareKey(event.target.value)} value={shareKey}>
-              <option value="">Choose from your Library</option>
+              <option value="">{t("pages.groups.artifacts.choose")}</option>
               {shareCandidates.map((artifact) => (
                 <option
                   key={artifactKey(artifact.artifactType, artifact.id)}
+                  lang=""
                   value={artifactKey(artifact.artifactType, artifact.id)}
                 >
-                  {artifact.artifactType === "round" ? "Round" : "Presentation"} · {artifact.title}
-                  {artifact.currentVersionId ? "" : " (draft)"}
+                  {t(
+                    artifact.artifactType === "round"
+                      ? "pages.common.round"
+                      : "pages.common.presentation",
+                  )}{" "}
+                  · {artifact.title}
+                  {artifact.currentVersionId ? "" : ` (${t("pages.common.status.draft")})`}
                 </option>
               ))}
             </select>
@@ -645,7 +671,7 @@ function SharedArtifacts({
             disabled={busy === "share" || !shareKey}
             type="submit"
           >
-            {busy === "share" ? "Sharing…" : "Share"}
+            {busy === "share" ? t("pages.groups.artifacts.sharing") : t("pages.groups.share")}
           </button>
         </form>
       ) : null}
@@ -662,24 +688,30 @@ function SharedArtifacts({
               </div>
               <div className={styles.artifactCopy}>
                 <div className={styles.inlineMeta}>
-                  <span>{artifact.artifactType}</span>
+                  <span>
+                    {t(
+                      artifact.artifactType === "round"
+                        ? "pages.common.round"
+                        : "pages.common.presentation",
+                    )}
+                  </span>
                   <span className={styles.statusBadge} data-status={artifact.status}>
-                    {artifact.status}
+                    {t(`pages.common.status.${artifact.status}`)}
                   </span>
                 </div>
-                <h3>{artifact.title}</h3>
+                <h3 lang="">{artifact.title}</h3>
                 <div className={styles.cardActions}>
                   <Link className="button-quiet small-button" href={artifact.editHref}>
-                    {canEdit ? "Edit" : "View"}
+                    {canEdit ? t("pages.library.edit") : t("pages.library.view")}
                   </Link>
                   {canEdit && artifact.published ? (
                     <Link className="button small-button" href={artifact.hostHref}>
-                      Host
+                      {t("pages.library.host")}
                     </Link>
                   ) : null}
                   {canEdit && artifact.published && artifact.assignHref ? (
                     <Link className="button-quiet small-button" href={artifact.assignHref}>
-                      Assign
+                      {t("pages.library.assign")}
                     </Link>
                   ) : null}
                   {canEdit ? (
@@ -689,7 +721,7 @@ function SharedArtifacts({
                       onClick={() => void onRemove(artifact)}
                       type="button"
                     >
-                      Remove
+                      {t("pages.groups.remove")}
                     </button>
                   ) : null}
                 </div>
@@ -699,8 +731,8 @@ function SharedArtifacts({
         </div>
       ) : (
         <PanelEmpty
-          strong="No shared artifacts yet"
-          text="Add a Round or Presentation from the workspace Library."
+          strong={t("pages.groups.artifacts.emptyTitle")}
+          text={t("pages.groups.artifacts.emptyDescription")}
         />
       )}
     </section>
@@ -722,15 +754,20 @@ function MembersPanel({
   onAdd: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   setMemberId: (value: string) => void;
 }) {
+  const { t } = useLocale();
   return (
     <section className={styles.panel}>
-      <SectionHeading count={detail.members.length} eyebrow="Facilitator team" title="Members" />
+      <SectionHeading
+        count={detail.members.length}
+        eyebrow={t("pages.groups.membersEyebrow")}
+        title={t("pages.groups.members")}
+      />
       {canManageMembers && detail.availableMembers.length ? (
         <form className={styles.compactForm} onSubmit={onAdd}>
           <label className={styles.field}>
-            <span>Workspace member</span>
+            <span>{t("pages.groups.workspaceMember")}</span>
             <select onChange={(event) => setMemberId(event.target.value)} value={memberId}>
-              <option value="">Choose a member</option>
+              <option value="">{t("pages.groups.chooseMember")}</option>
               {detail.availableMembers.map((member) => (
                 <option key={member.userId} value={member.userId}>
                   {member.email} · {member.role}
@@ -743,7 +780,7 @@ function MembersPanel({
             disabled={busy === "member" || !memberId}
             type="submit"
           >
-            {busy === "member" ? "Adding…" : "Add"}
+            {busy === "member" ? t("pages.groups.adding") : t("pages.groups.add")}
           </button>
         </form>
       ) : null}
@@ -755,16 +792,18 @@ function MembersPanel({
             </span>
             <span>
               <strong>{member.email}</strong>
-              <small>{member.workspaceRole ?? "Former workspace member"}</small>
+              <small>
+                {member.workspaceRole
+                  ? t(`pages.groups.role.${member.workspaceRole}`)
+                  : t("pages.groups.formerMember")}
+              </small>
             </span>
-            <span className={styles.roleBadge}>{member.role}</span>
+            <span className={styles.roleBadge}>{t(`pages.groups.role.${member.role}`)}</span>
           </li>
         ))}
       </ul>
       {canManageMembers && !detail.availableMembers.length ? (
-        <p className={styles.helpText}>
-          All available workspace members are already in this group.
-        </p>
+        <p className={styles.helpText}>{t("pages.groups.allMembersAdded")}</p>
       ) : null}
     </section>
   );
@@ -783,20 +822,22 @@ function DiscussionPanel({
   onPost: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   setMessageBody: (value: string) => void;
 }) {
+  const { locale, t } = useLocale();
   return (
     <section className={styles.panel}>
       <SectionHeading
         count={detail.messages.length}
-        eyebrow="Async coordination"
-        title="Discussion"
+        eyebrow={t("pages.groups.discussion.eyebrow")}
+        title={t("pages.groups.discussion.title")}
       />
       <form className={styles.messageForm} onSubmit={onPost}>
         <label className={styles.field}>
-          <span>Post an update</span>
+          <span>{t("pages.groups.discussion.postLabel")}</span>
           <textarea
+            lang={messageBody ? "" : locale}
             maxLength={2000}
             onChange={(event) => setMessageBody(event.target.value)}
-            placeholder="Share context, a facilitation note, or a question…"
+            placeholder={t("pages.groups.discussion.placeholder")}
             rows={3}
             value={messageBody}
           />
@@ -806,7 +847,9 @@ function DiscussionPanel({
           disabled={busy === "message" || !messageBody.trim()}
           type="submit"
         >
-          {busy === "message" ? "Posting…" : "Post update"}
+          {busy === "message"
+            ? t("pages.groups.discussion.posting")
+            : t("pages.groups.discussion.post")}
         </button>
       </form>
       {detail.messages.length ? (
@@ -815,14 +858,16 @@ function DiscussionPanel({
             <li key={message.id}>
               <div>
                 <strong>{message.authorEmail}</strong>
-                <time dateTime={message.createdAt}>{formatDateTime(message.createdAt)}</time>
+                <time dateTime={message.createdAt} lang={locale}>
+                  {formatDateTime(locale, message.createdAt)}
+                </time>
               </div>
-              <p>{message.body}</p>
+              <p lang="">{message.body}</p>
             </li>
           ))}
         </ol>
       ) : (
-        <p className={styles.helpText}>No updates yet. Start the facilitator discussion.</p>
+        <p className={styles.helpText}>{t("pages.groups.discussion.empty")}</p>
       )}
     </section>
   );
@@ -859,14 +904,19 @@ function SchedulePanel({
   setScheduleKind,
   setScheduleNote,
 }: SchedulePanelProps) {
+  const { locale, t } = useLocale();
   return (
     <section className={styles.panel}>
-      <SectionHeading count={detail.schedule.length} eyebrow="Delivery plan" title="Schedule" />
+      <SectionHeading
+        count={detail.schedule.length}
+        eyebrow={t("pages.groups.schedule.eyebrow")}
+        title={t("pages.groups.schedule.title")}
+      />
       {canEdit ? (
         detail.artifacts.some((artifact) => artifact.published) ? (
           <form className={styles.scheduleForm} onSubmit={onSchedule}>
             <label className={styles.field}>
-              <span>Published artifact</span>
+              <span>{t("pages.groups.schedule.publishedArtifact")}</span>
               <select
                 onChange={(event) => {
                   const next = event.target.value;
@@ -877,22 +927,27 @@ function SchedulePanel({
                 }}
                 value={scheduleKey}
               >
-                <option value="">Choose a shared artifact</option>
+                <option value="">{t("pages.groups.schedule.chooseArtifact")}</option>
                 {detail.artifacts
                   .filter((artifact) => artifact.published)
                   .map((artifact) => (
                     <option
                       key={artifactKey(artifact.artifactType, artifact.artifactId)}
+                      lang=""
                       value={artifactKey(artifact.artifactType, artifact.artifactId)}
                     >
-                      {artifact.artifactType === "round" ? "Round" : "Presentation"} ·{" "}
-                      {artifact.title}
+                      {t(
+                        artifact.artifactType === "round"
+                          ? "pages.common.round"
+                          : "pages.common.presentation",
+                      )}{" "}
+                      · {artifact.title}
                     </option>
                   ))}
               </select>
             </label>
             <label className={styles.field}>
-              <span>Activity</span>
+              <span>{t("pages.groups.schedule.activity")}</span>
               <select
                 disabled={scheduledArtifact?.artifactType === "presentation"}
                 onChange={(event) =>
@@ -902,15 +957,16 @@ function SchedulePanel({
                   scheduledArtifact?.artifactType === "presentation" ? "live_session" : scheduleKind
                 }
               >
-                <option value="live_session">Live session</option>
+                <option value="live_session">{t("pages.common.liveSession")}</option>
                 {scheduledArtifact?.artifactType !== "presentation" ? (
-                  <option value="round_assignment">Round assignment</option>
+                  <option value="round_assignment">{t("pages.common.roundAssignment")}</option>
                 ) : null}
               </select>
             </label>
             <label className={styles.field}>
-              <span>Date and time</span>
+              <span>{t("pages.groups.schedule.dateTime")}</span>
               <input
+                lang={scheduleNote ? "" : locale}
                 onChange={(event) => setScheduledFor(event.target.value)}
                 required
                 type="datetime-local"
@@ -918,11 +974,11 @@ function SchedulePanel({
               />
             </label>
             <label className={styles.field}>
-              <span>Note (optional)</span>
+              <span>{t("pages.groups.schedule.note")}</span>
               <input
                 maxLength={500}
                 onChange={(event) => setScheduleNote(event.target.value)}
-                placeholder="Preparation or audience context"
+                placeholder={t("pages.groups.schedule.notePlaceholder")}
                 value={scheduleNote}
               />
             </label>
@@ -931,13 +987,13 @@ function SchedulePanel({
               disabled={busy === "schedule" || !scheduleKey || !scheduledFor}
               type="submit"
             >
-              {busy === "schedule" ? "Scheduling…" : "Add to schedule"}
+              {busy === "schedule"
+                ? t("pages.groups.schedule.scheduling")
+                : t("pages.groups.schedule.add")}
             </button>
           </form>
         ) : (
-          <p className={styles.helpText}>
-            Publish and share a Round or Presentation before scheduling it.
-          </p>
+          <p className={styles.helpText}>{t("pages.groups.schedule.publishFirst")}</p>
         )
       ) : null}
       {detail.schedule.length ? (
@@ -953,20 +1009,36 @@ function SchedulePanel({
             return (
               <article className={styles.scheduleCard} key={item.id}>
                 <time dateTime={item.scheduledFor}>
-                  <strong>{formatDateTime(item.scheduledFor)}</strong>
-                  <span>{new Date(item.scheduledFor) < new Date() ? "Past" : "Upcoming"}</span>
+                  <strong>{formatDateTime(locale, item.scheduledFor)}</strong>
+                  <span>
+                    {new Date(item.scheduledFor) < new Date()
+                      ? t("pages.groups.schedule.past")
+                      : t("pages.common.upcoming")}
+                  </span>
                 </time>
                 <div>
                   <p className={styles.inlineMeta}>
-                    <span>{item.kind === "live_session" ? "Live session" : "Assignment"}</span>
-                    <span>{item.artifactType}</span>
+                    <span>
+                      {item.kind === "live_session"
+                        ? t("pages.common.liveSession")
+                        : t("pages.results.assignment")}
+                    </span>
+                    <span>
+                      {t(
+                        item.artifactType === "round"
+                          ? "pages.common.round"
+                          : "pages.common.presentation",
+                      )}
+                    </span>
                   </p>
-                  <h3>{item.artifactTitle}</h3>
-                  {item.note ? <p>{item.note}</p> : null}
+                  <h3 lang="">{item.artifactTitle}</h3>
+                  {item.note ? <p lang="">{item.note}</p> : null}
                 </div>
                 {actionHref && canEdit ? (
                   <Link className="button-quiet small-button" href={actionHref}>
-                    {item.kind === "live_session" ? "Open host setup" : "Open assignment"}
+                    {item.kind === "live_session"
+                      ? t("pages.groups.schedule.openHost")
+                      : t("pages.groups.schedule.openAssignment")}
                   </Link>
                 ) : null}
               </article>
@@ -975,8 +1047,8 @@ function SchedulePanel({
         </div>
       ) : (
         <PanelEmpty
-          strong="Nothing scheduled"
-          text="Plan a live session or Round assignment for this facilitator group."
+          strong={t("pages.groups.schedule.emptyTitle")}
+          text={t("pages.groups.schedule.emptyDescription")}
         />
       )}
     </section>

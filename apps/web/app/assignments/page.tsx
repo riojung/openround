@@ -2,14 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale } from "../../components/locale-provider";
 import { apiFetch, humanError } from "../../lib/api";
-import { formatCompactDate } from "../../components/workspace/workspace-model";
+import { formatDateTime, pluralCategory } from "../../lib/i18n/format";
 import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
 import type { CursorPage, FollowupSummary } from "../../components/workspace/workspace-types";
 import styles from "../../components/workspace/workspace-content.module.css";
 
 function AssignmentsWorkspace() {
+  const { locale, t } = useLocale();
   const { canEdit, productFeatures } = useWorkspace();
   const [assignments, setAssignments] = useState<FollowupSummary[]>([]);
   const [hasMorePractice, setHasMorePractice] = useState(false);
@@ -45,34 +47,32 @@ function AssignmentsWorkspace() {
     <WorkspaceShell
       actions={
         <Link className="button-quiet" href="/results?view=practice">
-          View all practice
+          {t("pages.assignments.viewAllPractice")}
         </Link>
       }
-      description="Manage standalone, account-free practice created from published Rounds."
-      eyebrow="Self-paced delivery"
-      title="Assignments"
+      description={t("page.assignments.description")}
+      eyebrow={t("page.assignments.eyebrow")}
+      title={t("page.assignments.title")}
+      translationLevel="full"
     >
       {productFeatures?.practiceAssignments !== true ? (
         <div className={styles.emptyState}>
-          <h2>Assignments are not enabled in this workspace</h2>
-          <p>
-            Existing Recovery follow-ups remain available in Results. A workspace owner can enable
-            standalone practice when the feature is available for this deployment.
-          </p>
+          <h2>{t("pages.assignments.disabledTitle")}</h2>
+          <p>{t("pages.assignments.disabledDescription")}</p>
           <Link className="button-quiet" href="/results?view=practice">
-            Open practice history
+            {t("pages.assignments.openHistory")}
           </Link>
         </div>
       ) : null}
 
       {error ? (
-        <p className="error" role="alert">
+        <p className="error" lang="en-CA" role="alert">
           {error}
         </p>
       ) : null}
       {loading ? (
         <p className={styles.muted} role="status">
-          Loading assignments…
+          {t("pages.assignments.loading")}
         </p>
       ) : null}
 
@@ -81,58 +81,70 @@ function AssignmentsWorkspace() {
       !error &&
       !assignments.length ? (
         <div className={styles.emptyState}>
-          <h2>No assignments yet</h2>
+          <h2>{t("pages.assignments.emptyTitle")}</h2>
           <p>
-            Publish a Round, then choose <strong>Assign practice</strong> from its primary actions.
+            {t("pages.assignments.emptyBeforeAction")}{" "}
+            <strong>{t("pages.assignments.assignPractice")}</strong>{" "}
+            {t("pages.assignments.emptyAfterAction")}
           </p>
           {canEdit ? (
             <Link className="button" href="/library">
-              Choose a Round
+              {t("pages.assignments.chooseRound")}
             </Link>
           ) : (
             <Link className="button-quiet" href="/library">
-              Browse the library
+              {t("pages.assignments.browseLibrary")}
             </Link>
           )}
         </div>
       ) : null}
 
-      <section className={styles.list} aria-label="Practice assignments">
+      <section className={styles.list} aria-label={t("pages.assignments.listLabel")}>
         {assignments.map((assignment) => (
           <article className={styles.listCard} key={assignment.id}>
             <div className={styles.rowTopline}>
               <div>
-                <h2>{assignment.title}</h2>
+                <h2 lang="">{assignment.title}</h2>
                 <p className={styles.summaryLine}>
-                  Created {formatCompactDate(assignment.createdAt)} · {assignment.checkpointCount}{" "}
-                  question{assignment.checkpointCount === 1 ? "" : "s"}
+                  {t("pages.assignments.created", {
+                    date: formatDateTime(locale, assignment.createdAt),
+                  })}{" "}
+                  ·{" "}
+                  {t(
+                    pluralCategory(locale, assignment.checkpointCount) === "one"
+                      ? "pages.assignments.questionCount.one"
+                      : "pages.assignments.questionCount.other",
+                    { count: assignment.checkpointCount },
+                  )}
                 </p>
                 <p className={styles.summaryLine}>
-                  Open {formatCompactDate(assignment.opensAt)} to{" "}
-                  {formatCompactDate(assignment.closesAt)}
+                  {t("pages.assignments.openRange", {
+                    from: formatDateTime(locale, assignment.opensAt),
+                    to: formatDateTime(locale, assignment.closesAt),
+                  })}
                 </p>
               </div>
               <span className={styles.status} data-tone={assignment.status}>
-                {assignment.status}
+                {t(`pages.common.status.${assignment.status}`)}
               </span>
             </div>
             <div className={styles.metricGrid}>
               <div className={styles.metric}>
                 <strong>{assignment.attemptCount}</strong>
-                <span>Attempts</span>
+                <span>{t("pages.common.attempts")}</span>
               </div>
               <div className={styles.metric}>
                 <strong>{assignment.completedAttemptCount}</strong>
-                <span>Completed</span>
+                <span>{t("pages.common.completed")}</span>
               </div>
               <div className={styles.metric}>
-                <strong>{formatCompactDate(assignment.expiresAt)}</strong>
-                <span>Evidence retained until</span>
+                <strong>{formatDateTime(locale, assignment.expiresAt)}</strong>
+                <span>{t("pages.assignments.retainedUntil")}</span>
               </div>
             </div>
             <div className={styles.listCardActions}>
               <Link className="button small-button" href={`/practice/${assignment.id}`}>
-                Manage assignment
+                {t("pages.assignments.manage")}
               </Link>
             </div>
           </article>
@@ -141,7 +153,8 @@ function AssignmentsWorkspace() {
 
       {hasMorePractice ? (
         <p className={styles.muted}>
-          More practice history is available in <Link href="/results?view=practice">Results</Link>.
+          {t("pages.assignments.moreHistoryBeforeLink")}{" "}
+          <Link href="/results?view=practice">{t("pages.common.results")}</Link>.
         </p>
       ) : null}
     </WorkspaceShell>

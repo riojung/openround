@@ -19,7 +19,8 @@ export function Brand({
       <span className="brand-mark" aria-hidden="true">
         {initials || "OR"}
       </span>
-      <span>{name}</span>
+      <span className="sr-only">{name}</span>
+      <span aria-hidden="true">{name}</span>
     </Link>
   );
 }

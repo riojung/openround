@@ -13,6 +13,7 @@ import {
   type AuthoringProposalSelection,
 } from "../lib/authoring-proposals";
 import { recordAuthoringEvent, recordCreationEvent } from "./workspace/product-events";
+import { useLocale } from "./locale-provider";
 
 interface AuthoringStatus {
   enabled: boolean;
@@ -55,25 +56,20 @@ function fileType(file: File) {
   return extension === "pdf" || extension === "docx" || extension === "pptx" ? extension : null;
 }
 
-function readBase64(file: File) {
+class LocalizedAuthoringError extends Error {}
+
+function readBase64(file: File, readError: string, encodeError: string) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("The source file could not be read."));
+    reader.onerror = () => reject(new LocalizedAuthoringError(readError));
     reader.onload = () => {
       const result = typeof reader.result === "string" ? reader.result : "";
       const separator = result.indexOf(",");
-      if (separator < 0) reject(new Error("The source file could not be encoded."));
+      if (separator < 0) reject(new LocalizedAuthoringError(encodeError));
       else resolve(result.slice(separator + 1));
     };
     reader.readAsDataURL(file);
   });
-}
-
-function statusLabel(status: AuthoringJob["status"]) {
-  if (status === "pending") return "Waiting";
-  if (status === "processing") return "Creating draft";
-  if (status === "ready") return "Ready to review";
-  return "Needs attention";
 }
 
 export function AuthoringAssistant({
@@ -85,10 +81,11 @@ export function AuthoringAssistant({
   insertionTarget,
 }: AuthoringAssistantProps) {
   const router = useRouter();
+  const { t } = useLocale();
   const [status, setStatus] = useState<AuthoringStatus | null>(null);
   const [jobs, setJobs] = useState<AuthoringJob[]>([]);
   const [sourceMode, setSourceMode] = useState<"pasted_text" | "file">("pasted_text");
-  const [sourceName, setSourceName] = useState("Pasted source");
+  const [sourceName, setSourceName] = useState(() => t("delivery.assistant.pastedSource"));
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
@@ -97,6 +94,7 @@ export function AuthoringAssistant({
     Record<string, AuthoringProposalSelection>
   >({});
   const [error, setError] = useState("");
+  const [errorIsLocalized, setErrorIsLocalized] = useState(false);
   const [expanded, setExpanded] = useState(plain);
   const mounted = useRef(true);
 
@@ -110,7 +108,10 @@ export function AuthoringAssistant({
       setStatus(statusResult.status);
       setJobs(jobResult.jobs);
     } catch (caught) {
-      if (mounted.current) setError(humanError(caught));
+      if (mounted.current) {
+        setError(humanError(caught));
+        setErrorIsLocalized(false);
+      }
     }
   }, []);
 
@@ -132,22 +133,28 @@ export function AuthoringAssistant({
     event.preventDefault();
     setBusy(true);
     setError("");
+    setErrorIsLocalized(false);
     if (trackCreation) recordCreationEvent("creation_started", "source", artifactType);
     try {
       let body: Record<string, unknown>;
       if (sourceMode === "pasted_text") {
         body = { sourceType: "pasted_text", sourceName, text };
       } else {
-        if (!file) throw new Error("Choose a PDF, Word, or PowerPoint source file.");
-        if (file.size > 6_000_000) throw new Error("Source files must be 6 MB or smaller.");
+        if (!file) throw new LocalizedAuthoringError(t("delivery.assistant.error.chooseFile"));
+        if (file.size > 6_000_000)
+          throw new LocalizedAuthoringError(t("delivery.assistant.error.fileSize"));
         const type = fileType(file);
-        if (!type) throw new Error("Choose a .pdf, .docx, or .pptx file.");
+        if (!type) throw new LocalizedAuthoringError(t("delivery.assistant.error.fileType"));
         body = {
           sourceType: type,
           sourceName: file.name,
           mimeType: sourceTypes[type].mimeType,
           encoding: "base64",
-          data: await readBase64(file),
+          data: await readBase64(
+            file,
+            t("delivery.assistant.error.readFile"),
+            t("delivery.assistant.error.encodeFile"),
+          ),
         };
       }
       const result = await apiFetch<{ job: AuthoringJob }>("/v1/authoring/jobs", {
@@ -160,6 +167,7 @@ export function AuthoringAssistant({
       await refresh();
     } catch (caught) {
       setError(humanError(caught));
+      setErrorIsLocalized(caught instanceof LocalizedAuthoringError);
     } finally {
       setBusy(false);
     }
@@ -168,6 +176,7 @@ export function AuthoringAssistant({
   async function apply(job: AuthoringJob) {
     setApplyingId(job.id);
     setError("");
+    setErrorIsLocalized(false);
     try {
       const selection = proposalSelections[job.id] ?? defaultAuthoringProposalSelection(job);
       const presentationSelection = {
@@ -217,10 +226,11 @@ export function AuthoringAssistant({
       } else if (result.quiz) {
         router.push(`/quiz/${result.quiz.id}`);
       } else {
-        throw new Error("The review draft could not be opened.");
+        throw new LocalizedAuthoringError(t("delivery.assistant.error.openDraft"));
       }
     } catch (caught) {
       setError(humanError(caught));
+      setErrorIsLocalized(caught instanceof LocalizedAuthoringError);
       setApplyingId("");
     }
   }
@@ -245,9 +255,24 @@ export function AuthoringAssistant({
 
   const allowance = status
     ? status.monthlyLimit === null
-      ? `${status.used} job${status.used === 1 ? "" : "s"} created this month; operator-configured allowance`
-      : `${status.used} of ${status.monthlyLimit} source-grounded jobs used this month`
-    : "Loading authoring availability…";
+      ? t(
+          status.used === 1
+            ? "delivery.assistant.allowanceUnlimited.one"
+            : "delivery.assistant.allowanceUnlimited.other",
+          { used: status.used },
+        )
+      : t("delivery.assistant.allowanceLimited", {
+          used: status.used,
+          limit: status.monthlyLimit,
+        })
+    : t("delivery.assistant.loadingAvailability");
+
+  function localizedStatusLabel(jobStatus: AuthoringJob["status"]) {
+    if (jobStatus === "pending") return t("delivery.assistant.status.waiting");
+    if (jobStatus === "processing") return t("delivery.assistant.status.creating");
+    if (jobStatus === "ready") return t("delivery.assistant.status.ready");
+    return t("delivery.assistant.status.attention");
+  }
 
   return (
     <details
@@ -257,37 +282,44 @@ export function AuthoringAssistant({
     >
       <summary>
         {insertionTarget
-          ? "Insert from a trusted source"
+          ? t("delivery.assistant.insertTrustedSource")
           : artifactType === "presentation"
-            ? "Draft presentation blocks from a trusted source"
-            : `Draft ${terminology === "round" ? "questions" : "checkpoints"} from a trusted source`}
+            ? t("delivery.assistant.draftPresentation")
+            : t(
+                terminology === "round"
+                  ? "delivery.assistant.draftQuestions"
+                  : "delivery.assistant.draftCheckpoints",
+              )}
       </summary>
       <p className="muted">
         {artifactType === "presentation"
-          ? "OpenRound can propose cited content slides plus a linked Recovery question pair."
-          : `OpenRound can propose a main ${terminology === "round" ? "question" : "checkpoint"} and linked recheck.`}
-        Sources may be pasted text or a private PDF, Word, or PowerPoint file. Files are security
-        scanned before retention. Every proposal includes citations and remains an unpublished draft
-        until you review it.
+          ? t("delivery.assistant.presentationDescription")
+          : t(
+              terminology === "round"
+                ? "delivery.assistant.roundDescription"
+                : "delivery.assistant.checkpointDescription",
+            )}{" "}
+        {t("delivery.assistant.securityDescription")}
       </p>
       <p className="notice" aria-live="polite">
         {allowance}
       </p>
       {error ? (
-        <p className="error" role="alert">
+        <p className="error" lang={errorIsLocalized ? undefined : "en-CA"} role="alert">
           {error}
         </p>
       ) : null}
       {status && !status.enabled ? (
-        <p className="notice">
-          The authoring assistant is disabled on this deployment. An operator can enable an approved
-          OpenAI-compatible provider; no source is sent anywhere while it is disabled.
-        </p>
+        <p className="notice">{t("delivery.assistant.disabled")}</p>
       ) : canEdit ? (
         <form onSubmit={submit}>
           <fieldset disabled={busy || status?.remaining === 0}>
-            <legend>Source type</legend>
-            <div className="button-row" role="group" aria-label="Source type">
+            <legend>{t("delivery.assistant.sourceType")}</legend>
+            <div
+              className="button-row"
+              role="group"
+              aria-label={t("delivery.assistant.sourceType")}
+            >
               <label className="checkbox-field">
                 <input
                   checked={sourceMode === "pasted_text"}
@@ -295,7 +327,7 @@ export function AuthoringAssistant({
                   onChange={() => setSourceMode("pasted_text")}
                   type="radio"
                 />
-                Paste text
+                {t("delivery.assistant.pasteText")}
               </label>
               <label className="checkbox-field">
                 <input
@@ -304,13 +336,13 @@ export function AuthoringAssistant({
                   onChange={() => setSourceMode("file")}
                   type="radio"
                 />
-                Upload a private file
+                {t("delivery.assistant.uploadPrivateFile")}
               </label>
             </div>
             {sourceMode === "pasted_text" ? (
               <>
                 <label className="field">
-                  <span>Source name</span>
+                  <span>{t("delivery.assistant.sourceName")}</span>
                   <input
                     className="input"
                     maxLength={200}
@@ -320,13 +352,13 @@ export function AuthoringAssistant({
                   />
                 </label>
                 <label className="field">
-                  <span>Trusted source text</span>
+                  <span>{t("delivery.assistant.trustedText")}</span>
                   <textarea
                     className="textarea"
                     maxLength={100_000}
                     minLength={50}
                     onChange={(event) => setText(event.target.value)}
-                    placeholder="Paste at least 50 characters from the material participants should understand."
+                    placeholder={t("delivery.assistant.textPlaceholder")}
                     required
                     rows={8}
                     value={text}
@@ -335,7 +367,7 @@ export function AuthoringAssistant({
               </>
             ) : (
               <label className="field">
-                <span>Private source file</span>
+                <span>{t("delivery.assistant.privateFile")}</span>
                 <input
                   accept=".pdf,.docx,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation"
                   className="input"
@@ -343,23 +375,24 @@ export function AuthoringAssistant({
                   required
                   type="file"
                 />
-                <small>
-                  PDF, DOCX, or PPTX; 6 MB maximum. Arbitrary web URLs are not accepted.
-                </small>
+                <small>{t("delivery.assistant.fileHelp")}</small>
               </label>
             )}
             <button className="button" type="submit">
-              {busy ? "Uploading source…" : "Create review proposal"}
+              {busy ? t("delivery.assistant.uploading") : t("delivery.assistant.createProposal")}
             </button>
           </fieldset>
         </form>
       ) : (
-        <p className="notice">Viewer access can inspect proposals but cannot create drafts.</p>
+        <p className="notice">{t("delivery.assistant.viewerNotice")}</p>
       )}
 
       {jobs.length ? (
-        <div className="authoring-job-list" aria-label="Recent authoring proposals">
-          <h3>Recent proposals</h3>
+        <div
+          className="authoring-job-list"
+          aria-label={t("delivery.assistant.recentProposalsAria")}
+        >
+          <h3>{t("delivery.assistant.recentProposals")}</h3>
           {jobs.map((job) => {
             const selection = selectionFor(job);
             return (
@@ -368,14 +401,15 @@ export function AuthoringAssistant({
                   <div>
                     <strong>{job.sourceName}</strong>
                     <p className="muted">
-                      {statusLabel(job.status)} · attempt {job.attempts}
+                      {localizedStatusLabel(job.status)} ·{" "}
+                      {t("delivery.assistant.attempt", { count: job.attempts })}
                     </p>
                   </div>
-                  <span className="status-pill">{job.status}</span>
+                  <span className="status-pill">{localizedStatusLabel(job.status)}</span>
                 </div>
                 {job.error ? (
                   <p className="error" role="status">
-                    Proposal could not be created: {job.error}
+                    {t("delivery.assistant.proposalFailed")} <span lang="en-CA">{job.error}</span>
                   </p>
                 ) : null}
                 {job.output ? (
@@ -383,7 +417,7 @@ export function AuthoringAssistant({
                     <h4>{job.output.checkpointSet.title}</h4>
                     {artifactType === "presentation" && job.output.contentSlideProposals?.length ? (
                       <fieldset className="authoring-proposal-options">
-                        <legend>Proposed content slides</legend>
+                        <legend>{t("delivery.assistant.proposedSlides")}</legend>
                         {job.output.contentSlideProposals.map((proposal) => (
                           <label className="authoring-proposal-option" key={proposal.id}>
                             <input
@@ -404,15 +438,15 @@ export function AuthoringAssistant({
                       </fieldset>
                     ) : null}
                     {artifactType === "presentation" ? (
-                      <p className="muted">
-                        Recovery questions stay paired when either question is selected.
-                      </p>
+                      <p className="muted">{t("delivery.assistant.recoveryPaired")}</p>
                     ) : null}
                     {job.output.checkpointSet.questions.map((question) => (
                       <section className="authoring-question-proposal" key={question.id}>
                         {artifactType === "presentation" ? (
                           <input
-                            aria-label={`Include ${question.prompt}`}
+                            aria-label={t("delivery.assistant.includeQuestion", {
+                              question: question.prompt,
+                            })}
                             checked={selection.selectedQuestionIds.includes(question.id)}
                             onChange={() => updateQuestionSelection(job, question.id)}
                             type="checkbox"
@@ -422,10 +456,10 @@ export function AuthoringAssistant({
                           <p>
                             <strong>
                               {question.delivery === "recheck"
-                                ? "Linked recheck"
+                                ? t("delivery.builder.linkedRecheck")
                                 : terminology === "round"
-                                  ? "Main question"
-                                  : "Main checkpoint"}
+                                  ? t("delivery.assistant.mainQuestion")
+                                  : t("delivery.assistant.mainCheckpoint")}
                               :
                             </strong>{" "}
                             {question.prompt}
@@ -443,12 +477,14 @@ export function AuthoringAssistant({
                       </section>
                     ))}
                     <p className="muted">
-                      Generated by {job.output.provider} / {job.output.model}. Check every answer,
-                      rationale, and citation against the source before publishing.
+                      {t("delivery.assistant.generatedReview", {
+                        provider: job.output.provider,
+                        model: job.output.model,
+                      })}
                     </p>
                     {job.output.conversionNotes?.length ? (
                       <div className="notice">
-                        <strong>Conversion review</strong>
+                        <strong>{t("delivery.assistant.conversionReview")}</strong>
                         <ul>
                           {job.output.conversionNotes.map((note) => (
                             <li key={note}>{note}</li>
@@ -458,7 +494,7 @@ export function AuthoringAssistant({
                     ) : null}
                     {artifactType === "round" && job.appliedQuizId ? (
                       <Link className="button-quiet" href={`/quiz/${job.appliedQuizId}`}>
-                        Open review draft
+                        {t("delivery.assistant.openDraft")}
                       </Link>
                     ) : canEdit ? (
                       <button
@@ -473,13 +509,15 @@ export function AuthoringAssistant({
                       >
                         {applyingId === job.id
                           ? insertionTarget
-                            ? "Inserting blocks…"
-                            : "Creating draft…"
+                            ? t("delivery.assistant.insertingBlocks")
+                            : t("delivery.assistant.creatingDraft")
                           : insertionTarget
-                            ? `Insert ${authoringProposalSelectionCount(selection)} selected blocks`
+                            ? t("delivery.assistant.insertSelected", {
+                                count: authoringProposalSelectionCount(selection),
+                              })
                             : artifactType === "presentation"
-                              ? "Create unpublished Presentation"
-                              : "Create unpublished review draft"}
+                              ? t("delivery.assistant.createPresentation")
+                              : t("delivery.assistant.createReviewDraft")}
                       </button>
                     ) : null}
                   </div>

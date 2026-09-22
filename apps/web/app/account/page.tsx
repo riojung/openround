@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type {
   BrandTheme,
   Entitlements,
@@ -15,9 +15,11 @@ import type {
   WorkspaceSummary,
 } from "@openround/contracts";
 import { Brand } from "../../components/brand";
+import { useLocale } from "../../components/locale-provider";
 import { WorkspaceProvider } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
 import { apiFetch, humanError } from "../../lib/api";
+import { formatDate, formatList, formatNumber } from "../../lib/i18n/format";
 import { liveThemeStyle } from "../../lib/theme";
 import styles from "./account.module.css";
 
@@ -30,17 +32,17 @@ interface Creator {
   plan: "free" | "pro" | "team";
 }
 
-const defaultTheme: BrandTheme = {
-  organizationName: "My organization",
-  primaryColor: "#0B2239",
-  accentColor: "#087375",
-};
-
 export default function AccountPage() {
+  const { locale, t } = useLocale();
+  const tRef = useRef(t);
   const router = useRouter();
   const [creator, setCreator] = useState<Creator | null>(null);
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
-  const [theme, setTheme] = useState<BrandTheme>(defaultTheme);
+  const [theme, setTheme] = useState<BrandTheme>(() => ({
+    organizationName: t("account.theme.defaultOrganizationName"),
+    primaryColor: "#0B2239",
+    accentColor: "#087375",
+  }));
   const [savedTheme, setSavedTheme] = useState<BrandTheme | null>(null);
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState<
@@ -65,6 +67,10 @@ export default function AccountPage() {
   const [uxBeta, setUxBeta] = useState(false);
 
   useEffect(() => {
+    tRef.current = t;
+  }, [t]);
+
+  useEffect(() => {
     Promise.all([
       apiFetch<{
         creator: Creator;
@@ -82,7 +88,13 @@ export default function AccountPage() {
         setEntitlements(account.entitlements);
         setUxBeta(Boolean(account.productFeatures?.uxBeta));
         setSavedTheme(branding.theme);
-        setTheme(branding.theme ?? defaultTheme);
+        setTheme(
+          branding.theme ?? {
+            organizationName: tRef.current("account.theme.defaultOrganizationName"),
+            primaryColor: "#0B2239",
+            accentColor: "#087375",
+          },
+        );
         setWorkspaces(workspaceList.workspaces);
         setEmbedOrigins(embedPolicy.origins.join("\n"));
         setInstitutionPolicy(policy);
@@ -149,7 +161,7 @@ export default function AccountPage() {
       );
       setInviteEmail("");
       setInviteUrl(result.debugUrl ?? "");
-      setMessage(`Invitation sent to ${result.invitation.email}.`);
+      setMessage(t("account.feedback.invitationSent", { email: result.invitation.email }));
       await refreshCollaboration();
     } catch (caught) {
       setError(humanError(caught));
@@ -175,7 +187,7 @@ export default function AccountPage() {
   }
 
   async function removeMember(userId: string) {
-    if (!window.confirm("Remove this member from the workspace?")) return;
+    if (!window.confirm(t("account.confirm.removeMember"))) return;
     setCollaborationBusy(`member:${userId}`);
     setError("");
     try {
@@ -214,7 +226,7 @@ export default function AccountPage() {
       });
       setTheme(response.theme);
       setSavedTheme(response.theme);
-      setMessage("Your brand theme was saved for new live sessions.");
+      setMessage(t("account.feedback.themeSaved"));
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -230,8 +242,12 @@ export default function AccountPage() {
     try {
       await apiFetch("/v1/account/theme", { method: "DELETE" });
       setSavedTheme(null);
-      setTheme(defaultTheme);
-      setMessage("The workspace theme was removed. New sessions will use OpenRound styling.");
+      setTheme({
+        organizationName: t("account.theme.defaultOrganizationName"),
+        primaryColor: "#0B2239",
+        accentColor: "#087375",
+      });
+      setMessage(t("account.feedback.themeRemoved"));
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -256,7 +272,7 @@ export default function AccountPage() {
         }),
       });
       setEmbedOrigins(response.origins.join("\n"));
-      setMessage("Secure presenter embed origins were saved.");
+      setMessage(t("account.feedback.embedSaved"));
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -281,7 +297,7 @@ export default function AccountPage() {
   }
 
   async function unlinkInstitutionIdentity(identityId: string) {
-    if (!window.confirm("Remove this institution sign-in method?")) return;
+    if (!window.confirm(t("account.confirm.unlinkIdentity"))) return;
     setBusy("federation");
     setError("");
     try {
@@ -289,7 +305,7 @@ export default function AccountPage() {
       setFederatedIdentities((identities) =>
         identities.filter((identity) => identity.id !== identityId),
       );
-      setMessage("Institution sign-in was removed. Email sign-in remains available.");
+      setMessage(t("account.feedback.identityRemoved"));
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -313,7 +329,7 @@ export default function AccountPage() {
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
-      setMessage("Your account export was downloaded.");
+      setMessage(t("account.feedback.accountExportDownloaded"));
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -337,7 +353,7 @@ export default function AccountPage() {
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
-      setMessage("The versioned institution audit export was downloaded.");
+      setMessage(t("account.feedback.auditExportDownloaded"));
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -378,11 +394,44 @@ export default function AccountPage() {
   }
 
   const effectivePlan = entitlements?.plan ?? creator?.plan;
+  const roleLabel = (role: Creator["role"] | WorkspaceMember["role"] | WorkspaceSummary["role"]) =>
+    role === "owner" ? t("role.owner") : role === "editor" ? t("role.editor") : t("role.viewer");
+  const planLabel = (plan: Creator["plan"]) =>
+    plan === "free" ? t("plan.free") : plan === "pro" ? t("plan.pro") : t("plan.team");
+  const contractStatusLabel = institutionPolicy
+    ? institutionPolicy.contractStatus === "active"
+      ? t("account.status.active")
+      : institutionPolicy.contractStatus === "pilot"
+        ? t("account.status.pilot")
+        : t("account.status.disabled")
+    : "";
+  const identityRequirementLabel = institutionPolicy
+    ? institutionPolicy.identityRequirement === "institution"
+      ? t("account.identity.institution")
+      : institutionPolicy.identityRequirement === "optional"
+        ? t("account.identity.optional")
+        : t("account.identity.guest")
+    : "";
+  const capabilityLabels: Record<keyof WorkspaceInstitutionPolicy["capabilities"], string> = {
+    oidc: t("account.capability.oidc"),
+    managedSso: t("account.capability.managedSso"),
+    scim: t("account.capability.scim"),
+    lti: t("account.capability.lti"),
+    nrps: t("account.capability.nrps"),
+    ags: t("account.capability.ags"),
+    auditExports: t("account.capability.auditExports"),
+    residencyControls: t("account.capability.residencyControls"),
+  };
+  const enabledCapabilities = institutionPolicy
+    ? Object.entries(institutionPolicy.capabilities)
+        .filter(([, enabled]) => enabled)
+        .map(([name]) => capabilityLabels[name as keyof typeof capabilityLabels])
+    : [];
 
   const content = (
     <div className={uxBeta ? styles.account : undefined}>
       {error ? (
-        <p className="error" role="alert">
+        <p className="error" lang="en-CA" role="alert">
           {error}
         </p>
       ) : null}
@@ -393,22 +442,22 @@ export default function AccountPage() {
       ) : null}
       <div className="settings-grid">
         <section className="panel">
-          <p className="eyebrow">Workspace</p>
-          <h2 style={{ fontSize: "1.8rem" }}>Active workspace</h2>
+          <p className="eyebrow">{t("account.workspace.eyebrow")}</p>
+          <h2 style={{ fontSize: "1.8rem" }}>{t("account.workspace.title")}</h2>
           <p className="muted">
-            Your role is <strong>{creator?.role ?? "loading"}</strong>. Content, sessions, reports,
-            and billing are isolated to the selected workspace.
+            {t("account.workspace.roleDescription", {
+              role: creator ? roleLabel(creator.role) : t("common.loading"),
+            })}
           </p>
           <p className="notice">
-            Home region:{" "}
-            <strong>
-              {workspaces.find((workspace) => workspace.id === creator?.workspaceId)?.homeRegion ??
-                "loading"}
-            </strong>
-            . Existing workspaces are never moved automatically.
+            {t("account.workspace.homeRegion", {
+              region:
+                workspaces.find((workspace) => workspace.id === creator?.workspaceId)?.homeRegion ??
+                t("common.loading"),
+            })}
           </p>
           <label className="field" htmlFor="active-workspace">
-            <span>Workspace</span>
+            <span>{t("account.workspace.field")}</span>
             <select
               className="select"
               disabled={!creator || collaborationBusy === "switch" || workspaces.length < 2}
@@ -418,59 +467,54 @@ export default function AccountPage() {
             >
               {workspaces.map((workspace) => (
                 <option key={workspace.id} value={workspace.id}>
-                  {workspace.name} · {workspace.role}
+                  {workspace.name} · {roleLabel(workspace.role)}
                 </option>
               ))}
             </select>
           </label>
         </section>
         <section className="panel">
-          <p className="eyebrow">Institution access</p>
-          <h2 style={{ fontSize: "1.8rem" }}>Identity and integration policy</h2>
-          <p className="muted">
-            Anonymous guest participation remains the default. Institution identity, roster, and
-            grade services require an approved contract and an operator-granted policy.
-          </p>
+          <p className="eyebrow">{t("account.institution.eyebrow")}</p>
+          <h2 style={{ fontSize: "1.8rem" }}>{t("account.institution.title")}</h2>
+          <p className="muted">{t("account.institution.description")}</p>
           {institutionPolicy ? (
             <dl className="definition-list compact-definition-list">
               <div>
-                <dt>Contract</dt>
-                <dd>{institutionPolicy.contractStatus}</dd>
+                <dt>{t("account.institution.contract")}</dt>
+                <dd>{contractStatusLabel}</dd>
               </div>
               <div>
-                <dt>Participant identity</dt>
-                <dd>{institutionPolicy.identityRequirement}</dd>
+                <dt>{t("account.institution.participantIdentity")}</dt>
+                <dd>{identityRequirementLabel}</dd>
               </div>
               <div>
-                <dt>Approved capabilities</dt>
+                <dt>{t("account.institution.approvedCapabilities")}</dt>
                 <dd>
-                  {Object.entries(institutionPolicy.capabilities)
-                    .filter(([, enabled]) => enabled)
-                    .map(([name]) => name)
-                    .join(", ") || "None"}
+                  {enabledCapabilities.length
+                    ? formatList(locale, enabledCapabilities)
+                    : t("account.common.none")}
                 </dd>
               </div>
               <div>
-                <dt>K–12 institutional mode</dt>
-                <dd>Disabled</dd>
+                <dt>{t("account.institution.k12Mode")}</dt>
+                <dd>{t("account.status.disabled")}</dd>
               </div>
             </dl>
           ) : (
-            <p className="muted">Loading institution policy…</p>
+            <p className="muted">{t("account.institution.loading")}</p>
           )}
           {oidcStatus?.enabled ? (
             <div className="stack-sm">
-              <p className="notice">
-                Link only an identity you control. OpenRound keys the link by institution issuer and
-                subject; it never links accounts by matching email addresses.
-              </p>
+              <p className="notice">{t("account.institution.linkGuidance")}</p>
               {federatedIdentities.map((identity) => (
                 <div className="identity-row" key={identity.id}>
                   <span>
                     <strong>{oidcStatus.providerName}</strong>
                     <small>
-                      {identity.emailHint ?? identity.issuer} · linked{" "}
-                      {new Date(identity.linkedAt).toLocaleDateString()}
+                      {identity.emailHint ?? identity.issuer} ·{" "}
+                      {t("account.institution.linked", {
+                        date: formatDate(locale, identity.linkedAt),
+                      })}
                     </small>
                   </span>
                   <button
@@ -479,7 +523,7 @@ export default function AccountPage() {
                     onClick={() => void unlinkInstitutionIdentity(identity.id)}
                     type="button"
                   >
-                    Unlink
+                    {t("account.institution.unlink")}
                   </button>
                 </div>
               ))}
@@ -491,73 +535,67 @@ export default function AccountPage() {
                   type="button"
                 >
                   {busy === "federation"
-                    ? "Opening institution sign-in…"
-                    : `Link ${oidcStatus.providerName}`}
+                    ? t("account.institution.openingSignIn")
+                    : t("account.institution.linkProvider", {
+                        provider: oidcStatus.providerName ?? "",
+                      })}
                 </button>
               ) : (
                 <p className="muted">
-                  Institution sign-in URL: <code>/signin?workspaceId={creator?.workspaceId}</code>
+                  {t("account.institution.signInUrl")}:{" "}
+                  <code>/signin?workspaceId={creator?.workspaceId}</code>
                 </p>
               )}
             </div>
           ) : (
-            <p className="notice">
-              Institution sign-in is not enabled for this workspace. Workspace owners cannot
-              self-enable contract-gated identity controls.
-            </p>
+            <p className="notice">{t("account.institution.notEnabled")}</p>
           )}
           {institutionPolicy?.capabilities.lti && creator?.role === "owner" ? (
             <div className="stack-sm institution-registration-list">
-              <h3>LTI 1.3 registrations</h3>
+              <h3>{t("account.institution.ltiTitle")}</h3>
               {ltiRegistrations.length ? (
                 <ul>
                   {ltiRegistrations.map((registration) => (
                     <li key={registration.id}>
                       <strong>{registration.name}</strong>
                       <span>
-                        {registration.issuer} · {registration.deploymentId} · {registration.status}
+                        {registration.issuer} · {registration.deploymentId} ·{" "}
+                        {registration.status === "active"
+                          ? t("account.status.active")
+                          : t("account.status.disabled")}
                       </span>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="notice">
-                  LTI is approved but no platform is registered. Your OpenRound operator must add
-                  the LMS issuer, client, deployment, JWKS, and return-origin values.
-                </p>
+                <p className="notice">{t("account.institution.ltiEmpty")}</p>
               )}
             </div>
           ) : null}
           {institutionPolicy?.capabilities.auditExports && creator?.role === "owner" ? (
             <div className="stack-sm">
-              <h3>Institution audit export</h3>
-              <p className="muted">
-                Download up to 10,000 ordered administrative and facilitator events with actor,
-                request, target, timestamp, and region context. Large exports are explicitly marked
-                as truncated.
-              </p>
+              <h3>{t("account.institution.auditTitle")}</h3>
+              <p className="muted">{t("account.institution.auditDescription")}</p>
               <button
                 className="button-quiet"
                 disabled={busy !== ""}
                 onClick={() => void downloadAuditExport()}
                 type="button"
               >
-                {busy === "audit" ? "Preparing audit export…" : "Download audit JSON"}
+                {busy === "audit"
+                  ? t("account.institution.preparingAudit")
+                  : t("account.institution.downloadAudit")}
               </button>
             </div>
           ) : null}
         </section>
         <section className="panel">
-          <p className="eyebrow">Presentation security</p>
-          <h2 style={{ fontSize: "1.8rem" }}>Secure embed origins</h2>
-          <p className="muted">
-            Presenter embeds are read-only and work only inside these HTTPS origins. Enter one
-            origin per line, without a path, up to ten. New presenter credentials capture the
-            current list.
-          </p>
+          <p className="eyebrow">{t("account.embed.eyebrow")}</p>
+          <h2 style={{ fontSize: "1.8rem" }}>{t("account.embed.title")}</h2>
+          <p className="muted">{t("account.embed.description")}</p>
           <form onSubmit={saveEmbedOrigins}>
             <label className="field" htmlFor="embed-origins">
-              <span>Allowed HTTPS origins</span>
+              <span>{t("account.embed.allowedOrigins")}</span>
               <textarea
                 className="textarea"
                 disabled={creator?.role !== "owner" || busy !== ""}
@@ -570,31 +608,39 @@ export default function AccountPage() {
             </label>
             {creator?.role === "owner" ? (
               <button className="button-quiet" disabled={busy !== ""} type="submit">
-                {busy === "embed" ? "Saving…" : "Save embed origins"}
+                {busy === "embed" ? t("account.common.saving") : t("account.embed.save")}
               </button>
             ) : (
-              <p className="notice">Only a workspace owner can change embed origins.</p>
+              <p className="notice">{t("account.embed.ownerOnly")}</p>
             )}
           </form>
         </section>
         <section className="panel">
-          <p className="eyebrow">Subscription</p>
+          <p className="eyebrow">{t("account.subscription.eyebrow")}</p>
           <h2 style={{ fontSize: "1.8rem" }}>
-            {creator ? `${effectivePlan} plan` : "Loading plan…"}
+            {creator && effectivePlan
+              ? t("account.subscription.plan", { plan: planLabel(effectivePlan) })
+              : t("account.subscription.loading")}
           </h2>
-          <p className="muted">
-            Hosted billing is disabled in community deployments. Hosted Pro customers manage payment
-            details and cancellation through the secure billing portal.
-          </p>
+          <p className="muted">{t("account.subscription.description")}</p>
           {entitlements ? (
             <p className="muted">
-              Up to {entitlements.maxParticipants} live participants ·{" "}
-              {entitlements.maxPublishedQuizzes === null
-                ? "unlimited published checkpoint sets"
-                : `${entitlements.maxPublishedQuizzes} published checkpoint sets`}
-              {" · "}
-              {entitlements.reportRetentionDays}-day report retention · CSV{" "}
-              {entitlements.csvExport ? "included" : "requires Pro"}
+              {formatList(locale, [
+                t("account.subscription.participants", {
+                  count: formatNumber(locale, entitlements.maxParticipants),
+                }),
+                entitlements.maxPublishedQuizzes === null
+                  ? t("account.subscription.unlimitedPublished")
+                  : t("account.subscription.published", {
+                      count: formatNumber(locale, entitlements.maxPublishedQuizzes),
+                    }),
+                t("account.subscription.retention", {
+                  count: formatNumber(locale, entitlements.reportRetentionDays),
+                }),
+                entitlements.csvExport
+                  ? t("account.subscription.csvIncluded")
+                  : t("account.subscription.csvRequiresPro"),
+              ])}
             </p>
           ) : null}
           {effectivePlan === "pro" ? (
@@ -604,27 +650,26 @@ export default function AccountPage() {
               onClick={() => void openBillingPortal()}
               type="button"
             >
-              {busy === "billing" ? "Opening portal…" : "Manage billing"}
+              {busy === "billing"
+                ? t("account.subscription.openingPortal")
+                : t("account.subscription.manageBilling")}
             </button>
           ) : effectivePlan === "free" ? (
             <Link className="button-quiet" href="/pricing">
-              Compare plans
+              {t("account.subscription.comparePlans")}
             </Link>
           ) : (
-            <p className="muted">Limits are controlled by your community operator.</p>
+            <p className="muted">{t("account.subscription.operatorLimits")}</p>
           )}
         </section>
         {creator?.role === "owner" ? (
           <section className="panel workspace-members-panel">
-            <p className="eyebrow">Collaboration</p>
-            <h2 style={{ fontSize: "1.8rem" }}>Workspace members</h2>
-            <p className="muted">
-              Editors can create, host, and view reports. Viewers have read-only access. Live
-              cohosts use separate, revocable round credentials.
-            </p>
+            <p className="eyebrow">{t("account.members.eyebrow")}</p>
+            <h2 style={{ fontSize: "1.8rem" }}>{t("account.members.title")}</h2>
+            <p className="muted">{t("account.members.description")}</p>
             <form className="toolbar" onSubmit={(event) => void inviteMember(event)}>
               <label className="field workspace-invite-email">
-                <span>Email address</span>
+                <span>{t("account.members.email")}</span>
                 <input
                   className="input"
                   maxLength={320}
@@ -635,14 +680,14 @@ export default function AccountPage() {
                 />
               </label>
               <label className="field">
-                <span>Role</span>
+                <span>{t("account.members.role")}</span>
                 <select
                   className="select"
                   onChange={(event) => setInviteRole(event.target.value as "editor" | "viewer")}
                   value={inviteRole}
                 >
-                  <option value="editor">Editor</option>
-                  <option value="viewer">Viewer</option>
+                  <option value="editor">{t("role.editor")}</option>
+                  <option value="viewer">{t("role.viewer")}</option>
                 </select>
               </label>
               <button
@@ -651,21 +696,29 @@ export default function AccountPage() {
                 style={{ alignSelf: "end" }}
                 type="submit"
               >
-                {collaborationBusy === "invite" ? "Sending…" : "Invite member"}
+                {collaborationBusy === "invite"
+                  ? t("account.members.sending")
+                  : t("account.members.invite")}
               </button>
             </form>
             {inviteUrl ? (
               <p className="notice">
-                Local invitation link: <a href={inviteUrl}>open invitation</a>
+                {t("account.members.localInvitationLink")}:{" "}
+                <a href={inviteUrl}>{t("account.members.openInvitation")}</a>
               </p>
             ) : null}
-            <div className="table-scroll" role="region" aria-label="Workspace members" tabIndex={0}>
+            <div
+              className="table-scroll"
+              role="region"
+              aria-label={t("account.members.tableLabel")}
+              tabIndex={0}
+            >
               <table className="report-table">
                 <thead>
                   <tr>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Action</th>
+                    <th>{t("account.members.email")}</th>
+                    <th>{t("account.members.role")}</th>
+                    <th>{t("account.members.action")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -674,10 +727,10 @@ export default function AccountPage() {
                       <td>{member.email}</td>
                       <td>
                         {member.role === "owner" ? (
-                          "Owner"
+                          t("role.owner")
                         ) : (
                           <select
-                            aria-label={`Role for ${member.email}`}
+                            aria-label={t("account.members.roleFor", { email: member.email })}
                             className="select compact-select"
                             disabled={collaborationBusy === `member:${member.userId}`}
                             onChange={(event) =>
@@ -688,8 +741,8 @@ export default function AccountPage() {
                             }
                             value={member.role}
                           >
-                            <option value="editor">Editor</option>
-                            <option value="viewer">Viewer</option>
+                            <option value="editor">{t("role.editor")}</option>
+                            <option value="viewer">{t("role.viewer")}</option>
                           </select>
                         )}
                       </td>
@@ -701,7 +754,7 @@ export default function AccountPage() {
                             onClick={() => void removeMember(member.userId)}
                             type="button"
                           >
-                            Remove
+                            {t("account.members.remove")}
                           </button>
                         ) : (
                           "—"
@@ -714,15 +767,17 @@ export default function AccountPage() {
             </div>
             {invitations.some((invitation) => !invitation.acceptedAt && !invitation.revokedAt) ? (
               <div className="workspace-invitations">
-                <h3>Pending invitations</h3>
+                <h3>{t("account.members.pendingInvitations")}</h3>
                 <ul>
                   {invitations
                     .filter((invitation) => !invitation.acceptedAt && !invitation.revokedAt)
                     .map((invitation) => (
                       <li key={invitation.id}>
                         <span>
-                          {invitation.email} · {invitation.role} · expires{" "}
-                          {new Date(invitation.expiresAt).toLocaleDateString()}
+                          {invitation.email} · {roleLabel(invitation.role)} ·{" "}
+                          {t("account.members.expires", {
+                            date: formatDate(locale, invitation.expiresAt),
+                          })}
                         </span>
                         <button
                           className="button-danger small-button"
@@ -730,7 +785,7 @@ export default function AccountPage() {
                           onClick={() => void revokeInvitation(invitation.id)}
                           type="button"
                         >
-                          Revoke
+                          {t("account.members.revoke")}
                         </button>
                       </li>
                     ))}
@@ -740,29 +795,26 @@ export default function AccountPage() {
           </section>
         ) : null}
         <section className="panel">
-          <p className="eyebrow">Live-session brand</p>
-          <h2 style={{ fontSize: "1.8rem" }}>Workspace theme</h2>
-          <p className="muted">
-            One contrast-checked theme is copied into each new session so its participant and
-            presenter views stay consistent throughout the round.
-          </p>
+          <p className="eyebrow">{t("account.theme.eyebrow")}</p>
+          <h2 style={{ fontSize: "1.8rem" }}>{t("account.theme.title")}</h2>
+          <p className="muted">{t("account.theme.description")}</p>
           {entitlements && !entitlements.brandTheme ? (
-            <p className="notice">
-              Editing and applying a workspace theme requires hosted Pro. Community deployments
-              include it without an application license fee.
-            </p>
+            <p className="notice">{t("account.theme.requiresPro")}</p>
           ) : null}
           <div
             className="live-shell theme-preview"
             data-branded="true"
             style={liveThemeStyle(theme)}
           >
-            <Brand inverted name={theme.organizationName || "My organization"} />
-            <p className="theme-preview-copy">Participant and presenter preview</p>
+            <Brand
+              inverted
+              name={theme.organizationName || t("account.theme.defaultOrganizationName")}
+            />
+            <p className="theme-preview-copy">{t("account.theme.preview")}</p>
           </div>
           <form onSubmit={saveTheme}>
             <label className="field" htmlFor="theme-name">
-              <span>Organization name</span>
+              <span>{t("account.theme.organizationName")}</span>
               <input
                 className="input"
                 disabled={!entitlements?.brandTheme || busy !== ""}
@@ -775,7 +827,9 @@ export default function AccountPage() {
             </label>
             <div className="settings-grid">
               <label className="field" htmlFor="theme-primary">
-                <span>Background colour · {theme.primaryColor}</span>
+                <span>
+                  {t("account.theme.backgroundColour")} · {theme.primaryColor}
+                </span>
                 <input
                   className="color-input"
                   disabled={!entitlements?.brandTheme || busy !== ""}
@@ -786,7 +840,9 @@ export default function AccountPage() {
                 />
               </label>
               <label className="field" htmlFor="theme-accent">
-                <span>Action colour · {theme.accentColor}</span>
+                <span>
+                  {t("account.theme.actionColour")} · {theme.accentColor}
+                </span>
                 <input
                   className="color-input"
                   disabled={!entitlements?.brandTheme || busy !== ""}
@@ -797,17 +853,14 @@ export default function AccountPage() {
                 />
               </label>
             </div>
-            <p className="muted">
-              Both colours must maintain at least 4.5:1 contrast with white text. Changes apply to
-              sessions created after saving, not rooms already in progress.
-            </p>
+            <p className="muted">{t("account.theme.contrastHelp")}</p>
             <div className="button-row">
               <button
                 className="button"
                 disabled={!entitlements?.brandTheme || busy !== ""}
                 type="submit"
               >
-                {busy === "theme" ? "Saving…" : "Save theme"}
+                {busy === "theme" ? t("account.common.saving") : t("account.theme.save")}
               </button>
               {savedTheme ? (
                 <button
@@ -816,42 +869,32 @@ export default function AccountPage() {
                   onClick={() => void resetTheme()}
                   type="button"
                 >
-                  Use OpenRound theme
+                  {t("account.theme.useOpenRound")}
                 </button>
               ) : null}
             </div>
           </form>
         </section>
         <section className="panel">
-          <p className="eyebrow">Portable data</p>
-          <h2 style={{ fontSize: "1.8rem" }}>Export your account</h2>
-          <p className="muted">
-            Download your profile, workspace, checkpoint-set versions, media metadata, live-session
-            data, reports, billing state, consent, and audit records as UTF-8 JSON. Secret token
-            hashes are excluded.
-          </p>
+          <p className="eyebrow">{t("account.export.eyebrow")}</p>
+          <h2 style={{ fontSize: "1.8rem" }}>{t("account.export.title")}</h2>
+          <p className="muted">{t("account.export.description")}</p>
           <button
             className="button-quiet"
             disabled={!creator || busy !== ""}
             onClick={() => void downloadExport()}
             type="button"
           >
-            {busy === "export" ? "Preparing export…" : "Download account export"}
+            {busy === "export" ? t("account.export.preparing") : t("account.export.download")}
           </button>
         </section>
         <section className="panel danger-panel">
-          <p className="eyebrow">Permanent action</p>
-          <h2 style={{ fontSize: "1.8rem" }}>Delete your account</h2>
-          <p className="muted">
-            This removes owned workspaces, checkpoint sets, private image objects, sessions,
-            responses, reports, and cached live state, revokes your sign-in sessions, and anonymizes
-            your email. This cannot be undone.
-          </p>
+          <p className="eyebrow">{t("account.delete.eyebrow")}</p>
+          <h2 style={{ fontSize: "1.8rem" }}>{t("account.delete.title")}</h2>
+          <p className="muted">{t("account.delete.description")}</p>
           <form onSubmit={deleteAccount}>
             <label className="field" htmlFor="delete-confirmation">
-              <span>
-                Type <strong>DELETE</strong> to confirm
-              </span>
+              <span>{t("account.delete.confirm", { confirmation: "DELETE" })}</span>
               <input
                 autoComplete="off"
                 className="input"
@@ -865,7 +908,7 @@ export default function AccountPage() {
               disabled={!creator || confirmation !== "DELETE" || busy !== ""}
               type="submit"
             >
-              {busy === "delete" ? "Deleting account…" : "Delete account"}
+              {busy === "delete" ? t("account.delete.deleting") : t("account.delete.action")}
             </button>
           </form>
         </section>
@@ -877,14 +920,11 @@ export default function AccountPage() {
     return (
       <WorkspaceProvider>
         <WorkspaceShell
-          description={
-            creator
-              ? `${creator.email} · ${creator.segment} · ${effectivePlan} plan`
-              : "Manage membership, integrations, privacy, billing, and data for this workspace."
-          }
-          eyebrow="Account and data"
+          description={t("page.account.description")}
+          eyebrow={t("page.account.eyebrow")}
           requireBeta={false}
-          title="Workspace settings"
+          title={t("page.account.title")}
+          translationLevel="full"
         >
           {content}
         </WorkspaceShell>
@@ -897,18 +937,25 @@ export default function AccountPage() {
       <header className="shell topbar">
         <Brand />
         <Link className="button-quiet small-button" href="/dashboard">
-          Dashboard
+          {t("account.legacy.dashboard")}
         </Link>
       </header>
       <main className="shell page-main" id="main">
         <div className="page-heading">
           <div>
-            <p className="eyebrow">Account and data</p>
-            <h1>Manage your account</h1>
+            <p className="eyebrow">{t("page.account.eyebrow")}</p>
+            <h1>{t("account.legacy.title")}</h1>
             <p className="muted">
-              {creator
-                ? `${creator.email} · ${creator.segment} · ${effectivePlan} plan`
-                : "Loading account…"}
+              {creator && effectivePlan
+                ? t("account.legacy.summary", {
+                    email: creator.email,
+                    segment:
+                      creator.segment === "education"
+                        ? t("account.segment.education")
+                        : t("account.segment.workplace"),
+                    plan: planLabel(effectivePlan),
+                  })
+                : t("account.legacy.loading")}
             </p>
           </div>
         </div>

@@ -1,3 +1,8 @@
+"use client";
+
+import { formatNumber } from "../lib/i18n/format";
+import { useLocale } from "./locale-provider";
+
 export interface RecoveryStoryIntervention {
   id: string;
   label: string;
@@ -25,116 +30,148 @@ export interface RecoveryStoryModel {
   synthetic?: boolean;
 }
 
-export function RecoveryStorySummary({ model }: { model: RecoveryStoryModel }) {
+export function RecoveryStorySummary({
+  model,
+  contentLanguage,
+}: {
+  model: RecoveryStoryModel;
+  contentLanguage?: string;
+}) {
+  const { locale, t } = useLocale();
+  const number = (value: number) => formatNumber(locale, value);
+  const percent = (value: number) =>
+    formatNumber(locale, value / 100, { style: "percent", maximumFractionDigits: 1 });
+
   return (
     <section
-      aria-label={model.synthetic ? "Synthetic Recovery Story" : "Recovery Story"}
+      aria-label={
+        model.synthetic ? t("reportRound.story.syntheticLabel") : t("reportRound.story.label")
+      }
       className="recovery-story"
       data-synthetic={model.synthetic || undefined}
       data-testid="recovery-summary"
+      lang={locale}
     >
       <div className="recovery-story-heading">
         <div>
-          <p className="eyebrow">Recovery Story</p>
-          <h2>What changed during this session</h2>
+          <p className="eyebrow">{t("reportRound.story.label")}</p>
+          <h2>{t("reportRound.story.title")}</h2>
         </div>
         <span className="status-pill">
           {model.synthetic
-            ? "Synthetic practice evidence · never saved"
-            : "Session evidence, not long-term retention"}
+            ? t("reportRound.story.syntheticEvidence")
+            : t("reportRound.story.sessionEvidence")}
         </span>
       </div>
       <div className="recovery-story-grid">
         <article>
-          <span>What recovered</span>
+          <span>{t("reportRound.story.recovered")}</span>
           <strong>
-            {model.denominator > 0 ? `${model.recovered}/${model.denominator}` : "Not measured"}
+            {model.denominator > 0
+              ? t("reportRound.story.ratio", {
+                  recovered: number(model.recovered),
+                  total: number(model.denominator),
+                })
+              : t("reportRound.common.notMeasured")}
           </strong>
-          <p>
+          <p lang={model.recoveryPercent === null ? undefined : contentLanguage}>
             {model.recoveryPercent === null
-              ? "No paired initial and recheck evidence was collected."
-              : `${model.recoveryPercent}% of initially incorrect participants with both responses recovered via ${model.evidenceLabel}.`}
+              ? t("reportRound.story.noPairedEvidence")
+              : t("reportRound.story.recoveryNarrative", {
+                  percent: percent(model.recoveryPercent),
+                  evidence: model.evidenceLabel,
+                })}
           </p>
         </article>
         <article>
-          <span>What remains unresolved</span>
-          <strong>{model.unresolvedCount}</strong>
-          <p>{model.unresolvedNarrative}</p>
+          <span>{t("reportRound.story.unresolved")}</span>
+          <strong>{number(model.unresolvedCount)}</strong>
+          <p lang={contentLanguage}>{model.unresolvedNarrative}</p>
         </article>
         <article>
-          <span>What the facilitator tried</span>
-          <strong>{model.interventions.length}</strong>
-          <p>
+          <span>{t("reportRound.story.facilitatorTried")}</span>
+          <strong>{number(model.interventions.length)}</strong>
+          <p lang={model.interventions.length ? contentLanguage : undefined}>
             {model.interventions.length
               ? model.interventions.map((item) => item.label).join(", ")
-              : "No intervention was recorded."}
+              : t("reportRound.story.noIntervention")}
           </p>
         </article>
         <article>
-          <span>Recommended next action</span>
-          <strong>{model.nextActionLabel}</strong>
-          <p>{model.nextAction}</p>
+          <span>{t("reportRound.story.nextAction")}</span>
+          <strong lang={contentLanguage}>{model.nextActionLabel}</strong>
+          <p lang={contentLanguage}>{model.nextAction}</p>
         </article>
       </div>
-      <div className="recovery-comparison" aria-label="Initial accuracy and recovery evidence">
+      <div className="recovery-comparison" aria-label={t("reportRound.story.comparisonLabel")}>
         <div>
-          <span>Initial accuracy</span>
+          <span>{t("reportRound.story.initialAccuracy")}</span>
           <span className="recovery-bar" aria-hidden="true">
             <span style={{ width: `${model.initialAccuracyPercent ?? 0}%` }} />
           </span>
           <strong>
             {model.initialAccuracyPercent === null
-              ? "Not measured"
+              ? t("reportRound.common.notMeasured")
               : typeof model.initialCorrect === "number" &&
                   typeof model.initialResponses === "number"
-                ? `${model.initialCorrect}/${model.initialResponses} · ${model.initialAccuracyPercent}%`
-                : `${model.initialAccuracyPercent}%`}
+                ? t("reportRound.story.accuracyRatio", {
+                    correct: number(model.initialCorrect),
+                    total: number(model.initialResponses),
+                    percent: percent(model.initialAccuracyPercent),
+                  })
+                : percent(model.initialAccuracyPercent)}
           </strong>
         </div>
         <div>
-          <span>Recovered among paired initially incorrect responses</span>
+          <span>{t("reportRound.story.pairedRecovery")}</span>
           <span className="recovery-bar" aria-hidden="true">
             <span style={{ width: `${model.recoveryPercent ?? 0}%` }} />
           </span>
           <strong>
-            {model.recoveryPercent === null ? "Not measured" : `${model.recoveryPercent}%`}
+            {model.recoveryPercent === null
+              ? t("reportRound.common.notMeasured")
+              : percent(model.recoveryPercent)}
           </strong>
         </div>
       </div>
       {model.highConfidenceWrong > 0 || model.correctButUnsure > 0 ? (
         <p className="confidence-callout">
-          <strong>Confidence contradiction:</strong> {model.highConfidenceWrong} high-confidence
-          incorrect response{model.highConfidenceWrong === 1 ? "" : "s"}; {model.correctButUnsure}{" "}
-          correct but unsure response
-          {model.correctButUnsure === 1 ? "" : "s"}.
+          <strong>{t("reportRound.story.confidenceContradiction")}</strong>{" "}
+          {t("reportRound.story.confidenceSummary", {
+            highWrong: number(model.highConfidenceWrong),
+            correctUnsure: number(model.correctButUnsure),
+          })}
         </p>
       ) : null}
-      {model.smallSample ? (
-        <p className="notice">
-          At least one recovery comparison has fewer than five paired responses.
-        </p>
-      ) : null}
+      {model.smallSample ? <p className="notice">{t("reportRound.story.smallSample")}</p> : null}
       {model.interventions.length ? (
-        <ol className="intervention-timeline" aria-label="Intervention timeline">
+        <ol
+          className="intervention-timeline"
+          aria-label={t("reportRound.story.interventionTimeline")}
+        >
           {model.interventions.map((intervention) => (
             <li key={intervention.id}>
-              <strong>{intervention.label}</strong>
+              <strong lang={contentLanguage}>{intervention.label}</strong>
               <span>
                 {intervention.startedAt
-                  ? new Date(intervention.startedAt).toLocaleTimeString([], {
+                  ? new Date(intervention.startedAt).toLocaleTimeString(locale, {
                       hour: "2-digit",
                       minute: "2-digit",
                     })
                   : model.synthetic
-                    ? "Synthetic action"
-                    : "Time unavailable"}
-                {intervention.followedByLinkedRecheck ? " · followed by a linked recheck" : ""}
+                    ? t("reportRound.story.syntheticAction")
+                    : t("reportRound.story.timeUnavailable")}
+                {intervention.followedByLinkedRecheck
+                  ? ` · ${t("reportRound.story.followedByRecheck")}`
+                  : ""}
               </span>
             </li>
           ))}
         </ol>
       ) : null}
-      <p className="muted">{model.evidenceNote}</p>
+      <p className="muted" lang={contentLanguage}>
+        {model.evidenceNote}
+      </p>
     </section>
   );
 }

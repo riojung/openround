@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useLocale } from "../../components/locale-provider";
 import { StarterGallery } from "../../components/workspace/starter-gallery";
 import { WorkspacePage } from "../../components/workspace/workspace-shell";
 import { useWorkspace } from "../../components/workspace/workspace-provider";
@@ -8,6 +9,7 @@ import hub from "../../components/workspace/workspace-hub.module.css";
 import content from "../../components/workspace/workspace-content.module.css";
 
 function PresentationCreateLink({ card = false }: { card?: boolean }) {
+  const { t } = useLocale();
   const { productFeatures } = useWorkspace();
   if (!productFeatures?.presentations) return null;
   return card ? (
@@ -15,18 +17,19 @@ function PresentationCreateLink({ card = false }: { card?: boolean }) {
       <span className={hub.cardIcon} data-tone="violet">
         P
       </span>
-      <h3>Engage a presentation</h3>
-      <p>Add purposeful checks and audience voice to slides, meetings, and workshops.</p>
-      <span className={hub.cardLink}>Choose a method →</span>
+      <h3>{t("pages.discover.presentation.title")}</h3>
+      <p>{t("pages.discover.presentation.description")}</p>
+      <span className={hub.cardLink}>{t("pages.discover.presentation.action")} →</span>
     </Link>
   ) : (
     <Link className={hub.heroPrimary} href="/create/presentation">
-      Create a presentation
+      {t("pages.discover.presentation.create")}
     </Link>
   );
 }
 
 function RoundSourceLink({ card = false }: { card?: boolean }) {
+  const { t } = useLocale();
   const { productFeatures } = useWorkspace();
   if (!productFeatures?.builderV2) return null;
   return card ? (
@@ -34,38 +37,37 @@ function RoundSourceLink({ card = false }: { card?: boolean }) {
       <span className={hub.cardIcon} data-tone="coral">
         S
       </span>
-      <h3>Build from source material</h3>
-      <p>Create reviewable proposals with citations from text, documents, or slides.</p>
-      <span className={hub.cardLink}>Add a source →</span>
+      <h3>{t("pages.discover.source.title")}</h3>
+      <p>{t("pages.discover.source.description")}</p>
+      <span className={hub.cardLink}>{t("pages.discover.source.action")} →</span>
     </Link>
   ) : (
     <Link className={hub.heroSecondary} href="/create?start=source">
-      Create from a source
+      {t("pages.discover.source.create")}
     </Link>
   );
 }
 
 export default function DiscoverPage() {
+  const { t } = useLocale();
   return (
     <WorkspacePage
       actions={
         <Link className="button-quiet" href="/templates">
-          Browse all templates
+          {t("pages.discover.browseTemplates")}
         </Link>
       }
-      description="Start with trusted OpenRound patterns and adapt them to your audience."
-      eyebrow="Curated by OpenRound"
+      description={t("page.discover.description")}
+      eyebrow={t("page.discover.eyebrow")}
       requiredFeature="discover"
-      title="Discover"
+      title={t("page.discover.title")}
+      translationLevel="full"
     >
       <section className={hub.hero}>
         <div className={hub.heroContent}>
-          <p className={hub.heroEyebrow}>Presentation companion</p>
-          <h2>Bring interaction into the material you already trust.</h2>
-          <p>
-            Begin with a Recovery-ready pattern, upload source material, or turn an existing deck
-            into a focused interactive Round.
-          </p>
+          <p className={hub.heroEyebrow}>{t("pages.discover.hero.eyebrow")}</p>
+          <h2>{t("pages.discover.hero.title")}</h2>
+          <p>{t("pages.discover.hero.description")}</p>
           <div className={hub.heroActions}>
             <PresentationCreateLink />
             <RoundSourceLink />
@@ -76,18 +78,16 @@ export default function DiscoverPage() {
       <section className={hub.section}>
         <div className={hub.sectionHeading}>
           <div>
-            <h2>Explore by learning moment</h2>
-            <p>
-              Purpose-led paths keep discovery useful without turning it into a public marketplace.
-            </p>
+            <h2>{t("pages.discover.explore.title")}</h2>
+            <p>{t("pages.discover.explore.description")}</p>
           </div>
         </div>
         <div className={hub.cardGrid}>
           <Link className={hub.quickCard} href="/templates">
             <span className={hub.cardIcon}>D</span>
-            <h3>Diagnose a concept</h3>
-            <p>Surface uncertainty and likely misconceptions before choosing an intervention.</p>
-            <span className={hub.cardLink}>Explore starters →</span>
+            <h3>{t("pages.discover.diagnose.title")}</h3>
+            <p>{t("pages.discover.diagnose.description")}</p>
+            <span className={hub.cardLink}>{t("pages.discover.diagnose.action")} →</span>
           </Link>
           <PresentationCreateLink card />
           <RoundSourceLink card />
@@ -97,11 +97,11 @@ export default function DiscoverPage() {
       <section className={`${hub.section} ${content.panel}`}>
         <div className={content.sectionHeader}>
           <div>
-            <p className="eyebrow">First-party library</p>
-            <h2>Recovery-ready starters</h2>
-            <p>Use one as an independent draft, then make every prompt and recheck your own.</p>
+            <p className="eyebrow">{t("pages.discover.library.eyebrow")}</p>
+            <h2>{t("pages.discover.library.title")}</h2>
+            <p>{t("pages.discover.library.description")}</p>
           </div>
-          <Link href="/templates">See all</Link>
+          <Link href="/templates">{t("pages.common.seeAll")}</Link>
         </div>
         <StarterGallery compact />
       </section>

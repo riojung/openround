@@ -4,10 +4,13 @@ import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import type { OidcStatus, PublicFeatures } from "@openround/contracts";
 import { Brand } from "../../components/brand";
+import { useLocale } from "../../components/locale-provider";
+import { LocalizedPolicyConsent } from "../../components/localized-policy-consent";
 import { apiFetch, humanError } from "../../lib/api";
 import { resolveSignInEnvironment, type SignInEnvironment } from "../../lib/signin-environment";
 
 export default function SignInPage() {
+  const { t } = useLocale();
   const [email, setEmail] = useState("");
   const [segment, setSegment] = useState<"education" | "workplace">("workplace");
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
@@ -97,17 +100,15 @@ export default function SignInPage() {
     <>
       <header className="shell topbar">
         <Brand />
-        <Link href="/join">Join a round</Link>
+        <Link href="/join">{t("delivery.site.joinRound")}</Link>
       </header>
       <main className="shell auth-wrap">
         <section className="join-card auth-card" aria-labelledby="signin-title">
-          <p className="eyebrow">Creator access</p>
+          <p className="eyebrow">{t("delivery.auth.creatorAccess")}</p>
           <h1 id="signin-title" style={{ fontSize: "clamp(2.4rem, 8vw, 4rem)" }}>
-            Sign in by email
+            {t("delivery.auth.signInTitle")}
           </h1>
-          <p className="muted">
-            We will send a single-use link. No password or memory puzzle required.
-          </p>
+          <p className="muted">{t("delivery.auth.signInDescription")}</p>
           {signInEnvironment?.originMismatch ? (
             <div className="notice" role="status">
               <strong>Use the configured address to sign in.</strong>
@@ -149,7 +150,7 @@ export default function SignInPage() {
           <form onSubmit={submit}>
             <fieldset className="field" style={{ border: 0, margin: 0, padding: 0 }}>
               <legend className="field-label" style={{ marginBottom: 8 }}>
-                I mainly facilitate
+                {t("delivery.auth.facilitate")}
               </legend>
               <div className="segmented">
                 <button
@@ -158,7 +159,7 @@ export default function SignInPage() {
                   onClick={() => setSegment("workplace")}
                   type="button"
                 >
-                  Workplace learning
+                  {t("delivery.auth.workplace")}
                 </button>
                 <button
                   aria-pressed={segment === "education"}
@@ -166,12 +167,12 @@ export default function SignInPage() {
                   onClick={() => setSegment("education")}
                   type="button"
                 >
-                  Education
+                  {t("delivery.auth.education")}
                 </button>
               </div>
             </fieldset>
             <div className="field">
-              <label htmlFor="email">Email address</label>
+              <label htmlFor="email">{t("delivery.auth.email")}</label>
               <input
                 autoComplete="email"
                 className="input"
@@ -191,20 +192,17 @@ export default function SignInPage() {
                 required
                 type="checkbox"
               />
-              <span>
-                I accept the <Link href="/terms">Terms</Link> and acknowledge the{" "}
-                <Link href="/privacy">Privacy notice</Link>.
-              </span>
+              <LocalizedPolicyConsent />
             </label>
             {error ? (
-              <p className="error" role="alert">
+              <p className="error" lang="en-CA" role="alert">
                 {error}
               </p>
             ) : null}
             {status === "sent" ? (
               <div className="success" role="status">
                 {debugUrl ? (
-                  <div style={{ marginTop: 10 }}>
+                  <div lang="en-CA" style={{ marginTop: 10 }}>
                     Your local sign-in link is ready. <a href={debugUrl}>Continue to dashboard</a>.
                   </div>
                 ) : publicFeatures?.developmentEmailInboxUrl ? (
@@ -240,7 +238,7 @@ export default function SignInPage() {
               disabled={!hydrated || !acceptPolicies || status === "sending"}
               type="submit"
             >
-              {status === "sending" ? "Sending…" : "Send sign-in link"}
+              {status === "sending" ? t("delivery.auth.sending") : t("delivery.auth.sendLink")}
             </button>
           </form>
         </section>

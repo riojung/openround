@@ -1,5 +1,6 @@
 import type { QuestionDraft } from "@openround/contracts";
 import type { QuestionUpdater } from "./types";
+import { useLocale } from "../locale-provider";
 
 export type MediaEditorState = "idle" | "uploading" | "scanning";
 
@@ -22,13 +23,15 @@ export function MediaEditor({
   onUpdateQuestion: QuestionUpdater;
   onUploadImage: (file: File | null) => void;
 }) {
+  const { t } = useLocale();
   return (
     <div className="media-editor">
       <div className="field" style={{ marginBottom: 0 }}>
-        <label htmlFor="media-alt">Optional instructional image</label>
+        <label htmlFor="media-alt">{t("delivery.builder.media")}</label>
         <input
           className="input"
           id="media-alt"
+          lang={question.mediaAlt ? "" : "en-CA"}
           maxLength={300}
           onChange={(event) =>
             onUpdateQuestion((item) => ({
@@ -39,7 +42,7 @@ export function MediaEditor({
           placeholder="Describe what the image teaches"
           value={question.mediaAlt ?? ""}
         />
-        <label className={uxBeta ? undefined : "sr-only"} htmlFor="media-upload">
+        <label className={uxBeta ? undefined : "sr-only"} htmlFor="media-upload" lang="en-CA">
           Choose instructional image
         </label>
         <input
@@ -53,13 +56,13 @@ export function MediaEditor({
           }}
           type="file"
         />
-        <small className="muted" id="media-help">
+        <small className="muted" id="media-help" lang="en-CA">
           {mediaUploadsEnabled
             ? "JPEG, PNG, or WebP up to 10 MB. Images are quarantined and scanned before use."
             : "New image uploads are disabled until this operator configures malware scanning."}
         </small>
         {mediaState !== "idle" ? (
-          <span className="notice" role="status">
+          <span className="notice" lang="en-CA" role="status">
             {mediaState === "uploading" ? "Uploading to quarantine…" : "Checking image safety…"}
           </span>
         ) : null}
@@ -70,11 +73,12 @@ export function MediaEditor({
             alt={question.mediaAlt ?? ""}
             className="question-media"
             height={360}
+            lang=""
             src={mediaPreviewUrl}
             width={640}
           />
           <button className="danger-link" onClick={onRemoveImage} type="button">
-            Remove image
+            {t("delivery.builder.removeImage")}
           </button>
         </div>
       ) : null}

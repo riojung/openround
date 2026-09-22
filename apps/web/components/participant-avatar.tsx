@@ -1,6 +1,7 @@
 "use client";
 
 import { AVATAR_IDS, type AvatarId } from "@openround/contracts";
+import { useLocale } from "./locale-provider";
 
 export interface ParticipantAvatarDefinition {
   id: AvatarId;
@@ -40,12 +41,14 @@ export function ParticipantAvatar({
   size?: "small" | "medium" | "large";
   decorative?: boolean;
 }) {
+  const { t } = useLocale();
   const avatar = participantAvatarDefinition(avatarId);
+  const avatarLabel = avatar ? t(`live.avatar.${avatar.id}`) : t("live.avatar.participant");
 
   return (
     <span
       aria-hidden={decorative || undefined}
-      aria-label={!decorative ? `${avatar?.label ?? "Participant"} avatar` : undefined}
+      aria-label={!decorative ? t("live.avatar.ariaLabel", { name: avatarLabel }) : undefined}
       className="participant-avatar"
       data-avatar={avatar?.id ?? "default"}
       data-size={size}
@@ -75,7 +78,8 @@ export function ParticipantIdentity({
         decorative={!identityVisible}
         size={size}
       />
-      <span>{nickname}</span>
+      {/* Participant aliases can be written in any language, independently of the UI locale. */}
+      <span lang="">{nickname}</span>
     </span>
   );
 }
@@ -89,11 +93,12 @@ export function AvatarPicker({
   onChange: (avatarId: AvatarId) => void;
   disabled?: boolean;
 }) {
+  const { t } = useLocale();
   return (
     <fieldset aria-describedby="avatar-picker-help" className="avatar-picker" disabled={disabled}>
-      <legend>Choose your avatar</legend>
+      <legend>{t("live.avatar.choose")}</legend>
       <p className="muted" id="avatar-picker-help">
-        Used only for this Round, not as an account profile.
+        {t("live.avatar.help")}
       </p>
       <div className="avatar-picker-grid">
         {PARTICIPANT_AVATARS.map((avatar) => (
@@ -115,7 +120,7 @@ export function AvatarPicker({
                 ✓
               </span>
               <ParticipantAvatar avatarId={avatar.id} decorative size="medium" />
-              <span>{avatar.label}</span>
+              <span>{t(`live.avatar.${avatar.id}`)}</span>
             </span>
           </label>
         ))}
