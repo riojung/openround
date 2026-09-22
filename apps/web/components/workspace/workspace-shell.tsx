@@ -241,7 +241,7 @@ export function WorkspaceNav({ mobile = false }: { mobile?: boolean }) {
 function CreateMenu({ productFeatures }: { productFeatures: WorkspaceProductFeatures }) {
   return (
     <details className={styles.createMenu}>
-      <summary className={styles.createButton}>
+      <summary className={styles.createButton} role="button">
         <ShellIcon name="plus" />
         <span>Create</span>
         <span className={styles.chevron} aria-hidden="true">

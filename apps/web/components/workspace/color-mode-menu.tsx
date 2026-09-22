@@ -159,6 +159,7 @@ export function ColorModeMenu() {
         aria-label={`Appearance: ${preference}`}
         className={styles.trigger}
         ref={triggerRef}
+        role="button"
         title={`Appearance: ${preference}`}
       >
         <ModeIcon mode={resolved} />
