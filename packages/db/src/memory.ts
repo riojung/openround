@@ -31,6 +31,7 @@ import type {
   FollowupAttemptRecord,
   FollowupRecord,
   FollowupHistoryRecord,
+  FollowupHistoryListOptions,
   FederatedAuthTransactionRecord,
   HistoryCursor,
   ExternalIdentityRecord,
@@ -3051,20 +3052,10 @@ export class MemoryRepository implements Repository {
     return followup ? structuredClone(followup) : null;
   }
 
-  async listFollowupHistory(
-    workspaceId: string,
-    options: {
-      cursor?: HistoryCursor;
-      limit: number;
-      status?: FollowupHistoryRecord["status"];
-      quizId?: string;
-      from?: Date;
-      to?: Date;
-      now: Date;
-    },
-  ) {
+  async listFollowupHistory(workspaceId: string, options: FollowupHistoryListOptions) {
     const records = [...this.followups.values()]
       .filter((followup) => followup.workspaceId === workspaceId)
+      .filter((followup) => !options.purpose || followup.purpose === options.purpose)
       .flatMap((followup): FollowupHistoryRecord[] => {
         const version = this.versions.get(followup.sourceQuizVersionId);
         if (!version || (options.quizId && version.quizId !== options.quizId)) return [];

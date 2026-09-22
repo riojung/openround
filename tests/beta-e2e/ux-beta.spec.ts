@@ -235,8 +235,8 @@ test("creator reuses a main question with its linked recheck as independent copi
 
   const autosave = page.waitForResponse(
     (response) =>
-      response.request().method() === "PATCH" &&
-      new URL(response.url()).pathname === `/v1/quizzes/${targetQuizId}`,
+      response.request().method() === "PUT" &&
+      new URL(response.url()).pathname === `/v1/quizzes/${targetQuizId}/draft`,
   );
   await picker.getByRole("button", { name: "Add 2 questions" }).click();
   expect((await autosave).ok()).toBeTruthy();

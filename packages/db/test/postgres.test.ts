@@ -2379,6 +2379,28 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       ]),
     });
     expect(
+      await repository.listFollowupHistory(first.workspaceId, {
+        limit: 1,
+        purpose: "assignment",
+        quizId: firstQuiz.id,
+        now,
+      }),
+    ).toMatchObject({
+      hasMore: true,
+      items: [expect.objectContaining({ id: assignmentIds[1], purpose: "assignment" })],
+    });
+    expect(
+      await repository.listFollowupHistory(first.workspaceId, {
+        limit: 1,
+        purpose: "recovery",
+        quizId: firstQuiz.id,
+        now,
+      }),
+    ).toMatchObject({
+      hasMore: false,
+      items: [expect.objectContaining({ id: followupId, purpose: "recovery" })],
+    });
+    expect(
       await repository.getFollowupAccessByToken(
         assignmentIds[0]!,
         assignmentPersonalTokenHash,

@@ -12,10 +12,10 @@
   min-width: 0;
   scroll-margin-top: 1.5rem;
   overflow: hidden;
-  border: 1px solid #d6e2ea;
+  border: 1px solid var(--ui-border);
   border-radius: 1.15rem;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 14px 38px rgba(16, 42, 67, 0.07);
+  background: var(--ui-surface-translucent);
+  box-shadow: var(--ui-shadow-md);
 }
 
 .heading {
@@ -24,13 +24,13 @@
 
 .heading h3 {
   margin: 0.65rem 0 0.35rem;
-  color: #102a43;
+  color: var(--ui-text-strong);
   font-size: clamp(1.25rem, 2.1vw, 1.6rem);
   letter-spacing: -0.03em;
 }
 
 .heading p {
-  color: #526d82;
+  color: var(--ui-text-subtle);
   line-height: 1.55;
   margin: 0;
 }
@@ -44,7 +44,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  color: #087375;
+  color: var(--ui-accent-ink);
   font-size: 0.7rem;
   font-weight: 850;
   letter-spacing: 0.08em;
@@ -71,20 +71,20 @@
 .transcript {
   flex: 1;
   min-width: 0;
-  color: #365778;
+  color: var(--ui-text-subtle);
 }
 
 .transcript summary {
   width: fit-content;
   cursor: pointer;
-  color: #075f75;
+  color: var(--ui-accent-ink);
   font-size: 0.86rem;
   font-weight: 800;
 }
 
 .transcript summary:focus-visible {
   border-radius: 0.25rem;
-  outline: 3px solid rgba(8, 115, 117, 0.28);
+  outline: 3px solid var(--ui-focus);
   outline-offset: 3px;
 }
 

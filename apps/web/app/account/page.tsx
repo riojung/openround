@@ -19,6 +19,7 @@ import { WorkspaceProvider } from "../../components/workspace/workspace-provider
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
 import { apiFetch, humanError } from "../../lib/api";
 import { liveThemeStyle } from "../../lib/theme";
+import styles from "./account.module.css";
 
 interface Creator {
   userId: string;
@@ -379,7 +380,7 @@ export default function AccountPage() {
   const effectivePlan = entitlements?.plan ?? creator?.plan;
 
   const content = (
-    <>
+    <div className={uxBeta ? styles.account : undefined}>
       {error ? (
         <p className="error" role="alert">
           {error}
@@ -869,7 +870,7 @@ export default function AccountPage() {
           </form>
         </section>
       </div>
-    </>
+    </div>
   );
 
   if (uxBeta) {

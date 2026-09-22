@@ -2,6 +2,17 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
+const workspaceDestinations = [
+  ["/home", "Home"],
+  ["/library", "Library"],
+  ["/sessions", "Sessions"],
+  ["/assignments", "Assignments"],
+  ["/results", "Results"],
+  ["/discover", "Discover"],
+  ["/groups", "Groups"],
+  ["/activity", "Activity inbox"],
+  ["/account", "Workspace settings"],
+] as const;
 
 async function signIn(page: Page) {
   await page.goto("/signin");
@@ -81,27 +92,122 @@ test("beta workspace and creation surfaces pass automated accessibility checks",
   await expectNoAxeViolations(page);
 });
 
+test("workspace Create flyout stays inside the mobile viewport @mobile", async ({ page }) => {
+  await signIn(page);
+  expect(page.viewportSize()).toEqual({ width: 390, height: 844 });
+  await page.goto("/home");
+
+  await page.getByRole("banner").getByText("Create", { exact: true }).click();
+  const createFlyout = page.getByText("Create new", { exact: true }).locator("..");
+  await expect(createFlyout).toBeVisible();
+  const createFlyoutBox = await createFlyout.boundingBox();
+  expect(createFlyoutBox).not.toBeNull();
+  expect(createFlyoutBox!.x).toBeGreaterThanOrEqual(0);
+  expect(createFlyoutBox!.x + createFlyoutBox!.width).toBeLessThanOrEqual(
+    page.viewportSize()!.width,
+  );
+  await expect(page.getByRole("link", { name: /^Round\b/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^Presentation\b/ })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+});
+
 test("professional workspace destinations pass automated accessibility checks", async ({
   page,
 }) => {
   await signIn(page);
-  const destinations = [
-    ["/home", "Home"],
-    ["/library", "Library"],
-    ["/sessions", "Sessions"],
-    ["/assignments", "Assignments"],
-    ["/results", "Results"],
-    ["/discover", "Discover"],
-    ["/groups", "Groups"],
-    ["/activity", "Activity inbox"],
-    ["/account", "Workspace settings"],
-  ] as const;
 
-  for (const [path, heading] of destinations) {
+  for (const [path, heading] of workspaceDestinations) {
+    const assignmentsResponse =
+      path === "/assignments"
+        ? page.waitForResponse(
+            (response) =>
+              response.request().method() === "GET" &&
+              new URL(response.url()).pathname === "/v1/followups",
+          )
+        : null;
     await page.goto(path);
     await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
+    if (assignmentsResponse) {
+      expect((await assignmentsResponse).status()).toBe(200);
+      await expect(
+        page.getByRole("heading", { name: "No assignments yet", level: 2 }),
+      ).toBeVisible();
+      await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
+    }
     await expectNoAxeViolations(page);
   }
+});
+
+test("workspace appearance follows, overrides, and persists the system color mode", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/home");
+
+  // Firefox does not preserve a media override across the authentication
+  // navigation, so apply it after the final workspace document has loaded.
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode-preference", "system");
+
+  await page.getByLabel("Appearance: system").click();
+  const systemOption = page.getByRole("radio", { name: "System" });
+  const lightOption = page.getByRole("radio", { name: "Light" });
+  const darkOption = page.getByRole("radio", { name: "Dark" });
+  await expect(systemOption).toHaveAttribute("tabindex", "0");
+  await expect(lightOption).toHaveAttribute("tabindex", "-1");
+  await expect(darkOption).toHaveAttribute("tabindex", "-1");
+
+  await systemOption.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(lightOption).toBeFocused();
+  await expect(lightOption).toHaveAttribute("aria-checked", "true");
+  await expect(lightOption).toHaveAttribute("tabindex", "0");
+  await expect(systemOption).toHaveAttribute("tabindex", "-1");
+  await page.keyboard.press("ArrowDown");
+  await expect(darkOption).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(lightOption).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(systemOption).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(darkOption).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(systemOption).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(lightOption).toBeFocused();
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "light");
+  await page.keyboard.press("Escape");
+  await expect(page.getByLabel("Appearance: light")).toBeFocused();
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode-preference", "light");
+
+  await page.getByLabel("Appearance: light").click();
+  await page.getByRole("radio", { name: "Dark" }).click();
+  await page.emulateMedia({ colorScheme: "light" });
+  for (const [path, heading] of workspaceDestinations) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+    if (path === "/account") {
+      await expect(page.locator(".settings-grid > .panel").first()).toHaveCSS(
+        "background-color",
+        "rgba(13, 37, 48, 0.94)",
+      );
+      await expect(page.locator("#active-workspace")).toHaveCSS(
+        "background-color",
+        "rgb(18, 48, 59)",
+      );
+    }
+    await expectNoAxeViolations(page);
+  }
+
+  await page.getByLabel("Appearance: dark").click();
+  await page.getByRole("radio", { name: "System" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
 });
 
 test("Presentation Builder dialogs and drawers pass automated accessibility checks", async ({
@@ -115,6 +221,19 @@ test("Presentation Builder dialogs and drawers pass automated accessibility chec
   await expect(page.getByLabel("Presentation title")).toHaveValue("Accessible presentation");
   await expectNoAxeViolations(page);
 
+  await page.getByRole("button", { name: "+ Question", exact: true }).click();
+  const questionPrompt = page.getByLabel("Question prompt");
+  await questionPrompt.focus();
+  await expect(questionPrompt).toHaveCSS("background-color", "rgba(255, 255, 255, 0.94)");
+  await expect(questionPrompt).toHaveCSS("color", "rgb(16, 42, 67)");
+  await expect(page.getByRole("status")).toHaveText("Saved");
+
+  await page.evaluate(() => window.localStorage.setItem("openround:color-mode", "dark"));
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await expect(page.getByLabel("Presentation title")).toHaveValue("Accessible presentation");
+  await expectNoAxeViolations(page);
+
   await page.getByRole("button", { name: "Preview" }).click();
   await expect(page.getByRole("dialog", { name: "Presentation preview" })).toBeVisible();
   await expectNoAxeViolations(page);
@@ -124,6 +243,20 @@ test("Presentation Builder dialogs and drawers pass automated accessibility chec
   await expect(page.getByRole("dialog", { name: "Insert from a published Round" })).toBeVisible();
   await expectNoAxeViolations(page);
   await page.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("Round Builder follows system appearance changes", async ({ page }) => {
+  await signIn(page);
+  const quizId = await createPublishedPracticeSource(page);
+  await page.evaluate(() => window.localStorage.setItem("openround:color-mode", "system"));
+  await page.emulateMedia({ colorScheme: "light" });
+
+  await page.goto(`/quiz/${quizId}`);
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await expect(page.getByLabel("Title")).toHaveValue("Misconception check");
+  await expectNoAxeViolations(page);
 });
 
 test("practice assignment and management surfaces pass automated accessibility checks", async ({
@@ -198,4 +331,9 @@ test("mobile beta creation surface passes automated accessibility checks @mobile
   await page.goto("/create");
   await expect(page.getByRole("heading", { name: "How do you want to start?" })).toBeVisible();
   await expectNoAxeViolations(page);
+  await page.getByLabel("Appearance: system").click();
+  await page.getByRole("radio", { name: "Dark" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  await expectNoAxeViolations(page);
+  await expectNoHorizontalOverflow(page);
 });

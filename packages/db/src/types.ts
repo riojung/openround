@@ -5,6 +5,7 @@ import type {
   AuthoringSourceType,
   ChatReaction,
   ConfidenceValue,
+  FollowupPurpose,
   FollowupTimeMode,
   IdentityRequirement,
   InstitutionCapabilities,
@@ -582,6 +583,17 @@ export type FollowupHistoryRecord = FollowupHistoryRecordBase &
 export interface HistoryPage<T> {
   items: T[];
   hasMore: boolean;
+}
+
+export interface FollowupHistoryListOptions {
+  cursor?: HistoryCursor;
+  limit: number;
+  purpose?: FollowupPurpose;
+  status?: FollowupHistoryRecord["status"];
+  quizId?: string;
+  from?: Date;
+  to?: Date;
+  now: Date;
 }
 
 export interface ProductEventRecord extends ProductEvent {
@@ -1236,15 +1248,7 @@ export interface Repository {
   getFollowupByReport(workspaceId: string, reportId: string): Promise<FollowupRecord | null>;
   listFollowupHistory(
     workspaceId: string,
-    options: {
-      cursor?: HistoryCursor;
-      limit: number;
-      status?: FollowupHistoryRecord["status"];
-      quizId?: string;
-      from?: Date;
-      to?: Date;
-      now: Date;
-    },
+    options: FollowupHistoryListOptions,
   ): Promise<HistoryPage<FollowupHistoryRecord>>;
   getFollowupByGenericToken(
     followupId: string,

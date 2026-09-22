@@ -98,6 +98,13 @@ describe("professional workspace shell", () => {
     expect(markup).toContain('href="/activity"');
     expect(markup).toContain('href="/help"');
     expect(markup).toContain('aria-label="Open account and workspace settings"');
+    expect(markup).toMatch(/<summary class="[^"]*createButton[^"]*" role="button">/);
+    expect(markup).toContain('aria-label="Appearance: system"');
+    expect(markup).toMatch(/aria-label="Appearance: system"[^>]*role="button"/);
+    expect(markup).toContain('aria-label="Interface appearance"');
+    expect(markup).toContain('role="radio"');
+    expect(markup.match(/tabindex="0"/g)).toHaveLength(1);
+    expect(markup.match(/tabindex="-1"/g)).toHaveLength(2);
     expect(markup).toContain("Create new");
     expect(markup).toContain('href="/create"');
     expect(markup).toContain('href="/create/presentation"');
