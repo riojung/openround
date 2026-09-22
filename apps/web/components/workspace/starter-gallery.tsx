@@ -2,19 +2,38 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { QuestionType, RoundCategory } from "@openround/contracts";
 import { apiFetch, humanError } from "../../lib/api";
+import { useLocale } from "../locale-provider";
+import { formatNumber, pluralCategory } from "../../lib/i18n/format";
+import type { MessageKey } from "../../lib/i18n/catalog";
 import { useWorkspace } from "./workspace-provider";
-import {
-  formatStarterCategory,
-  prioritizeStartersForSegment,
-  responseTypeLabel,
-} from "./workspace-model";
+import { prioritizeStartersForSegment } from "./workspace-model";
 import type { StarterSummary } from "./workspace-types";
 import styles from "./workspace-content.module.css";
 import { recordAuthoringEvent, recordCreationEvent } from "./product-events";
 
+const categoryKeys: Record<RoundCategory, MessageKey> = {
+  general: "category.general",
+  education: "category.education",
+  business: "category.business",
+  technical: "category.technical",
+  safety_compliance: "category.safety_compliance",
+  icebreaker: "category.icebreaker",
+};
+
+const questionTypeLabelKeys: Record<QuestionType, MessageKey> = {
+  single_select: "questionType.single_select.label",
+  true_false: "questionType.true_false.label",
+  multi_select: "questionType.multi_select.label",
+  numeric: "questionType.numeric.label",
+  rating: "questionType.rating.label",
+  poll: "questionType.poll.label",
+};
+
 export function StarterGallery({ compact = false }: { compact?: boolean }) {
   const router = useRouter();
+  const { locale, t } = useLocale();
   const { creator, canEdit } = useWorkspace();
   const [starters, setStarters] = useState<StarterSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,18 +78,18 @@ export function StarterGallery({ compact = false }: { compact?: boolean }) {
 
   if (loading)
     return (
-      <p className={styles.muted} role="status">
-        Loading starters…
+      <p className={styles.muted} lang={locale} role="status">
+        {t("starter.loading")}
       </p>
     );
 
   const orderedStarters = prioritizeStartersForSegment(starters, creator?.segment);
 
   return (
-    <>
+    <div lang={locale}>
       {loadError ? (
         <div>
-          <p className="error" role="alert">
+          <p className="error" lang="en-CA" role="alert">
             {loadError}
           </p>
           <button
@@ -78,12 +97,12 @@ export function StarterGallery({ compact = false }: { compact?: boolean }) {
             onClick={() => void refresh()}
             type="button"
           >
-            Retry loading starters
+            {t("starter.retry")}
           </button>
         </div>
       ) : null}
       {actionError ? (
-        <p className="error" role="alert">
+        <p className="error" lang="en-CA" role="alert">
           {actionError}
         </p>
       ) : null}
@@ -93,16 +112,25 @@ export function StarterGallery({ compact = false }: { compact?: boolean }) {
           return (
             <article className={styles.starterCard} key={starter.id}>
               <div className={styles.cardTopline}>
-                <span className={styles.category}>{formatStarterCategory(starter.category)}</span>
-                {recommended ? <span className={styles.recommended}>Good fit</span> : null}
+                <span className={styles.category}>{t(categoryKeys[starter.category])}</span>
+                {recommended ? (
+                  <span className={styles.recommended}>{t("starter.recommended")}</span>
+                ) : null}
               </div>
-              <h3>{starter.title}</h3>
-              <p>{starter.description}</p>
+              <h3 lang="en-CA">{starter.title}</h3>
+              <p lang="en-CA">{starter.description}</p>
               <div className={styles.metaLine}>
                 <span>
-                  {starter.questionCount} question{starter.questionCount === 1 ? "" : "s"}
+                  {t(
+                    pluralCategory(locale, starter.questionCount) === "one"
+                      ? "starter.questionCount.one"
+                      : "starter.questionCount.other",
+                    { count: formatNumber(locale, starter.questionCount) },
+                  )}
                 </span>
-                <span>{starter.responseTypes.map(responseTypeLabel).join(" · ")}</span>
+                <span>
+                  {starter.responseTypes.map((type) => t(questionTypeLabelKeys[type])).join(" · ")}
+                </span>
               </div>
               {canEdit ? (
                 <button
@@ -111,10 +139,10 @@ export function StarterGallery({ compact = false }: { compact?: boolean }) {
                   onClick={() => void useStarter(starter)}
                   type="button"
                 >
-                  {busyId === starter.id ? "Creating…" : "Use this starter"}
+                  {busyId === starter.id ? t("starter.creating") : t("starter.use")}
                 </button>
               ) : (
-                <p className={styles.readOnlyNote}>Viewers can browse starters.</p>
+                <p className={styles.readOnlyNote}>{t("starter.readOnly")}</p>
               )}
             </article>
           );
@@ -122,10 +150,10 @@ export function StarterGallery({ compact = false }: { compact?: boolean }) {
       </div>
       {!starters.length && !loadError ? (
         <div className={styles.emptyState}>
-          <h3>No starters are available yet</h3>
-          <p>The starter library will appear here when it is enabled for this workspace.</p>
+          <h3>{t("starter.emptyTitle")}</h3>
+          <p>{t("starter.emptyDescription")}</p>
         </div>
       ) : null}
-    </>
+    </div>
   );
 }

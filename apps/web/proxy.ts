@@ -64,6 +64,7 @@ export async function proxy(request: NextRequest) {
   const policy = contentSecurityPolicy(nonce, secureRequest, frameAncestors);
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("x-openround-pathname", request.nextUrl.pathname);
   requestHeaders.set("content-security-policy", policy);
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });

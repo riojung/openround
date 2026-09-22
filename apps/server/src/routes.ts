@@ -38,6 +38,7 @@ import {
   LtiLaunchViewSchema,
   LtiLoginInitiationSchema,
   LtiRegistrationSchema,
+  LocalReturnPathSchema,
   MagicLinkRequestSchema,
   MediaUploadRequestSchema,
   ModerateQnaQuestionSchema,
@@ -64,6 +65,7 @@ import {
   SetAudienceSignalSchema,
   SetChatReactionSchema,
   UpdateInteractionSettingsSchema,
+  UpdateLocalePreferenceSchema,
   UpdateQnaSettingsSchema,
   UpdateFolderSchema,
   UpdateQuizSchema,
@@ -739,14 +741,7 @@ export async function registerRoutes(
     const { token, returnTo } = z
       .object({
         token: z.string().min(20),
-        returnTo: z
-          .string()
-          .max(500)
-          .refine(
-            (value) => value.startsWith("/") && !value.startsWith("//") && !/[\\\r\n]/.test(value),
-            "Return path must be local",
-          )
-          .optional(),
+        returnTo: LocalReturnPathSchema.optional(),
       })
       .parse(request.query);
     const verified = await auth.verifyMagicLink(token);
@@ -760,9 +755,7 @@ export async function registerRoutes(
       );
     auth.setSessionCookie(reply, verified.sessionToken);
     return reply.redirect(
-      returnTo
-        ? new URL(returnTo, config.WEB_ORIGIN).href
-        : `${config.WEB_ORIGIN}/dashboard?welcome=1`,
+      auth.localeAwareWebRedirect(verified.creator, returnTo ?? "/dashboard?welcome=1"),
     );
   });
 
@@ -778,6 +771,17 @@ export async function registerRoutes(
         ? await repository.getBrandTheme(creator.workspaceId)
         : null,
     };
+  });
+
+  app.put("/v1/account/locale", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    const { locale } = UpdateLocalePreferenceSchema.parse(request.body);
+    const updated = await repository.updateUserLocale(creator.userId, locale);
+    if (!updated) {
+      return apiError(reply, 404, "NOT_FOUND", "Account not found", request.id);
+    }
+    return { locale: updated };
   });
 
   app.post(
@@ -837,7 +841,9 @@ export async function registerRoutes(
       if (result.mode === "login") {
         const session = await auth.issueCreatorSession(result.creator);
         auth.setSessionCookie(reply, session.sessionToken);
-        return reply.redirect(`${config.WEB_ORIGIN}/dashboard?federated=1`);
+        return reply.redirect(
+          auth.localeAwareWebRedirect(session.creator, "/dashboard?federated=1"),
+        );
       }
       return reply.redirect(`${config.WEB_ORIGIN}/account?federated=linked`);
     },
@@ -929,12 +935,15 @@ export async function registerRoutes(
       const session = await auth.issueCreatorSession(result.creator!);
       auth.setSessionCookie(reply, session.sessionToken);
       if (result.launch.messageType === "LtiDeepLinkingRequest") {
-        return reply.redirect(`${config.WEB_ORIGIN}/lti/select?launchId=${result.launch.id}`);
+        return reply.redirect(
+          auth.localeAwareWebRedirect(session.creator, `/lti/select?launchId=${result.launch.id}`),
+        );
       }
       return reply.redirect(
-        result.launch.quizId
-          ? `${config.WEB_ORIGIN}/host/setup/${result.launch.quizId}`
-          : `${config.WEB_ORIGIN}/dashboard?lti=1`,
+        auth.localeAwareWebRedirect(
+          session.creator,
+          result.launch.quizId ? `/host/setup/${result.launch.quizId}` : "/dashboard?lti=1",
+        ),
       );
     },
   );

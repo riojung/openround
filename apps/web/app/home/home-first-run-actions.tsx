@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { useLocale } from "../../components/locale-provider";
 import styles from "./home.module.css";
 
 export function HomeFirstRunActions({
@@ -10,18 +11,19 @@ export function HomeFirstRunActions({
   createHref: string;
   guideAvailable: boolean;
 }) {
+  const { t } = useLocale();
   if (!canEdit && !guideAvailable) return null;
 
   return (
     <div className={styles.onboardingActions}>
       {canEdit ? (
         <Link className="button" href={createHref}>
-          Create your first artifact
+          {t("pages.home.firstRun.create")}
         </Link>
       ) : null}
       {guideAvailable ? (
         <Link className="button-quiet" href="/help#quick-start">
-          Watch the 1-minute quick start
+          {t("pages.home.firstRun.watch")}
         </Link>
       ) : null}
     </div>

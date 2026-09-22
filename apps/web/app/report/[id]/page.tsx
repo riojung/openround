@@ -37,6 +37,7 @@ function RecoveryStory({ report }: { report: ReportV2 | ReportV3 }) {
           .join(" and ");
   return (
     <RecoveryStorySummary
+      contentLanguage="en-CA"
       model={{
         recovered: summary.recovered,
         denominator: summary.denominator,
@@ -85,7 +86,7 @@ function ReportDistribution({
       <ul>
         {distribution.buckets.map((bucket) => (
           <li key={bucket.value}>
-            {bucket.label}: {bucket.count} ({bucket.percent}%
+            <span lang="">{bucket.label}</span>: {bucket.count} ({bucket.percent}%
             {distribution.kind === "choice" && distribution.percentBasis === "respondents"
               ? " of respondents"
               : ""}
@@ -222,7 +223,7 @@ function EvidenceSections({ report }: { report: ReportV2 | ReportV3 }) {
               <tbody>
                 {report.unresolvedConcepts.map((concept) => (
                   <tr key={concept.conceptKey}>
-                    <td>{concept.conceptKey}</td>
+                    <td lang="">{concept.conceptKey}</td>
                     <td>{concept.initiallyIncorrect}</td>
                     <td>{concept.recovered}</td>
                     <td>{concept.unresolved}</td>
@@ -240,8 +241,9 @@ function EvidenceSections({ report }: { report: ReportV2 | ReportV3 }) {
           <ul>
             {report.misconceptions.map((item) => (
               <li key={`${item.questionId}:${item.key}`}>
-                <strong>{item.key}</strong>: {item.responses} responses ({item.allResponsePercent}%
-                of all; {item.wrongResponsePercent}% of incorrect responses)
+                <strong lang="">{item.key}</strong>: {item.responses} responses (
+                {item.allResponsePercent}% of all; {item.wrongResponsePercent}% of incorrect
+                responses)
               </li>
             ))}
           </ul>
@@ -556,7 +558,7 @@ function FollowupBuilder({
       ) : followup ? (
         <>
           <p>
-            <strong>{followup.title}</strong> contains {followup.checkpointCount}{" "}
+            <strong lang="">{followup.title}</strong> contains {followup.checkpointCount}{" "}
             {uxBeta ? "question" : "checkpoint"}
             {followup.checkpointCount === 1 ? "" : "s"} and closes on{" "}
             {new Date(followup.closesAt).toLocaleString()}.
@@ -606,6 +608,7 @@ function FollowupBuilder({
                 <span>Accommodation pass label</span>
                 <input
                   className="input"
+                  lang=""
                   maxLength={80}
                   onChange={(event) => setPassLabel(event.target.value)}
                   required
@@ -662,7 +665,7 @@ function FollowupBuilder({
                 <tbody>
                   {access.map((item) => (
                     <tr key={item.id}>
-                      <td>{item.nickname ?? item.label}</td>
+                      <td lang="">{item.nickname ?? item.label}</td>
                       <td>{item.timeMultiplier}×</td>
                       <td>{item.revokedAt ? "Revoked" : "Active"}</td>
                       <td>
@@ -715,7 +718,7 @@ function FollowupBuilder({
                   type="checkbox"
                 />
                 <span>
-                  <strong>{concept.conceptKey}</strong> — {concept.unresolved} unresolved
+                  <strong lang="">{concept.conceptKey}</strong> — {concept.unresolved} unresolved
                 </span>
               </label>
             ))}
@@ -851,21 +854,21 @@ export default function ReportPage() {
 
   return (
     <>
-      <header className="shell topbar">
+      <header className="shell topbar" lang="en-CA">
         <Brand />
         <Link className="button-quiet small-button" href="/dashboard">
           Dashboard
         </Link>
       </header>
-      <main className="shell page-main" id="main">
+      <main className="shell page-main" id="main" lang="en-CA">
         <div className="page-heading">
           <div>
             <p className="eyebrow">Session report</p>
-            <h1>
-              {uxBeta
-                ? (context?.quizTitle ?? "What the room understood")
-                : "What the room understood"}
-            </h1>
+            {uxBeta && context?.quizTitle ? (
+              <h1 lang="">{context.quizTitle}</h1>
+            ) : (
+              <h1>What the room understood</h1>
+            )}
             {uxBeta && context ? (
               <p className="muted">
                 What the room understood · {new Date(context.sessionCreatedAt).toLocaleDateString()}
@@ -1032,7 +1035,7 @@ export default function ReportPage() {
                     <tbody>
                       {report.questions.map((question) => (
                         <tr key={question.questionId}>
-                          <td>{question.prompt}</td>
+                          <td lang="">{question.prompt}</td>
                           <td>{question.responses}</td>
                           <td>{question.correct}</td>
                           <td>{question.accuracyPercent}%</td>

@@ -112,6 +112,30 @@ export const WorkspaceProductFeaturesSchema = z.object({
 });
 export type WorkspaceProductFeatures = z.infer<typeof WorkspaceProductFeaturesSchema>;
 
+export const supportedLocales = [
+  "en-CA",
+  "fr-FR",
+  "de-DE",
+  "es-ES",
+  "it-IT",
+  "pt-PT",
+  "ja-JP",
+  "ko-KR",
+  "zh-CN",
+  "zh-TW",
+] as const;
+
+export const LOCALE_COOKIE_NAME = "openround-locale" as const;
+export const LOCALE_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+
+export const SupportedLocaleSchema = z.enum(supportedLocales);
+export type SupportedLocale = z.infer<typeof SupportedLocaleSchema>;
+
+export const UpdateLocalePreferenceSchema = z.object({
+  locale: SupportedLocaleSchema,
+});
+export type UpdateLocalePreference = z.infer<typeof UpdateLocalePreferenceSchema>;
+
 export const OperationalFeatureFlagsSchema = z.object({
   signups: z.boolean(),
   sessionCreation: z.boolean(),
@@ -2156,18 +2180,30 @@ export const CreateSessionResponseSchema = z.object({
   snapshot: SessionSnapshotSchema,
 });
 
+function hasControlCharacter(value: string) {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+}
+
+export const LocalReturnPathSchema = z
+  .string()
+  .max(500)
+  .refine(
+    (value) =>
+      value.startsWith("/") &&
+      !value.startsWith("//") &&
+      !value.includes("\\") &&
+      !hasControlCharacter(value),
+    "Return path must be a local application path",
+  );
+
 export const MagicLinkRequestSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
   segment: z.enum(["education", "workplace"]).default("workplace"),
   acceptPolicies: z.literal(true),
-  returnTo: z
-    .string()
-    .max(500)
-    .refine(
-      (value) => value.startsWith("/") && !value.startsWith("//") && !/[\\\r\n]/.test(value),
-      "Return path must be a local application path",
-    )
-    .optional(),
+  returnTo: LocalReturnPathSchema.optional(),
 });
 
 const ReportMetricsSchema = z.object({

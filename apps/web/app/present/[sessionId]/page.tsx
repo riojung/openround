@@ -12,9 +12,11 @@ import {
 import { ExperiencePreferences } from "../../../components/experience-preferences";
 import { Countdown } from "../../../components/countdown";
 import { JoinAccess } from "../../../components/join-access";
+import { useLocale } from "../../../components/locale-provider";
 import { ParticipantIdentity } from "../../../components/participant-avatar";
 import { QuestionMedia } from "../../../components/question-media";
 import { ResponseDistributionView } from "../../../components/response-distribution";
+import { formatNumber } from "../../../lib/i18n/format";
 import {
   audienceContextKey,
   createAudienceRealtimeReceipt,
@@ -29,10 +31,14 @@ type Ack<T> = { data?: T; error?: { message: string } };
 
 export default function PresenterPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const { locale, t } = useLocale();
+  const tRef = useRef(t);
+  tRef.current = t;
   const socket = useMemo(createRealtimeClient, []);
   const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
   const snapshotRef = useRef<SessionSnapshot | null>(null);
   const [error, setError] = useState("");
+  const [errorIsEnglish, setErrorIsEnglish] = useState(false);
   const [mediaCredential, setMediaCredential] = useState("");
   const [embedded, setEmbedded] = useState(false);
   const [audienceSyncRevision, setAudienceSyncRevision] = useState(0);
@@ -59,7 +65,8 @@ export default function PresenterPage() {
     const presenterToken =
       fragmentCredential ?? sessionStorage.getItem(`openround:presenter:${sessionId}`);
     if (!presenterToken) {
-      setError("Presenter access must be opened from the host tab.");
+      setError(tRef.current("live.presenter.unauthorized"));
+      setErrorIsEnglish(false);
       return;
     }
     setMediaCredential(presenterToken);
@@ -72,10 +79,17 @@ export default function PresenterPage() {
           hostToken: presenterToken,
           lastSeq: snapshotRef.current?.seq ?? 0,
         },
-        (response: Ack<{ snapshot: SessionSnapshot }>) =>
-          response.data
-            ? setSnapshot(response.data.snapshot)
-            : setError(response.error?.message ?? "Could not synchronize"),
+        (response: Ack<{ snapshot: SessionSnapshot }>) => {
+          if (response.data) {
+            setSnapshot(response.data.snapshot);
+          } else if (response.error) {
+            setError(response.error.message);
+            setErrorIsEnglish(true);
+          } else {
+            setError(tRef.current("live.presenter.syncError"));
+            setErrorIsEnglish(false);
+          }
+        },
       );
     const update = withRealtimeReceipt((envelope: EventEnvelope<{ snapshot: SessionSnapshot }>) => {
       playPresenterCue(envelope.payload.snapshot.experienceTheme, envelope.type);
@@ -142,42 +156,59 @@ export default function PresenterPage() {
           {!embedded ? (
             <button
               className="button-quiet small-button"
+              lang="en-CA"
               onClick={() => window.close()}
               type="button"
             >
               Close presenter
             </button>
           ) : (
-            <span className="status-pill">Read-only embed</span>
+            <span className="status-pill">{t("live.presenter.readOnly")}</span>
           )}
         </div>
       </header>
       <main className="shell live-stage">
         <p aria-atomic="true" aria-live="polite" className="sr-only">
-          {snapshot?.phase === "question_open"
-            ? `Checkpoint open: ${snapshot.question?.prompt ?? "new checkpoint"}`
-            : snapshot?.phase === "finished"
-              ? "The live round is complete."
-              : snapshot
-                ? `Round status: ${snapshot.phase.replaceAll("_", " ")}`
-                : "Synchronizing presenter view."}
+          {snapshot?.phase === "question_open" ? (
+            snapshot.question?.prompt ? (
+              <>
+                {t("live.presenter.checkpointOpen", { prompt: "" })}
+                <span lang="">{snapshot.question.prompt}</span>
+              </>
+            ) : (
+              t("live.presenter.checkpointOpen", {
+                prompt: t("live.presenter.newCheckpoint"),
+              })
+            )
+          ) : snapshot?.phase === "finished" ? (
+            t("live.presenter.complete")
+          ) : snapshot ? (
+            <>
+              {t("live.presenter.roundStatus", { status: "" })}
+              <span lang="en-CA">{snapshot.phase.replaceAll("_", " ")}</span>
+            </>
+          ) : (
+            t("live.presenter.syncing")
+          )}
         </p>
         {error ? (
           <section className="live-card">
-            <p className="error">{error}</p>
+            <p className="error" lang={errorIsEnglish ? "en-CA" : undefined} role="alert">
+              {error}
+            </p>
           </section>
         ) : null}
         {!snapshot && !error ? (
           <section className="live-card">
-            <p>Synchronizing presenter view…</p>
+            <p>{t("live.presenter.syncingProgress")}</p>
           </section>
         ) : null}
         {snapshot?.phase === "lobby" ? (
           <section className="live-card" style={{ textAlign: "center" }}>
-            <p className="eyebrow">Join at this site</p>
+            <p className="eyebrow">{t("live.presenter.joinAtSite")}</p>
             <div className="session-code">{snapshot.code}</div>
             <JoinAccess code={snapshot.code} size={220} />
-            <h2>{snapshot.participants.length} ready</h2>
+            <h2 lang="en-CA">{formatNumber(locale, snapshot.participants.length)} ready</h2>
             <ul className="roster" style={{ justifyContent: "center" }}>
               {snapshot.participants.map((participant) => (
                 <li key={participant.id}>
@@ -194,23 +225,36 @@ export default function PresenterPage() {
           <section className="live-card">
             <div className="page-heading" style={{ alignItems: "center" }}>
               <span className="status-pill">
-                {snapshot.roundKind === "linked_recheck"
-                  ? "Linked recheck"
-                  : snapshot.roundKind === "revote"
-                    ? "Revote"
-                    : `Checkpoint ${(snapshot.questionPosition ?? snapshot.questionIndex ?? 0) + 1} of ${snapshot.questionCount}`}
+                {snapshot.roundKind === "linked_recheck" ? (
+                  t("live.presenter.linkedRecheck")
+                ) : snapshot.roundKind === "revote" ? (
+                  t("live.presenter.revote")
+                ) : (
+                  <span lang="en-CA">
+                    Checkpoint{" "}
+                    {formatNumber(
+                      locale,
+                      (snapshot.questionPosition ?? snapshot.questionIndex ?? 0) + 1,
+                    )}{" "}
+                    of {formatNumber(locale, snapshot.questionCount)}
+                  </span>
+                )}
               </span>
               {snapshot.phase === "question_open" ? (
                 <Countdown deadline={snapshot.deadline} />
               ) : null}
             </div>
-            <h1 style={{ fontSize: "clamp(2.4rem, 6vw, 5rem)" }}>{snapshot.question.prompt}</h1>
-            <QuestionMedia
-              altText={snapshot.question.mediaAlt}
-              credential={mediaCredential}
-              mediaId={snapshot.question.mediaId}
-              sessionId={sessionId}
-            />
+            <h1 lang="" style={{ fontSize: "clamp(2.4rem, 6vw, 5rem)" }}>
+              {snapshot.question.prompt}
+            </h1>
+            <span lang="">
+              <QuestionMedia
+                altText={snapshot.question.mediaAlt}
+                credential={mediaCredential}
+                mediaId={snapshot.question.mediaId}
+                sessionId={sessionId}
+              />
+            </span>
             {snapshot.question.choices.length > 0 ? (
               <div className="answer-grid">
                 {snapshot.question.choices.map((choice, index) => {
@@ -224,37 +268,58 @@ export default function PresenterPage() {
                       key={choice.id}
                     >
                       <span aria-hidden="true">{String.fromCharCode(65 + index)}.</span>{" "}
-                      {choice.label}
+                      <span lang="">{choice.label}</span>
                     </div>
                   );
                 })}
               </div>
             ) : snapshot.question.type === "numeric" ? (
-              <p className="lead">
+              <p className="lead" lang="en-CA">
                 Enter a numeric response
-                {snapshot.question.unit ? ` in ${snapshot.question.unit}` : ""}
-                {snapshot.correctResponse?.kind === "numeric"
-                  ? `. Correct response: ${snapshot.correctResponse.value}${snapshot.question.unit ? ` ${snapshot.question.unit}` : ""}`
-                  : "."}
+                {snapshot.question.unit ? (
+                  <>
+                    {" "}
+                    in <span lang="">{snapshot.question.unit}</span>
+                  </>
+                ) : null}
+                {snapshot.correctResponse?.kind === "numeric" ? (
+                  <>
+                    . Correct response: <span lang="">{snapshot.correctResponse.value}</span>
+                    {snapshot.question.unit ? (
+                      <>
+                        {" "}
+                        <span lang="">{snapshot.question.unit}</span>
+                      </>
+                    ) : null}
+                  </>
+                ) : (
+                  "."
+                )}
               </p>
             ) : snapshot.question.rating ? (
-              <p className="lead">
-                Rate from {snapshot.question.rating.min} ({snapshot.question.rating.minLabel}) to{" "}
-                {snapshot.question.rating.max} ({snapshot.question.rating.maxLabel}).
+              <p className="lead" lang="en-CA">
+                Rate from {formatNumber(locale, snapshot.question.rating.min)} (
+                {<span lang="">{snapshot.question.rating.minLabel}</span>}) to{" "}
+                {formatNumber(locale, snapshot.question.rating.max)} (
+                {<span lang="">{snapshot.question.rating.maxLabel}</span>}).
               </p>
             ) : null}
             {snapshot.phase === "intervention" && snapshot.intervention ? (
               <p className="notice">
                 {snapshot.intervention.type === "peer_discussion"
-                  ? "Discuss with a neighbour before responding again."
+                  ? t("live.presenter.discuss")
                   : snapshot.intervention.type === "example"
-                    ? "The facilitator is working through an example."
+                    ? t("live.presenter.example")
                     : snapshot.intervention.type === "explain"
-                      ? "The facilitator is clarifying this concept."
-                      : "The round is taking a short break."}
+                      ? t("live.presenter.clarifying")
+                      : t("live.presenter.shortBreak")}
               </p>
             ) : null}
-            {snapshot.explanation ? <p className="notice">{snapshot.explanation}</p> : null}
+            {snapshot.explanation ? (
+              <p className="notice" lang="">
+                {snapshot.explanation}
+              </p>
+            ) : null}
             {snapshot.uxBeta === true && snapshot.responseDistribution ? (
               <ResponseDistributionView distribution={snapshot.responseDistribution} />
             ) : null}
@@ -267,7 +332,7 @@ export default function PresenterPage() {
                       avatarId={participant.avatarId}
                       nickname={participant.nickname}
                     />{" "}
-                    · {participant.score}
+                    · {formatNumber(locale, participant.score)}
                   </li>
                 ))}
               </ol>
@@ -276,9 +341,9 @@ export default function PresenterPage() {
         ) : null}
         {snapshot?.phase === "finished" ? (
           <section className="live-card" style={{ textAlign: "center" }}>
-            <p className="eyebrow">Round complete</p>
-            <h1 style={{ fontSize: "clamp(3rem, 9vw, 6rem)" }}>Thank you.</h1>
-            <p className="lead" style={{ margin: "auto" }}>
+            <p className="eyebrow">{t("live.presenter.roundComplete")}</p>
+            <h1 style={{ fontSize: "clamp(3rem, 9vw, 6rem)" }}>{t("live.presenter.thankYou")}</h1>
+            <p className="lead" lang="en-CA" style={{ margin: "auto" }}>
               The facilitator now has the results for follow-up.
             </p>
           </section>

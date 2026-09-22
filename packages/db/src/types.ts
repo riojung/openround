@@ -15,6 +15,7 @@ import type {
   QuizDraft,
   Report,
   ResponsePayload,
+  SupportedLocale,
   TimeMultiplier,
 } from "@openround/contracts";
 import type {
@@ -49,6 +50,8 @@ export interface CreatorContext {
   userId: string;
   workspaceId: string;
   email: string;
+  locale: SupportedLocale;
+  localePreferenceSet: boolean;
   segment: Segment;
   role: "owner" | "editor" | "viewer";
   plan: Plan;
@@ -859,6 +862,7 @@ export interface Repository {
     activeWorkspaceId?: string;
   }): Promise<void>;
   getCreatorBySession(tokenHash: string, now: Date): Promise<CreatorContext | null>;
+  updateUserLocale(userId: string, locale: SupportedLocale): Promise<SupportedLocale | null>;
   listWorkspaces(userId: string): Promise<WorkspaceSummaryRecord[]>;
   setCreatorSessionWorkspace(
     tokenHash: string,

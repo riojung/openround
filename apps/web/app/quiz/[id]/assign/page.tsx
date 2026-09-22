@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { QuizDraft } from "@openround/contracts";
 import styles from "../../../../components/practice/practice.module.css";
+import { useLocale } from "../../../../components/locale-provider";
 import { recordPracticeAssignmentShared } from "../../../../components/workspace/product-events";
 import {
   WorkspaceProvider,
@@ -12,6 +13,7 @@ import {
 } from "../../../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../../../components/workspace/workspace-shell";
 import { apiFetch, humanError } from "../../../../lib/api";
+import { formatNumber } from "../../../../lib/i18n/format";
 import {
   defaultPracticeWindow,
   localDateTimeValue,
@@ -38,6 +40,8 @@ interface PublishedVersion {
 }
 
 function AssignPracticeContent() {
+  const { locale, t } = useLocale();
+  const tRef = useRef(t);
   const { id } = useParams<{ id: string }>();
   const { entitlements, productFeatures, canEdit, startUpgrade } = useWorkspace();
   const [quiz, setQuiz] = useState<QuizRecord | null>(null);
@@ -55,9 +59,14 @@ function AssignPracticeContent() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
+  const [rawError, setRawError] = useState("");
   const windowInitialized = useRef(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
   const receiptHeadingRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,7 +78,9 @@ function AssignPracticeContent() {
         setQuiz(response.quiz);
         setCurrentVersion(response.currentVersion);
         const publishedTitle = response.currentVersion?.content.title ?? response.quiz.title;
-        setTitle(`Practice: ${publishedTitle}`.slice(0, 160));
+        setTitle(
+          tRef.current("reportRound.assign.defaultTitle", { title: publishedTitle }).slice(0, 160),
+        );
       })
       .catch((caught) => {
         if (!cancelled) setLoadError(humanError(caught));
@@ -97,7 +108,14 @@ function AssignPracticeContent() {
     [personalLabelsText],
   );
   const personalLabelLimit = Math.min(250, entitlements?.maxParticipants ?? 250);
-  const labelError = personalLabelsError(personalLabels, personalLabelLimit);
+  const rawLabelError = personalLabelsError(personalLabels, personalLabelLimit);
+  const labelError = rawLabelError
+    ? personalLabels.length > personalLabelLimit
+      ? t("reportRound.assign.tooManyLabels", {
+          maximum: formatNumber(locale, personalLabelLimit),
+        })
+      : t("reportRound.assign.labelTooLong")
+    : null;
   const mainQuestionCount =
     currentVersion?.content.questions.filter((question) => (question.delivery ?? "main") === "main")
       .length ?? 0;
@@ -114,12 +132,14 @@ function AssignPracticeContent() {
     const opening = opensLater ? new Date(opensAt) : new Date();
     const closing = new Date(closesAt);
     if (Number.isNaN(opening.getTime()) || Number.isNaN(closing.getTime()) || closing <= opening) {
-      setError("Choose a close time after the practice opens.");
+      setError(t("reportRound.assign.closeAfterOpen"));
+      setRawError("");
       window.requestAnimationFrame(() => errorRef.current?.focus());
       return;
     }
     setBusy(true);
     setError("");
+    setRawError("");
     setCopyStatus("");
     try {
       const response = await apiFetch<CreatedPractice>(`/v1/quizzes/${id}/practice-assignments`, {
@@ -136,7 +156,7 @@ function AssignPracticeContent() {
       setCreated(response);
       window.requestAnimationFrame(() => receiptHeadingRef.current?.focus());
     } catch (caught) {
-      setError(humanError(caught));
+      setRawError(humanError(caught));
       window.requestAnimationFrame(() => errorRef.current?.focus());
     } finally {
       setBusy(false);
@@ -145,19 +165,21 @@ function AssignPracticeContent() {
 
   async function copyLink(url: string, label: string) {
     setError("");
+    setRawError("");
     setCopyStatus("");
     try {
       await navigator.clipboard.writeText(url);
       recordPracticeAssignmentShared();
-      setCopyStatus(`${label} copied.`);
+      setCopyStatus(t("reportRound.assign.copied", { label }));
     } catch {
-      setError("Copy was blocked. Select and copy the link instead.");
+      setError(t("reportRound.assign.copyBlocked"));
     }
   }
 
   function downloadLinks() {
     if (!created) return;
     setError("");
+    setRawError("");
     const blob = new Blob([practiceLinksCsv(created)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -168,57 +190,62 @@ function AssignPracticeContent() {
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
     recordPracticeAssignmentShared();
-    setCopyStatus("Practice links downloaded.");
+    setCopyStatus(t("reportRound.assign.linksDownloaded"));
   }
 
   return (
     <WorkspaceShell
       actions={
         <Link className="button-quiet" href="/dashboard">
-          Back to Rounds
+          {t("reportRound.rehearsal.backToRounds")}
         </Link>
       }
-      description="Share a published Round for private, accountless practice."
-      eyebrow="Practice"
+      description={t("reportRound.assign.description")}
+      eyebrow={t("delivery.practice.title")}
       requireBeta={false}
-      title="Assign practice"
+      title={t("reportRound.assign.title")}
+      translationLevel="full"
     >
-      {loadError || error ? (
-        <p className="error" ref={errorRef} role="alert" tabIndex={-1}>
-          {loadError || error}
+      {loadError || rawError || error ? (
+        <p
+          className="error"
+          lang={loadError || rawError ? "en-CA" : undefined}
+          ref={errorRef}
+          role="alert"
+          tabIndex={-1}
+        >
+          {loadError || rawError || error}
         </p>
       ) : null}
       {loading ? (
         <p className={styles.muted} role="status">
-          Loading the published Round…
+          {t("reportRound.assign.loading")}
         </p>
       ) : null}
       {!loading && !loadError && !featureAvailable ? (
         <section className={styles.emptyState}>
-          <h2>Practice assignments are not enabled</h2>
-          <p>This workspace can keep using live Rounds and report-based Recovery follow-ups.</p>
+          <h2>{t("reportRound.assign.notEnabledTitle")}</h2>
+          <p>{t("reportRound.assign.notEnabledDescription")}</p>
           <Link className="button" href="/dashboard">
-            Return to Rounds
+            {t("reportRound.assign.returnToRounds")}
           </Link>
         </section>
       ) : null}
       {!loading && !loadError && featureAvailable && !canEdit ? (
         <section className={styles.emptyState}>
-          <h2>Editor access is required</h2>
-          <p>Ask a workspace owner or editor to create this practice assignment.</p>
+          <h2>{t("reportRound.assign.editorRequiredTitle")}</h2>
+          <p>{t("reportRound.assign.editorRequiredDescription")}</p>
           <Link className="button" href={`/quiz/${id}/preview`}>
-            View Round
+            {t("reportRound.assign.viewRound")}
           </Link>
         </section>
       ) : null}
       {!loading && !loadError && featureAvailable && canEdit && quiz && !published ? (
         <section className={styles.emptyState}>
-          <h2>Publish this Round first</h2>
-          <p>
-            Practice always uses an immutable published version, never unfinished draft changes.
-          </p>
+          <h2>{t("reportRound.assign.publishFirstTitle")}</h2>
+          <p>{t("reportRound.assign.publishFirstDescription")}</p>
           <Link className="button" href={`/quiz/${id}`}>
-            Open editor
+            {t("reportRound.assign.openEditor")}
           </Link>
         </section>
       ) : null}
@@ -229,27 +256,25 @@ function AssignPracticeContent() {
       published &&
       !entitlementAvailable ? (
         <section className={styles.emptyState}>
-          <h2>Practice assignments require Pro</h2>
-          <p>
-            Upgrade to share accountless practice links, track completion, and create private
-            accommodation passes.
-          </p>
+          <h2>{t("reportRound.assign.requiresProTitle")}</h2>
+          <p>{t("reportRound.assign.requiresProDescription")}</p>
           <div className={styles.formActions} style={{ justifyContent: "center" }}>
             <button
               className="button"
               onClick={() => {
                 setError("");
+                setRawError("");
                 void startUpgrade().catch((caught) => {
-                  setError(humanError(caught));
+                  setRawError(humanError(caught));
                   window.requestAnimationFrame(() => errorRef.current?.focus());
                 });
               }}
               type="button"
             >
-              Explore Pro
+              {t("workspace.explorePro")}
             </button>
             <Link className="button-quiet" href="/pricing">
-              Compare plans
+              {t("account.subscription.comparePlans")}
             </Link>
           </div>
         </section>
@@ -262,13 +287,10 @@ function AssignPracticeContent() {
       entitlementAvailable &&
       mainQuestionCount === 0 ? (
         <section className={styles.emptyState}>
-          <h2>Add an eligible main question</h2>
-          <p>
-            This published version contains only conditional rechecks. Practice assignments need at
-            least one main question.
-          </p>
+          <h2>{t("reportRound.assign.addMainTitle")}</h2>
+          <p>{t("reportRound.assign.addMainDescription")}</p>
           <Link className="button" href={`/quiz/${id}`}>
-            Open editor
+            {t("reportRound.assign.openEditor")}
           </Link>
         </section>
       ) : null}
@@ -284,23 +306,22 @@ function AssignPracticeContent() {
           <section className={styles.receipt} aria-labelledby="practice-receipt-heading">
             <div className={styles.receiptHeader}>
               <div>
-                <p className="eyebrow">Practice ready</p>
+                <p className="eyebrow">{t("reportRound.assign.ready")}</p>
                 <h2 id="practice-receipt-heading" ref={receiptHeadingRef} tabIndex={-1}>
-                  Save and share these links now
+                  {t("reportRound.assign.saveLinks")}
                 </h2>
               </div>
               <span className="status-pill">
-                {new Date(created.followup.opensAt) > new Date() ? "scheduled" : "open"}
+                {new Date(created.followup.opensAt) > new Date()
+                  ? t("reportRound.status.scheduled")
+                  : t("reportRound.status.open")}
               </span>
             </div>
-            <p>
-              OpenRound stores only token hashes. These exact links cannot be displayed again after
-              you leave this page.
-            </p>
+            <p>{t("reportRound.assign.hashNotice")}</p>
             <div className={styles.linkBox}>
               <div className={styles.linkRow}>
                 <label className="field" htmlFor="generic-practice-link">
-                  <span>Generic anonymous link</span>
+                  <span>{t("reportRound.assign.genericLink")}</span>
                   <input
                     className="input"
                     id="generic-practice-link"
@@ -310,15 +331,17 @@ function AssignPracticeContent() {
                 </label>
                 <button
                   className="button-quiet small-button"
-                  onClick={() => void copyLink(created.genericUrl, "Generic practice link")}
+                  onClick={() =>
+                    void copyLink(created.genericUrl, t("reportRound.assign.genericPracticeLink"))
+                  }
                   type="button"
                 >
-                  Copy
+                  {t("reportRound.assign.copy")}
                 </button>
               </div>
               {created.personalAccess.length ? (
                 <>
-                  <h3>Personal one-attempt links</h3>
+                  <h3>{t("reportRound.assign.personalLinks")}</h3>
                   <ul className={styles.personalLinks}>
                     {created.personalAccess.map((access, index) => (
                       <li className={styles.linkRow} key={access.id}>
@@ -338,12 +361,16 @@ function AssignPracticeContent() {
                             access.url &&
                             void copyLink(
                               access.url,
-                              access.nickname ?? (access.label || `Personal link ${index + 1}`),
+                              access.nickname ??
+                                (access.label ||
+                                  t("reportRound.assign.personalLinkNumber", {
+                                    number: index + 1,
+                                  })),
                             )
                           }
                           type="button"
                         >
-                          Copy
+                          {t("reportRound.assign.copy")}
                         </button>
                       </li>
                     ))}
@@ -356,13 +383,13 @@ function AssignPracticeContent() {
             </p>
             <div className={styles.receiptActions}>
               <button className="button" onClick={downloadLinks} type="button">
-                Download links as CSV
+                {t("reportRound.assign.downloadCsv")}
               </button>
               <Link className="button-quiet" href={`/practice/${created.followup.id}`}>
-                Manage practice
+                {t("reportRound.assign.managePractice")}
               </Link>
               <Link className="button-quiet" href="/dashboard">
-                Done
+                {t("reportRound.assign.done")}
               </Link>
             </div>
           </section>
@@ -371,43 +398,50 @@ function AssignPracticeContent() {
             <section className={styles.sourceCard} aria-labelledby="practice-source-heading">
               <div className={styles.sourceHeader}>
                 <div>
-                  <p className="eyebrow">Published source</p>
+                  <p className="eyebrow">{t("reportRound.assign.publishedSource")}</p>
                   <h2 id="practice-source-heading">
                     {currentVersion?.content.title ?? quiz.title}
                   </h2>
                 </div>
-                <span className="status-pill">Published v{currentVersion?.version}</span>
+                <span className="status-pill">
+                  {t("reportRound.assign.publishedVersion", {
+                    version: currentVersion?.version ?? "",
+                  })}
+                </span>
               </div>
               <div className={styles.sourceFacts}>
                 <div className={styles.sourceFact}>
-                  <strong>{mainQuestionCount}</strong>
-                  <span>main question{mainQuestionCount === 1 ? "" : "s"}</span>
+                  <strong>{formatNumber(locale, mainQuestionCount)}</strong>
+                  <span>
+                    {t("reportRound.assign.mainQuestions", {
+                      count: formatNumber(locale, mainQuestionCount),
+                    })}
+                  </span>
                 </div>
                 <div className={styles.sourceFact}>
-                  <strong>{timeMode === "flex" ? "Flexible" : "Timed"}</strong>
-                  <span>participant pacing</span>
+                  <strong>
+                    {timeMode === "flex"
+                      ? t("reportRound.assign.flexible")
+                      : t("reportRound.assign.timed")}
+                  </strong>
+                  <span>{t("reportRound.assign.participantPacing")}</span>
                 </div>
                 <div className={styles.sourceFact}>
-                  <strong>One attempt</strong>
-                  <span>per personal link</span>
+                  <strong>{t("reportRound.assign.oneAttempt")}</strong>
+                  <span>{t("reportRound.assign.perPersonalLink")}</span>
                 </div>
               </div>
-              <p>
-                Practice uses the immutable published version. Conditional live rechecks are not
-                repeated as separate practice questions.
-              </p>
+              <p>{t("reportRound.assign.immutableDescription")}</p>
               {hasUnpublishedChanges ? (
-                <p className="notice">
-                  This Round has newer draft edits. Publish them first if they should be included.
-                </p>
+                <p className="notice">{t("reportRound.assign.unpublishedNotice")}</p>
               ) : null}
             </section>
 
             <form className={styles.formCard} onSubmit={createPractice}>
-              <h2>Practice settings</h2>
+              <h2>{t("reportRound.assign.settings")}</h2>
               <div className={styles.fields}>
                 <label className={`field ${styles.fullField}`} htmlFor="practice-title">
-                  <span>Title</span>
+                  <span>{t("reportRound.assign.titleField")}</span>
                   <input
                     className="input"
                     id="practice-title"
@@ -417,7 +451,7 @@ function AssignPracticeContent() {
                   />
                 </label>
                 <fieldset className={styles.fullField} style={{ border: 0, margin: 0, padding: 0 }}>
-                  <legend className="field-label">Timing</legend>
+                  <legend className="field-label">{t("reportRound.assign.timing")}</legend>
                   <div className={styles.optionGrid}>
                     <label className={styles.option}>
                       <input
@@ -427,8 +461,8 @@ function AssignPracticeContent() {
                         type="radio"
                       />
                       <span>
-                        <strong>Time-flex</strong>
-                        No countdown. Recommended when speed is not part of the learning goal.
+                        <strong>{t("reportRound.assign.timeFlex")}</strong>
+                        {t("reportRound.assign.timeFlexDescription")}
                       </span>
                     </label>
                     <label className={styles.option}>
@@ -439,14 +473,14 @@ function AssignPracticeContent() {
                         type="radio"
                       />
                       <span>
-                        <strong>Use question timers</strong>
-                        Enforce each published question&apos;s timer on the server.
+                        <strong>{t("reportRound.assign.useTimers")}</strong>
+                        {t("reportRound.assign.useTimersDescription")}
                       </span>
                     </label>
                   </div>
                 </fieldset>
                 <fieldset className={styles.fullField} style={{ border: 0, margin: 0, padding: 0 }}>
-                  <legend className="field-label">Open practice</legend>
+                  <legend className="field-label">{t("reportRound.assign.openPractice")}</legend>
                   <div className={styles.optionGrid}>
                     <label className={styles.option}>
                       <input
@@ -456,8 +490,8 @@ function AssignPracticeContent() {
                         type="radio"
                       />
                       <span>
-                        <strong>Now</strong>
-                        The link works as soon as it is created.
+                        <strong>{t("reportRound.assign.now")}</strong>
+                        {t("reportRound.assign.nowDescription")}
                       </span>
                     </label>
                     <label className={styles.option}>
@@ -468,15 +502,15 @@ function AssignPracticeContent() {
                         type="radio"
                       />
                       <span>
-                        <strong>Schedule for later</strong>
-                        Links stay closed until the selected time.
+                        <strong>{t("reportRound.assign.scheduleLater")}</strong>
+                        {t("reportRound.assign.scheduleLaterDescription")}
                       </span>
                     </label>
                   </div>
                 </fieldset>
                 {opensLater ? (
                   <label className="field" htmlFor="practice-opens-at">
-                    <span>Open date and time</span>
+                    <span>{t("reportRound.assign.openDate")}</span>
                     <input
                       className="input"
                       id="practice-opens-at"
@@ -490,7 +524,7 @@ function AssignPracticeContent() {
                   </label>
                 ) : null}
                 <label className="field" htmlFor="practice-closes-at">
-                  <span>Close date and time</span>
+                  <span>{t("reportRound.assign.closeDate")}</span>
                   <input
                     className="input"
                     id="practice-closes-at"
@@ -504,25 +538,25 @@ function AssignPracticeContent() {
                 </label>
               </div>
               <details className={styles.disclosure}>
-                <summary>Create personal one-attempt links (optional)</summary>
+                <summary>{t("reportRound.assign.createPersonalLinks")}</summary>
                 <label className="field" htmlFor="practice-personal-labels">
-                  <span>One label per line</span>
+                  <span>{t("reportRound.assign.oneLabelPerLine")}</span>
                   <textarea
                     aria-describedby="practice-personal-labels-help"
                     aria-invalid={Boolean(labelError)}
                     className="textarea"
                     id="practice-personal-labels"
                     onChange={(event) => setPersonalLabelsText(event.target.value)}
-                    placeholder={"Learner 1\nLearner 2"}
+                    placeholder={t("reportRound.assign.labelsPlaceholder")}
                     rows={5}
                     value={personalLabelsText}
                   />
                 </label>
                 <p className={styles.muted} id="practice-personal-labels-help">
-                  Labels identify links for the facilitator only. OpenRound does not email anyone or
-                  create learner accounts. Up to {personalLabelLimit} labels are available on this
-                  plan. {personalLabels.length} personal link
-                  {personalLabels.length === 1 ? "" : "s"} will be created.
+                  {t("reportRound.assign.labelsHelp", {
+                    maximum: formatNumber(locale, personalLabelLimit),
+                    count: formatNumber(locale, personalLabels.length),
+                  })}
                 </p>
                 {labelError ? (
                   <p className="error" role="alert">
@@ -532,10 +566,10 @@ function AssignPracticeContent() {
               </details>
               <div className={styles.formActions}>
                 <button className="button" disabled={busy || Boolean(labelError)} type="submit">
-                  {busy ? "Creating practice…" : "Create assignment"}
+                  {busy ? t("reportRound.assign.creating") : t("reportRound.assign.create")}
                 </button>
                 <Link className="button-quiet" href="/dashboard">
-                  Cancel
+                  {t("delivery.common.cancel")}
                 </Link>
               </div>
             </form>

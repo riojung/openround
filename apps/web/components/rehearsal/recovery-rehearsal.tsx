@@ -14,7 +14,9 @@ import {
   type RecoveryRehearsalScenarioId,
 } from "@openround/rehearsal";
 import { HostCommandBar, HostStage, RecoveryCompass } from "../host-command-center";
+import { useLocale } from "../locale-provider";
 import { RecoveryStorySummary } from "../recovery-story";
+import { formatNumber } from "../../lib/i18n/format";
 import { recordRehearsalProductEvent } from "./product-events";
 import { defaultRehearsalContentSource, type RehearsalContentSource } from "./rehearsal-access";
 import styles from "./rehearsal.module.css";
@@ -32,16 +34,35 @@ export interface RecoveryRehearsalVersion {
   content: QuizDraft;
 }
 
+const insightMessageKeys = {
+  insufficient_sample: "reportRound.rehearsal.insight.insufficient_sample",
+  low_participation: "reportRound.rehearsal.insight.low_participation",
+  high_confidence_error: "reportRound.rehearsal.insight.high_confidence_error",
+  dominant_misconception: "reportRound.rehearsal.insight.dominant_misconception",
+  low_correctness: "reportRound.rehearsal.insight.low_correctness",
+  split_understanding: "reportRound.rehearsal.insight.split_understanding",
+  correct_but_uncertain: "reportRound.rehearsal.insight.correct_but_uncertain",
+  continue: "reportRound.rehearsal.insight.continue",
+  opinion_result: "reportRound.rehearsal.insight.opinion_result",
+} as const;
+
+function insightMessageKey(code: string) {
+  return Object.hasOwn(insightMessageKeys, code)
+    ? insightMessageKeys[code as keyof typeof insightMessageKeys]
+    : insightMessageKeys.continue;
+}
+
 function ChoicePreview({ snapshot }: { snapshot: SessionSnapshot }) {
+  const { t } = useLocale();
   if (!snapshot.question || snapshot.question.choices.length === 0) return null;
   return (
-    <ol aria-label="Question choices" className={styles.choiceGrid}>
+    <ol aria-label={t("reportRound.rehearsal.questionChoices")} className={styles.choiceGrid}>
       {snapshot.question.choices.map((choice, index) => (
         <li className={styles.choice} key={choice.id}>
           <span aria-hidden="true" className={styles.choiceLetter}>
             {String.fromCharCode(65 + index)}
           </span>
-          <span>{choice.label}</span>
+          <span lang="">{choice.label}</span>
         </li>
       ))}
     </ol>
@@ -57,6 +78,8 @@ function PatternGraphic({
   wrong: number;
   missing: number;
 }) {
+  const { locale, t } = useLocale();
+  const number = (value: number) => formatNumber(locale, value);
   const cells = [
     ...Array.from({ length: correct }, () => "correct" as const),
     ...Array.from({ length: wrong }, () => "wrong" as const),
@@ -65,7 +88,11 @@ function PatternGraphic({
   return (
     <div>
       <div
-        aria-label={`${correct} correct, ${wrong} wrong, ${missing} no response`}
+        aria-label={t("reportRound.rehearsal.patternLabel", {
+          correct: number(correct),
+          wrong: number(wrong),
+          missing: number(missing),
+        })}
         className={styles.dotPlot}
         role="img"
       >
@@ -75,14 +102,14 @@ function PatternGraphic({
       </div>
       <div className={styles.legend}>
         <span>
-          <i data-kind="correct" /> Correct · {correct}
+          <i data-kind="correct" /> {t("reportRound.rehearsal.correct")} · {number(correct)}
         </span>
         <span>
-          <i data-kind="wrong" /> Leading wrong · {wrong}
+          <i data-kind="wrong" /> {t("reportRound.rehearsal.leadingWrong")} · {number(wrong)}
         </span>
         {missing > 0 ? (
           <span>
-            <i data-kind="missing" /> No response · {missing}
+            <i data-kind="missing" /> {t("reportRound.rehearsal.noResponse")} · {number(missing)}
           </span>
         ) : null}
       </div>
@@ -91,6 +118,7 @@ function PatternGraphic({
 }
 
 function Debrief({ controller }: { controller: RecoveryRehearsalController }) {
+  const { locale, t } = useLocale();
   const { debrief, insight, intervention, participants, recheck, scenario } = controller.plan;
   return (
     <div className={styles.debrief} data-testid="rehearsal-debrief">
@@ -100,54 +128,76 @@ function Debrief({ controller }: { controller: RecoveryRehearsalController }) {
           denominator: debrief.initialWrongCount,
           recoveryPercent: debrief.recoveryPercent,
           initialAccuracyPercent: insight.correctnessPercent,
-          evidenceLabel: debrief.evidenceLabel.toLowerCase(),
+          evidenceLabel:
+            recheck.mode === "linked"
+              ? t("reportRound.rehearsal.linkedRecovery")
+              : t("reportRound.rehearsal.revoteImprovement"),
           unresolvedCount: debrief.unresolvedCount,
           unresolvedNarrative:
             debrief.unresolvedCount > 0
-              ? `${debrief.unresolvedCount} synthetic learner${debrief.unresolvedCount === 1 ? "" : "s"} remained incorrect after the recheck.`
-              : "No synthetic learner remained incorrect after the recheck.",
+              ? t("reportRound.rehearsal.syntheticUnresolved", {
+                  count: formatNumber(locale, debrief.unresolvedCount),
+                })
+              : t("reportRound.rehearsal.noneUnresolved"),
           interventions: [
             {
               id: "synthetic-intervention",
-              label: intervention.type.replaceAll("_", " "),
+              label: t(`reportRound.rehearsal.intervention.${intervention.type}`),
               followedByLinkedRecheck: recheck.mode === "linked",
             },
           ],
-          nextActionLabel: debrief.unresolvedCount > 0 ? "Target practice" : "Review evidence",
+          nextActionLabel:
+            debrief.unresolvedCount > 0
+              ? t("reportRound.rehearsal.targetPractice")
+              : t("reportRound.rehearsal.reviewEvidence"),
           nextAction:
             debrief.unresolvedCount > 0
-              ? "Use the unresolved synthetic pattern to plan focused practice."
-              : "Review the simulated evidence, then rehearse another pattern.",
+              ? t("reportRound.rehearsal.targetPracticeDescription")
+              : t("reportRound.rehearsal.reviewEvidenceDescription"),
           highConfidenceWrong: scenario.highConfidenceWrongCount,
           correctButUnsure: 0,
           smallSample: debrief.initialWrongCount < 5,
-          evidenceNote: `${debrief.evidenceNote} ${debrief.syntheticDataNote}`,
+          evidenceNote: t("reportRound.rehearsal.syntheticEvidenceNote", {
+            mode:
+              recheck.mode === "linked"
+                ? t("reportRound.rehearsal.linkedEvidence")
+                : t("reportRound.rehearsal.revoteEvidence"),
+          }),
           synthetic: true,
         }}
       />
       <details className={styles.details}>
-        <summary>Review synthetic learner outcomes</summary>
+        <summary>{t("reportRound.rehearsal.reviewOutcomes")}</summary>
         <div className={styles.tableWrap}>
           <table>
             <caption className={styles.visuallyHidden}>
-              Synthetic results for the initial question and {recheck.label.toLowerCase()}
+              {t("reportRound.rehearsal.resultsCaption", {
+                recheck:
+                  recheck.mode === "linked"
+                    ? t("reportRound.rehearsal.linkedRecheck")
+                    : t("reportRound.rehearsal.revote"),
+              })}
             </caption>
             <thead>
               <tr>
-                <th scope="col">Learner</th>
-                <th scope="col">Initial</th>
-                <th scope="col">Recheck</th>
+                <th scope="col">{t("reportRound.rehearsal.learner")}</th>
+                <th scope="col">{t("reportRound.rehearsal.initial")}</th>
+                <th scope="col">{t("reportRound.rehearsal.recheck")}</th>
               </tr>
             </thead>
             <tbody>
-              {participants.map((participant) => (
+              {participants.map((participant, index) => (
                 <tr key={participant.id}>
-                  <th scope="row">{participant.label}</th>
-                  <td>{participant.initial.replace("_", " ")}</td>
+                  <th scope="row">
+                    {t("reportRound.rehearsal.syntheticLearnerNumber", {
+                      number: String(index + 1).padStart(2, "0"),
+                    })}
+                  </th>
+                  <td>{t(`reportRound.rehearsal.outcome.${participant.initial}`)}</td>
                   <td>
-                    {participant.recheck.replace("_", " ")}
+                    {t(`reportRound.rehearsal.outcome.${participant.recheck}`)}
                     {participant.recovered ? (
-                      <span className={styles.recovered}>Recovered</span>
+                      <span className={styles.recovered}>{t("reportRound.story.recovered")}</span>
                     ) : null}
                   </td>
                 </tr>
@@ -169,6 +219,7 @@ function ActiveRehearsal({
   onExit: () => void;
   startedAtMs: number;
 }) {
+  const { locale, t } = useLocale();
   const [stepIndex, setStepIndex] = useState(0);
   const completionRecorded = useRef(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -176,9 +227,59 @@ function ActiveRehearsal({
   const { plan } = controller;
   const { step } = view;
   const phaseView = getHostPhaseView(step.snapshot);
-  const displayPhaseView =
-    step.id === "debrief" ? { ...phaseView, phaseLabel: "Recovery debrief" } : phaseView;
+  const commandLabel = (command: HostPhaseCommand) => {
+    if (command.action === "intervention.start") {
+      return t(
+        `reportRound.rehearsal.command.intervention.${command.interventionType ?? "explain"}`,
+      );
+    }
+    if (command.action === "recheck.open") {
+      return command.recheckMode === "linked"
+        ? t("reportRound.rehearsal.command.linkedRecheck")
+        : t("reportRound.rehearsal.command.revote");
+    }
+    return t(`reportRound.rehearsal.command.${command.action}`);
+  };
+  const localizeCommand = (command: HostPhaseCommand): HostPhaseCommand => ({
+    ...command,
+    label: commandLabel(command),
+  });
+  const displayPhaseView = {
+    ...phaseView,
+    phaseLabel: t(`reportRound.rehearsal.phase.${step.id}`),
+    primary: phaseView.primary ? localizeCommand(phaseView.primary) : null,
+    secondary: phaseView.secondary.map(localizeCommand),
+  };
   const missing = plan.scenario.audienceSize - plan.scenario.responseCount;
+  const localizedStepTitle =
+    locale === "en-CA"
+      ? step.title
+      : step.id === "question_open" || step.id === "recheck"
+        ? step.title
+        : step.id === "briefing"
+          ? t("reportRound.rehearsal.briefingTitle", {
+              scenario: t(`reportRound.rehearsal.scenario.${plan.scenario.id}.title`),
+              pattern: t(`reportRound.rehearsal.scenario.${plan.scenario.id}.short`),
+            })
+          : step.id === "responses"
+            ? t("reportRound.rehearsal.respondedTitle", {
+                count: formatNumber(locale, plan.scenario.responseCount),
+              })
+            : step.id === "diagnosis"
+              ? t(insightMessageKey(plan.insight.recommendation.code))
+              : step.id === "revealed" || step.id === "intervention"
+                ? t(`reportRound.rehearsal.interventionTitle.${plan.intervention.type}`)
+                : step.id === "verify"
+                  ? t("reportRound.rehearsal.collectEvidence")
+                  : t("reportRound.rehearsal.debriefTitle");
+  const localizedGuidance =
+    locale === "en-CA" ? step.guidance : t(`reportRound.rehearsal.guidance.${step.id}`);
+  const localizedEyebrow =
+    locale === "en-CA"
+      ? step.eyebrow
+      : t(`reportRound.rehearsal.stepEyebrow.${step.id}`, {
+          number: formatNumber(locale, stepIndex + 1),
+        });
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -214,17 +315,24 @@ function ActiveRehearsal({
     >
       <div className={styles.activeHeader}>
         <div>
-          <p className={styles.eyebrow}>Recovery rehearsal · {plan.scenario.title}</p>
-          <h1 ref={headingRef} tabIndex={-1}>
+          <p className={styles.eyebrow}>
+            {t("reportRound.rehearsal.eyebrow")} ·{" "}
+            {t(`reportRound.rehearsal.scenario.${plan.scenario.id}.title`)}
+          </p>
+          <h1 lang="" ref={headingRef} tabIndex={-1}>
             {plan.sourceQuestion.prompt}
           </h1>
         </div>
         <button className={styles.textButton} onClick={onExit} type="button">
-          Exit practice
+          {t("reportRound.rehearsal.exit")}
         </button>
       </div>
 
-      <nav aria-label="Rehearsal progress" className={styles.progressNav} tabIndex={0}>
+      <nav
+        aria-label={t("reportRound.rehearsal.progress")}
+        className={styles.progressNav}
+        tabIndex={0}
+      >
         <ol>
           {plan.steps.map((candidate, index) => (
             <li
@@ -232,8 +340,8 @@ function ActiveRehearsal({
               data-complete={index < stepIndex}
               key={candidate.id}
             >
-              <span>{index + 1}</span>
-              <small>{candidate.id.replace("_", " ")}</small>
+              <span>{formatNumber(locale, index + 1)}</span>
+              <small>{t(`reportRound.rehearsal.step.${candidate.id}`)}</small>
             </li>
           ))}
         </ol>
@@ -243,11 +351,15 @@ function ActiveRehearsal({
         <HostStage className={styles.stageCard}>
           <div className={styles.stageMeta}>
             <span>{displayPhaseView.phaseLabel}</span>
-            <span>{step.snapshot.answerCount} responses</span>
+            <span>
+              {t("reportRound.rehearsal.responses", {
+                count: formatNumber(locale, step.snapshot.answerCount),
+              })}
+            </span>
           </div>
-          <p className={styles.eyebrow}>{step.eyebrow}</p>
-          <h2>{step.title}</h2>
-          <p className={styles.guidance}>{step.guidance}</p>
+          <p className={styles.eyebrow}>{localizedEyebrow}</p>
+          <h2>{localizedStepTitle}</h2>
+          <p className={styles.guidance}>{localizedGuidance}</p>
 
           {step.id === "question_open" || step.id === "recheck" ? (
             <ChoicePreview snapshot={step.snapshot} />
@@ -265,38 +377,50 @@ function ActiveRehearsal({
               data-insight-code={plan.insight.recommendation.code}
             >
               <span className={styles.insightStrength}>
-                {plan.insight.recommendation.strong ? "Strong signal" : "Use judgment"}
+                {plan.insight.recommendation.strong
+                  ? t("reportRound.rehearsal.strongSignal")
+                  : t("reportRound.rehearsal.useJudgment")}
               </span>
               <dl>
                 <div>
-                  <dt>Participation</dt>
-                  <dd>{plan.insight.participationPercent}%</dd>
+                  <dt>{t("reportRound.rehearsal.participation")}</dt>
+                  <dd>
+                    {formatNumber(locale, plan.insight.participationPercent / 100, {
+                      style: "percent",
+                    })}
+                  </dd>
                 </div>
                 <div>
-                  <dt>Correct</dt>
-                  <dd>{plan.insight.correctnessPercent ?? "—"}%</dd>
+                  <dt>{t("reportRound.rehearsal.correct")}</dt>
+                  <dd>
+                    {plan.insight.correctnessPercent === null
+                      ? "—"
+                      : formatNumber(locale, plan.insight.correctnessPercent / 100, {
+                          style: "percent",
+                        })}
+                  </dd>
                 </div>
                 <div>
-                  <dt>Very-sure wrong</dt>
-                  <dd>{plan.insight.highConfidenceWrongPercent ?? "—"}%</dd>
+                  <dt>{t("reportRound.rehearsal.verySureWrong")}</dt>
+                  <dd>
+                    {plan.insight.highConfidenceWrongPercent === null
+                      ? "—"
+                      : formatNumber(locale, plan.insight.highConfidenceWrongPercent / 100, {
+                          style: "percent",
+                        })}
+                  </dd>
                 </div>
               </dl>
               {plan.scenario.id === "split_room" ? (
-                <p className={styles.ruleNote}>
-                  This is a 5/5 split pattern. The production rule recommends an example first
-                  because 50% correct is below its 60% low-correctness threshold.
-                </p>
+                <p className={styles.ruleNote}>{t("reportRound.rehearsal.splitRule")}</p>
               ) : null}
             </div>
           ) : null}
           {step.id === "revealed" || step.id === "intervention" ? (
             <div className={styles.coachScript}>
-              <span>Facilitator prompt</span>
-              <blockquote>“What clue would help us rule out the tempting response?”</blockquote>
-              <p>
-                Keep the learner anonymous. Address the reasoning pattern, then collect fresh
-                evidence.
-              </p>
+              <span>{t("reportRound.rehearsal.facilitatorPrompt")}</span>
+              <blockquote>{t("reportRound.rehearsal.promptQuote")}</blockquote>
+              <p>{t("reportRound.rehearsal.promptGuidance")}</p>
             </div>
           ) : null}
           {step.id === "debrief" ? <Debrief controller={controller} /> : null}
@@ -308,34 +432,38 @@ function ActiveRehearsal({
               onClick={() => setStepIndex(controller.previous(stepIndex))}
               type="button"
             >
-              Back
+              {t("delivery.common.back")}
             </button>
             {view.canContinue && !step.command ? (
               <button className={styles.primaryButton} onClick={continueRehearsal} type="button">
-                {step.continueLabel}
+                {t(`reportRound.rehearsal.continue.${step.id}`)}
               </button>
             ) : view.complete ? (
               <button className={styles.primaryButton} onClick={onExit} type="button">
-                Rehearse another pattern
+                {t("reportRound.rehearsal.anotherPattern")}
               </button>
             ) : null}
           </div>
         </HostStage>
 
         <RecoveryCompass phaseView={displayPhaseView} snapshot={step.snapshot} synthetic>
-          <p>Production guidance is a prompt for facilitator judgment, not an automatic verdict.</p>
+          <p>{t("reportRound.rehearsal.productionGuidance")}</p>
           <dl className={styles.snapshotStats}>
             <div>
-              <dt>Synthetic learners</dt>
-              <dd>{step.snapshot.participants.length}</dd>
+              <dt>{t("reportRound.rehearsal.syntheticLearners")}</dt>
+              <dd>{formatNumber(locale, step.snapshot.participants.length)}</dd>
             </div>
             <div>
-              <dt>Round evidence</dt>
-              <dd>{plan.recheck.label}</dd>
+              <dt>{t("reportRound.rehearsal.roundEvidence")}</dt>
+              <dd>
+                {plan.recheck.mode === "linked"
+                  ? t("reportRound.rehearsal.linkedRecheck")
+                  : t("reportRound.rehearsal.revote")}
+              </dd>
             </div>
             <div>
-              <dt>Saved data</dt>
-              <dd>No learner records</dd>
+              <dt>{t("reportRound.rehearsal.savedData")}</dt>
+              <dd>{t("reportRound.rehearsal.noLearnerRecords")}</dd>
             </div>
           </dl>
           {plan.adaptations.map((adaptation) => (
@@ -350,13 +478,17 @@ function ActiveRehearsal({
           busy={false}
           onCommand={applyCommand}
           phaseView={phaseView}
-          primary={step.command}
+          primary={step.command ? localizeCommand(step.command) : null}
           secondary={[]}
           synthetic
         />
       ) : null}
       <p aria-live="polite" className={styles.visuallyHidden}>
-        Step {view.stepIndex + 1} of {view.stepCount}: {step.title}
+        {t("reportRound.rehearsal.stepProgress", {
+          current: formatNumber(locale, view.stepIndex + 1),
+          total: formatNumber(locale, view.stepCount),
+          title: localizedStepTitle,
+        })}
       </p>
     </section>
   );
@@ -371,6 +503,7 @@ export function RecoveryRehearsal({
   quiz: RecoveryRehearsalQuiz;
   currentVersion: RecoveryRehearsalVersion | null;
 }) {
+  const { locale, t } = useLocale();
   const hasPublishedVersion = Boolean(currentVersion);
   const [source, setSource] = useState<RehearsalContentSource>(
     defaultRehearsalContentSource({ status: quiz.status, hasPublishedVersion }),
@@ -438,7 +571,11 @@ export function RecoveryRehearsal({
       recordRehearsalProductEvent({ name: "rehearsal_started", scenario: scenarioId });
       setStartError("");
     } catch (error) {
-      setStartError(error instanceof Error ? error.message : "The rehearsal could not start.");
+      setStartError(
+        locale === "en-CA" && error instanceof Error
+          ? error.message
+          : t("reportRound.rehearsal.startError"),
+      );
     }
   }
 
@@ -446,20 +583,14 @@ export function RecoveryRehearsal({
     <section className={styles.setup} data-testid="rehearsal-setup">
       <div className={styles.hero}>
         <div>
-          <p className={styles.eyebrow}>Recovery rehearsal · private beta</p>
-          <h1>Practise the moment after answers arrive.</h1>
-          <p className={styles.lede}>
-            Run a guided, deterministic recovery loop with ten synthetic learners. See the same
-            insight, intervention, and recheck states used in a live Round—without creating a
-            session or saving a response.
-          </p>
+          <p className={styles.eyebrow}>{t("reportRound.rehearsal.betaEyebrow")}</p>
+          <h1>{t("reportRound.rehearsal.heroTitle")}</h1>
+          <p className={styles.lede}>{t("reportRound.rehearsal.heroDescription")}</p>
         </div>
         <div className={styles.promiseCard}>
           <span aria-hidden="true">◎</span>
-          <strong>Safe by design</strong>
-          <p>
-            Read-only Round content. In-memory engine. No session, participant, or answer records.
-          </p>
+          <strong>{t("reportRound.rehearsal.safeTitle")}</strong>
+          <p>{t("reportRound.rehearsal.safeDescription")}</p>
         </div>
       </div>
 
@@ -474,16 +605,15 @@ export function RecoveryRehearsal({
           <div className={styles.sectionHeading}>
             <span>01</span>
             <div>
-              <h2>Choose the evidence source</h2>
-              <p>
-                Published Rounds default to their published version; drafts use the latest editor
-                content.
-              </p>
+              <h2>{t("reportRound.rehearsal.chooseSource")}</h2>
+              <p>{t("reportRound.rehearsal.chooseSourceDescription")}</p>
             </div>
           </div>
           {hasPublishedVersion ? (
             <fieldset className={styles.segmented}>
-              <legend className={styles.visuallyHidden}>Rehearsal version</legend>
+              <legend className={styles.visuallyHidden}>
+                {t("reportRound.rehearsal.version")}
+              </legend>
               <label data-selected={source === "published"}>
                 <input
                   checked={source === "published"}
@@ -494,7 +624,9 @@ export function RecoveryRehearsal({
                   }}
                   type="radio"
                 />
-                Published v{currentVersion?.version}
+                {t("reportRound.assign.publishedVersion", {
+                  version: currentVersion?.version ?? "",
+                })}
               </label>
               <label data-selected={source === "draft"}>
                 <input
@@ -506,54 +638,62 @@ export function RecoveryRehearsal({
                   }}
                   type="radio"
                 />
-                Current draft
+                {t("reportRound.rehearsal.currentDraft")}
               </label>
             </fieldset>
           ) : (
             <div className={styles.sourceSummary}>
-              <span>Current draft</span>
-              <small>{quiz.status === "draft" ? "Not published yet" : quiz.status}</small>
+              <span>{t("reportRound.rehearsal.currentDraft")}</span>
+              <small>
+                {quiz.status === "draft"
+                  ? t("reportRound.rehearsal.notPublished")
+                  : t(`reportRound.status.${quiz.status}`)}
+              </small>
             </div>
           )}
 
           {eligibility.eligible ? (
             <label className={styles.field}>
-              <span>Question</span>
+              <span>{t("reportRound.common.question")}</span>
               <select
                 data-testid="rehearsal-question"
                 value={questionId}
                 onChange={(event) => setQuestionId(event.target.value)}
               >
                 {eligibility.questions.map((option) => (
-                  <option key={option.questionId} value={option.questionId}>
+                  <option key={option.questionId} lang="" value={option.questionId}>
                     {option.questionIndex + 1}. {option.prompt}
                   </option>
                 ))}
               </select>
-              <small>
+              <small lang={selectedOption?.recheckPrompt ? "" : undefined}>
                 {selectedOption?.recheckMode === "linked"
-                  ? `Uses linked recheck: ${selectedOption.recheckPrompt}`
-                  : "No eligible linked recheck—practice will use a clearly labelled revote."}
+                  ? t("reportRound.rehearsal.usesLinkedRecheck", {
+                      prompt: selectedOption.recheckPrompt,
+                    })
+                  : t("reportRound.rehearsal.usesRevote")}
               </small>
             </label>
           ) : (
             <div className={styles.ineligible} role="status">
-              <strong>No eligible question yet</strong>
-              <p>{eligibility.reason}</p>
+              <strong>{t("reportRound.rehearsal.noEligibleQuestion")}</strong>
+              <p>{t(`reportRound.rehearsal.ineligible.${scenarioId}`)}</p>
               <ul>
-                {eligibility.requirements.map((requirement) => (
-                  <li key={requirement}>{requirement}</li>
-                ))}
+                <li>{t("reportRound.rehearsal.requirement.question")}</li>
+                <li>{t("reportRound.rehearsal.requirement.answers")}</li>
+                <li>{t(`reportRound.rehearsal.requirement.${scenarioId}`)}</li>
               </ul>
               {!anyScenarioEligible ? (
                 canEdit ? (
                   <Link href={`/quiz/${quiz.id}#question-diagnostic-details`}>
-                    Open the relevant question controls
+                    {t("reportRound.rehearsal.openControls")}
                   </Link>
                 ) : (
                   <>
-                    <p>Ask an owner or editor to add the required diagnostic details.</p>
-                    <Link href={`/quiz/${quiz.id}/preview`}>Return to read-only preview</Link>
+                    <p>{t("reportRound.rehearsal.askEditor")}</p>
+                    <Link href={`/quiz/${quiz.id}/preview`}>
+                      {t("reportRound.rehearsal.returnToPreview")}
+                    </Link>
                   </>
                 )
               ) : null}
@@ -563,12 +703,14 @@ export function RecoveryRehearsal({
           <div className={styles.sectionHeading}>
             <span>02</span>
             <div>
-              <h2>Pick a pressure-tested pattern</h2>
-              <p>Every run is exact and repeatable, so teams can compare facilitation choices.</p>
+              <h2>{t("reportRound.rehearsal.pickPattern")}</h2>
+              <p>{t("reportRound.rehearsal.pickPatternDescription")}</p>
             </div>
           </div>
           <fieldset className={styles.scenarioList}>
-            <legend className={styles.visuallyHidden}>Practice scenario</legend>
+            <legend className={styles.visuallyHidden}>
+              {t("reportRound.rehearsal.practiceScenario")}
+            </legend>
             {RECOVERY_REHEARSAL_SCENARIOS.map((scenario) => {
               const scenarioEligibility = eligibilityByScenario[scenario.id];
               return (
@@ -587,13 +729,15 @@ export function RecoveryRehearsal({
                   />
                   <span className={styles.scenarioCheck} aria-hidden="true" />
                   <span>
-                    <strong>{scenario.title}</strong>
-                    <small>{scenario.shortLabel}</small>
-                    <em>{scenario.description}</em>
+                    <strong>{t(`reportRound.rehearsal.scenario.${scenario.id}.title`)}</strong>
+                    <small>{t(`reportRound.rehearsal.scenario.${scenario.id}.short`)}</small>
+                    <em>{t(`reportRound.rehearsal.scenario.${scenario.id}.description`)}</em>
                     <small className={styles.scenarioEligibility}>
                       {scenarioEligibility.eligible
-                        ? `${scenarioEligibility.questions.length} eligible question${scenarioEligibility.questions.length === 1 ? "" : "s"}`
-                        : scenarioEligibility.reason}
+                        ? t("reportRound.rehearsal.eligibleQuestions", {
+                            count: formatNumber(locale, scenarioEligibility.questions.length),
+                          })
+                        : t(`reportRound.rehearsal.ineligible.${scenario.id}`)}
                     </small>
                   </span>
                 </label>
@@ -612,52 +756,46 @@ export function RecoveryRehearsal({
             disabled={!eligibility.eligible || !questionId || !anyScenarioEligible}
             type="submit"
           >
-            Start private rehearsal <span aria-hidden="true">→</span>
+            {t("reportRound.rehearsal.start")} <span aria-hidden="true">→</span>
           </button>
         </form>
 
         <aside className={styles.explainer}>
-          <p className={styles.eyebrow}>The recovery loop</p>
+          <p className={styles.eyebrow}>{t("reportRound.rehearsal.loopTitle")}</p>
           <ol>
             <li>
               <span>1</span>
               <div>
-                <strong>Notice</strong>
-                <p>Read participation, correctness, and confidence together.</p>
+                <strong>{t("reportRound.rehearsal.loop.notice")}</strong>
+                <p>{t("reportRound.rehearsal.loop.noticeDescription")}</p>
               </div>
             </li>
             <li>
               <span>2</span>
               <div>
-                <strong>Intervene</strong>
-                <p>Respond to the reasoning pattern without singling anyone out.</p>
+                <strong>{t("reportRound.rehearsal.loop.intervene")}</strong>
+                <p>{t("reportRound.rehearsal.loop.interveneDescription")}</p>
               </div>
             </li>
             <li>
               <span>3</span>
               <div>
-                <strong>Recheck</strong>
-                <p>Prefer a linked question; use a revote when none is available.</p>
+                <strong>{t("reportRound.rehearsal.loop.recheck")}</strong>
+                <p>{t("reportRound.rehearsal.loop.recheckDescription")}</p>
               </div>
             </li>
             <li>
               <span>4</span>
               <div>
-                <strong>Debrief</strong>
-                <p>Separate stronger transfer evidence from same-prompt improvement.</p>
+                <strong>{t("reportRound.rehearsal.loop.debrief")}</strong>
+                <p>{t("reportRound.rehearsal.loop.debriefDescription")}</p>
               </div>
             </li>
           </ol>
           <div className={styles.callout}>
-            <strong>Designed for every workspace role</strong>
-            <p>
-              Owners, editors, and viewers can rehearse because this flow cannot publish, host,
-              edit, or create learner records.
-            </p>
-            <p className={styles.telemetryNote}>
-              OpenRound records only the selected scenario, start/completion, and a coarse duration
-              bucket for product learning—never Round text, responses, or learner identifiers.
-            </p>
+            <strong>{t("reportRound.rehearsal.everyRole")}</strong>
+            <p>{t("reportRound.rehearsal.everyRoleDescription")}</p>
+            <p className={styles.telemetryNote}>{t("reportRound.rehearsal.telemetry")}</p>
           </div>
         </aside>
       </div>

@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { connection } from "next/server";
 import type { ReactNode } from "react";
 import { ColorModeSync } from "../components/color-mode-sync";
+import { LocaleProvider } from "../components/locale-provider";
 import { COLOR_MODE_BOOTSTRAP_SCRIPT } from "../lib/color-mode";
+import { loadMessagesWithFallback, localeDomainsForPath } from "../lib/i18n/catalog";
+import { LOCALE_COOKIE_NAME, localeDirection, resolveLocale } from "../lib/i18n/config";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -14,21 +17,39 @@ export const metadata: Metadata = {
 
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   await connection();
-  const nonce = (await headers()).get("x-nonce") ?? undefined;
+  const [requestHeaders, cookieStore] = await Promise.all([headers(), cookies()]);
+  const nonce = requestHeaders.get("x-nonce") ?? undefined;
+  const requestedLocale = resolveLocale({
+    cookieLocale: cookieStore.get(LOCALE_COOKIE_NAME)?.value,
+    acceptLanguage: requestHeaders.get("accept-language"),
+  });
+  const initialDomains = localeDomainsForPath(requestHeaders.get("x-openround-pathname") ?? "/");
+  const { locale, messages, fellBack } = await loadMessagesWithFallback(
+    requestedLocale,
+    initialDomains,
+  );
   return (
     <html
       data-color-mode="light"
       data-color-mode-preference="system"
       data-scroll-behavior="smooth"
-      lang="en-CA"
+      dir={localeDirection(locale)}
+      lang={locale}
       suppressHydrationWarning
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: COLOR_MODE_BOOTSTRAP_SCRIPT }} nonce={nonce} />
       </head>
       <body>
-        <ColorModeSync />
-        {children}
+        <LocaleProvider
+          initialDomains={initialDomains}
+          initialLoadError={fellBack}
+          initialLocale={locale}
+          initialMessages={messages}
+        >
+          <ColorModeSync />
+          {children}
+        </LocaleProvider>
       </body>
     </html>
   );

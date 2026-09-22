@@ -1,11 +1,16 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { withEnglishLocale } from "../../test-utils/english-locale";
 import { RoundLibraryViewToggle } from "./round-library-view-toggle";
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/library",
+}));
 
 describe("RoundLibraryViewToggle", () => {
   it("exposes a labelled, pressed-state view choice", () => {
     const markup = renderToStaticMarkup(
-      <RoundLibraryViewToggle onChange={() => undefined} value="list" />,
+      withEnglishLocale(<RoundLibraryViewToggle onChange={() => undefined} value="list" />),
     );
 
     expect(markup).toContain('role="group"');

@@ -18,9 +18,11 @@ import {
 } from "../../../components/audience-panel";
 import { ExperiencePreferences } from "../../../components/experience-preferences";
 import { Countdown } from "../../../components/countdown";
+import { useLocale } from "../../../components/locale-provider";
 import { ParticipantAvatar, ParticipantIdentity } from "../../../components/participant-avatar";
 import { QuestionMedia } from "../../../components/question-media";
 import { QnaPanel } from "../../../components/qna-panel";
+import { formatNumber } from "../../../lib/i18n/format";
 import {
   audienceContextKey,
   createAudienceRealtimeReceipt,
@@ -54,14 +56,19 @@ type ParticipantSubmission = {
 
 const ACK_TIMEOUT_MS = 10_000;
 const SYNC_GRACE_MS = 5_000;
+const LOCALIZED_VALUE_MARKER = "\uFFFC";
 
 export default function PlayerPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const { locale, t } = useLocale();
+  const tRef = useRef(t);
+  tRef.current = t;
   const socket = useMemo(createRealtimeClient, []);
   const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
   const snapshotRef = useRef<SessionSnapshot | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState("");
+  const [errorIsEnglish, setErrorIsEnglish] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [acknowledged, setAcknowledged] = useState<AnswerAck | null>(null);
   const [localReceipt, setLocalReceipt] = useState<LocalResponseReceipt | null>(null);
@@ -94,6 +101,7 @@ export default function PlayerPage() {
       onPendingChange: setSubmitting,
       onReconciliationRequested: () => {
         setError(PARTICIPANT_ACK_CHECKING_MESSAGE);
+        setErrorIsEnglish(true);
         syncParticipantRef.current();
       },
       onExpired: ({ context }) => {
@@ -101,10 +109,12 @@ export default function PlayerPage() {
         if (current?.roundId === context.roundId && current.phase === "question_open") {
           setRetryableSubmission(context);
           setError(PARTICIPANT_ACK_TIMEOUT_MESSAGE);
+          setErrorIsEnglish(true);
         } else {
           setRetryableSubmission(null);
           setLocalReceipt(null);
-          setError("OpenRound could not confirm that response before the question closed.");
+          setError(tRef.current("live.roundPlay.responseUnconfirmed"));
+          setErrorIsEnglish(false);
         }
       },
     });
@@ -124,6 +134,7 @@ export default function PlayerPage() {
     setRatingValue(null);
     setConfidence(null);
     setError("");
+    setErrorIsEnglish(false);
   }
 
   function reconcilePendingSubmission(nextSnapshot: SessionSnapshot) {
@@ -145,6 +156,7 @@ export default function PlayerPage() {
     if (!clearPendingSubmission(pending.id)) return;
     setRetryableSubmission(null);
     setError("");
+    setErrorIsEnglish(false);
   }
 
   useEffect(() => {
@@ -154,7 +166,8 @@ export default function PlayerPage() {
   useEffect(() => {
     const token = sessionStorage.getItem(`openround:participant:${sessionId}`);
     if (!token) {
-      setError("This device does not have a resume credential. Join the round again.");
+      setError(tRef.current("live.roundPlay.joinAgain"));
+      setErrorIsEnglish(false);
       return;
     }
     setMediaCredential(token);
@@ -168,7 +181,10 @@ export default function PlayerPage() {
           lastSeq: snapshotRef.current?.seq ?? 0,
         },
         (response: Ack<{ snapshot: SessionSnapshot }>) => {
-          if (response.error) setError(response.error.message);
+          if (response.error) {
+            setError(response.error.message);
+            setErrorIsEnglish(true);
+          }
           if (response.data) {
             const nextSnapshot = response.data.snapshot;
             if (nextSnapshot.roundId !== snapshotRef.current?.roundId) resetResponse();
@@ -252,7 +268,8 @@ export default function PlayerPage() {
 
   function sendSubmission(submission: ParticipantSubmission) {
     if (!connected) {
-      setError("Wait for the connection to recover before submitting your response.");
+      setError(t("live.roundPlay.waitConnection"));
+      setErrorIsEnglish(false);
       return;
     }
     const participantToken = sessionStorage.getItem(`openround:participant:${sessionId}`);
@@ -260,6 +277,7 @@ export default function PlayerPage() {
     const attemptId = clientUuid();
     if (!submissionRecoveryRef.current?.begin(attemptId, submission)) return;
     setError("");
+    setErrorIsEnglish(false);
     setAcknowledged(null);
     setRetryableSubmission(null);
     setLocalReceipt({ response: submission.response, confidence: submission.confidence });
@@ -279,23 +297,27 @@ export default function PlayerPage() {
           setRetryableSubmission(null);
           setLocalReceipt(null);
           setError(response.error.message);
+          setErrorIsEnglish(true);
         } else if (response.data) {
           setAcknowledged(response.data);
           if (response.data.accepted) {
             setRetryableSubmission(null);
             setError("");
+            setErrorIsEnglish(false);
           } else {
             setRetryableSubmission(null);
             setLocalReceipt(null);
             setError(
               response.data.code === "ANSWER_LATE"
-                ? "Time expired before the server received that answer."
-                : "That answer was not accepted.",
+                ? t("live.roundPlay.late")
+                : t("live.roundPlay.responseRejected"),
             );
+            setErrorIsEnglish(false);
           }
         } else {
           setRetryableSubmission(submission);
           setError(PARTICIPANT_ACK_TIMEOUT_MESSAGE);
+          setErrorIsEnglish(true);
         }
       },
     );
@@ -311,7 +333,8 @@ export default function PlayerPage() {
     )
       return;
     if (snapshot.question?.confidence === "required" && selectedConfidence === null) {
-      setError("Choose how sure you are before submitting your response.");
+      setError(t("live.roundPlay.chooseConfidence"));
+      setErrorIsEnglish(false);
       confidenceRef.current?.focus();
       return;
     }
@@ -327,7 +350,8 @@ export default function PlayerPage() {
     if (!retryableSubmission || submitting || snapshot?.myResponse) return;
     if (snapshot?.roundId !== retryableSubmission.roundId || snapshot.phase !== "question_open") {
       resetResponse();
-      setError("That question is no longer accepting responses.");
+      setError(t("live.roundPlay.closed"));
+      setErrorIsEnglish(false);
       return;
     }
     sendSubmission(retryableSubmission);
@@ -351,10 +375,12 @@ export default function PlayerPage() {
           : [...current, choiceId],
       );
       setError("");
+      setErrorIsEnglish(false);
       return;
     }
     setSelectedChoiceIds([choiceId]);
     setError("");
+    setErrorIsEnglish(false);
     if (snapshot.uxBeta !== true && question.confidence === "off") {
       submitResponse(
         question.type === "poll"
@@ -369,19 +395,22 @@ export default function PlayerPage() {
     if (!question) return;
     if (["single_select", "true_false", "multi_select"].includes(question.type)) {
       if (selectedChoiceIds.length === 0) {
-        setError("Choose an answer before submitting.");
+        setError(t("live.roundPlay.chooseAnswer"));
+        setErrorIsEnglish(false);
         return;
       }
       submitResponse({ kind: "choice", choiceIds: selectedChoiceIds });
     } else if (question.type === "poll") {
       if (selectedChoiceIds.length !== 1) {
-        setError("Choose a poll response before submitting.");
+        setError(t("live.roundPlay.choosePoll"));
+        setErrorIsEnglish(false);
         return;
       }
       submitResponse({ kind: "poll", choiceIds: selectedChoiceIds });
     } else if (question.type === "numeric") {
       if (!numericValue.trim()) {
-        setError("Enter a numeric response before submitting.");
+        setError(t("live.roundPlay.enterNumeric"));
+        setErrorIsEnglish(false);
         return;
       }
       submitResponse({
@@ -392,7 +421,8 @@ export default function PlayerPage() {
     } else if (ratingValue !== null) {
       submitResponse({ kind: "rating", value: ratingValue });
     } else {
-      setError("Choose a rating before submitting.");
+      setError(t("live.roundPlay.chooseRatingError"));
+      setErrorIsEnglish(false);
     }
   }
 
@@ -443,13 +473,13 @@ export default function PlayerPage() {
   const progressStage =
     snapshot && uxBeta ? participantProgressStage(snapshot, responseSaved) : null;
   const progressSteps = [
-    ["waiting", "Waiting"],
-    ["answering", "Answering"],
-    ["saved", "Saved"],
-    ["discussing", "Discussing"],
-    ["reviewing", "Reviewing"],
-    ["rechecking", "Rechecking"],
-    ["complete", "Complete"],
+    ["waiting", "Waiting", "en-CA"],
+    ["answering", "Answering", "en-CA"],
+    ["saved", "Saved", "en-CA"],
+    ["discussing", "Discussing", "en-CA"],
+    ["reviewing", "Reviewing", "en-CA"],
+    ["rechecking", "Rechecking", "en-CA"],
+    ["complete", t("live.common.complete"), undefined],
   ] as const;
   const legacyNeedsSubmit = Boolean(
     snapshot?.question &&
@@ -458,6 +488,15 @@ export default function PlayerPage() {
       snapshot.question.type === "rating" ||
       snapshot.question.confidence !== "off"),
   );
+  const [checkpointOpenBefore, checkpointOpenAfter = ""] = t("live.presenter.checkpointOpen", {
+    prompt: LOCALIZED_VALUE_MARKER,
+  }).split(LOCALIZED_VALUE_MARKER);
+  const [roundStatusBefore, roundStatusAfter = ""] = t("live.presenter.roundStatus", {
+    status: LOCALIZED_VALUE_MARKER,
+  }).split(LOCALIZED_VALUE_MARKER);
+  const [reviewItemBefore, reviewItemAfter = ""] = t("live.roundPlay.reviewItem", {
+    item: LOCALIZED_VALUE_MARKER,
+  }).split(LOCALIZED_VALUE_MARKER);
 
   return (
     <div
@@ -474,42 +513,71 @@ export default function PlayerPage() {
         <div className="button-row">
           <ExperiencePreferences />
           <span
-            aria-label="Connection status"
+            aria-label={t("live.roundPlay.connectionAria")}
             className="connection"
             data-connected={connected}
             role="status"
           >
             <span className="connection-dot" aria-hidden="true" />
-            {connected ? "Connected" : "Reconnecting…"}
+            {connected ? t("live.common.connected") : t("live.common.connecting")}
           </span>
         </div>
       </header>
       <main className="shell live-stage">
         {progressStage ? (
-          <ol aria-label="Round progress" className="participant-progress">
-            {progressSteps.map(([stage, label]) => (
-              <li aria-current={progressStage === stage ? "step" : undefined} key={stage}>
+          <ol aria-label={t("live.roundPlay.progressAria")} className="participant-progress">
+            {progressSteps.map(([stage, label, language]) => (
+              <li
+                aria-current={progressStage === stage ? "step" : undefined}
+                key={stage}
+                lang={language}
+              >
                 {label}
               </li>
             ))}
           </ol>
         ) : null}
         <p aria-atomic="true" aria-live="polite" className="sr-only">
-          {snapshot?.phase === "question_open"
-            ? `${uxBeta ? "Question" : "Checkpoint"} open: ${snapshot.question?.prompt ?? (uxBeta ? "new question" : "new checkpoint")}`
-            : snapshot?.phase === "finished"
-              ? "The live round is complete."
-              : snapshot
-                ? `Round status: ${snapshot.phase.replaceAll("_", " ")}`
-                : "Connecting to the live round."}
+          {snapshot?.phase === "question_open" ? (
+            uxBeta ? (
+              <span lang="en-CA">
+                Question open:{" "}
+                {snapshot.question?.prompt ? (
+                  <span lang="">{snapshot.question.prompt}</span>
+                ) : (
+                  "new question"
+                )}
+              </span>
+            ) : snapshot.question?.prompt ? (
+              <>
+                {checkpointOpenBefore}
+                <span lang="">{snapshot.question.prompt}</span>
+                {checkpointOpenAfter}
+              </>
+            ) : (
+              t("live.presenter.checkpointOpen", {
+                prompt: t("live.presenter.newCheckpoint"),
+              })
+            )
+          ) : snapshot?.phase === "finished" ? (
+            t("live.presenter.complete")
+          ) : snapshot ? (
+            <>
+              {roundStatusBefore}
+              <span lang="en-CA">{snapshot.phase.replaceAll("_", " ")}</span>
+              {roundStatusAfter}
+            </>
+          ) : (
+            <span lang="en-CA">Connecting to the live round.</span>
+          )}
         </p>
         {error ? (
           <section className="live-card">
-            <p className="error" role="alert">
+            <p className="error" lang={errorIsEnglish ? "en-CA" : undefined} role="alert">
               {error}
             </p>
             {!snapshot ? (
-              <Link className="button" href="/join">
+              <Link className="button" href="/join" lang="en-CA">
                 Join again
               </Link>
             ) : null}
@@ -517,51 +585,63 @@ export default function PlayerPage() {
         ) : null}
         {!snapshot && !error ? (
           <section className="live-card">
-            <p>Synchronizing with the round…</p>
+            <p>{t("live.roundPlay.syncing")}</p>
           </section>
         ) : null}
         {snapshot?.phase === "lobby" ? (
           <section className="live-card">
-            <p className="eyebrow">You are in</p>
+            <p className="eyebrow">{t("live.roundPlay.youAreIn")}</p>
             <div className="participant-hero-identity">
               <ParticipantAvatar avatarId={myRow?.avatarId} size="large" />
               <h1 style={{ fontSize: "clamp(2.6rem, 10vw, 5rem)" }}>
-                {myRow?.nickname ?? "Ready"}
+                {myRow?.nickname ? (
+                  <span lang="">{myRow.nickname}</span>
+                ) : (
+                  <span lang="en-CA">Ready</span>
+                )}
               </h1>
             </div>
-            <p className="lead">The facilitator will start when everyone is ready.</p>
+            <p className="lead">{t("live.roundPlay.facilitatorStarts")}</p>
             <p className="muted">
-              {snapshot.participants.length} participant
-              {snapshot.participants.length === 1 ? "" : "s"} joined
+              {t("live.common.joinedCount", {
+                count: formatNumber(locale, snapshot.participants.length),
+              })}
             </p>
           </section>
         ) : null}
         {snapshot?.question && snapshot.phase !== "finished" ? (
           <section className="live-card" data-testid="participant-task">
             <div className="page-heading" style={{ alignItems: "center", marginBottom: 20 }}>
-              <span className="status-pill">
+              <span className="status-pill" lang="en-CA">
                 {snapshot.roundKind === "main" ? (uxBeta ? "Question" : "Checkpoint") : "Recheck"}{" "}
-                {(snapshot.questionPosition ?? snapshot.questionIndex ?? 0) + 1} of{" "}
-                {snapshot.questionCount}
+                {formatNumber(
+                  locale,
+                  (snapshot.questionPosition ?? snapshot.questionIndex ?? 0) + 1,
+                )}{" "}
+                of {formatNumber(locale, snapshot.questionCount)}
               </span>
               {snapshot.phase === "question_open" ? (
                 <Countdown deadline={snapshot.deadline} />
               ) : null}
             </div>
-            <h1 style={{ fontSize: "clamp(2rem, 7vw, 4rem)" }}>{snapshot.question.prompt}</h1>
-            <QuestionMedia
-              altText={snapshot.question.mediaAlt}
-              credential={mediaCredential}
-              mediaId={snapshot.question.mediaId}
-              sessionId={sessionId}
-            />
+            <h1 lang="" style={{ fontSize: "clamp(2rem, 7vw, 4rem)" }}>
+              {snapshot.question.prompt}
+            </h1>
+            <span lang="">
+              <QuestionMedia
+                altText={snapshot.question.mediaAlt}
+                credential={mediaCredential}
+                mediaId={snapshot.question.mediaId}
+                sessionId={sessionId}
+              />
+            </span>
             {snapshot.phase === "paused" ? (
-              <p className="notice">
+              <p className="notice" lang="en-CA">
                 The facilitator paused this {uxBeta ? "question" : "checkpoint"}.
               </p>
             ) : null}
             {snapshot.phase === "intervention" ? (
-              <p className="notice">
+              <p className="notice" lang="en-CA">
                 The facilitator started{" "}
                 {snapshot.intervention?.type.replaceAll("_", " ") ?? "an intervention"}.
               </p>
@@ -569,7 +649,7 @@ export default function PlayerPage() {
             {["single_select", "true_false", "multi_select", "poll"].includes(
               snapshot.question.type,
             ) ? (
-              <div className="answer-grid" aria-label="Answer choices">
+              <div className="answer-grid" aria-label={t("live.roundPlay.answerChoices")}>
                 {snapshot.question.choices.map((choice, index) => {
                   const selected = displayedChoiceIds.includes(choice.id);
                   const revealState = participantRevealState(snapshot, selected);
@@ -588,14 +668,22 @@ export default function PlayerPage() {
                       <span aria-hidden="true" style={{ marginRight: 10 }}>
                         {String.fromCharCode(65 + index)}.
                       </span>
-                      {choice.label}
+                      <span lang="">{choice.label}</span>
                     </button>
                   );
                 })}
               </div>
             ) : snapshot.question.type === "numeric" ? (
               <label className="field">
-                <span>Numeric response {snapshot.question.unit ?? ""}</span>
+                <span>
+                  {t("live.presentationPlay.numericResponse")}
+                  {snapshot.question.unit ? (
+                    <>
+                      {" "}
+                      <span lang="">{snapshot.question.unit}</span>
+                    </>
+                  ) : null}
+                </span>
                 <input
                   className="input"
                   disabled={responseControlsDisabled}
@@ -609,7 +697,7 @@ export default function PlayerPage() {
               </label>
             ) : snapshot.question.rating ? (
               <fieldset style={{ border: 0, margin: 0, padding: 0 }}>
-                <legend className="field-label">Choose a rating</legend>
+                <legend className="field-label">{t("live.roundPlay.chooseRating")}</legend>
                 <div className="answer-grid">
                   {Array.from(
                     {
@@ -629,12 +717,13 @@ export default function PlayerPage() {
                       }}
                       type="button"
                     >
-                      {value}
+                      {formatNumber(locale, value)}
                     </button>
                   ))}
                 </div>
                 <p className="muted">
-                  {snapshot.question.rating.minLabel} · {snapshot.question.rating.maxLabel}
+                  <span lang="">{snapshot.question.rating.minLabel}</span> ·{" "}
+                  <span lang="">{snapshot.question.rating.maxLabel}</span>
                 </p>
               </fieldset>
             ) : null}
@@ -646,14 +735,14 @@ export default function PlayerPage() {
                 style={{ border: 0, padding: 0 }}
                 tabIndex={-1}
               >
-                <legend className="field-label">
+                <legend className="field-label" lang="en-CA">
                   How sure are you?{snapshot.question.confidence === "required" ? " Required" : ""}
                 </legend>
                 <div className="button-row">
                   {[
-                    [1, "Not sure"],
-                    [2, "Somewhat sure"],
-                    [3, "Very sure"],
+                    [1, t("live.roundPlay.confidence.notSure")],
+                    [2, t("live.roundPlay.confidence.somewhat")],
+                    [3, t("live.roundPlay.confidence.very")],
                   ].map(([value, label]) => (
                     <button
                       aria-pressed={displayedConfidence === value}
@@ -677,7 +766,7 @@ export default function PlayerPage() {
             (uxBeta || legacyNeedsSubmit || retryableSubmission) ? (
               retryableSubmission ? (
                 <div className="participant-submit-bar" data-testid="response-status">
-                  <p className="muted">
+                  <p className="muted" lang="en-CA">
                     Your original response is unchanged. Retry uses the same save request so it
                     cannot create a second answer.
                   </p>
@@ -687,12 +776,12 @@ export default function PlayerPage() {
                     onClick={retrySubmission}
                     type="button"
                   >
-                    {submitting ? "Saving…" : "Retry saving response"}
+                    {submitting ? t("live.common.saving") : t("live.roundPlay.retry")}
                   </button>
                 </div>
               ) : uxBeta ? (
                 <div className="participant-submit-bar" data-testid="response-status">
-                  <p className="muted">
+                  <p className="muted" lang="en-CA">
                     Review your response before submitting. It cannot be changed.
                   </p>
                   <button
@@ -701,7 +790,7 @@ export default function PlayerPage() {
                     onClick={submitSelectedResponse}
                     type="button"
                   >
-                    {submitting ? "Saving…" : "Submit response"}
+                    {submitting ? t("live.common.saving") : t("live.roundPlay.submit")}
                   </button>
                 </div>
               ) : (
@@ -711,36 +800,47 @@ export default function PlayerPage() {
                   onClick={submitSelectedResponse}
                   type="button"
                 >
-                  {submitting ? "Saving…" : "Submit response"}
+                  {submitting ? t("live.common.saving") : t("live.roundPlay.submit")}
                 </button>
               )
             ) : null}
             {responseSaved && !revealed ? (
-              <p aria-label="Response save status" className="success" role="status">
+              <p
+                aria-label={t("live.roundPlay.saveStatusAria")}
+                className="success"
+                lang="en-CA"
+                role="status"
+              >
                 Answer received and saved.
               </p>
             ) : null}
             {revealed ? (
               <div className={snapshot.myCorrect ? "success" : "notice"}>
                 <strong>
-                  {snapshot.question.purpose === "opinion"
-                    ? "Response recorded"
-                    : snapshot.myCorrect === true
-                      ? "Correct"
-                      : snapshot.myCorrect === false
-                        ? `Review this ${uxBeta ? "question" : "checkpoint"}`
-                        : "Answer revealed"}
+                  {snapshot.question.purpose === "opinion" ? (
+                    t("live.presentationPlay.responseRecorded")
+                  ) : snapshot.myCorrect === true ? (
+                    <span lang="en-CA">Correct</span>
+                  ) : snapshot.myCorrect === false ? (
+                    <>
+                      {reviewItemBefore}
+                      <span lang="en-CA">{uxBeta ? "question" : "checkpoint"}</span>
+                      {reviewItemAfter}
+                    </>
+                  ) : (
+                    t("live.roundPlay.answerRevealed")
+                  )}
                 </strong>
-                {snapshot.explanation ? <div>{snapshot.explanation}</div> : null}
-                {snapshot.feedback ? <div>{snapshot.feedback}</div> : null}
+                {snapshot.explanation ? <div lang="">{snapshot.explanation}</div> : null}
+                {snapshot.feedback ? <div lang="">{snapshot.feedback}</div> : null}
               </div>
             ) : null}
           </section>
         ) : null}
         {snapshot?.phase === "finished" ? (
           <section className="live-card">
-            <p className="eyebrow">Round complete</p>
-            <h1>Thanks for taking part.</h1>
+            <p className="eyebrow">{t("live.presenter.roundComplete")}</p>
+            <h1>{t("live.roundPlay.complete")}</h1>
             {myRow ? (
               <p>
                 <ParticipantIdentity
@@ -750,7 +850,9 @@ export default function PlayerPage() {
                 />
               </p>
             ) : null}
-            <p className="lead">Your final score is {myRow?.score ?? 0}.</p>
+            <p className="lead" lang="en-CA">
+              Your final score is {formatNumber(locale, myRow?.score ?? 0)}.
+            </p>
           </section>
         ) : null}
         {snapshot && mediaCredential && uxBeta ? (
@@ -759,8 +861,8 @@ export default function PlayerPage() {
             data-testid="audience-tray"
             key={snapshot.roundId ?? snapshot.phase}
           >
-            <summary>Open Pulse, Q&amp;A, and chat</summary>
-            <p className="muted">
+            <summary>{t("live.roundPlay.openTools")}</summary>
+            <p className="muted" lang="en-CA">
               These optional tools never affect whether your response is saved.
             </p>
             {snapshot.phase !== "finished" ? (

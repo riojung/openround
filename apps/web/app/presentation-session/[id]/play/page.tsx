@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Brand } from "../../../../components/brand";
+import { useLocale } from "../../../../components/locale-provider";
 import { PresentationMedia } from "../../../../components/presentation-live/presentation-media";
 import styles from "../../../../components/presentation-live/presentation-live.module.css";
 import { apiFetch, humanError } from "../../../../lib/api";
+import { formatNumber } from "../../../../lib/i18n/format";
 import {
   shouldApplyLiveSnapshot,
   type LiveSnapshotFence,
@@ -58,6 +60,7 @@ interface ParticipantSnapshot {
 }
 
 export default function PresentationParticipantPage() {
+  const { locale, t } = useLocale();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [snapshot, setSnapshot] = useState<ParticipantSnapshot | null>(null);
@@ -181,53 +184,63 @@ export default function PresentationParticipantPage() {
     <main className={styles.page}>
       <header className={styles.topbar}>
         <Brand />
-        <span>{snapshot ? `${snapshot.participantCount} joined` : "Connecting…"}</span>
+        <span>
+          {snapshot
+            ? t("live.common.joinedCount", {
+                count: formatNumber(locale, snapshot.participantCount),
+              })
+            : t("live.common.connecting")}
+        </span>
       </header>
       <div className={styles.stage}>
         {error ? (
-          <p className="error" role="alert">
+          <p className="error" lang="en-CA" role="alert">
             {error}
           </p>
         ) : null}
         <section className={styles.canvas} aria-live="polite">
           <div className={styles.canvasContent}>
-            {!snapshot ? <p>Restoring this Presentation…</p> : null}
+            {!snapshot ? <p>{t("live.presentationPlay.restoring")}</p> : null}
             {snapshot?.phase === "lobby" ? (
               <>
-                <span className={styles.statusPill}>You’re in</span>
-                <h1>{snapshot.title}</h1>
-                <p>The facilitator will begin shortly.</p>
+                <span className={styles.statusPill}>{t("live.presentationPlay.youreIn")}</span>
+                <h1 lang="">{snapshot.title}</h1>
+                <p>{t("live.presentationPlay.facilitatorStarts")}</p>
               </>
             ) : null}
             {block?.kind === "content" ? (
               <>
-                <span className={styles.statusPill}>Content</span>
-                <h1>{block.title}</h1>
-                <p>{block.body}</p>
+                <span className={styles.statusPill}>{t("live.presentationPlay.content")}</span>
+                <h1 lang="">{block.title}</h1>
+                <p lang="">{block.body}</p>
                 <PresentationMedia
                   altText={block.mediaAlt}
                   mediaId={block.mediaId}
                   participant
                   sessionId={id}
                 />
-                <p className="muted">No response is collected on this slide.</p>
+                <p className="muted">{t("live.presentationPlay.noResponse")}</p>
               </>
             ) : null}
             {block?.kind === "question" ? (
               <>
                 <span className={styles.statusPill}>
                   {snapshot?.phase === "intervention"
-                    ? "Review and recover"
+                    ? t("live.presentationPlay.reviewRecover")
                     : snapshot?.acceptingResponses
-                      ? "Respond now"
-                      : "Response closed"}
+                      ? t("live.presentationPlay.respondNow")
+                      : t("live.presentationPlay.responseClosed")}
                 </span>
                 {remainingSeconds !== null ? (
                   <p className={styles.timer} aria-live="off">
-                    {remainingSeconds}s
+                    {formatNumber(locale, remainingSeconds, {
+                      style: "unit",
+                      unit: "second",
+                      unitDisplay: "narrow",
+                    })}
                   </p>
                 ) : null}
-                <h1>{block.question.prompt}</h1>
+                <h1 lang="">{block.question.prompt}</h1>
                 <PresentationMedia
                   altText={block.question.mediaAlt}
                   mediaId={block.question.mediaId}
@@ -242,6 +255,7 @@ export default function PresentationParticipantPage() {
                         className={styles.choiceButton}
                         disabled={!snapshot?.acceptingResponses || snapshot.responseSubmitted}
                         key={choice.id}
+                        lang=""
                         onClick={() => toggleChoice(block.question, choice.id)}
                         type="button"
                       >
@@ -251,7 +265,7 @@ export default function PresentationParticipantPage() {
                   </div>
                 ) : block.question.type === "numeric" ? (
                   <label className={styles.formStack}>
-                    Numeric response
+                    {t("live.presentationPlay.numericResponse")}
                     <input
                       disabled={!snapshot?.acceptingResponses || snapshot.responseSubmitted}
                       inputMode="decimal"
@@ -261,14 +275,14 @@ export default function PresentationParticipantPage() {
                   </label>
                 ) : (
                   <label className={styles.formStack}>
-                    Rating
+                    {t("live.presentationPlay.rating")}
                     <select
                       disabled={!snapshot?.acceptingResponses || snapshot.responseSubmitted}
                       onChange={(event) => setRatingValue(Number(event.target.value))}
                       value={ratingValue ?? ""}
                     >
                       <option disabled value="">
-                        Choose a rating
+                        {t("live.presentationPlay.chooseRating")}
                       </option>
                       {Array.from(
                         {
@@ -277,7 +291,7 @@ export default function PresentationParticipantPage() {
                         (_, index) => (block.question.min ?? 1) + index,
                       ).map((value) => (
                         <option key={value} value={value}>
-                          {value}
+                          {formatNumber(locale, value)}
                         </option>
                       ))}
                     </select>
@@ -285,17 +299,21 @@ export default function PresentationParticipantPage() {
                 )}
                 {block.question.confidence !== "off" && snapshot?.acceptingResponses ? (
                   <label className={styles.formStack}>
-                    Confidence{" "}
-                    {block.question.confidence === "required" ? "(required)" : "(optional)"}
+                    {t("live.presentationPlay.confidence", {
+                      requirement:
+                        block.question.confidence === "required"
+                          ? t("live.presentationPlay.required")
+                          : t("live.presentationPlay.optional"),
+                    })}
                     <select
                       disabled={snapshot.responseSubmitted}
                       onChange={(event) => setConfidence(Number(event.target.value))}
                       value={confidence ?? ""}
                     >
-                      <option value="">Choose confidence</option>
-                      <option value="1">Low</option>
-                      <option value="2">Medium</option>
-                      <option value="3">High</option>
+                      <option value="">{t("live.presentationPlay.chooseConfidence")}</option>
+                      <option value="1">{t("live.presentationPlay.low")}</option>
+                      <option value="2">{t("live.presentationPlay.medium")}</option>
+                      <option value="3">{t("live.presentationPlay.high")}</option>
                     </select>
                   </label>
                 ) : null}
@@ -303,17 +321,22 @@ export default function PresentationParticipantPage() {
                   {snapshot?.responseResult ? (
                     <p className="notice" role="status">
                       {snapshot.responseResult.correct === null
-                        ? "Response recorded"
+                        ? t("live.presentationPlay.responseRecorded")
                         : snapshot.responseResult.correct
-                          ? `Correct · +${snapshot.responseResult.score.toLocaleString()} points`
-                          : "Not quite · review the facilitator’s explanation"}
+                          ? t("live.presentationPlay.correctPoints", {
+                              score: formatNumber(locale, snapshot.responseResult.score),
+                            })
+                          : t("live.presentationPlay.notQuite")}
                       {snapshot.standing
-                        ? ` · Rank ${snapshot.standing.rank} with ${snapshot.standing.score.toLocaleString()} points`
+                        ? t("live.presentationPlay.rankPoints", {
+                            rank: formatNumber(locale, snapshot.standing.rank),
+                            score: formatNumber(locale, snapshot.standing.score),
+                          })
                         : ""}
                     </p>
                   ) : snapshot?.responseSubmitted ? (
                     <p className="notice" role="status">
-                      Response saved. You can stay here while the facilitator continues.
+                      {t("live.presentationPlay.responseSaved")}
                     </p>
                   ) : snapshot?.acceptingResponses ? (
                     <button
@@ -322,21 +345,21 @@ export default function PresentationParticipantPage() {
                       onClick={() => void submitResponse()}
                       type="button"
                     >
-                      {busy ? "Saving…" : "Submit response"}
+                      {busy ? t("live.common.saving") : t("live.presentationPlay.submit")}
                     </button>
                   ) : (
-                    <p className="muted">The facilitator has closed this question.</p>
+                    <p className="muted">{t("live.presentationPlay.closed")}</p>
                   )}
                 </div>
               </>
             ) : null}
             {snapshot?.phase === "finished" ? (
               <>
-                <span className={styles.statusPill}>Complete</span>
-                <h1>Thanks for participating</h1>
-                <p>Your responses have been saved for the facilitator’s session report.</p>
+                <span className={styles.statusPill}>{t("live.common.complete")}</span>
+                <h1>{t("live.presentationPlay.thanks")}</h1>
+                <p>{t("live.presentationPlay.savedForReport")}</p>
                 <Link className="button" href="/">
-                  Leave Presentation
+                  {t("live.presentationPlay.leave")}
                 </Link>
               </>
             ) : null}

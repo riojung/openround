@@ -12,6 +12,7 @@ import {
 import { resolveExperienceTheme } from "@openround/experience";
 import { Brand } from "../../../../components/brand";
 import { ExperiencePreferences } from "../../../../components/experience-preferences";
+import { useLocale } from "../../../../components/locale-provider";
 import { apiFetch, humanError } from "../../../../lib/api";
 import { experienceThemeStyle } from "../../../../lib/theme";
 
@@ -30,28 +31,35 @@ function isChoiceQuestion(
   return ["single_select", "true_false", "multi_select", "poll"].includes(question.type);
 }
 
-function previewValidationError(draft: QuizDraft) {
+function previewValidationError(draft: QuizDraft, t: ReturnType<typeof useLocale>["t"]) {
   const result = QuizContentSchema.safeParse(draft);
   if (result.success) return { content: result.data, message: null };
 
   const issue = result.error.issues[0];
   const [root, itemIndex, field, choiceIndex] = issue?.path ?? [];
-  let source = "Checkpoint set";
-  if (root === "title") source = "Checkpoint set title";
+  let source = t("reportRound.preview.checkpointSet");
+  if (root === "title") source = t("reportRound.preview.checkpointSetTitle");
   else if (root === "questions" && typeof itemIndex === "number") {
-    source = `Checkpoint ${itemIndex + 1}`;
+    source = t("reportRound.preview.checkpointNumber", { number: itemIndex + 1 });
     if (field === "choices" && typeof choiceIndex === "number") {
-      source += `, answer ${choiceIndex + 1}`;
+      source = t("reportRound.preview.checkpointAnswer", {
+        checkpoint: itemIndex + 1,
+        answer: choiceIndex + 1,
+      });
     }
-  } else if (root === "questions") source = "Checkpoints";
+  } else if (root === "questions") source = t("reportRound.preview.checkpoints");
 
   return {
     content: null,
-    message: `Preview unavailable. ${source}: ${issue?.message ?? "Complete the checkpoint set before previewing"}. Return to the editor and finish this draft.`,
+    message: t("reportRound.preview.validationError", {
+      source,
+      issue: issue?.message ?? t("reportRound.preview.completeSet"),
+    }),
   };
 }
 
 export default function QuizPreviewPage() {
+  const { locale, t } = useLocale();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [quiz, setQuiz] = useState<QuizRecord | null>(null);
@@ -60,6 +68,7 @@ export default function QuizPreviewPage() {
   const [revealed, setRevealed] = useState(false);
   const [mediaSource, setMediaSource] = useState("");
   const [error, setError] = useState("");
+  const [errorIsRaw, setErrorIsRaw] = useState(false);
   const question = quiz?.draft.questions[questionIndex];
   const experienceTheme = quiz
     ? resolveExperienceTheme({
@@ -76,18 +85,22 @@ export default function QuizPreviewPage() {
     ])
       .then(([{ quiz: loadedQuiz }, account]) => {
         setBrandTheme(account.brandTheme);
-        const validation = previewValidationError(loadedQuiz.draft);
+        const validation = previewValidationError(loadedQuiz.draft, t);
         if (!validation.content) {
           setError(validation.message);
+          setErrorIsRaw(false);
           return;
         }
         setQuiz({ ...loadedQuiz, draft: validation.content });
       })
       .catch((caught) => {
         if ((caught as { status?: number }).status === 401) router.replace("/signin");
-        else setError(humanError(caught));
+        else {
+          setError(humanError(caught));
+          setErrorIsRaw(true);
+        }
       });
-  }, [id, router]);
+  }, [id, router, t]);
 
   useEffect(() => {
     setRevealed(false);
@@ -129,35 +142,35 @@ export default function QuizPreviewPage() {
         <div className="button-row">
           <ExperiencePreferences />
           <Link className="button-quiet small-button" href={`/quiz/${id}`}>
-            Back to editor
+            {t("delivery.presentation.backToEditor")}
           </Link>
           <Link className="button-quiet small-button" href="/dashboard">
-            Dashboard
+            {t("delivery.builder.dashboard")}
           </Link>
         </div>
       </header>
       <main className="shell live-stage" id="main">
         {error ? (
           <section className="live-card">
-            <p className="error" role="alert">
+            <p className="error" lang={errorIsRaw ? "en-CA" : undefined} role="alert">
               {error}
             </p>
             <Link className="button" href={`/quiz/${id}`}>
-              Return to editor
+              {t("reportRound.preview.returnToEditor")}
             </Link>
           </section>
         ) : null}
         {!quiz && !error ? (
           <section className="live-card">
-            <p>Loading preview…</p>
+            <p>{t("reportRound.preview.loading")}</p>
           </section>
         ) : null}
         {quiz && !question ? (
           <section className="live-card">
-            <p className="eyebrow">Participant preview</p>
-            <h1>Add a checkpoint to preview this set.</h1>
+            <p className="eyebrow">{t("delivery.builder.previewParticipant")}</p>
+            <h1>{t("reportRound.preview.addCheckpoint")}</h1>
             <Link className="button" href={`/quiz/${id}`}>
-              Return to editor
+              {t("reportRound.preview.returnToEditor")}
             </Link>
           </section>
         ) : null}
@@ -165,13 +178,28 @@ export default function QuizPreviewPage() {
           <section className="live-card">
             <div className="page-heading" style={{ alignItems: "center", marginBottom: 20 }}>
               <div>
-                <p className="eyebrow">Participant preview · {quiz.status}</p>
+                <p className="eyebrow">
+                  {t("delivery.builder.previewParticipant")} ·{" "}
+                  {t(`reportRound.status.${quiz.status}`)}
+                </p>
                 <span className="status-pill">
-                  Checkpoint {questionIndex + 1} of {quiz.draft.questions.length}
+                  {t("reportRound.preview.progress", {
+                    current: questionIndex + 1,
+                    total: quiz.draft.questions.length,
+                  })}
                 </span>
               </div>
-              <span className="countdown" aria-label={`${question.timeLimitSeconds} second timer`}>
-                {question.timeLimitSeconds}s
+              <span
+                className="countdown"
+                aria-label={t("reportRound.preview.timerLabel", {
+                  seconds: question.timeLimitSeconds,
+                })}
+              >
+                {new Intl.NumberFormat(locale, {
+                  style: "unit",
+                  unit: "second",
+                  unitDisplay: "narrow",
+                }).format(question.timeLimitSeconds)}
               </span>
             </div>
             <h1 style={{ fontSize: "clamp(2rem, 7vw, 4rem)" }}>{question.prompt}</h1>
@@ -185,7 +213,7 @@ export default function QuizPreviewPage() {
               />
             ) : null}
             {isChoiceQuestion(question) ? (
-              <div className="answer-grid" aria-label="Answer choices">
+              <div className="answer-grid" aria-label={t("reportRound.preview.answerChoices")}>
                 {question.choices.map((choice, index) => (
                   <div
                     className="answer-button"
@@ -201,17 +229,23 @@ export default function QuizPreviewPage() {
               </div>
             ) : question.type === "numeric" ? (
               <div className="field">
-                <label htmlFor="preview-numeric">Numeric response {question.unit ?? ""}</label>
+                <label htmlFor="preview-numeric">
+                  {t("reportRound.preview.numericResponse", { unit: question.unit ?? "" })}
+                </label>
                 <input className="input" disabled id="preview-numeric" inputMode="decimal" />
                 {revealed ? (
                   <p className="success">
-                    Accepted value: {question.correctValue} ± {question.tolerance} {question.unit}
+                    {t("reportRound.preview.acceptedValue", {
+                      value: question.correctValue,
+                      tolerance: question.tolerance,
+                      unit: question.unit ?? "",
+                    })}
                   </p>
                 ) : null}
               </div>
             ) : (
               <fieldset style={{ border: 0, margin: 0, padding: 0 }}>
-                <legend className="field-label">Choose a rating</legend>
+                <legend className="field-label">{t("reportRound.preview.chooseRating")}</legend>
                 <div className="button-row">
                   {Array.from(
                     { length: question.max - question.min + 1 },
@@ -229,7 +263,7 @@ export default function QuizPreviewPage() {
             )}
             {revealed ? (
               <div className="success" role="status">
-                <strong>Correct answer revealed</strong>
+                <strong>{t("reportRound.preview.correctRevealed")}</strong>
                 {question.explanation ? <div>{question.explanation}</div> : null}
               </div>
             ) : null}
@@ -240,14 +274,14 @@ export default function QuizPreviewPage() {
                 onClick={() => move(-1)}
                 type="button"
               >
-                Previous checkpoint
+                {t("reportRound.preview.previous")}
               </button>
               <button
                 className="button-quiet"
                 onClick={() => setRevealed((current) => !current)}
                 type="button"
               >
-                {revealed ? "Hide answer" : "Reveal answer"}
+                {revealed ? t("reportRound.preview.hideAnswer") : t("delivery.live.reveal")}
               </button>
               <button
                 className="button"
@@ -255,7 +289,7 @@ export default function QuizPreviewPage() {
                 onClick={() => move(1)}
                 type="button"
               >
-                Next checkpoint
+                {t("reportRound.preview.next")}
               </button>
             </div>
           </section>

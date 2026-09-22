@@ -1,21 +1,37 @@
 import type { QuestionDraft } from "@openround/contracts";
 import { isChoiceQuestion } from "./types";
+import { useLocale } from "../locale-provider";
 
 export function ParticipantPreview({ question }: { question: QuestionDraft }) {
+  const { t } = useLocale();
   return (
-    <div className="participant-preview" aria-label="Participant preview">
-      <p className="eyebrow">Participant view</p>
-      <h3>{question.prompt || "Your question will appear here"}</h3>
+    <div className="participant-preview" aria-label={t("delivery.builder.previewParticipant")}>
+      <p className="eyebrow">{t("delivery.builder.participantView")}</p>
+      <h3>
+        {question.prompt ? (
+          <span lang="">{question.prompt}</span>
+        ) : (
+          t("delivery.builder.questionPrompt")
+        )}
+      </h3>
       {isChoiceQuestion(question) ? (
         <div className="preview-options">
           {question.choices.map((choice, index) => (
             <span className="preview-option" key={choice.id}>
-              {choice.label || `Choice ${index + 1}`}
+              {choice.label ? (
+                <span lang="">{choice.label}</span>
+              ) : (
+                t("delivery.builder.answer", { number: index + 1 })
+              )}
             </span>
           ))}
         </div>
       ) : question.type === "numeric" ? (
-        <input className="input" disabled placeholder="Enter a number" />
+        <input
+          className="input"
+          disabled
+          placeholder={t("delivery.builder.answer", { number: 1 })}
+        />
       ) : (
         <div className="preview-options">
           {Array.from({ length: question.max - question.min + 1 }, (_, index) => (
@@ -26,10 +42,12 @@ export function ParticipantPreview({ question }: { question: QuestionDraft }) {
         </div>
       )}
       {question.confidence !== "off" && question.type !== "poll" && question.type !== "rating" ? (
-        <p className="muted">Confidence will be requested before Submit.</p>
+        <p className="muted" lang="en-CA">
+          Confidence will be requested before Submit.
+        </p>
       ) : null}
       <button className="button" disabled type="button">
-        Submit answer
+        {t("delivery.builder.submitAnswer")}
       </button>
     </div>
   );

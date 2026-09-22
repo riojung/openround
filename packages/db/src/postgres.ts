@@ -6,10 +6,12 @@ import { upgradeGameState, type EngineAnswer, type GameState } from "@openround/
 import {
   ReportSchema,
   ResponsePayloadSchema,
+  SupportedLocaleSchema,
   questionDelivery,
   type BrandTheme,
   type QuizDraft,
   type Report,
+  type SupportedLocale,
 } from "@openround/contracts";
 import {
   AudienceStoreError,
@@ -97,6 +99,11 @@ import type {
 
 function date(value: unknown): Date {
   return value instanceof Date ? value : new Date(String(value));
+}
+
+function supportedLocale(value: unknown): SupportedLocale {
+  const parsed = SupportedLocaleSchema.safeParse(value);
+  return parsed.success ? parsed.data : "en-CA";
 }
 
 function mapQuiz(row: QueryResultRow): QuizRecord {
@@ -1099,7 +1106,8 @@ export class PostgresRepository implements Repository {
         }
 
         userResult = await client.query(
-          `SELECT u.id AS user_id, u.email, w.id AS workspace_id, w.segment, wm.role,
+          `SELECT u.id AS user_id, u.email, u.locale, u.locale_explicit,
+                  w.id AS workspace_id, w.segment, wm.role,
                 COALESCE(s.plan, 'free') AS plan
          FROM users u
          JOIN workspace_members wm ON wm.user_id = u.id
@@ -1133,6 +1141,8 @@ export class PostgresRepository implements Repository {
               userId: row.user_id,
               workspaceId: row.workspace_id,
               email: row.email,
+              locale: supportedLocale(row.locale),
+              localePreferenceSet: Boolean(row.locale_explicit),
               segment: row.segment,
               role: row.role,
               plan: row.plan,
@@ -1160,7 +1170,8 @@ export class PostgresRepository implements Repository {
 
   async getCreatorBySession(tokenHash: string, now: Date): Promise<CreatorContext | null> {
     const result = await this.systemQuery(
-      `SELECT u.id AS user_id, u.email, w.id AS workspace_id, w.segment, wm.role,
+      `SELECT u.id AS user_id, u.email, u.locale, u.locale_explicit,
+              w.id AS workspace_id, w.segment, wm.role,
               COALESCE(s.plan, 'free') AS plan
        FROM creator_sessions cs
        JOIN users u ON u.id = cs.user_id
@@ -1187,11 +1198,22 @@ export class PostgresRepository implements Repository {
           userId: row.user_id,
           workspaceId: row.workspace_id,
           email: row.email,
+          locale: supportedLocale(row.locale),
+          localePreferenceSet: Boolean(row.locale_explicit),
           segment: row.segment,
           role: row.role,
           plan: row.plan,
         }
       : null;
+  }
+
+  async updateUserLocale(userId: string, locale: SupportedLocale) {
+    const result = await this.systemQuery(
+      `UPDATE users SET locale = $2, locale_explicit = true
+       WHERE id = $1 AND deleted_at IS NULL RETURNING locale`,
+      [userId, locale],
+    );
+    return result.rows[0] ? supportedLocale(result.rows[0].locale) : null;
   }
 
   async listWorkspaces(userId: string): Promise<WorkspaceSummaryRecord[]> {
@@ -1382,7 +1404,8 @@ export class PostgresRepository implements Repository {
           );
         }
         userResult = await client.query(
-          `SELECT users.id AS user_id, users.email, workspace.id AS workspace_id,
+          `SELECT users.id AS user_id, users.email, users.locale, users.locale_explicit,
+                  workspace.id AS workspace_id,
                   workspace.segment, member.role, COALESCE(subscription.plan, 'free') AS plan
            FROM users
            JOIN workspace_members AS member ON member.user_id = users.id
@@ -1398,6 +1421,8 @@ export class PostgresRepository implements Repository {
               userId: row.user_id,
               workspaceId: row.workspace_id,
               email: row.email,
+              locale: supportedLocale(row.locale),
+              localePreferenceSet: Boolean(row.locale_explicit),
               segment: row.segment,
               role: row.role,
               plan: row.plan,
@@ -1416,7 +1441,8 @@ export class PostgresRepository implements Repository {
 
   async getCreatorByUserId(userId: string, workspaceId: string): Promise<CreatorContext | null> {
     const result = await this.systemQuery(
-      `SELECT users.id AS user_id, users.email, workspace.id AS workspace_id,
+      `SELECT users.id AS user_id, users.email, users.locale, users.locale_explicit,
+              workspace.id AS workspace_id,
               workspace.segment, member.role, COALESCE(subscription.plan, 'free') AS plan
        FROM users
        JOIN workspace_members AS member ON member.user_id = users.id
@@ -1432,6 +1458,8 @@ export class PostgresRepository implements Repository {
           userId: String(row.user_id),
           workspaceId: String(row.workspace_id),
           email: String(row.email),
+          locale: supportedLocale(row.locale),
+          localePreferenceSet: Boolean(row.locale_explicit),
           segment: row.segment,
           role: row.role,
           plan: row.plan,
@@ -5520,7 +5548,8 @@ export class PostgresRepository implements Repository {
     return this.transaction(
       async (client) => {
         const userResult = await client.query(
-          "SELECT id, email, locale, created_at FROM users WHERE id = $1 AND deleted_at IS NULL",
+          `SELECT id, email, locale, locale_explicit AS "localePreferenceSet", created_at
+           FROM users WHERE id = $1 AND deleted_at IS NULL`,
           [userId],
         );
         const membershipResult = await client.query(
@@ -5926,10 +5955,15 @@ export class PostgresRepository implements Repository {
         await client.query("DELETE FROM external_identities WHERE user_id = $1", [userId]);
         await client.query("DELETE FROM workspace_members WHERE user_id = $1", [userId]);
         await client.query("DELETE FROM consent_records WHERE user_id = $1", [userId]);
-        await client.query("UPDATE users SET email = $2, deleted_at = now() WHERE id = $1", [
-          userId,
-          `deleted-${createHash("sha256").update(userId).digest("hex").slice(0, 16)}@invalid.local`,
-        ]);
+        await client.query(
+          `UPDATE users
+           SET email = $2, locale = 'en-CA', locale_explicit = false, deleted_at = now()
+           WHERE id = $1`,
+          [
+            userId,
+            `deleted-${createHash("sha256").update(userId).digest("hex").slice(0, 16)}@invalid.local`,
+          ],
+        );
         await client.query("UPDATE creator_sessions SET revoked_at = now() WHERE user_id = $1", [
           userId,
         ]);

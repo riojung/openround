@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { withEnglishLocale } from "../../test-utils/english-locale";
 
 const fixtures = vi.hoisted(() => ({
   canEdit: true,
@@ -10,6 +11,7 @@ const fixtures = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/library",
   useRouter: () => ({ push: fixtures.push, replace: fixtures.replace }),
   useSearchParams: () => new URLSearchParams(fixtures.query),
 }));
@@ -57,7 +59,7 @@ describe("Library workspace", () => {
   });
 
   it("defaults to the Round library with search, management, and creation actions", () => {
-    const markup = renderToStaticMarkup(<LibraryPage />);
+    const markup = renderToStaticMarkup(withEnglishLocale(<LibraryPage />));
 
     expect(markup).toContain("Library");
     expect(markup).toContain('role="tablist"');
@@ -80,7 +82,7 @@ describe("Library workspace", () => {
 
   it("deep-links to Presentations with shared folder and favorite controls", () => {
     fixtures.query = "type=presentations&q=recovery";
-    const markup = renderToStaticMarkup(<LibraryPage />);
+    const markup = renderToStaticMarkup(withEnglishLocale(<LibraryPage />));
 
     expect(markup).toMatch(/aria-selected="true"[^>]*role="tab"[^>]*>Presentations/);
     expect(markup).toContain('placeholder="Search presentations"');
@@ -93,7 +95,7 @@ describe("Library workspace", () => {
 
   it("hydrates deep-linked status and ownership filters", () => {
     fixtures.query = "status=archived&owner=workspace&folder=unfiled&favorites=true";
-    const markup = renderToStaticMarkup(<LibraryPage />);
+    const markup = renderToStaticMarkup(withEnglishLocale(<LibraryPage />));
 
     expect(markup).toMatch(/<option value="archived" selected="">Archived<\/option>/);
     expect(markup).toMatch(/<option value="workspace" selected="">Workspace-owned<\/option>/);
@@ -103,7 +105,7 @@ describe("Library workspace", () => {
 
   it("keeps a read-only Library discoverable without offering creation", () => {
     fixtures.canEdit = false;
-    const markup = renderToStaticMarkup(<LibraryPage />);
+    const markup = renderToStaticMarkup(withEnglishLocale(<LibraryPage />));
 
     expect(markup).toContain("Rounds");
     expect(markup).toContain('placeholder="Search rounds"');

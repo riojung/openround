@@ -1,8 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { QuestionDraft } from "@openround/contracts";
 import type { QuestionReuseSource } from "../../lib/question-reuse";
+import { withEnglishLocale } from "../../test-utils/english-locale";
 import { QuestionReusePicker } from "./question-reuse-picker";
+
+vi.mock("next/navigation", () => ({ usePathname: () => "/quiz/example" }));
 
 const sourceId = "00000000-0000-4000-8000-000000000001";
 const mainId = "10000000-0000-4000-8000-000000000001";
@@ -61,12 +64,14 @@ function sources(): QuestionReuseSource[] {
 describe("QuestionReusePicker", () => {
   it("renders a private, searchable main-question picker without exposing raw IDs", () => {
     const markup = renderToStaticMarkup(
-      <QuestionReusePicker
-        currentQuestionCount={4}
-        onCancel={() => undefined}
-        onReuse={() => undefined}
-        sources={sources()}
-      />,
+      withEnglishLocale(
+        <QuestionReusePicker
+          currentQuestionCount={4}
+          onCancel={() => undefined}
+          onReuse={() => undefined}
+          sources={sources()}
+        />,
+      ),
     );
 
     expect(markup).toContain('data-testid="question-reuse-picker"');
@@ -74,9 +79,10 @@ describe("QuestionReusePicker", () => {
     expect(markup).toContain('id="question-reuse-heading"');
     expect(markup).toContain("Private question bank");
     expect(markup).toContain("Search workspace questions");
-    expect(markup).toContain("Fraction foundations · 1 question");
-    expect(markup).toContain("Which fraction is shaded?");
-    expect(markup).toContain("Single select · fractions.core");
+    expect(markup).toContain('<span lang="">Fraction foundations</span>');
+    expect(markup).toContain("· 1 question");
+    expect(markup).toContain('<span lang="">Which fraction is shaded?</span>');
+    expect(markup).toContain('<span lang=""> · fractions.core</span>');
     expect(markup).toContain("Includes paired recheck: Apply the model to a new diagram.");
     expect(markup).toContain("2 questions total");
     expect(markup).not.toContain("Hidden orphan recheck");
@@ -91,12 +97,14 @@ describe("QuestionReusePicker", () => {
 
   it("exposes empty and capacity-full states without making selection actionable", () => {
     const empty = renderToStaticMarkup(
-      <QuestionReusePicker
-        currentQuestionCount={200}
-        onCancel={() => undefined}
-        onReuse={() => undefined}
-        sources={[]}
-      />,
+      withEnglishLocale(
+        <QuestionReusePicker
+          currentQuestionCount={200}
+          onCancel={() => undefined}
+          onReuse={() => undefined}
+          sources={[]}
+        />,
+      ),
     );
 
     expect(empty).toContain("No reusable main questions match your search.");

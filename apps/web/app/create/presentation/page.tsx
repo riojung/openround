@@ -5,7 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import type { PresentationDraft } from "@openround/contracts";
 import { AuthoringAssistant } from "../../../components/authoring-assistant";
+import { useLocale } from "../../../components/locale-provider";
 import { apiFetch, humanError } from "../../../lib/api";
+import type { MessageKey } from "../../../lib/i18n/catalog";
 import { clientUuid } from "../../../lib/uuid";
 import { WorkspaceProvider, useWorkspace } from "../../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../../components/workspace/workspace-shell";
@@ -15,9 +17,34 @@ import {
 } from "../../../components/workspace/product-events";
 import styles from "../../../components/workspace/workspace-hub.module.css";
 
+type PresentationTemplateKind = "review" | "training" | "meeting";
+
+const presentationTemplates: Array<{
+  kind: PresentationTemplateKind;
+  titleKey: MessageKey;
+  descriptionKey: MessageKey;
+}> = [
+  {
+    kind: "review",
+    titleKey: "create.presentation.template.review.title",
+    descriptionKey: "create.presentation.template.review.description",
+  },
+  {
+    kind: "training",
+    titleKey: "create.presentation.template.training.title",
+    descriptionKey: "create.presentation.template.training.description",
+  },
+  {
+    kind: "meeting",
+    titleKey: "create.presentation.template.meeting.title",
+    descriptionKey: "create.presentation.template.meeting.description",
+  },
+];
+
 function PresentationLauncher() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { t } = useLocale();
   const { canEdit } = useWorkspace();
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
@@ -29,7 +56,10 @@ function PresentationLauncher() {
     try {
       const response = await apiFetch<{ presentation: { id: string } }>("/v1/presentations", {
         method: "POST",
-        body: JSON.stringify({ title: "Untitled presentation", description: "" }),
+        body: JSON.stringify({
+          title: "Untitled presentation",
+          description: "",
+        }),
       });
       recordCreationEvent("creation_completed", "blank", "presentation");
       router.push(`/presentation/${response.presentation.id}`);
@@ -39,7 +69,7 @@ function PresentationLauncher() {
     }
   }
 
-  async function createTemplate(kind: "review" | "training" | "meeting") {
+  async function createTemplate(kind: PresentationTemplateKind) {
     setCreating(true);
     setError("");
     recordCreationEvent("creation_started", "starter", "presentation");
@@ -151,13 +181,14 @@ function PresentationLauncher() {
     <WorkspaceShell
       actions={
         <Link className="button-quiet" href="/create">
-          Create a Round instead
+          {t("create.presentation.switchToRound")}
         </Link>
       }
-      description="Choose the shortest path from existing material to an interactive, Recovery-ready session."
-      eyebrow="Create presentation"
+      description={t("create.presentation.description")}
+      eyebrow={t("create.presentation.eyebrow")}
       requiredFeature="presentations"
-      title="How do you want to start?"
+      title={t("create.presentation.title")}
+      translationLevel="full"
     >
       {!canEdit ? (
         <div className={styles.emptyCanvas}>
@@ -165,10 +196,10 @@ function PresentationLauncher() {
             <span className={styles.emptyMark} aria-hidden="true">
               P
             </span>
-            <h2>This workspace role is read-only</h2>
-            <p>Viewers can browse presentation starters but cannot create a new draft.</p>
+            <h2>{t("create.common.readOnlyTitle")}</h2>
+            <p>{t("create.presentation.readOnlyDescription")}</p>
             <Link className="button-quiet" href="/discover">
-              Browse Discover
+              {t("create.presentation.browseDiscover")}
             </Link>
           </div>
         </div>
@@ -177,10 +208,12 @@ function PresentationLauncher() {
           {selectedStart ? (
             <div className={styles.methodToolbar}>
               <Link className="button-quiet small-button" href="/create/presentation">
-                ← All starting points
+                {t("create.common.allStartingPoints")}
               </Link>
               <span>
-                {selectedStart === "source" ? "Source-grounded" : "Presentation template"}
+                {selectedStart === "source"
+                  ? t("create.common.sourceGrounded")
+                  : t("create.common.presentationTemplate")}
               </span>
             </div>
           ) : null}
@@ -190,20 +223,21 @@ function PresentationLauncher() {
                 <span className={styles.cardIcon} data-tone="violet">
                   S
                 </span>
-                <small>Slides or source</small>
-                <h2>Bring your material</h2>
-                <p>
-                  Upload PowerPoint, PDF, Word, or trusted text and review source-grounded
-                  proposals.
-                </p>
-                <span className={styles.cardLink}>Add material →</span>
+                <small>{t("create.presentation.method.source.kicker")}</small>
+                <h2>{t("create.presentation.method.source.title")}</h2>
+                <p>{t("create.presentation.method.source.description")}</p>
+                <span className={styles.cardLink}>
+                  {t("create.presentation.method.source.action")}
+                </span>
               </Link>
               <Link className={styles.methodCard} href="/create/presentation?start=template">
                 <span className={styles.cardIcon}>T</span>
-                <small>Fastest start</small>
-                <h2>Use a starter</h2>
-                <p>Begin with a facilitated pattern and adapt the prompts, checks, and rechecks.</p>
-                <span className={styles.cardLink}>Choose a starter →</span>
+                <small>{t("create.common.fastestStart")}</small>
+                <h2>{t("create.presentation.method.template.title")}</h2>
+                <p>{t("create.presentation.method.template.description")}</p>
+                <span className={styles.cardLink}>
+                  {t("create.presentation.method.template.action")}
+                </span>
               </Link>
               <button
                 className={styles.methodCard}
@@ -214,11 +248,13 @@ function PresentationLauncher() {
                 <span className={styles.cardIcon} data-tone="coral">
                   B
                 </span>
-                <small>Full control</small>
-                <h2>Start a blank presentation</h2>
-                <p>Create a presentation canvas, then add slides and audience interactions.</p>
+                <small>{t("create.common.fullControl")}</small>
+                <h2>{t("create.presentation.method.blank.title")}</h2>
+                <p>{t("create.presentation.method.blank.description")}</p>
                 <span className={styles.cardLink}>
-                  {creating ? "Creating presentation…" : "Start blank →"}
+                  {creating
+                    ? t("create.presentation.method.blank.creating")
+                    : t("create.presentation.method.blank.action")}
                 </span>
               </button>
             </div>
@@ -226,42 +262,27 @@ function PresentationLauncher() {
 
           {selectedStart === "source" ? (
             <section className={styles.panel}>
-              <p className="eyebrow">Grounded conversion</p>
-              <h2>Create from trusted material</h2>
-              <p>
-                PDF, DOCX, PPTX, and pasted text become structured OpenRound blocks. The result is
-                reviewable and responsive—not a promise of pixel-perfect slide reproduction.
-              </p>
-              <AuthoringAssistant
-                artifactType="presentation"
-                canEdit
-                plain
-                terminology="round"
-                trackCreation
-              />
+              <p className="eyebrow">{t("create.presentation.source.eyebrow")}</p>
+              <h2>{t("create.presentation.source.title")}</h2>
+              <p>{t("create.presentation.source.description")}</p>
+              <div lang="en-CA">
+                <AuthoringAssistant
+                  artifactType="presentation"
+                  canEdit
+                  plain
+                  terminology="round"
+                  trackCreation
+                />
+              </div>
             </section>
           ) : null}
 
           {selectedStart === "template" ? (
             <section className={styles.panel}>
-              <p className="eyebrow">Structured templates</p>
-              <h2>Choose a facilitation pattern</h2>
+              <p className="eyebrow">{t("create.presentation.templates.eyebrow")}</p>
+              <h2>{t("create.presentation.templates.title")}</h2>
               <div className={styles.methodGrid}>
-                {(
-                  [
-                    ["review", "Evidence review", "Context followed by a diagnostic question."],
-                    [
-                      "training",
-                      "Training + Recovery",
-                      "Diagnostic, intervention, and linked recheck.",
-                    ],
-                    [
-                      "meeting",
-                      "Team meeting",
-                      "A concise opening and an inclusive priority poll.",
-                    ],
-                  ] as const
-                ).map(([kind, title, description]) => (
+                {presentationTemplates.map(({ kind, titleKey, descriptionKey }) => (
                   <button
                     className={styles.methodCard}
                     disabled={creating}
@@ -269,10 +290,12 @@ function PresentationLauncher() {
                     onClick={() => void createTemplate(kind)}
                     type="button"
                   >
-                    <small>Presentation template</small>
-                    <h3>{title}</h3>
-                    <p>{description}</p>
-                    <span className={styles.cardLink}>Use template →</span>
+                    <small>{t("create.common.presentationTemplate")}</small>
+                    <h3>{t(titleKey)}</h3>
+                    <p>{t(descriptionKey)}</p>
+                    <span className={styles.cardLink}>
+                      {t("create.presentation.templates.use")}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -280,14 +303,14 @@ function PresentationLauncher() {
           ) : null}
 
           {error ? (
-            <p className="error" role="alert">
+            <p className="error" lang="en-CA" role="alert">
               {error}
             </p>
           ) : null}
 
           <p className={styles.notice}>
-            <strong>Built for live facilitation.</strong> Content slides and interactive questions
-            stay together as one Presentation. Self-paced assignment remains available for Rounds.
+            <strong>{t("create.presentation.notice.title")}</strong>{" "}
+            {t("create.presentation.notice.description")}
           </p>
         </>
       )}

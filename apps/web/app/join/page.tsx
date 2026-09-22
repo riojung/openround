@@ -6,6 +6,7 @@ import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import type { AvatarId, JoinPreflightResponse, JoinResponse } from "@openround/contracts";
 import { Brand } from "../../components/brand";
 import { AvatarPicker } from "../../components/participant-avatar";
+import { useLocale } from "../../components/locale-provider";
 import { apiFetch, humanError } from "../../lib/api";
 import {
   beginJoinPreflight,
@@ -17,6 +18,7 @@ import {
 } from "../../lib/join-preflight";
 
 function JoinForm() {
+  const { t } = useLocale();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [code, setCode] = useState(() =>
@@ -97,14 +99,14 @@ function JoinForm() {
 
   return (
     <section className="join-card auth-card" aria-labelledby="join-heading">
-      <p className="eyebrow">Guest participation</p>
+      <p className="eyebrow">{t("delivery.join.eyebrow")}</p>
       <h1 id="join-heading" style={{ fontSize: "clamp(2.5rem, 9vw, 4.4rem)" }}>
-        Join this round
+        {t("delivery.join.title")}
       </h1>
-      <p className="muted">Your nickname and answers belong only to this live session.</p>
+      <p className="muted">{t("delivery.join.description")}</p>
       <form onSubmit={submit}>
         <div className="field">
-          <label htmlFor="join-code">Seven-digit round code</label>
+          <label htmlFor="join-code">{t("delivery.join.codeLabel")}</label>
           <input
             autoComplete="one-time-code"
             className="input code-input"
@@ -119,14 +121,14 @@ function JoinForm() {
         </div>
         {collectNickname ? (
           <div className="field">
-            <label htmlFor="nickname">Nickname</label>
+            <label htmlFor="nickname">{t("delivery.join.nickname")}</label>
             <input
               autoComplete="nickname"
               className="input"
               id="nickname"
               maxLength={32}
               onChange={(event) => setNickname(event.target.value)}
-              placeholder="A name for this round"
+              placeholder={t("delivery.join.nicknamePlaceholder")}
               value={nickname}
             />
           </div>
@@ -142,17 +144,17 @@ function JoinForm() {
           </p>
         ) : null}
         {preflight.code === code && preflight.status === "failed" ? (
-          <p className="notice" role="status">
+          <p className="notice" lang="en-CA" role="status">
             {preflight.message}
           </p>
         ) : null}
         {error ? (
-          <p className="error" role="alert">
+          <p className="error" lang="en-CA" role="alert">
             {error}
           </p>
         ) : null}
         <button className="button full-width" disabled={busy || code.length !== 7} type="submit">
-          {busy ? "Joining…" : "Join round"}
+          {busy ? t("delivery.join.joining") : t("delivery.join.submit")}
         </button>
       </form>
       <p className="muted" style={{ fontSize: "0.84rem", marginTop: 18, marginBottom: 0 }}>
@@ -166,13 +168,14 @@ function JoinForm() {
 }
 
 export default function JoinPage() {
+  const { t } = useLocale();
   return (
     <>
       <header className="shell topbar">
         <Brand />
       </header>
       <main className="shell auth-wrap">
-        <Suspense fallback={<div className="panel">Preparing the join form…</div>}>
+        <Suspense fallback={<div className="panel">{t("delivery.common.loading")}</div>}>
           <JoinForm />
         </Suspense>
       </main>

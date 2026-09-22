@@ -3,11 +3,14 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { useLocale } from "../../components/locale-provider";
 import { apiFetch, humanError } from "../../lib/api";
 import { buildHistoryQuery } from "../../lib/history-query";
-import { formatCompactDate, formatPercent } from "../../components/workspace/workspace-model";
+import { formatPercent } from "../../components/workspace/workspace-model";
+import { formatDateTime, pluralCategory } from "../../lib/i18n/format";
 import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
+import { SessionPhaseLabel } from "../../components/workspace/session-phase-label";
 import type {
   CursorPage,
   FollowupSummary,
@@ -46,9 +49,10 @@ function HistoryFilters({
   onToDateChange: (value: string) => void;
   onClear: () => void;
 }) {
+  const { t } = useLocale();
   const hasFilters = status !== "all" || quizId !== "all" || fromDate !== "" || toDate !== "";
   return (
-    <section aria-label="History filters" className={styles.filters}>
+    <section aria-label={t("pages.results.historyFilters")} className={styles.filters}>
       <label className="field">
         <span>{statusLabel}</span>
         <select
@@ -64,22 +68,22 @@ function HistoryFilters({
         </select>
       </label>
       <label className="field">
-        <span>Round</span>
+        <span>{t("pages.common.round")}</span>
         <select
           className="select"
           onChange={(event) => onQuizChange(event.target.value)}
           value={quizId}
         >
-          <option value="all">All Rounds</option>
+          <option value="all">{t("pages.results.allRounds")}</option>
           {rounds.map((round) => (
-            <option key={round.id} value={round.id}>
+            <option key={round.id} lang="" value={round.id}>
               {round.title}
             </option>
           ))}
         </select>
       </label>
       <label className="field">
-        <span>From</span>
+        <span>{t("pages.common.from")}</span>
         <input
           className="input"
           onChange={(event) => onFromDateChange(event.target.value)}
@@ -88,7 +92,7 @@ function HistoryFilters({
         />
       </label>
       <label className="field">
-        <span>To</span>
+        <span>{t("pages.common.to")}</span>
         <input
           className="input"
           min={fromDate || undefined}
@@ -98,19 +102,22 @@ function HistoryFilters({
         />
       </label>
       <button className="button-quiet" disabled={!hasFilters} onClick={onClear} type="button">
-        Clear filters
+        {t("pages.results.clearFilters")}
       </button>
     </section>
   );
 }
 
-function followupLifecycleLabel(report: ReportSummary) {
-  if (!report.followupId) return "No practice follow-up yet";
-  if (!report.followupStatus) return "Practice follow-up created";
-  return `Practice follow-up ${report.followupStatus}`;
+function followupLifecycleLabel(report: ReportSummary, t: ReturnType<typeof useLocale>["t"]) {
+  if (!report.followupId) return t("pages.results.noFollowup");
+  if (!report.followupStatus) return t("pages.results.followupCreated");
+  return t("pages.results.followupStatus", {
+    status: t(`pages.common.status.${report.followupStatus}`),
+  });
 }
 
 function ReportList({ rounds }: { rounds: RoundFilterOption[] }) {
+  const { locale, t } = useLocale();
   const [status, setStatus] = useState<ReportStatusFilter>("all");
   const [quizId, setQuizId] = useState("all");
   const [fromDate, setFromDate] = useState("");
@@ -209,84 +216,93 @@ function ReportList({ rounds }: { rounds: RoundFilterOption[] }) {
         quizId={quizId}
         rounds={rounds}
         status={status}
-        statusLabel="Result status"
+        statusLabel={t("pages.results.resultStatus")}
         statusOptions={[
-          { value: "all", label: "All results" },
-          { value: "ready", label: "Ready" },
-          { value: "pending", label: "Processing" },
-          { value: "failed", label: "Needs attention" },
+          { value: "all", label: t("pages.results.allResults") },
+          { value: "ready", label: t("pages.common.status.ready") },
+          { value: "pending", label: t("pages.common.status.processing") },
+          { value: "failed", label: t("pages.common.status.needsAttention") },
         ]}
         toDate={toDate}
       />
       {error ? (
-        <p className="error" role="alert">
+        <p className="error" lang="en-CA" role="alert">
           {error}
         </p>
       ) : null}
       {loading ? (
         <p className={styles.muted} role="status">
-          Loading results…
+          {t("pages.results.loading")}
         </p>
       ) : null}
       {!loading && !reports.length && !error ? (
         <div className={styles.emptyState}>
-          <h2>No results yet</h2>
+          <h2>{t("pages.results.emptyTitle")}</h2>
           <p>
             {status === "all" && quizId === "all" && !fromDate && !toDate
-              ? "Finish a live session and its Recovery Story will appear here."
-              : "No results match these filters."}
+              ? t("pages.results.emptyDescription")
+              : t("pages.results.noMatches")}
           </p>
           <Link className="button" href="/dashboard">
-            Choose a Round
+            {t("pages.assignments.chooseRound")}
           </Link>
         </div>
       ) : null}
-      <section className={styles.list} aria-label="Results">
+      <section className={styles.list} aria-label={t("pages.common.results")}>
         {reports.map((report) => (
           <article className={styles.listCard} key={report.id}>
             <div className={styles.rowTopline}>
               <div>
-                <h2>{report.title}</h2>
+                <h2 lang="">{report.title}</h2>
                 <p className={styles.summaryLine}>
-                  {formatCompactDate(report.generatedAt ?? report.createdAt)} ·{" "}
-                  {report.participantCount} participant{report.participantCount === 1 ? "" : "s"}
+                  {formatDateTime(locale, report.generatedAt ?? report.createdAt)} ·{" "}
+                  {t("pages.common.participantCount", { count: report.participantCount })}
                 </p>
                 <p className={styles.summaryLine}>
-                  Evidence expires {formatCompactDate(report.expiresAt)} ·{" "}
-                  {followupLifecycleLabel(report)}
+                  {t("pages.results.evidenceExpires", {
+                    date: formatDateTime(locale, report.expiresAt),
+                  })}{" "}
+                  · {followupLifecycleLabel(report, t)}
                 </p>
               </div>
               <span className={styles.status} data-tone={report.status}>
-                {report.status}
+                {t(
+                  `pages.common.status.${report.status === "pending" ? "processing" : report.status === "failed" ? "needsAttention" : "ready"}`,
+                )}
               </span>
             </div>
             <div className={styles.metricGrid}>
               <div className={styles.metric}>
                 <strong>{formatPercent(report.initialAccuracyPercent)}</strong>
-                <span>Initial accuracy</span>
+                <span>{t("pages.common.initialAccuracy")}</span>
               </div>
               <div className={styles.metric}>
                 <strong>{formatPercent(report.recovery.percent)}</strong>
                 <span>
-                  Recovery · {report.recovery.recovered}/{report.recovery.eligible}
+                  {t("pages.results.recoveryMetric", {
+                    recovered: report.recovery.recovered,
+                    eligible: report.recovery.eligible,
+                  })}
                 </span>
               </div>
               <div className={styles.metric}>
                 <strong>{report.unresolvedConceptCount}</strong>
-                <span>Unresolved concepts</span>
+                <span>{t("pages.results.unresolvedConcepts")}</span>
               </div>
               <div className={styles.metric}>
                 <strong>{report.interventionCount}</strong>
-                <span>Interventions</span>
+                <span>{t("pages.results.interventions")}</span>
               </div>
             </div>
             <div className={styles.listCardActions}>
               <Link className="button small-button" href={`/report/${report.id}`}>
-                {report.status === "ready" ? "Open Recovery Story" : "View status"}
+                {report.status === "ready"
+                  ? t("pages.results.openRecoveryStory")
+                  : t("pages.results.viewStatus")}
               </Link>
               {report.followupId ? (
                 <Link className="button-quiet small-button" href="/results?view=practice">
-                  View practice follow-up
+                  {t("pages.results.viewFollowup")}
                 </Link>
               ) : null}
             </div>
@@ -296,7 +312,7 @@ function ReportList({ rounds }: { rounds: RoundFilterOption[] }) {
       {nextCursor ? (
         <div className={styles.loadMore}>
           <button className="button-quiet" disabled={loadingMore} onClick={() => void more()}>
-            {loadingMore ? "Loading…" : "Load more results"}
+            {loadingMore ? t("pages.common.loading") : t("pages.results.loadMore")}
           </button>
         </div>
       ) : null}
@@ -305,6 +321,7 @@ function ReportList({ rounds }: { rounds: RoundFilterOption[] }) {
 }
 
 function PracticeList({ rounds }: { rounds: RoundFilterOption[] }) {
+  const { locale, t } = useLocale();
   const [status, setStatus] = useState<FollowupStatusFilter>("all");
   const [quizId, setQuizId] = useState("all");
   const [fromDate, setFromDate] = useState("");
@@ -403,79 +420,91 @@ function PracticeList({ rounds }: { rounds: RoundFilterOption[] }) {
         quizId={quizId}
         rounds={rounds}
         status={status}
-        statusLabel="Practice status"
+        statusLabel={t("pages.results.practiceStatus")}
         statusOptions={[
-          { value: "all", label: "All practice" },
-          { value: "scheduled", label: "Scheduled" },
-          { value: "open", label: "Open" },
-          { value: "closed", label: "Closed" },
-          { value: "expired", label: "Expired" },
+          { value: "all", label: t("pages.results.allPractice") },
+          { value: "scheduled", label: t("pages.common.status.scheduled") },
+          { value: "open", label: t("pages.common.status.open") },
+          { value: "closed", label: t("pages.common.status.closed") },
+          { value: "expired", label: t("pages.common.status.expired") },
         ]}
         toDate={toDate}
       />
       {error ? (
-        <p className="error" role="alert">
+        <p className="error" lang="en-CA" role="alert">
           {error}
         </p>
       ) : null}
       {loading ? (
         <p className={styles.muted} role="status">
-          Loading practice…
+          {t("pages.results.loadingPractice")}
         </p>
       ) : null}
       {!loading && !followups.length && !error ? (
         <div className={styles.emptyState}>
-          <h2>No practice yet</h2>
+          <h2>{t("pages.results.emptyPracticeTitle")}</h2>
           <p>
             {status === "all" && quizId === "all" && !fromDate && !toDate
-              ? "Assign a published Round or create a Recovery follow-up from a ready result."
-              : "No practice matches these filters."}
+              ? t("pages.results.emptyPracticeDescription")
+              : t("pages.results.noPracticeMatches")}
           </p>
         </div>
       ) : null}
-      <section className={styles.list} aria-label="Practice assignments and follow-ups">
+      <section className={styles.list} aria-label={t("pages.results.practiceListLabel")}>
         {followups.map((followup) => (
           <article className={styles.listCard} key={followup.id}>
             <div className={styles.rowTopline}>
               <div>
-                <h2>{followup.title}</h2>
+                <h2 lang="">{followup.title}</h2>
                 <p className={styles.summaryLine}>
-                  Created {formatCompactDate(followup.createdAt)} · {followup.checkpointCount}{" "}
-                  question{followup.checkpointCount === 1 ? "" : "s"}
+                  {t("pages.assignments.created", {
+                    date: formatDateTime(locale, followup.createdAt),
+                  })}{" "}
+                  ·{" "}
+                  {t(
+                    pluralCategory(locale, followup.checkpointCount) === "one"
+                      ? "pages.assignments.questionCount.one"
+                      : "pages.assignments.questionCount.other",
+                    { count: followup.checkpointCount },
+                  )}
                 </p>
                 <p className={styles.summaryLine}>
-                  Retained until {formatCompactDate(followup.expiresAt)}
+                  {t("pages.results.retainedUntil", {
+                    date: formatDateTime(locale, followup.expiresAt),
+                  })}
                 </p>
               </div>
               <div className={styles.conceptList}>
                 <span className={styles.subtlePill}>
-                  {followup.purpose === "assignment" ? "Assignment" : "Recovery follow-up"}
+                  {followup.purpose === "assignment"
+                    ? t("pages.results.assignment")
+                    : t("pages.results.recoveryFollowup")}
                 </span>
                 <span className={styles.status} data-tone={followup.status}>
-                  {followup.status}
+                  {t(`pages.common.status.${followup.status}`)}
                 </span>
               </div>
             </div>
             <div className={styles.metricGrid}>
               <div className={styles.metric}>
                 <strong>{followup.attemptCount}</strong>
-                <span>Attempts</span>
+                <span>{t("pages.common.attempts")}</span>
               </div>
               <div className={styles.metric}>
                 <strong>{followup.completedAttemptCount}</strong>
-                <span>Completed</span>
+                <span>{t("pages.common.completed")}</span>
               </div>
               <div className={styles.metric}>
-                <strong>{formatCompactDate(followup.opensAt)}</strong>
-                <span>Opens</span>
+                <strong>{formatDateTime(locale, followup.opensAt)}</strong>
+                <span>{t("pages.results.opens")}</span>
               </div>
               <div className={styles.metric}>
-                <strong>{formatCompactDate(followup.closesAt)}</strong>
-                <span>Closes</span>
+                <strong>{formatDateTime(locale, followup.closesAt)}</strong>
+                <span>{t("pages.results.closes")}</span>
               </div>
             </div>
             {followup.conceptKeys.length ? (
-              <div className={styles.conceptList} aria-label="Concepts practised">
+              <div className={styles.conceptList} aria-label={t("pages.results.conceptsPractised")}>
                 {followup.conceptKeys.map((concept) => (
                   <span className={styles.subtlePill} key={concept}>
                     {concept}
@@ -485,14 +514,14 @@ function PracticeList({ rounds }: { rounds: RoundFilterOption[] }) {
             ) : null}
             <div className={styles.listCardActions}>
               <Link className="button small-button" href={`/practice/${followup.id}`}>
-                Manage practice
+                {t("pages.results.managePractice")}
               </Link>
               {followup.sourceReportId ? (
                 <Link
                   className="button-quiet small-button"
                   href={`/report/${followup.sourceReportId}`}
                 >
-                  View source result
+                  {t("pages.results.viewSourceResult")}
                 </Link>
               ) : null}
             </div>
@@ -502,7 +531,7 @@ function PracticeList({ rounds }: { rounds: RoundFilterOption[] }) {
       {nextCursor ? (
         <div className={styles.loadMore}>
           <button className="button-quiet" disabled={loadingMore} onClick={() => void more()}>
-            {loadingMore ? "Loading…" : "Load more practice"}
+            {loadingMore ? t("pages.common.loading") : t("pages.results.loadMorePractice")}
           </button>
         </div>
       ) : null}
@@ -524,6 +553,7 @@ interface PresentationResultSummary {
 }
 
 function PresentationResultList() {
+  const { locale, t } = useLocale();
   const [sessions, setSessions] = useState<PresentationResultSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -545,52 +575,57 @@ function PresentationResultList() {
     return () => controller.abort();
   }, []);
 
-  if (loading) return <p className={styles.muted}>Loading Presentation results…</p>;
+  if (loading) return <p className={styles.muted}>{t("pages.results.loadingPresentations")}</p>;
   if (error)
     return (
-      <p className="error" role="alert">
+      <p className="error" lang="en-CA" role="alert">
         {error}
       </p>
     );
   if (!sessions.length) {
     return (
       <div className={styles.emptyState}>
-        <h2>No Presentation results yet</h2>
-        <p>Host a published Presentation and its interactive evidence will appear here.</p>
+        <h2>{t("pages.results.emptyPresentationsTitle")}</h2>
+        <p>{t("pages.results.emptyPresentationsDescription")}</p>
         <Link className="button" href="/library?type=presentations">
-          Choose a Presentation
+          {t("pages.results.choosePresentation")}
         </Link>
       </div>
     );
   }
   return (
-    <section className={styles.list} aria-label="Presentation results">
+    <section className={styles.list} aria-label={t("pages.results.presentationResults")}>
       {sessions.map((session) => (
         <article className={styles.listCard} key={session.id}>
           <div className={styles.rowTopline}>
             <div>
-              <p className="eyebrow">Presentation</p>
-              <h2>{session.title}</h2>
+              <p className="eyebrow">{t("pages.common.presentation")}</p>
+              <h2 lang="">{session.title}</h2>
               <p className={styles.summaryLine}>
-                Started {formatCompactDate(session.createdAt)} · {session.blockCount} blocks
+                {t("pages.results.presentationStarted", {
+                  date: formatDateTime(locale, session.createdAt),
+                  count: session.blockCount,
+                })}
               </p>
             </div>
             <span className={styles.status} data-tone={session.status}>
-              {session.status}
+              {t(`pages.common.status.${session.status}`)}
             </span>
           </div>
           <div className={styles.metricGrid}>
             <div className={styles.metric}>
               <strong>{session.participantCount}</strong>
-              <span>Participants</span>
+              <span>{t("pages.common.participants")}</span>
             </div>
             <div className={styles.metric}>
               <strong>{session.responseCount}</strong>
-              <span>Responses</span>
+              <span>{t("pages.results.responses")}</span>
             </div>
             <div className={styles.metric}>
-              <strong>{session.phase.replaceAll("_", " ")}</strong>
-              <span>Session phase</span>
+              <strong>
+                <SessionPhaseLabel phase={session.phase} />
+              </strong>
+              <span>{t("pages.results.sessionPhase")}</span>
             </div>
           </div>
           <div className={styles.listCardActions}>
@@ -598,13 +633,13 @@ function PresentationResultList() {
               className="button small-button"
               href={`/presentation-session/${session.id}/report`}
             >
-              Open report
+              {t("pages.results.openReport")}
             </Link>
             <Link
               className="button-quiet small-button"
               href={`/presentation/${session.presentationId}`}
             >
-              View Presentation
+              {t("pages.sessions.viewPresentation")}
             </Link>
           </div>
         </article>
@@ -614,6 +649,7 @@ function PresentationResultList() {
 }
 
 function ResultsContent() {
+  const { t } = useLocale();
   const params = useSearchParams();
   const { productFeatures } = useWorkspace();
   const presentationsEnabled = productFeatures?.presentations === true;
@@ -640,13 +676,13 @@ function ResultsContent() {
 
   return (
     <>
-      <nav className={styles.tabList} aria-label="Evidence views">
+      <nav className={styles.tabList} aria-label={t("pages.results.evidenceViews")}>
         <Link
           aria-current={view === "results" ? "page" : undefined}
           className={view === "results" ? styles.tabActive : styles.tab}
           href="/results"
         >
-          Recovery results
+          {t("pages.results.recoveryResults")}
         </Link>
         {presentationsEnabled ? (
           <Link
@@ -654,7 +690,7 @@ function ResultsContent() {
             className={view === "presentations" ? styles.tabActive : styles.tab}
             href="/results?view=presentations"
           >
-            Presentation results
+            {t("pages.results.presentationResults")}
           </Link>
         ) : null}
         <Link
@@ -662,7 +698,7 @@ function ResultsContent() {
           className={view === "practice" ? styles.tabActive : styles.tab}
           href="/results?view=practice"
         >
-          Practice
+          {t("pages.results.practice")}
         </Link>
       </nav>
       {view === "practice" ? (
@@ -677,12 +713,14 @@ function ResultsContent() {
 }
 
 export default function ResultsPage() {
+  const { t } = useLocale();
   return (
     <WorkspaceProvider>
       <WorkspaceShell
-        description="Review Recovery evidence and track assigned or report-based practice."
-        eyebrow="Evidence"
-        title="Results"
+        description={t("page.results.description")}
+        eyebrow={t("page.results.eyebrow")}
+        title={t("page.results.title")}
+        translationLevel="full"
       >
         <ResultsContent />
       </WorkspaceShell>

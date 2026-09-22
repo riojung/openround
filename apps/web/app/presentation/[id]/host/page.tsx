@@ -4,11 +4,13 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Brand } from "../../../../components/brand";
+import { useLocale } from "../../../../components/locale-provider";
 import { WorkspaceProvider } from "../../../../components/workspace/workspace-provider";
 import { WorkspaceFeatureGate } from "../../../../components/workspace/workspace-shell";
 import styles from "../../../../components/presentation-live/presentation-live.module.css";
 import { recordAuthoringEvent } from "../../../../components/workspace/product-events";
 import { apiFetch, humanError } from "../../../../lib/api";
+import { formatNumber } from "../../../../lib/i18n/format";
 
 interface PresentationRecord {
   id: string;
@@ -20,6 +22,7 @@ interface PresentationRecord {
 }
 
 function PresentationHostSetupContent() {
+  const { locale, t } = useLocale();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [presentation, setPresentation] = useState<PresentationRecord | null>(null);
@@ -58,42 +61,39 @@ function PresentationHostSetupContent() {
     <main className={styles.page}>
       <div className={styles.topbar}>
         <Brand />
-        <Link href={`/presentation/${id}`}>Back to builder</Link>
+        <Link href={`/presentation/${id}`}>{t("live.presentationHost.backEditor")}</Link>
       </div>
       <section className={styles.setup}>
-        <span className={styles.statusPill}>Live Presentation</span>
-        <h1>{presentation?.title ?? "Preparing Presentation…"}</h1>
-        <p>
-          Content slides and interactive questions will run in their authored order. Participants
-          join without workspace accounts, and only question responses become learning evidence.
-        </p>
+        <span className={styles.statusPill}>{t("live.presentationHost.live")}</span>
+        {presentation ? <h1 lang="">{presentation.title}</h1> : <h1>{t("common.loading")}</h1>}
+        <p>{t("live.presentationHost.description")}</p>
         {presentation ? (
           <div className={styles.metricRow}>
             <div className={styles.metric}>
-              <strong>{presentation.draft.blocks.length}</strong>
-              <span>Total blocks</span>
+              <strong>{formatNumber(locale, presentation.draft.blocks.length)}</strong>
+              <span>{t("live.presentationHost.totalBlocks")}</span>
             </div>
             <div className={styles.metric}>
               <strong>
-                {presentation.draft.blocks.filter((block) => block.kind === "question").length}
+                {formatNumber(
+                  locale,
+                  presentation.draft.blocks.filter((block) => block.kind === "question").length,
+                )}
               </strong>
-              <span>Interactive questions</span>
+              <span>{t("live.presentationHost.interactiveQuestions")}</span>
             </div>
           </div>
         ) : null}
         {presentation?.hasUnpublishedChanges ? (
-          <p className="notice">
-            This session will use the latest published version. Unpublished builder changes are not
-            included.
-          </p>
+          <p className="notice">{t("live.presentationHost.unpublishedNotice")}</p>
         ) : null}
         {!presentation?.currentVersionId && presentation ? (
           <p className="error" role="alert">
-            Publish this Presentation before hosting it.
+            {t("live.presentationHost.publishFirst")}
           </p>
         ) : null}
         {error ? (
-          <p className="error" role="alert">
+          <p className="error" lang="en-CA" role="alert">
             {error}
           </p>
         ) : null}
@@ -104,10 +104,10 @@ function PresentationHostSetupContent() {
             onClick={() => void startSession()}
             type="button"
           >
-            {busy ? "Opening room…" : "Open participant room"}
+            {busy ? t("live.presentationHost.starting") : t("live.presentationHost.start")}
           </button>
           <Link className="button-quiet" href="/sessions">
-            Session history
+            {t("live.presentationHost.history")}
           </Link>
         </div>
       </section>

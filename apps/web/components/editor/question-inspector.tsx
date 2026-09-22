@@ -1,13 +1,8 @@
 import type { ReactNode } from "react";
+import { useLocale } from "../locale-provider";
 import styles from "./round-builder.module.css";
 
 export type InspectorTab = "build" | "diagnose" | "recover";
-
-const tabLabels: Record<InspectorTab, string> = {
-  build: "Build",
-  diagnose: "Diagnose",
-  recover: "Recover",
-};
 
 export function QuestionInspector({
   activeTab,
@@ -26,17 +21,31 @@ export function QuestionInspector({
   onTabChange: (tab: InspectorTab) => void;
   onToggle: () => void;
 }) {
+  const { t } = useLocale();
+  const tabLabels: Record<InspectorTab, string> = {
+    build: t("delivery.builder.build"),
+    diagnose: t("delivery.builder.diagnose"),
+    recover: t("delivery.builder.recover"),
+  };
   const panels = { build, diagnose, recover };
   return (
-    <aside className={styles.inspector} data-collapsed={collapsed} aria-label="Question inspector">
+    <aside
+      className={styles.inspector}
+      data-collapsed={collapsed}
+      aria-label={t("delivery.builder.inspector")}
+    >
       <div className={styles.inspectorHeader}>
         <div className={styles.inspectorTopline}>
-          <h2>Inspector</h2>
+          <h2>{t("delivery.builder.inspector")}</h2>
           <button className={styles.iconButton} onClick={onToggle} type="button">
-            Close
+            {t("delivery.common.close")}
           </button>
         </div>
-        <div aria-label="Inspector sections" className={styles.inspectorTabs} role="tablist">
+        <div
+          aria-label={t("delivery.builder.inspector")}
+          className={styles.inspectorTabs}
+          role="tablist"
+        >
           {(Object.keys(tabLabels) as InspectorTab[]).map((tab) => (
             <button
               aria-controls={`inspector-${tab}`}

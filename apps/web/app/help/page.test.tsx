@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { withEnglishLocale } from "../../test-utils/english-locale";
 
 const fixtures = vi.hoisted(() => ({
   workspace: {
@@ -43,6 +44,10 @@ vi.mock("../../components/workspace/workspace-provider", () => ({
   useWorkspace: () => fixtures.workspace,
 }));
 
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/help",
+}));
+
 import HelpPage from "./page";
 
 describe("Help centre video guides", () => {
@@ -62,7 +67,7 @@ describe("Help centre video guides", () => {
   });
 
   it("renders both captioned guides, transcripts, and direct next steps", () => {
-    const markup = renderToStaticMarkup(<HelpPage />);
+    const markup = renderToStaticMarkup(withEnglishLocale(<HelpPage />));
 
     expect(markup).toContain('data-require-beta="false"');
     expect(markup).toContain('id="quick-start"');
@@ -92,7 +97,7 @@ describe("Help centre video guides", () => {
     fixtures.workspace.productFeatures.groups = false;
     fixtures.workspace.productFeatures.discover = false;
 
-    const markup = renderToStaticMarkup(<HelpPage />);
+    const markup = renderToStaticMarkup(withEnglishLocale(<HelpPage />));
 
     expect(markup).toContain("Use the classic Round workflow");
     expect(markup).toContain("Open the dashboard, name a checkpoint set");
@@ -106,7 +111,7 @@ describe("Help centre video guides", () => {
   it("hides combined videos when an independently rolled-out capability is unavailable", () => {
     fixtures.workspace.productFeatures.presentations = false;
 
-    const markup = renderToStaticMarkup(<HelpPage />);
+    const markup = renderToStaticMarkup(withEnglishLocale(<HelpPage />));
 
     expect(markup).toContain("Use the enabled Round Builder");
     expect(markup).toContain('href="/create?start=starters"');
@@ -117,7 +122,7 @@ describe("Help centre video guides", () => {
   it("sends read-only members to Library instead of a creation route", () => {
     fixtures.workspace.canEdit = false;
 
-    const markup = renderToStaticMarkup(<HelpPage />);
+    const markup = renderToStaticMarkup(withEnglishLocale(<HelpPage />));
 
     expect(markup.match(/href="\/library"/g)?.length).toBeGreaterThan(1);
     expect(markup).toContain("Open Library");

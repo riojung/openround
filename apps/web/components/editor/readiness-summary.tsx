@@ -1,5 +1,6 @@
 import type { RoundReadinessIssue } from "../../lib/round-readiness";
 import styles from "./round-builder.module.css";
+import { useLocale } from "../locale-provider";
 
 export function ReadinessSummary({
   issues,
@@ -12,10 +13,18 @@ export function ReadinessSummary({
   entityLabel?: string;
   onSelectIssue: (issue: RoundReadinessIssue) => void;
 }) {
+  const { locale, t } = useLocale();
   const ready = issues.length === 0;
+  const localizedAction =
+    action === "preview"
+      ? t("delivery.common.preview")
+      : action === "publish"
+        ? t("delivery.common.publish")
+        : "";
+  const actionInSentence = localizedAction.toLocaleLowerCase(locale);
   return (
     <section
-      aria-label="Round readiness"
+      aria-label={t("delivery.builder.roundReadiness")}
       className={`${styles.readiness} validation-guidance`}
       data-ready={ready}
       role={action && !ready ? "alert" : undefined}
@@ -23,20 +32,28 @@ export function ReadinessSummary({
       <div className={styles.readinessHeading}>
         <strong>
           {ready
-            ? "Ready to preview and publish"
+            ? t("delivery.builder.readyToPreview")
             : action
-              ? `Cannot ${action} this ${entityLabel} yet`
-              : "Round readiness"}
+              ? t("delivery.builder.cannotAction", {
+                  action: actionInSentence,
+                  entity: entityLabel,
+                })
+              : t("delivery.builder.roundReadiness")}
         </strong>
         <span>
           {ready
-            ? "All required content is complete"
-            : `${issues.length} item${issues.length === 1 ? "" : "s"} need attention`}
+            ? t("delivery.builder.allRequiredComplete")
+            : t(
+                issues.length === 1
+                  ? "delivery.builder.itemsNeedAttention.one"
+                  : "delivery.builder.itemsNeedAttention.other",
+                { count: issues.length },
+              )}
         </span>
       </div>
       {!ready ? (
         <>
-          <span className="sr-only">
+          <span className="sr-only" lang="en-CA">
             Source: {issues[0]?.source}. How to fix: {issues[0]?.resolution}
           </span>
           <div className={styles.issueList}>
@@ -44,6 +61,7 @@ export function ReadinessSummary({
               <button
                 className={styles.issueButton}
                 key={issue.id}
+                lang="en-CA"
                 onClick={() => onSelectIssue(issue)}
                 title={issue.resolution}
                 type="button"
@@ -52,7 +70,7 @@ export function ReadinessSummary({
               </button>
             ))}
           </div>
-          <small>Your in-progress draft is still saved automatically.</small>
+          <small lang="en-CA">Your in-progress draft is still saved automatically.</small>
         </>
       ) : null}
     </section>

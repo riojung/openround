@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocale } from "../../components/locale-provider";
 import type { QuizDraft } from "@openround/contracts";
 import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
 import { apiFetch, humanError } from "../../lib/api";
+import { pluralCategory } from "../../lib/i18n/format";
 import {
   filterLibraryItems,
   libraryBulkActionIds,
@@ -80,11 +82,12 @@ function statusFromQuery(value: string | null): LibraryStatusFilter {
     : "active";
 }
 
-function dateLabel(value: string) {
-  return new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(new Date(value));
+function dateLabel(locale: string, value: string) {
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(value));
 }
 
 function LibraryContent() {
+  const { locale, t } = useLocale();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { canEdit, creator, productFeatures } = useWorkspace();
@@ -323,10 +326,13 @@ function LibraryContent() {
     await refresh();
     if (failed?.status === "rejected") setError(humanError(failed.reason));
     if (succeeded.length) {
-      const verb =
-        action === "duplicate" ? "duplicated" : action === "archive" ? "archived" : "restored";
-      const noun = type === "rounds" ? "Round" : "Presentation";
-      setAnnouncement(`${succeeded.length} ${noun}${succeeded.length === 1 ? "" : "s"} ${verb}.`);
+      setAnnouncement(
+        t("pages.library.actionComplete", {
+          count: succeeded.length,
+          type: t(type === "rounds" ? "pages.common.rounds" : "pages.common.presentations"),
+          action: t(`pages.library.action.${action}`),
+        }),
+      );
     }
     setBusyAction("");
   }
@@ -360,11 +366,10 @@ function LibraryContent() {
     if (succeeded.length) {
       const folderName =
         nextFolderId === null
-          ? "Unfiled"
-          : (folders.find((folder) => folder.id === nextFolderId)?.name ?? "the selected folder");
-      setAnnouncement(
-        `${succeeded.length} item${succeeded.length === 1 ? "" : "s"} moved to ${folderName}.`,
-      );
+          ? t("pages.library.unfiled")
+          : (folders.find((folder) => folder.id === nextFolderId)?.name ??
+            t("pages.library.selectedFolder"));
+      setAnnouncement(t("pages.library.moved", { count: succeeded.length, folder: folderName }));
     }
     setBusyAction("");
   }
@@ -385,7 +390,9 @@ function LibraryContent() {
         method: "PUT",
         body: JSON.stringify({ favorite }),
       });
-      setAnnouncement(favorite ? "Added to favorites." : "Removed from favorites.");
+      setAnnouncement(
+        t(favorite ? "pages.library.favoriteAdded" : "pages.library.favoriteRemoved"),
+      );
     } catch (caught) {
       setFavoriteIds((current) => {
         const next = new Set(current);
@@ -413,16 +420,19 @@ function LibraryContent() {
                   : "/dashboard"
             }
           >
-            Create {type === "rounds" ? "Round" : "Presentation"}
+            {t(
+              type === "rounds" ? "pages.library.createRound" : "pages.library.createPresentation",
+            )}
           </Link>
         ) : null
       }
-      description="Create, find, and reuse everything your workspace facilitates."
-      eyebrow="Workspace content"
-      title="Library"
+      description={t("page.library.description")}
+      eyebrow={t("page.library.eyebrow")}
+      title={t("page.library.title")}
+      translationLevel="full"
     >
       <div className={styles.toolbar}>
-        <div className={styles.tabs} role="tablist" aria-label="Library content type">
+        <div className={styles.tabs} role="tablist" aria-label={t("pages.library.typeLabel")}>
           <button
             aria-controls="rounds-panel"
             aria-selected={type === "rounds"}
@@ -432,7 +442,7 @@ function LibraryContent() {
             role="tab"
             type="button"
           >
-            Rounds <span>{rounds.length}</span>
+            {t("pages.common.rounds")} <span>{rounds.length}</span>
           </button>
           {presentationsEnabled ? (
             <button
@@ -444,50 +454,60 @@ function LibraryContent() {
               role="tab"
               type="button"
             >
-              Presentations <span>{presentations.length}</span>
+              {t("pages.common.presentations")} <span>{presentations.length}</span>
             </button>
           ) : null}
         </div>
         <label className={styles.searchField}>
-          <span className="sr-only">Search {type}</span>
+          <span className="sr-only">
+            {t(
+              type === "rounds"
+                ? "pages.library.searchRounds"
+                : "pages.library.searchPresentations",
+            )}
+          </span>
           <input
             onChange={(event) => setSearch(event.target.value)}
-            placeholder={`Search ${type}`}
+            placeholder={t(
+              type === "rounds"
+                ? "pages.library.searchRounds"
+                : "pages.library.searchPresentations",
+            )}
             type="search"
             value={search}
           />
         </label>
         <Link className={styles.manageLink} href="/dashboard">
-          Manage folders
+          {t("pages.library.manageFolders")}
         </Link>
       </div>
 
-      <section className={styles.filterBar} aria-label="Library filters and layout">
+      <section className={styles.filterBar} aria-label={t("pages.library.filtersLabel")}>
         <label className={styles.filterField}>
-          <span>Status</span>
+          <span>{t("pages.common.statusLabel")}</span>
           <select
-            aria-label="Filter by status"
+            aria-label={t("pages.library.filterStatus")}
             onChange={(event) => setStatus(event.target.value as LibraryStatusFilter)}
             value={status}
           >
-            <option value="active">Active</option>
-            <option value="draft">Draft</option>
-            <option value="published">Published</option>
-            <option value="archived">Archived</option>
-            <option value="all">All statuses</option>
+            <option value="active">{t("pages.common.status.active")}</option>
+            <option value="draft">{t("pages.common.status.draft")}</option>
+            <option value="published">{t("pages.common.status.published")}</option>
+            <option value="archived">{t("pages.common.status.archived")}</option>
+            <option value="all">{t("pages.library.allStatuses")}</option>
           </select>
         </label>
         <label className={styles.filterField}>
-          <span>Folder</span>
+          <span>{t("pages.library.folder")}</span>
           <select
-            aria-label="Filter by folder"
+            aria-label={t("pages.library.filterFolder")}
             onChange={(event) => setFolderId(event.target.value)}
             value={folderId}
           >
-            <option value="all">All folders</option>
-            <option value="unfiled">Unfiled</option>
+            <option value="all">{t("pages.library.allFolders")}</option>
+            <option value="unfiled">{t("pages.library.unfiled")}</option>
             {folders.map((folder) => (
-              <option key={folder.id} value={folder.id}>
+              <option key={folder.id} lang="" value={folder.id}>
                 {folder.name}
               </option>
             ))}
@@ -499,38 +519,44 @@ function LibraryContent() {
           onClick={() => setFavoritesOnly((current) => !current)}
           type="button"
         >
-          <span aria-hidden="true">★</span> Favorites
+          <span aria-hidden="true">★</span> {t("pages.library.favorites")}
         </button>
         <label className={styles.filterField}>
-          <span>Ownership</span>
+          <span>{t("pages.library.ownership")}</span>
           <select
-            aria-label="Filter by ownership"
+            aria-label={t("pages.library.filterOwnership")}
             onChange={(event) => setOwnership(event.target.value as LibraryOwnershipFilter)}
             value={ownership}
           >
-            <option value="all">All owners</option>
-            <option value="workspace">Workspace-owned</option>
+            <option value="all">{t("pages.library.allOwners")}</option>
+            <option value="workspace">{t("pages.library.workspaceOwned")}</option>
           </select>
         </label>
         <p className={styles.resultSummary} role="status">
-          {loading ? "Loading content…" : `${visibleCount} of ${totalCount} ${type}`}
+          {loading
+            ? t("pages.library.loadingContent")
+            : t("pages.library.resultCount", {
+                visible: visibleCount,
+                total: totalCount,
+                type: t(type === "rounds" ? "pages.common.rounds" : "pages.common.presentations"),
+              })}
         </p>
-        <div aria-label="Library layout" className={styles.viewToggle} role="group">
+        <div aria-label={t("pages.library.layoutLabel")} className={styles.viewToggle} role="group">
           <button
-            aria-label="Grid view"
+            aria-label={t("pages.library.gridView")}
             aria-pressed={view === "grid"}
             onClick={() => chooseView("grid")}
             type="button"
           >
-            Grid
+            {t("pages.library.grid")}
           </button>
           <button
-            aria-label="List view"
+            aria-label={t("pages.library.listView")}
             aria-pressed={view === "list"}
             onClick={() => chooseView("list")}
             type="button"
           >
-            List
+            {t("pages.library.list")}
           </button>
         </div>
       </section>
@@ -541,7 +567,7 @@ function LibraryContent() {
         </p>
       ) : null}
       {error ? (
-        <p className="error" role="alert">
+        <p className="error" lang="en-CA" role="alert">
           {error}
         </p>
       ) : null}
@@ -551,13 +577,15 @@ function LibraryContent() {
           <label className={styles.selectAll}>
             <input checked={allVisibleSelected} onChange={toggleVisible} type="checkbox" />
             <span>
-              {allVisibleSelected ? "Deselect results" : `Select all ${visibleIds.length}`}
+              {allVisibleSelected
+                ? t("pages.library.deselectResults")
+                : t("pages.library.selectAll", { count: visibleIds.length })}
             </span>
           </label>
           {selectedIds.size ? (
             <>
               <strong>
-                {selectedIds.size} selected
+                {t("pages.library.selectedCount", { count: selectedIds.size })}
                 <span className="sr-only"> {type}</span>
               </strong>
               <div className={styles.bulkActions}>
@@ -567,7 +595,7 @@ function LibraryContent() {
                     onClick={() => void runArtifactAction("duplicate", bulkTargets.duplicate)}
                     type="button"
                   >
-                    Duplicate ({bulkTargets.duplicate.length})
+                    {t("pages.library.duplicateCount", { count: bulkTargets.duplicate.length })}
                   </button>
                 ) : null}
                 {bulkTargets.archive.length ? (
@@ -576,7 +604,7 @@ function LibraryContent() {
                     onClick={() => void runArtifactAction("archive", bulkTargets.archive)}
                     type="button"
                   >
-                    Archive ({bulkTargets.archive.length})
+                    {t("pages.library.archiveCount", { count: bulkTargets.archive.length })}
                   </button>
                 ) : null}
                 {bulkTargets.restore.length ? (
@@ -585,20 +613,20 @@ function LibraryContent() {
                     onClick={() => void runArtifactAction("restore", bulkTargets.restore)}
                     type="button"
                   >
-                    Restore ({bulkTargets.restore.length})
+                    {t("pages.library.restoreCount", { count: bulkTargets.restore.length })}
                   </button>
                 ) : null}
                 <label className={styles.bulkFolder}>
-                  <span className="sr-only">Destination folder</span>
+                  <span className="sr-only">{t("pages.library.destinationFolder")}</span>
                   <select
-                    aria-label="Destination folder"
+                    aria-label={t("pages.library.destinationFolder")}
                     disabled={Boolean(busyAction)}
                     onChange={(event) => setTargetFolderId(event.target.value)}
                     value={targetFolderId}
                   >
-                    <option value="unfiled">Unfiled</option>
+                    <option value="unfiled">{t("pages.library.unfiled")}</option>
                     {folders.map((folder) => (
-                      <option key={folder.id} value={folder.id}>
+                      <option key={folder.id} lang="" value={folder.id}>
                         {folder.name}
                       </option>
                     ))}
@@ -609,24 +637,26 @@ function LibraryContent() {
                   onClick={() => void applyFolder([...selectedIds])}
                   type="button"
                 >
-                  Move
+                  {t("pages.library.move")}
                 </button>
                 <button
                   disabled={Boolean(busyAction)}
                   onClick={() => setSelectedIds(new Set())}
                   type="button"
                 >
-                  Clear
+                  {t("pages.library.clear")}
                 </button>
               </div>
             </>
           ) : (
-            <span className={styles.selectionHint}>Select items for bulk actions</span>
+            <span className={styles.selectionHint}>{t("pages.library.selectionHint")}</span>
           )}
         </div>
       ) : null}
 
-      {loading ? <div className={styles.loadingGrid} aria-label="Loading Library" /> : null}
+      {loading ? (
+        <div className={styles.loadingGrid} aria-label={t("pages.library.loading")} />
+      ) : null}
 
       <div
         aria-labelledby="rounds-tab"
@@ -649,7 +679,7 @@ function LibraryContent() {
                     {canEdit ? (
                       <label className={styles.cardSelector}>
                         <input
-                          aria-label={`Select ${round.title}`}
+                          aria-label={t("pages.library.selectItem", { title: round.title })}
                           checked={selected}
                           onChange={() => toggleSelection(round.id)}
                           type="checkbox"
@@ -657,7 +687,12 @@ function LibraryContent() {
                       </label>
                     ) : null}
                     <button
-                      aria-label={`${round.favorite ? "Remove" : "Add"} ${round.title} ${round.favorite ? "from" : "to"} favorites`}
+                      aria-label={t(
+                        round.favorite
+                          ? "pages.library.removeFavorite"
+                          : "pages.library.addFavorite",
+                        { title: round.title },
+                      )}
                       aria-pressed={round.favorite}
                       className={styles.favoriteButton}
                       disabled={busyAction === "favorite"}
@@ -674,31 +709,45 @@ function LibraryContent() {
                     <div className={styles.cardBody}>
                       <div className={styles.cardMeta}>
                         <span className={styles.status} data-status={round.status}>
-                          {round.status}
+                          {t(`pages.common.status.${round.status}`)}
                         </span>
-                        <span>Updated {dateLabel(round.updatedAt)}</span>
+                        <span>
+                          {t("pages.common.updated", { date: dateLabel(locale, round.updatedAt) })}
+                        </span>
                       </div>
                       <div className={styles.cardMain}>
-                        <h2>{round.title}</h2>
+                        <h2 lang="">{round.title}</h2>
                         {round.description ? (
-                          <p className={styles.description}>{round.description}</p>
+                          <p className={styles.description} lang="">
+                            {round.description}
+                          </p>
                         ) : null}
                         <p className={styles.facts}>
-                          {round.draft.questions.length} question
-                          {round.draft.questions.length === 1 ? "" : "s"}
+                          {t(
+                            pluralCategory(locale, round.draft.questions.length) === "one"
+                              ? "pages.home.authoring.questionCount.one"
+                              : "pages.home.authoring.questionCount.other",
+                            { count: round.draft.questions.length },
+                          )}
                         </p>
-                        <p className={styles.folderLabel}>{folderName ?? "Unfiled"}</p>
+                        <p className={styles.folderLabel}>
+                          {folderName ? (
+                            <span lang="">{folderName}</span>
+                          ) : (
+                            t("pages.library.unfiled")
+                          )}
+                        </p>
                       </div>
                       <div className={styles.cardActions}>
                         <Link
                           className="button-quiet small-button"
                           href={archived ? `/quiz/${round.id}/preview` : `/quiz/${round.id}`}
                         >
-                          {canEdit && !archived ? "Edit" : "View"}
+                          {canEdit && !archived ? t("pages.library.edit") : t("pages.library.view")}
                         </Link>
                         {round.currentVersionId && canEdit && !archived ? (
                           <Link className="button small-button" href={`/host/setup/${round.id}`}>
-                            Host
+                            {t("pages.library.host")}
                           </Link>
                         ) : null}
                         {round.currentVersionId && canEdit && !archived ? (
@@ -706,19 +755,19 @@ function LibraryContent() {
                             className="button-quiet small-button"
                             href={`/quiz/${round.id}/assign`}
                           >
-                            Assign
+                            {t("pages.library.assign")}
                           </Link>
                         ) : null}
                         {canEdit ? (
                           <details className={styles.moreMenu}>
-                            <summary>More</summary>
+                            <summary>{t("pages.library.more")}</summary>
                             <div className={styles.moreMenuPanel}>
                               <button
                                 disabled={Boolean(busyAction)}
                                 onClick={() => void runArtifactAction("duplicate", [round.id])}
                                 type="button"
                               >
-                                Duplicate
+                                {t("pages.library.duplicate")}
                               </button>
                               <button
                                 className={!archived ? styles.dangerAction : undefined}
@@ -730,7 +779,7 @@ function LibraryContent() {
                                 }
                                 type="button"
                               >
-                                {archived ? "Restore" : "Archive"}
+                                {archived ? t("pages.library.restore") : t("pages.library.archive")}
                               </button>
                             </div>
                           </details>
@@ -776,7 +825,9 @@ function LibraryContent() {
                       {canEdit ? (
                         <label className={styles.cardSelector}>
                           <input
-                            aria-label={`Select ${presentation.title}`}
+                            aria-label={t("pages.library.selectItem", {
+                              title: presentation.title,
+                            })}
                             checked={selected}
                             onChange={() => toggleSelection(presentation.id)}
                             type="checkbox"
@@ -784,7 +835,12 @@ function LibraryContent() {
                         </label>
                       ) : null}
                       <button
-                        aria-label={`${presentation.favorite ? "Remove" : "Add"} ${presentation.title} ${presentation.favorite ? "from" : "to"} favorites`}
+                        aria-label={t(
+                          presentation.favorite
+                            ? "pages.library.removeFavorite"
+                            : "pages.library.addFavorite",
+                          { title: presentation.title },
+                        )}
                         aria-pressed={presentation.favorite}
                         className={styles.favoriteButton}
                         disabled={busyAction === "favorite"}
@@ -804,43 +860,61 @@ function LibraryContent() {
                       <div className={styles.cardBody}>
                         <div className={styles.cardMeta}>
                           <span className={styles.status} data-status={presentation.status}>
-                            {presentation.status}
+                            {t(`pages.common.status.${presentation.status}`)}
                           </span>
                           {presentation.hasUnpublishedChanges &&
                           presentation.status === "published" ? (
-                            <span className={styles.changed}>Unpublished changes</span>
+                            <span className={styles.changed}>
+                              {t("pages.library.unpublishedChanges")}
+                            </span>
                           ) : (
-                            <span>Updated {dateLabel(presentation.updatedAt)}</span>
+                            <span>
+                              {t("pages.common.updated", {
+                                date: dateLabel(locale, presentation.updatedAt),
+                              })}
+                            </span>
                           )}
                         </div>
                         <div className={styles.cardMain}>
-                          <h2>{presentation.title}</h2>
+                          <h2 lang="">{presentation.title}</h2>
                           {presentation.description ? (
-                            <p className={styles.description}>{presentation.description}</p>
+                            <p className={styles.description} lang="">
+                              {presentation.description}
+                            </p>
                           ) : null}
                           <p className={styles.facts}>
-                            {presentation.blockCount} structured blocks
+                            {t("pages.library.structuredBlockCount", {
+                              count: presentation.blockCount,
+                            })}
                           </p>
-                          <p className={styles.folderLabel}>{folderName ?? "Unfiled"}</p>
+                          <p className={styles.folderLabel}>
+                            {folderName ? (
+                              <span lang="">{folderName}</span>
+                            ) : (
+                              t("pages.library.unfiled")
+                            )}
+                          </p>
                         </div>
                         <div className={styles.cardActions}>
                           <Link
                             className="button-quiet small-button"
                             href={`/presentation/${presentation.id}`}
                           >
-                            {canEdit && !archived ? "Edit" : "View"}
+                            {canEdit && !archived
+                              ? t("pages.library.edit")
+                              : t("pages.library.view")}
                           </Link>
                           {presentation.currentVersionId && canEdit && !archived ? (
                             <Link
                               className="button small-button"
                               href={`/presentation/${presentation.id}/host`}
                             >
-                              Host
+                              {t("pages.library.host")}
                             </Link>
                           ) : null}
                           {canEdit ? (
                             <details className={styles.moreMenu}>
-                              <summary>More</summary>
+                              <summary>{t("pages.library.more")}</summary>
                               <div className={styles.moreMenuPanel}>
                                 <button
                                   className={!archived ? styles.dangerAction : undefined}
@@ -852,7 +926,9 @@ function LibraryContent() {
                                   }
                                   type="button"
                                 >
-                                  {archived ? "Restore" : "Archive"}
+                                  {archived
+                                    ? t("pages.library.restore")
+                                    : t("pages.library.archive")}
                                 </button>
                               </div>
                             </details>
@@ -889,28 +965,31 @@ function EmptyLibrary({
   filtered: boolean;
   onClear: () => void;
 }) {
+  const { t } = useLocale();
   return (
     <section className={styles.empty}>
       <span aria-hidden="true">{type === "rounds" ? "R" : "P"}</span>
       <h2>
         {filtered
-          ? `No ${type} match`
-          : `Create your first ${type === "rounds" ? "Round" : "Presentation"}`}
+          ? t("pages.library.noMatch", {
+              type: t(type === "rounds" ? "pages.common.rounds" : "pages.common.presentations"),
+            })
+          : t(type === "rounds" ? "pages.library.firstRound" : "pages.library.firstPresentation")}
       </h2>
       <p>
         {filtered
-          ? "Try a broader search or clear the active filters."
+          ? t("pages.library.noMatchDescription")
           : type === "rounds"
-            ? "Build a focused diagnostic and connect it to a Recovery recheck."
-            : "Combine clear content slides with questions that bring every voice into the room."}
+            ? t("pages.library.firstRoundDescription")
+            : t("pages.library.firstPresentationDescription")}
       </p>
       {filtered ? (
         <button className="button-quiet" onClick={onClear} type="button">
-          Clear filters
+          {t("pages.results.clearFilters")}
         </button>
       ) : canEdit ? (
         <Link className="button" href={type === "rounds" ? "/create" : "/create/presentation"}>
-          Create {type === "rounds" ? "Round" : "Presentation"}
+          {t(type === "rounds" ? "pages.library.createRound" : "pages.library.createPresentation")}
         </Link>
       ) : null}
     </section>

@@ -2,8 +2,10 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useLocale } from "./locale-provider";
 
 export function JoinCodeForm({ compact = false }: { compact?: boolean }) {
+  const { t } = useLocale();
   const [code, setCode] = useState("");
   const router = useRouter();
 
@@ -13,9 +15,9 @@ export function JoinCodeForm({ compact = false }: { compact?: boolean }) {
   }
 
   return (
-    <form onSubmit={submit} aria-label="Join a live round">
+    <form onSubmit={submit} aria-label={t("delivery.join.formLabel")}>
       <div className="field">
-        <label htmlFor={compact ? "home-code" : "join-code"}>Seven-digit round code</label>
+        <label htmlFor={compact ? "home-code" : "join-code"}>{t("delivery.join.codeLabel")}</label>
         <input
           autoComplete="one-time-code"
           className="input code-input"
@@ -29,7 +31,7 @@ export function JoinCodeForm({ compact = false }: { compact?: boolean }) {
         />
       </div>
       <button className="button full-width" disabled={code.length !== 7} type="submit">
-        Continue
+        {t("delivery.common.continue")}
       </button>
     </form>
   );

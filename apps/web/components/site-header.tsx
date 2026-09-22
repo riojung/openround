@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { Brand } from "./brand";
 import { apiFetch, humanError } from "../lib/api";
+import { useLocale } from "./locale-provider";
 
 interface CreatorSummary {
   email: string;
@@ -15,6 +16,7 @@ type SessionState =
   | { status: "signed-in"; creator: CreatorSummary };
 
 export function SiteHeader() {
+  const { t } = useLocale();
   const [session, setSession] = useState<SessionState>({ status: "checking", creator: null });
   const [menuOpen, setMenuOpen] = useState(false);
   const [signOutError, setSignOutError] = useState("");
@@ -57,12 +59,12 @@ export function SiteHeader() {
   return (
     <header className="shell topbar site-header">
       <a className="skip-link" href="#main">
-        Skip to content
+        {t("delivery.site.skip")}
       </a>
       <Brand />
       <nav
         aria-busy={session.status === "checking"}
-        aria-label="Primary navigation"
+        aria-label={t("delivery.site.primaryNavigation")}
         className="nav-links site-desktop-nav"
       >
         {signedIn ? (
@@ -70,15 +72,15 @@ export function SiteHeader() {
             <span className="creator-identity" title={session.creator.email}>
               {session.creator.email}
             </span>
-            <Link href="/dashboard">My checkpoint sets</Link>
-            <Link href="/account">Account</Link>
+            <Link href="/dashboard">{t("delivery.site.myRounds")}</Link>
+            <Link href="/account">{t("delivery.site.account")}</Link>
             <button
               className="nav-text-button"
               disabled={signingOut}
               onClick={() => void signOut()}
               type="button"
             >
-              {signingOut ? "Signing out…" : "Sign out"}
+              {signingOut ? t("delivery.site.signingOut") : t("delivery.site.signOut")}
             </button>
             {signOutError ? (
               <span className="site-nav-error" role="alert">
@@ -88,18 +90,18 @@ export function SiteHeader() {
           </>
         ) : (
           <>
-            <Link href="/pricing">Pricing</Link>
-            <Link href="/privacy">Privacy</Link>
-            <Link href="/signin">Sign in</Link>
+            <Link href="/pricing">{t("delivery.site.pricing")}</Link>
+            <Link href="/privacy">{t("delivery.site.privacy")}</Link>
+            <Link href="/signin">{t("delivery.site.signIn")}</Link>
           </>
         )}
         <Link className="button small-button" href="/join">
-          Join a round
+          {t("delivery.site.joinRound")}
         </Link>
       </nav>
       <div className="site-mobile-actions">
         <Link className="button small-button" href={signedIn ? "/dashboard" : "/signin"}>
-          {signedIn ? "My sets" : "Sign in"}
+          {signedIn ? t("delivery.site.myLibrary") : t("delivery.site.signIn")}
         </Link>
         <button
           aria-controls={mobileMenuId}
@@ -108,12 +110,12 @@ export function SiteHeader() {
           onClick={() => setMenuOpen((open) => !open)}
           type="button"
         >
-          {menuOpen ? "Close" : "Menu"}
+          {menuOpen ? t("delivery.site.close") : t("delivery.site.menu")}
         </button>
       </div>
       <nav
         aria-busy={session.status === "checking"}
-        aria-label="Mobile navigation"
+        aria-label={t("delivery.site.mobileNavigation")}
         className="site-mobile-nav"
         hidden={!menuOpen}
         id={mobileMenuId}
@@ -121,26 +123,26 @@ export function SiteHeader() {
         {signedIn ? (
           <>
             <div className="site-mobile-session">
-              <span>Signed in as</span>
+              <span>{t("delivery.site.signedInAs")}</span>
               <strong>{session.creator.email}</strong>
             </div>
-            <Link href="/dashboard">My checkpoint sets</Link>
-            <Link href="/account">Account</Link>
-            <Link href="/pricing">Plans</Link>
+            <Link href="/dashboard">{t("delivery.site.myRounds")}</Link>
+            <Link href="/account">{t("delivery.site.account")}</Link>
+            <Link href="/pricing">{t("delivery.site.plans")}</Link>
             <button disabled={signingOut} onClick={() => void signOut()} type="button">
-              {signingOut ? "Signing out…" : "Sign out"}
+              {signingOut ? t("delivery.site.signingOut") : t("delivery.site.signOut")}
             </button>
           </>
         ) : (
           <>
             <Link className="site-mobile-primary" href="/signin">
-              Sign in to create and manage checkpoint sets
+              {t("delivery.site.signInToCreate")}
             </Link>
-            <Link href="/pricing">Pricing</Link>
-            <Link href="/privacy">Privacy</Link>
+            <Link href="/pricing">{t("delivery.site.pricing")}</Link>
+            <Link href="/privacy">{t("delivery.site.privacy")}</Link>
           </>
         )}
-        <Link href="/join">Join a round</Link>
+        <Link href="/join">{t("delivery.site.joinRound")}</Link>
         {signOutError ? (
           <p className="site-nav-error" role="alert">
             {signOutError}

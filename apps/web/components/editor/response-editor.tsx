@@ -8,6 +8,7 @@ import {
   type QuestionStructuralChange,
   type QuestionUpdater,
 } from "./types";
+import { useLocale } from "../locale-provider";
 
 function ChoiceResponseEditor({
   question,
@@ -20,11 +21,14 @@ function ChoiceResponseEditor({
   onStructuralChange: QuestionStructuralChange;
   onUpdateChoiceQuestion: ChoiceQuestionUpdater;
 }) {
+  const { locale, t } = useLocale();
   return (
     <>
       <fieldset style={{ border: 0, margin: 0, padding: 0 }}>
         <legend className="field-label" style={{ marginBottom: 10 }}>
-          {question.type === "poll" ? "Poll choices" : "Choices and correct answer"}
+          {question.type === "poll"
+            ? t("questionType.poll.label")
+            : t("delivery.builder.choicesAndCorrect")}
         </legend>
         {question.choices.map((choice, index) => (
           <div className="choice-row" key={choice.id}>
@@ -52,15 +56,20 @@ function ChoiceResponseEditor({
                     })),
                   }))
                 }
+                lang="en-CA"
                 type={question.type === "multi_select" ? "checkbox" : "radio"}
               />
             ) : null}
             <div style={{ flex: 1 }}>
+              <span className="sr-only" id={`answer-label-${choice.id}`} lang={locale}>
+                {t("delivery.builder.answer", { number: index + 1 })}
+              </span>
               <input
-                aria-label={`Choice ${index + 1}`}
+                aria-labelledby={`answer-label-${choice.id}`}
                 aria-invalid={!choice.label.trim()}
                 className="input"
                 disabled={question.type === "true_false"}
+                lang=""
                 maxLength={180}
                 onChange={(event) =>
                   onUpdateChoiceQuestion((item) => ({
@@ -75,51 +84,65 @@ function ChoiceResponseEditor({
                 value={choice.label}
               />
               {question.type !== "poll" ? (
-                <BetaDisclosure
-                  className="choice-diagnostics"
-                  enabled={uxBeta}
-                  summary="Diagnostic rationale and feedback"
-                >
-                  <div className="toolbar" style={{ marginTop: 8 }}>
-                    <input
-                      aria-label={`Misconception tag for choice ${index + 1}`}
-                      className="input"
-                      maxLength={64}
-                      onChange={(event) =>
-                        onUpdateChoiceQuestion((item) => ({
-                          ...item,
-                          choices: item.choices.map((candidate) =>
-                            candidate.id === choice.id
-                              ? {
-                                  ...candidate,
-                                  misconceptionKey: event.target.value || null,
-                                }
-                              : candidate,
-                          ),
-                        }))
-                      }
-                      placeholder="Misconception tag, such as unit-confusion"
-                      value={choice.misconceptionKey ?? ""}
-                    />
-                    <input
-                      aria-label={`Why someone might choose choice ${index + 1}`}
-                      className="input"
-                      maxLength={500}
-                      onChange={(event) =>
-                        onUpdateChoiceQuestion((item) => ({
-                          ...item,
-                          choices: item.choices.map((candidate) =>
-                            candidate.id === choice.id
-                              ? { ...candidate, feedback: event.target.value }
-                              : candidate,
-                          ),
-                        }))
-                      }
-                      placeholder="Why might someone choose this?"
-                      value={choice.feedback ?? ""}
-                    />
-                  </div>
-                </BetaDisclosure>
+                <div lang="en-CA">
+                  <BetaDisclosure
+                    className="choice-diagnostics"
+                    enabled={uxBeta}
+                    summary="Diagnostic rationale and feedback"
+                  >
+                    <div className="toolbar" style={{ marginTop: 8 }}>
+                      <span
+                        className="sr-only"
+                        id={`misconception-label-${choice.id}`}
+                        lang="en-CA"
+                      >
+                        Misconception tag for choice {index + 1}
+                      </span>
+                      <input
+                        aria-labelledby={`misconception-label-${choice.id}`}
+                        className="input"
+                        lang={choice.misconceptionKey ? "" : "en-CA"}
+                        maxLength={64}
+                        onChange={(event) =>
+                          onUpdateChoiceQuestion((item) => ({
+                            ...item,
+                            choices: item.choices.map((candidate) =>
+                              candidate.id === choice.id
+                                ? {
+                                    ...candidate,
+                                    misconceptionKey: event.target.value || null,
+                                  }
+                                : candidate,
+                            ),
+                          }))
+                        }
+                        placeholder="Misconception tag, such as unit-confusion"
+                        value={choice.misconceptionKey ?? ""}
+                      />
+                      <span className="sr-only" id={`feedback-label-${choice.id}`} lang="en-CA">
+                        Why someone might choose choice {index + 1}
+                      </span>
+                      <input
+                        aria-labelledby={`feedback-label-${choice.id}`}
+                        className="input"
+                        lang={choice.feedback ? "" : "en-CA"}
+                        maxLength={500}
+                        onChange={(event) =>
+                          onUpdateChoiceQuestion((item) => ({
+                            ...item,
+                            choices: item.choices.map((candidate) =>
+                              candidate.id === choice.id
+                                ? { ...candidate, feedback: event.target.value }
+                                : candidate,
+                            ),
+                          }))
+                        }
+                        placeholder="Why might someone choose this?"
+                        value={choice.feedback ?? ""}
+                      />
+                    </div>
+                  </BetaDisclosure>
+                </div>
               ) : null}
             </div>
             {question.type !== "true_false" && question.choices.length > 2 ? (
@@ -136,7 +159,7 @@ function ChoiceResponseEditor({
                 }
                 type="button"
               >
-                Remove
+                {t("delivery.common.delete")}
               </button>
             ) : null}
           </div>
@@ -153,7 +176,7 @@ function ChoiceResponseEditor({
           }
           type="button"
         >
-          Add choice
+          {t("delivery.builder.addAnswer")}
         </button>
       ) : null}
     </>
@@ -173,6 +196,7 @@ export function ResponseEditor({
   onUpdateChoiceQuestion: ChoiceQuestionUpdater;
   onUpdateQuestion: QuestionUpdater;
 }) {
+  const { t } = useLocale();
   if (isChoiceQuestion(question)) {
     return (
       <ChoiceResponseEditor
@@ -188,10 +212,11 @@ export function ResponseEditor({
     return (
       <div className="toolbar">
         <label className="field" style={{ flex: "1 1 180px" }}>
-          <span>Correct value</span>
+          <span>{t("delivery.builder.correctValue")}</span>
           <input
             className="input"
             inputMode="decimal"
+            lang=""
             onChange={(event) =>
               onUpdateQuestion((item) =>
                 item.type === "numeric" ? { ...item, correctValue: event.target.value } : item,
@@ -201,10 +226,11 @@ export function ResponseEditor({
           />
         </label>
         <label className="field" style={{ flex: "1 1 180px" }}>
-          <span>Absolute tolerance</span>
+          <span lang="en-CA">Absolute tolerance</span>
           <input
             className="input"
             inputMode="decimal"
+            lang=""
             onChange={(event) =>
               onUpdateQuestion((item) =>
                 item.type === "numeric" ? { ...item, tolerance: event.target.value } : item,
@@ -214,9 +240,10 @@ export function ResponseEditor({
           />
         </label>
         <label className="field" style={{ flex: "1 1 180px" }}>
-          <span>Optional unit</span>
+          <span lang="en-CA">Optional unit</span>
           <input
             className="input"
+            lang=""
             maxLength={32}
             onChange={(event) =>
               onUpdateQuestion((item) =>
@@ -233,7 +260,7 @@ export function ResponseEditor({
   return (
     <div className="toolbar">
       <label className="field" style={{ flex: "1 1 120px" }}>
-        <span>Minimum</span>
+        <span lang="en-CA">Minimum</span>
         <select
           className="select"
           onChange={(event) =>
@@ -249,7 +276,7 @@ export function ResponseEditor({
         </select>
       </label>
       <label className="field" style={{ flex: "1 1 120px" }}>
-        <span>Maximum</span>
+        <span lang="en-CA">Maximum</span>
         <select
           className="select"
           onChange={(event) =>
@@ -265,9 +292,10 @@ export function ResponseEditor({
         </select>
       </label>
       <label className="field" style={{ flex: "1 1 180px" }}>
-        <span>Minimum label</span>
+        <span lang="en-CA">Minimum label</span>
         <input
           className="input"
+          lang=""
           onChange={(event) =>
             onUpdateQuestion((item) =>
               item.type === "rating" ? { ...item, minLabel: event.target.value } : item,
@@ -277,9 +305,10 @@ export function ResponseEditor({
         />
       </label>
       <label className="field" style={{ flex: "1 1 180px" }}>
-        <span>Maximum label</span>
+        <span lang="en-CA">Maximum label</span>
         <input
           className="input"
+          lang=""
           onChange={(event) =>
             onUpdateQuestion((item) =>
               item.type === "rating" ? { ...item, maxLabel: event.target.value } : item,

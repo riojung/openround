@@ -7,7 +7,7 @@ export default function PrivacyPage() {
   return (
     <>
       <SiteHeader />
-      <main className="shell page-main legal-copy" id="main">
+      <main className="shell page-main legal-copy" id="main" lang="en-CA">
         <p className="eyebrow">Draft for legal review</p>
         <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5rem)" }}>Privacy notice</h1>
         <p>

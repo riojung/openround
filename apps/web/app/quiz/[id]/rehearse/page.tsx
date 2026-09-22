@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Brand } from "../../../../components/brand";
+import { useLocale } from "../../../../components/locale-provider";
 import {
   RecoveryRehearsal,
   type RecoveryRehearsalQuiz,
@@ -18,6 +19,7 @@ import { apiFetch, humanError } from "../../../../lib/api";
 import styles from "../../../../components/rehearsal/rehearsal.module.css";
 
 export default function RehearsePage() {
+  const { t } = useLocale();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [payload, setPayload] = useState<{
@@ -67,18 +69,24 @@ export default function RehearsePage() {
     ? rehearsalReturnLink({ quizId: id, role: payload.role, status: payload.quiz.status })
     : { href: "/dashboard", label: "Back to Rounds" };
   const archived = payload?.quiz.status === "archived";
+  const returnLabel =
+    returnLink.label === "Back to Round preview"
+      ? t("reportRound.rehearsal.backToPreview")
+      : returnLink.label === "Back to editor"
+        ? t("delivery.presentation.backToEditor")
+        : t("reportRound.rehearsal.backToRounds");
 
   return (
     <div className={styles.page} data-testid="rehearsal-page">
       <a className={styles.skipLink} href="#rehearsal-main">
-        Skip to rehearsal
+        {t("reportRound.rehearsal.skip")}
       </a>
       <header className={styles.topbar}>
         <Brand />
         <div className={styles.topbarActions}>
-          <span className={styles.readOnlyBadge}>Read-only practice · synthetic learners only</span>
+          <span className={styles.readOnlyBadge}>{t("reportRound.rehearsal.readOnlyBadge")}</span>
           <Link className={styles.quietLink} href={returnLink.href}>
-            {returnLink.label}
+            {returnLabel}
           </Link>
         </div>
       </header>
@@ -86,38 +94,37 @@ export default function RehearsePage() {
         {!payload && !error ? (
           <section aria-live="polite" className={styles.stateCard}>
             <span aria-hidden="true" className={styles.loadingDot} />
-            <p>Preparing a private practice room…</p>
+            <p>{t("reportRound.rehearsal.preparing")}</p>
           </section>
         ) : null}
         {error ? (
           <section className={styles.stateCard}>
-            <p className={styles.eyebrow}>Recovery rehearsal</p>
-            <h1>We couldn’t open this Round.</h1>
-            <p className={styles.error} role="alert">
+            <p className={styles.eyebrow}>{t("reportRound.rehearsal.eyebrow")}</p>
+            <h1>{t("reportRound.rehearsal.openError")}</h1>
+            <p className={styles.error} lang="en-CA" role="alert">
               {error}
             </p>
             <Link className={styles.primaryLink} href="/dashboard">
-              Back to Rounds
+              {t("reportRound.rehearsal.backToRounds")}
             </Link>
           </section>
         ) : null}
         {payload && !payload.available ? (
           <section className={styles.stateCard} data-testid="rehearsal-unavailable">
-            <p className={styles.eyebrow}>Recovery rehearsal</p>
+            <p className={styles.eyebrow}>{t("reportRound.rehearsal.eyebrow")}</p>
             <h1>
               {archived
-                ? "Archived Rounds can’t be rehearsed."
-                : "This practice lab isn’t available for your workspace."}
+                ? t("reportRound.rehearsal.archivedTitle")
+                : t("reportRound.rehearsal.unavailableTitle")}
             </h1>
             <p>
               {archived
-                ? "Restore this Round from Rounds before starting a rehearsal."
-                : "Ask a workspace administrator about the UX beta, or return to the Round."}{" "}
-              No synthetic room was started and no session, participant, answer, or rehearsal record
-              was created.
+                ? t("reportRound.rehearsal.archivedDescription")
+                : t("reportRound.rehearsal.unavailableDescription")}{" "}
+              {t("reportRound.rehearsal.noRecordCreated")}
             </p>
             <Link className={styles.primaryLink} href={returnLink.href}>
-              {returnLink.label}
+              {returnLabel}
             </Link>
           </section>
         ) : null}

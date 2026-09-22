@@ -22,7 +22,6 @@ import {
   QuestionInspector,
   type InspectorTab,
 } from "../../../components/editor/question-inspector";
-import { editorTypeLabel } from "../../../components/editor/question-labels";
 import { QuestionNavigator } from "../../../components/editor/question-navigator";
 import { QuestionReusePicker } from "../../../components/editor/question-reuse-picker";
 import { ReadinessSummary } from "../../../components/editor/readiness-summary";
@@ -30,7 +29,9 @@ import { ResponseEditor } from "../../../components/editor/response-editor";
 import builderStyles from "../../../components/editor/round-builder.module.css";
 import { isChoiceQuestion, type ChoiceQuestionDraft } from "../../../components/editor/types";
 import { ExperiencePicker } from "../../../components/experience-picker";
+import { useLocale } from "../../../components/locale-provider";
 import { ApiClientError, apiFetch, humanError } from "../../../lib/api";
+import { formatDateTime, formatNumber } from "../../../lib/i18n/format";
 import {
   clearBuilderRecovery,
   loadBuilderRecovery,
@@ -103,6 +104,7 @@ function newQuestion(type: QuestionType): QuestionDraft {
 }
 
 export default function QuizEditorPage() {
+  const { locale, t } = useLocale();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -139,6 +141,7 @@ export default function QuizEditorPage() {
   const [mediaState, setMediaState] = useState<"idle" | "uploading" | "scanning">("idle");
   const [mediaPreviewUrl, setMediaPreviewUrl] = useState("");
   const [error, setError] = useState("");
+  const [errorIsRaw, setErrorIsRaw] = useState(false);
   const [validationAction, setValidationAction] = useState<"preview" | "publish" | null>(null);
   const [questionMapCollapsed, setQuestionMapCollapsed] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
@@ -286,7 +289,10 @@ export default function QuizEditorPage() {
       .catch((caught) => {
         if (!active) return;
         if ((caught as { status?: number }).status === 401) router.replace("/signin");
-        else setError(humanError(caught));
+        else {
+          setError(humanError(caught));
+          setErrorIsRaw(true);
+        }
       });
     return () => {
       active = false;
@@ -352,6 +358,7 @@ export default function QuizEditorPage() {
           setQuiz(saved);
           setSaveState("saved");
           setError("");
+          setErrorIsRaw(false);
           void clearBuilderRecovery(recoveryKey);
         })
         .catch((caught) => {
@@ -361,10 +368,12 @@ export default function QuizEditorPage() {
             setSaveConflict(true);
             setSaveState("conflict");
             setError("");
+            setErrorIsRaw(false);
             return;
           }
           recordAuthoringEvent("draft_save_failed", "round");
           setError(humanError(caught));
+          setErrorIsRaw(true);
           setSaveState("error");
         });
     }, 700);
@@ -440,7 +449,7 @@ export default function QuizEditorPage() {
     applyStructuralChange({ ...draft, questions: [...draft.questions, inserted] }, inserted.id, {
       draft,
       selectedQuestionId,
-      message: "Question added.",
+      message: t("reportRound.editor.history.questionAdded"),
     });
     setInspectorTab("build");
   }
@@ -466,19 +475,26 @@ export default function QuizEditorPage() {
     const cloned = cloneQuestionReuseSelections(questionReuseSources, selections, clientUuid);
     if (cloned.includedQuestionCount === 0) return;
     if (draft.questions.length + cloned.includedQuestionCount > 200) {
-      setError("Select fewer questions so this Round stays within the 200-question limit.");
+      setError(t("reportRound.editor.reuseLimit"));
+      setErrorIsRaw(false);
       return;
     }
     setError("");
+    setErrorIsRaw(false);
     applyStructuralChange(
       { ...draft, questions: [...draft.questions, ...cloned.questions] },
       cloned.firstQuestionId,
       {
         draft,
         selectedQuestionId,
-        message: `${cloned.includedQuestionCount} ${
-          cloned.includedQuestionCount === 1 ? "question" : "questions"
-        } reused.`,
+        message: t(
+          cloned.includedQuestionCount === 1
+            ? "reportRound.editor.history.questionsReused.one"
+            : "reportRound.editor.history.questionsReused.other",
+          {
+            count: formatNumber(locale, cloned.includedQuestionCount),
+          },
+        ),
       },
     );
     setQuestionReuseOpen(false);
@@ -493,7 +509,7 @@ export default function QuizEditorPage() {
     const undo = {
       draft,
       selectedQuestionId,
-      message: "Question deleted.",
+      message: t("reportRound.editor.history.questionDeleted"),
     };
     const next = removeQuestionById(draft, removedId);
     applyStructuralChange(next, next.questions[Math.max(0, removedIndex - 1)]?.id ?? null, undo);
@@ -517,7 +533,7 @@ export default function QuizEditorPage() {
     applyStructuralChange({ ...draft, questions: next }, copy.id, {
       draft,
       selectedQuestionId,
-      message: "Question duplicated.",
+      message: t("reportRound.editor.history.questionDuplicated"),
     });
   }
 
@@ -541,7 +557,7 @@ export default function QuizEditorPage() {
     applyStructuralChange({ ...draft, questions: next }, linked.id, {
       draft,
       selectedQuestionId,
-      message: "Recheck question added.",
+      message: t("reportRound.editor.history.recheckAdded"),
     });
     setInspectorTab("recover");
   }
@@ -554,7 +570,7 @@ export default function QuizEditorPage() {
     const undo = {
       draft,
       selectedQuestionId,
-      message: "Question moved.",
+      message: t("reportRound.editor.history.questionMoved"),
     };
     applyStructuralChange(moveQuestionById(draft, questionId, direction), questionId, undo);
   }
@@ -564,6 +580,7 @@ export default function QuizEditorPage() {
     loadDraft(recoverySnapshot.draft);
     setRecoverySnapshot(null);
     setError("");
+    setErrorIsRaw(false);
     setSaveState("idle");
   }
 
@@ -575,6 +592,7 @@ export default function QuizEditorPage() {
   async function reloadLatestDraft() {
     setSaveState("saving");
     setError("");
+    setErrorIsRaw(false);
     try {
       const { quiz: latest } = await apiFetch<{ quiz: QuizRecord }>(`/v1/quizzes/${id}`);
       serverRevision.current = latest.draftRevision ?? 0;
@@ -586,6 +604,7 @@ export default function QuizEditorPage() {
       await clearBuilderRecovery(recoveryKey);
     } catch (caught) {
       setError(humanError(caught));
+      setErrorIsRaw(true);
       setSaveState("error");
     }
   }
@@ -604,8 +623,11 @@ export default function QuizEditorPage() {
   async function duplicateLocalDraft() {
     if (!draft) return;
     setError("");
+    setErrorIsRaw(false);
     try {
-      const title = `${draft.title.trim() || "Untitled Round"} — recovered copy`;
+      const title = t("reportRound.editor.recoveredCopy", {
+        title: draft.title.trim() || t("delivery.builder.titlePlaceholder"),
+      });
       const { quiz: created } = await apiFetch<{ quiz: QuizRecord }>("/v1/quizzes", {
         method: "POST",
         body: JSON.stringify({ title, description: draft.description ?? "" }),
@@ -621,6 +643,7 @@ export default function QuizEditorPage() {
       router.push(`/quiz/${created.id}`);
     } catch (caught) {
       setError(humanError(caught));
+      setErrorIsRaw(true);
     }
   }
 
@@ -637,6 +660,7 @@ export default function QuizEditorPage() {
     }
     setValidationAction(null);
     setError("");
+    setErrorIsRaw(false);
     const revision = ++latestSaveRevision.current;
     setSaveState("saving");
     let draftSaved = false;
@@ -671,6 +695,7 @@ export default function QuizEditorPage() {
         recordAuthoringEvent("draft_save_failed", "round");
       }
       setError(humanError(caught));
+      setErrorIsRaw(true);
       if (revision === latestSaveRevision.current) setSaveState("error");
     }
   }
@@ -687,6 +712,7 @@ export default function QuizEditorPage() {
     }
     setValidationAction(null);
     setError("");
+    setErrorIsRaw(false);
     const revision = ++latestSaveRevision.current;
     setSaveState("saving");
     try {
@@ -705,6 +731,7 @@ export default function QuizEditorPage() {
       }
       recordAuthoringEvent("draft_save_failed", "round");
       setError(humanError(caught));
+      setErrorIsRaw(true);
       if (revision === latestSaveRevision.current) setSaveState("error");
     }
   }
@@ -714,11 +741,13 @@ export default function QuizEditorPage() {
     const current = draft.questions[selectedIndex];
     const altText = current?.mediaAlt?.trim();
     if (!current || !altText) {
-      setError("Describe the instructional image before uploading it.");
+      setError(t("reportRound.editor.describeImage"));
+      setErrorIsRaw(false);
       return;
     }
     const questionId = current.id;
     setError("");
+    setErrorIsRaw(false);
     setMediaState("uploading");
     try {
       const ticket = await apiFetch<{
@@ -763,6 +792,7 @@ export default function QuizEditorPage() {
       setMediaPreviewUrl(finalized.downloadUrl);
     } catch (caught) {
       setError(humanError(caught));
+      setErrorIsRaw(true);
     } finally {
       setMediaState("idle");
     }
@@ -787,6 +817,14 @@ export default function QuizEditorPage() {
   const issueQuestionIds = new Set(
     readinessIssues.flatMap((issue) => (issue.questionId ? [issue.questionId] : [])),
   );
+  const localizedQuestionTypeLabels: Record<QuestionType, string> = {
+    single_select: t("delivery.builder.type.single_select"),
+    true_false: t("delivery.builder.type.true_false"),
+    multi_select: t("delivery.builder.type.multi_select"),
+    numeric: t(uxBeta ? "delivery.builder.type.numeric" : "delivery.builder.type.numericLegacy"),
+    rating: t("delivery.builder.type.rating"),
+    poll: t("delivery.builder.type.poll"),
+  };
   const publishLimitReached = Boolean(
     quiz &&
     !quiz.currentVersionId &&
@@ -805,17 +843,17 @@ export default function QuizEditorPage() {
           <div className="button-row">
             <span className="muted" role="status">
               {saveState === "saving"
-                ? "Saving…"
+                ? t("delivery.common.saving")
                 : saveState === "saved"
-                  ? "Saved"
+                  ? t("delivery.common.saved")
                   : saveState === "conflict"
-                    ? "Edit conflict"
+                    ? t("delivery.builder.editConflict")
                     : saveState === "error"
-                      ? "Save failed"
+                      ? t("delivery.builder.saveFailed")
                       : ""}
             </span>
             <Link className="button-quiet small-button" href="/dashboard">
-              Dashboard
+              {t("delivery.builder.dashboard")}
             </Link>
             <button
               className="button-quiet small-button"
@@ -823,13 +861,13 @@ export default function QuizEditorPage() {
               onClick={() => void openPreview()}
               type="button"
             >
-              Preview
+              {t("delivery.common.preview")}
             </button>
             {practiceAssignmentsAvailable &&
             quiz?.status === "published" &&
             quiz.currentVersionId ? (
               <Link className="button-quiet small-button" href={`/quiz/${id}/assign`}>
-                Assign practice
+                {t("delivery.builder.assignPractice")}
               </Link>
             ) : null}
             <button
@@ -838,26 +876,36 @@ export default function QuizEditorPage() {
               onClick={() => void publish()}
               type="button"
             >
-              {publishLimitReached ? "Publish limit reached" : "Publish"}
+              {t("delivery.common.publish")}
             </button>
           </div>
         </header>
         <main className="shell page-main" id="main">
           <div className="page-heading">
             <div>
-              <p className="eyebrow">Checkpoint set editor</p>
+              <p className="eyebrow" lang="en-CA">
+                Checkpoint set editor
+              </p>
               <h1 style={{ fontSize: "clamp(2.4rem, 6vw, 4rem)" }}>
-                {draft?.title || "Untitled checkpoint set"}
+                {draft?.title ? (
+                  <span lang="">{draft.title}</span>
+                ) : (
+                  <span lang="en-CA">Untitled checkpoint set</span>
+                )}
               </h1>
             </div>
-            {quiz ? <span className="status-pill">{quiz.status}</span> : null}
+            {quiz ? (
+              <span className="status-pill" lang="en-CA">
+                {quiz.status}
+              </span>
+            ) : null}
           </div>
           {recoverySnapshot ? (
-            <section className="notice" role="status">
+            <section className="notice" lang="en-CA" role="status">
               <strong>Unsaved local work is available</strong>
               <p>
                 This browser preserved changes from{" "}
-                {new Date(recoverySnapshot.savedAt).toLocaleString()}.
+                <span lang={locale}>{formatDateTime(locale, recoverySnapshot.savedAt)}</span>.
               </p>
               <div className="button-row">
                 <button
@@ -878,7 +926,7 @@ export default function QuizEditorPage() {
             </section>
           ) : null}
           {saveConflict ? (
-            <section className="error" role="alert">
+            <section className="error" lang="en-CA" role="alert">
               <strong>A newer server edit prevented this save</strong>
               <p>
                 Your local work is preserved. Reload the current server draft, download your local
@@ -910,13 +958,14 @@ export default function QuizEditorPage() {
             </section>
           ) : null}
           {error ? (
-            <p className="error" role="alert">
+            <p className="error" lang={errorIsRaw ? "en-CA" : undefined} role="alert">
               {error}
             </p>
           ) : null}
           {draftGuidance ? (
             <div
               className={`${validationAction ? "error" : "notice"} validation-guidance`}
+              lang="en-CA"
               role={validationAction ? "alert" : undefined}
             >
               <strong>
@@ -951,32 +1000,36 @@ export default function QuizEditorPage() {
             </div>
           ) : null}
           {publishLimitReached ? (
-            <p className="notice">
+            <p className="notice" lang="en-CA">
               This plan&apos;s {entitlements?.maxPublishedQuizzes} published checkpoint set slots
               are in use. Archive a published set or compare plans before publishing this draft.
             </p>
           ) : null}
           {!draft ? (
-            <p>Loading editor…</p>
+            <p>{t("delivery.common.loading")}</p>
           ) : (
             <>
               <section className="panel" style={{ marginBottom: 22 }}>
                 <div className="field">
-                  <label htmlFor="quiz-title">Title</label>
+                  <label htmlFor="quiz-title">{t("create.round.blank.titleLabel")}</label>
                   <input
                     aria-invalid={!draft.title.trim()}
                     className="input"
                     id="quiz-title"
+                    lang=""
                     maxLength={160}
                     onChange={(event) => setDraft({ ...draft, title: event.target.value })}
                     value={draft.title}
                   />
                 </div>
                 <div className="field">
-                  <label htmlFor="quiz-description">Description</label>
+                  <label htmlFor="quiz-description" lang="en-CA">
+                    Description
+                  </label>
                   <textarea
                     className="textarea"
                     id="quiz-description"
+                    lang=""
                     maxLength={1000}
                     onChange={(event) => setDraft({ ...draft, description: event.target.value })}
                     value={draft.description}
@@ -992,7 +1045,7 @@ export default function QuizEditorPage() {
                     presetId={draft.experiencePreset?.id ?? "focus"}
                   />
                 ) : (
-                  <p className="notice">
+                  <p className="notice" lang="en-CA">
                     Round Experiences are not enabled for this workspace. Existing presentation
                     metadata is preserved and new sessions use Focus.
                   </p>
@@ -1011,9 +1064,9 @@ export default function QuizEditorPage() {
                   selectedQuestionId={selectedQuestionId}
                   uxBeta={false}
                 />
-                <section className="panel" aria-label="Selected checkpoint editor">
+                <section className="panel" aria-label={t("delivery.builder.checkpoints")}>
                   {!question ? (
-                    <div>
+                    <div lang="en-CA">
                       <h2 style={{ fontSize: "1.7rem" }}>Add the first checkpoint</h2>
                       <p className="muted">Choose a response format for the signal you need.</p>
                     </div>
@@ -1024,14 +1077,17 @@ export default function QuizEditorPage() {
                         style={{ justifyContent: "space-between", marginBottom: 22 }}
                       >
                         <span className="status-pill">
-                          {editorTypeLabel(question.type, false)}
-                          {(question.delivery ?? "main") === "recheck" ? " · linked recheck" : ""}
+                          {localizedQuestionTypeLabels[question.type]}
+                          {(question.delivery ?? "main") === "recheck"
+                            ? ` · ${t("delivery.builder.linkedRecheck")}`
+                            : ""}
                         </span>
                         <div className="button-row">
                           <button
                             className="button-quiet small-button"
                             disabled={selectedIndex === 0}
                             onClick={() => moveQuestion(question.id, -1)}
+                            lang="en-CA"
                             type="button"
                           >
                             Move up
@@ -1040,6 +1096,7 @@ export default function QuizEditorPage() {
                             className="button-quiet small-button"
                             disabled={selectedIndex === draft.questions.length - 1}
                             onClick={() => moveQuestion(question.id, 1)}
+                            lang="en-CA"
                             type="button"
                           >
                             Move down
@@ -1049,7 +1106,7 @@ export default function QuizEditorPage() {
                             onClick={() => duplicateQuestion(question.id)}
                             type="button"
                           >
-                            Duplicate
+                            {t("delivery.common.duplicate")}
                           </button>
                           {(question.delivery ?? "main") === "main" &&
                           question.type !== "poll" &&
@@ -1058,6 +1115,7 @@ export default function QuizEditorPage() {
                             <button
                               className="button-quiet small-button"
                               onClick={addLinkedRecheck}
+                              lang="en-CA"
                               type="button"
                             >
                               Add linked recheck
@@ -1066,11 +1124,14 @@ export default function QuizEditorPage() {
                         </div>
                       </div>
                       <div className="field">
-                        <label htmlFor="prompt">Checkpoint prompt</label>
+                        <label htmlFor="prompt" lang="en-CA">
+                          Checkpoint prompt
+                        </label>
                         <textarea
                           aria-invalid={!question.prompt.trim()}
                           className="textarea"
                           id="prompt"
+                          lang=""
                           maxLength={500}
                           onChange={(event) =>
                             updateQuestion((item) => ({ ...item, prompt: event.target.value }))
@@ -1109,7 +1170,7 @@ export default function QuizEditorPage() {
                       />
                       <DeliveryScoring onUpdateQuestion={updateQuestion} question={question} />
                       {question.sourceCitations?.length ? (
-                        <details className="notice source-citations">
+                        <details className="notice source-citations" lang="en-CA">
                           <summary>Source evidence for this generated draft</summary>
                           <p>
                             These citations support the original assistant proposal. Recheck them if
@@ -1119,6 +1180,7 @@ export default function QuizEditorPage() {
                             {question.sourceCitations.map((citation) => (
                               <li
                                 key={`${citation.sourceDigest}-${citation.locator}-${citation.excerpt}`}
+                                lang=""
                               >
                                 <strong>
                                   {citation.sourceName} · {citation.locator}:
@@ -1131,6 +1193,7 @@ export default function QuizEditorPage() {
                       ) : null}
                       <button
                         className="button-danger"
+                        lang="en-CA"
                         onClick={() => removeQuestion(question.id)}
                         type="button"
                       >
@@ -1167,7 +1230,7 @@ export default function QuizEditorPage() {
         onUndo={undoStructuralChange}
         previewDisabled={!draft?.questions.length || saveState === "saving"}
         publishDisabled={!draft?.questions.length || saveState === "saving" || publishLimitReached}
-        publishLabel={publishLimitReached ? "Publish limit reached" : "Publish"}
+        publishLabel={t("delivery.common.publish")}
         questionMapOpen={!questionMapCollapsed}
         saveState={saveState}
         status={quiz?.status}
@@ -1175,15 +1238,19 @@ export default function QuizEditorPage() {
       />
       <main id="main">
         <h1 className="sr-only">
-          {draft?.title || (uxBeta ? "Untitled Round" : "Untitled checkpoint set")}
+          {draft?.title ? (
+            <span lang="">{draft.title}</span>
+          ) : (
+            t("delivery.builder.titlePlaceholder")
+          )}
         </h1>
         {recoverySnapshot ? (
-          <section className={builderStyles.recoveryBanner} role="status">
+          <section className={builderStyles.recoveryBanner} lang="en-CA" role="status">
             <div>
               <strong>Unsaved local work is available</strong>
               <p className="muted">
                 This browser preserved changes from{" "}
-                {new Date(recoverySnapshot.savedAt).toLocaleString()}.
+                <span lang={locale}>{formatDateTime(locale, recoverySnapshot.savedAt)}</span>.
               </p>
             </div>
             <div className={builderStyles.bannerActions}>
@@ -1205,7 +1272,7 @@ export default function QuizEditorPage() {
           </section>
         ) : null}
         {saveConflict ? (
-          <section className={builderStyles.conflictBanner} role="alert">
+          <section className={builderStyles.conflictBanner} lang="en-CA" role="alert">
             <div>
               <strong>A newer server edit prevented this save</strong>
               <p className="muted">
@@ -1240,7 +1307,7 @@ export default function QuizEditorPage() {
           </section>
         ) : null}
         {!draft ? (
-          <p className={builderStyles.emptyCanvas}>Loading editor…</p>
+          <p className={builderStyles.emptyCanvas}>{t("delivery.common.loading")}</p>
         ) : (
           <>
             {uxBeta && canEdit && questionReuseOpen ? (
@@ -1284,12 +1351,12 @@ export default function QuizEditorPage() {
               <section className={builderStyles.canvasColumn}>
                 <div className={builderStyles.alertStack}>
                   {error ? (
-                    <p className="error" role="alert">
+                    <p className="error" lang={errorIsRaw ? "en-CA" : undefined} role="alert">
                       {error}
                     </p>
                   ) : null}
                   {publishLimitReached ? (
-                    <p className="notice">
+                    <p className="notice" lang="en-CA">
                       This plan&apos;s {entitlements?.maxPublishedQuizzes} published{" "}
                       {uxBeta ? "Round" : "checkpoint set"} slots are in use. Archive a published
                       set or compare plans before publishing this draft.
@@ -1298,16 +1365,16 @@ export default function QuizEditorPage() {
                 </div>
                 <ReadinessSummary
                   action={validationAction}
-                  entityLabel={uxBeta ? "Round" : "checkpoint set"}
+                  entityLabel="Round"
                   issues={readinessIssues}
                   onSelectIssue={focusReadinessIssue}
                 />
                 <section
-                  aria-label={uxBeta ? "Selected question editor" : "Selected checkpoint editor"}
+                  aria-label={t("delivery.builder.question", { number: selectedIndex + 1 })}
                   className={builderStyles.canvas}
                 >
                   {!question ? (
-                    <div className={builderStyles.emptyCanvas}>
+                    <div className={builderStyles.emptyCanvas} lang="en-CA">
                       <div>
                         <p className="eyebrow">Start building</p>
                         <h2>Add the first {uxBeta ? "question" : "checkpoint"}</h2>
@@ -1319,10 +1386,12 @@ export default function QuizEditorPage() {
                       <header className={builderStyles.canvasHeader}>
                         <div className={builderStyles.canvasMeta}>
                           <span className="status-pill">
-                            {editorTypeLabel(question.type, uxBeta)}
-                            {(question.delivery ?? "main") === "recheck" ? " · recheck" : ""}
+                            {localizedQuestionTypeLabels[question.type]}
+                            {(question.delivery ?? "main") === "recheck"
+                              ? ` · ${t("delivery.builder.recheck")}`
+                              : ""}
                           </span>
-                          <span className="muted">
+                          <span className="muted" lang="en-CA">
                             {selectedIndex + 1} of {draft.questions.length}
                           </span>
                         </div>
@@ -1332,33 +1401,32 @@ export default function QuizEditorPage() {
                             onClick={() => duplicateQuestion(question.id)}
                             type="button"
                           >
-                            Duplicate
+                            {t("delivery.common.duplicate")}
                           </button>
                           <button
                             className="danger-link"
                             onClick={() => removeQuestion(question.id)}
                             type="button"
                           >
-                            Delete
+                            {t("delivery.common.delete")}
                           </button>
                         </div>
                       </header>
                       <div className={builderStyles.canvasBody}>
                         <div className={builderStyles.promptField}>
                           <label className="sr-only" htmlFor="prompt">
-                            {uxBeta ? "Question prompt" : "Checkpoint prompt"}
+                            {t("delivery.builder.questionPrompt")}
                           </label>
                           <textarea
                             aria-invalid={!question.prompt.trim()}
                             className={builderStyles.promptInput}
                             id="prompt"
+                            lang=""
                             maxLength={500}
                             onChange={(event) =>
                               updateQuestion((item) => ({ ...item, prompt: event.target.value }))
                             }
-                            placeholder={
-                              uxBeta ? "Type your question" : "Type your checkpoint prompt"
-                            }
+                            placeholder={t("delivery.builder.questionPrompt")}
                             value={question.prompt}
                           />
                         </div>
@@ -1380,8 +1448,10 @@ export default function QuizEditorPage() {
                         />
                         <div className={builderStyles.canvasSection}>
                           <div className={builderStyles.canvasSectionHeading}>
-                            <h2>Response</h2>
-                            <span className="muted">Mark the correct answer where applicable</span>
+                            <h2 lang="en-CA">Response</h2>
+                            <span className="muted" lang="en-CA">
+                              Mark the correct answer where applicable
+                            </span>
                           </div>
                           <ResponseEditor
                             onStructuralChange={applyQuestionStructuralChange}
@@ -1393,7 +1463,7 @@ export default function QuizEditorPage() {
                         </div>
                         {uxBeta ? (
                           <details className={builderStyles.settingsDisclosure}>
-                            <summary>Participant preview</summary>
+                            <summary>{t("delivery.builder.previewParticipant")}</summary>
                             <ParticipantPreview question={question} />
                           </details>
                         ) : null}
@@ -1407,18 +1477,19 @@ export default function QuizEditorPage() {
                 build={
                   question ? (
                     <>
-                      <h3>Question delivery</h3>
-                      <p className={builderStyles.inspectorIntro}>
+                      <h3 lang="en-CA">Question delivery</h3>
+                      <p className={builderStyles.inspectorIntro} lang="en-CA">
                         Tune timing, scoring, and the explanation shown after reveal.
                       </p>
                       <DeliveryScoring onUpdateQuestion={updateQuestion} question={question} />
-                      <details className={builderStyles.settingsDisclosure}>
+                      <details className={builderStyles.settingsDisclosure} lang="en-CA">
                         <summary>Round settings</summary>
                         <label className="field" htmlFor="quiz-description">
                           <span>Description</span>
                           <textarea
                             className="textarea"
                             id="quiz-description"
+                            lang=""
                             maxLength={1000}
                             onChange={(event) =>
                               setDraft({ ...draft, description: event.target.value })
@@ -1441,7 +1512,7 @@ export default function QuizEditorPage() {
                             presetId={draft.experiencePreset?.id ?? "focus"}
                           />
                         ) : (
-                          <p className="notice">
+                          <p className="notice" lang="en-CA">
                             Round Experiences are not enabled for this workspace. Existing metadata
                             is preserved and new sessions use Focus.
                           </p>
@@ -1449,7 +1520,7 @@ export default function QuizEditorPage() {
                       </details>
                     </>
                   ) : (
-                    <p className={builderStyles.inspectorIntro}>
+                    <p className={builderStyles.inspectorIntro} lang="en-CA">
                       Add a question to see build settings.
                     </p>
                   )
@@ -1458,8 +1529,8 @@ export default function QuizEditorPage() {
                 diagnose={
                   question ? (
                     <>
-                      <h3>Diagnostic signal</h3>
-                      <p className={builderStyles.inspectorIntro}>
+                      <h3 lang="en-CA">Diagnostic signal</h3>
+                      <p className={builderStyles.inspectorIntro} lang="en-CA">
                         Capture confidence, concepts, and misconception evidence for useful reports.
                       </p>
                       <DiagnosticDetails
@@ -1469,12 +1540,13 @@ export default function QuizEditorPage() {
                         uxBeta={uxBeta}
                       />
                       {question.sourceCitations?.length ? (
-                        <details className="notice source-citations">
+                        <details className="notice source-citations" lang="en-CA">
                           <summary>Source evidence</summary>
                           <ul>
                             {question.sourceCitations.map((citation) => (
                               <li
                                 key={`${citation.sourceDigest}-${citation.locator}-${citation.excerpt}`}
+                                lang=""
                               >
                                 <strong>
                                   {citation.sourceName} · {citation.locator}:
@@ -1493,17 +1565,24 @@ export default function QuizEditorPage() {
                 recover={
                   question ? (
                     <>
-                      <h3>Recovery path</h3>
-                      <p className={builderStyles.inspectorIntro}>
+                      <h3 lang="en-CA">Recovery path</h3>
+                      <p className={builderStyles.inspectorIntro} lang="en-CA">
                         Pair a second question to verify whether the concept recovered after
                         support.
                       </p>
                       {linkedRecheck ? (
                         <div className={builderStyles.recoveryCard}>
-                          <strong>Paired recheck</strong>
-                          <p>{linkedRecheck.prompt || "Untitled recheck question"}</p>
+                          <strong lang="en-CA">Paired recheck</strong>
+                          <p>
+                            {linkedRecheck.prompt ? (
+                              <span lang="">{linkedRecheck.prompt}</span>
+                            ) : (
+                              <span lang="en-CA">Untitled recheck question</span>
+                            )}
+                          </p>
                           <button
                             className="button-quiet small-button"
+                            lang="en-CA"
                             onClick={() => setSelectedQuestionId(linkedRecheck.id)}
                             type="button"
                           >
@@ -1512,15 +1591,22 @@ export default function QuizEditorPage() {
                         </div>
                       ) : (question.delivery ?? "main") === "recheck" ? (
                         <div className={builderStyles.recoveryCard}>
-                          <strong>This is a recheck question</strong>
-                          <p>Use Diagnose to connect it to a main question.</p>
+                          <strong lang="en-CA">This is a recheck question</strong>
+                          <p lang="en-CA">Use Diagnose to connect it to a main question.</p>
                         </div>
                       ) : question.type !== "poll" && question.type !== "rating" ? (
-                        <button className="button" onClick={addLinkedRecheck} type="button">
+                        <button
+                          className="button"
+                          lang="en-CA"
+                          onClick={addLinkedRecheck}
+                          type="button"
+                        >
                           Add a recheck for this concept
                         </button>
                       ) : (
-                        <p className="notice">Polls and ratings do not use scored rechecks.</p>
+                        <p className="notice" lang="en-CA">
+                          Polls and ratings do not use scored rechecks.
+                        </p>
                       )}
                     </>
                   ) : null

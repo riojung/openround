@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { QnaPage, QnaQuestion, QnaSettings } from "@openround/contracts";
 import { apiFetch, humanError } from "../lib/api";
+import { useLocale } from "./locale-provider";
 
 type QnaPanelProps = {
   role: "participant" | "moderator";
@@ -11,21 +12,15 @@ type QnaPanelProps = {
   revision: number;
 };
 
-function statusLabel(status: QnaQuestion["status"]) {
-  if (status === "pending") return "Awaiting review";
-  if (status === "published") return "Open";
-  if (status === "answered") return "Answered";
-  if (status === "dismissed") return "Dismissed";
-  return "Removed";
-}
-
 export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
+  const { t } = useLocale();
   const [page, setPage] = useState<QnaPage | null>(null);
   const [questionBody, setQuestionBody] = useState("");
   const [replyBodies, setReplyBodies] = useState<Record<string, string>>({});
   const [busyKey, setBusyKey] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const statusLabel = (status: QnaQuestion["status"]) => t(`live.qna.status.${status}`);
 
   const request = useCallback(
     <T,>(path: string, init: RequestInit = {}) =>
@@ -91,8 +86,8 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
         setQuestionBody("");
       },
       page?.settings.moderationMode === "pre"
-        ? "Question sent for facilitator review."
-        : "Question shared with the room.",
+        ? t("live.qna.questionSentForReview")
+        : t("live.qna.questionShared"),
     );
   }
 
@@ -108,7 +103,7 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
         });
         setReplyBodies((current) => ({ ...current, [questionId]: "" }));
       },
-      role === "moderator" ? "Reply published." : "Reply submitted.",
+      role === "moderator" ? t("live.qna.replyPublished") : t("live.qna.replySubmitted"),
     );
   }
 
@@ -159,16 +154,16 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
     <section className="panel qna-panel" aria-labelledby={`qna-heading-${role}`}>
       <div className="qna-heading">
         <div>
-          <p className="eyebrow">Audience voice</p>
-          <h2 id={`qna-heading-${role}`}>Questions and answers</h2>
+          <p className="eyebrow">{t("live.qna.eyebrow")}</p>
+          <h2 id={`qna-heading-${role}`}>{t("live.qna.title")}</h2>
         </div>
         <button className="button-quiet small-button" onClick={() => void load()} type="button">
-          Refresh
+          {t("live.qna.refresh")}
         </button>
       </div>
 
       {error ? (
-        <p className="error" role="alert">
+        <p className="error" lang="en-CA" role="alert">
           {error}
         </p>
       ) : null}
@@ -180,17 +175,17 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
 
       {role === "moderator" && settings ? (
         <fieldset className="qna-settings" disabled={busyKey === "settings"}>
-          <legend>Q&amp;A controls</legend>
+          <legend>{t("live.qna.controls")}</legend>
           <label className="checkbox-field">
             <input
               checked={settings.enabled}
               onChange={(event) => void updateSettings({ enabled: event.target.checked })}
               type="checkbox"
             />
-            Enable Q&amp;A
+            {t("live.qna.enable")}
           </label>
           <label className="field qna-setting-field">
-            <span className="field-label">Public names</span>
+            <span className="field-label">{t("live.qna.publicNames")}</span>
             <select
               className="select"
               onChange={(event) =>
@@ -200,12 +195,12 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
               }
               value={settings.displayMode}
             >
-              <option value="anonymous_public">Anonymous to participants</option>
-              <option value="alias_public">Show participant aliases</option>
+              <option value="anonymous_public">{t("live.qna.anonymousToParticipants")}</option>
+              <option value="alias_public">{t("live.qna.showAliases")}</option>
             </select>
           </label>
           <label className="field qna-setting-field">
-            <span className="field-label">Moderation</span>
+            <span className="field-label">{t("live.qna.moderation")}</span>
             <select
               className="select"
               onChange={(event) =>
@@ -215,8 +210,8 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
               }
               value={settings.moderationMode}
             >
-              <option value="pre">Review before publishing</option>
-              <option value="post">Publish immediately</option>
+              <option value="pre">{t("live.qna.reviewBeforePublishing")}</option>
+              <option value="post">{t("live.qna.publishImmediately")}</option>
             </select>
           </label>
           <label className="checkbox-field">
@@ -227,7 +222,7 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
               }
               type="checkbox"
             />
-            Allow participant replies
+            {t("live.qna.allowParticipantReplies")}
           </label>
         </fieldset>
       ) : null}
@@ -235,13 +230,13 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
       {role === "participant" && settings?.enabled ? (
         <form className="qna-compose" onSubmit={(event) => void submitQuestion(event)}>
           <label className="field" htmlFor="qna-question-body">
-            <span className="field-label">Ask the facilitator</span>
+            <span className="field-label">{t("live.qna.askFacilitator")}</span>
             <textarea
               className="textarea"
               id="qna-question-body"
               maxLength={1_000}
               onChange={(event) => setQuestionBody(event.target.value)}
-              placeholder="What would help you understand this better?"
+              placeholder={t("live.qna.questionPlaceholder")}
               value={questionBody}
             />
           </label>
@@ -251,34 +246,41 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
               disabled={busyKey === "new-question" || !questionBody.trim()}
               type="submit"
             >
-              {busyKey === "new-question" ? "Sending…" : "Ask question"}
+              {busyKey === "new-question" ? t("live.qna.sending") : t("live.qna.askQuestion")}
             </button>
             <small className="muted">
               {settings.moderationMode === "pre"
-                ? "The facilitator reviews questions before the room sees them."
-                : "Questions appear to the room immediately."}
+                ? t("live.qna.reviewNotice")
+                : t("live.qna.immediateNotice")}
             </small>
           </div>
         </form>
       ) : role === "participant" && settings ? (
-        <p className="notice">The facilitator has paused Q&amp;A for this round.</p>
+        <p className="notice">{t("live.qna.paused")}</p>
       ) : null}
 
-      {!page ? <p className="muted">Loading audience questions…</p> : null}
+      {!page ? <p className="muted">{t("live.qna.loading")}</p> : null}
       {page && visibleQuestions.length === 0 ? (
-        <p className="qna-empty">No audience questions yet.</p>
+        <p className="qna-empty">{t("live.qna.empty")}</p>
       ) : null}
       <ol className="qna-list">
         {visibleQuestions.map((question) => (
           <li className="qna-question" key={question.id}>
             <div className="qna-question-meta">
               <span>
-                <strong>{question.author.displayName}</strong> · {statusLabel(question.status)}
+                <strong lang="">{question.author.displayName}</strong> ·{" "}
+                {statusLabel(question.status)}
               </span>
-              <span>{question.voteCount} votes</span>
+              <span>{t("live.qna.votes", { count: question.voteCount })}</span>
             </div>
-            <p className="qna-question-body">{question.body}</p>
-            {question.label ? <span className="status-pill">{question.label}</span> : null}
+            <p className="qna-question-body" lang="">
+              {question.body}
+            </p>
+            {question.label ? (
+              <span className="status-pill" lang="">
+                {question.label}
+              </span>
+            ) : null}
 
             {role === "participant" && ["published", "answered"].includes(question.status) ? (
               <button
@@ -288,7 +290,7 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
                 onClick={() => void setVote(question)}
                 type="button"
               >
-                {question.votedByMe ? "Remove vote" : "I have this question"}
+                {question.votedByMe ? t("live.qna.removeVote") : t("live.qna.sameQuestion")}
               </button>
             ) : null}
 
@@ -301,7 +303,7 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
                     onClick={() => void moderate(question, "published")}
                     type="button"
                   >
-                    Publish
+                    {t("live.qna.publish")}
                   </button>
                 ) : null}
                 {!["dismissed", "removed"].includes(question.status) ? (
@@ -311,7 +313,7 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
                     onClick={() => void moderate(question, "dismissed")}
                     type="button"
                   >
-                    Dismiss
+                    {t("live.qna.dismiss")}
                   </button>
                 ) : null}
                 {question.status !== "removed" ? (
@@ -321,7 +323,7 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
                     onClick={() => void moderate(question, "removed")}
                     type="button"
                   >
-                    Remove
+                    {t("live.qna.remove")}
                   </button>
                 ) : null}
                 {question.moderationParticipantId && question.status !== "removed" ? (
@@ -329,23 +331,24 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
                     className="button-danger small-button"
                     disabled={busyKey === `moderate:${question.id}`}
                     onClick={() =>
-                      window.confirm("Remove this question and block this participant from Q&A?") &&
+                      window.confirm(t("live.qna.removeAndBlockConfirm")) &&
                       void moderate(question, "removed", true)
                     }
                     type="button"
                   >
-                    Remove and block
+                    {t("live.qna.removeAndBlock")}
                   </button>
                 ) : null}
               </div>
             ) : null}
 
             {question.replies.length > 0 ? (
-              <ul className="qna-replies" aria-label="Replies">
+              <ul className="qna-replies" aria-label={t("live.qna.replies")}>
                 {question.replies.map((reply) => (
                   <li key={reply.id}>
                     <p>
-                      <strong>{reply.author.displayName}</strong> · {reply.body}
+                      <strong lang="">{reply.author.displayName}</strong> ·{" "}
+                      <span lang="">{reply.body}</span>
                     </p>
                     {role === "moderator" && reply.status === "pending" ? (
                       <div className="button-row">
@@ -355,7 +358,7 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
                           onClick={() => void moderateReply(reply.id, "published")}
                           type="button"
                         >
-                          Publish reply
+                          {t("live.qna.publishReply")}
                         </button>
                         <button
                           className="button-danger small-button"
@@ -363,7 +366,7 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
                           onClick={() => void moderateReply(reply.id, "removed")}
                           type="button"
                         >
-                          Remove reply
+                          {t("live.qna.removeReply")}
                         </button>
                       </div>
                     ) : null}
@@ -379,7 +382,7 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
               <div className="qna-reply-compose">
                 <label className="field" htmlFor={`qna-reply-${question.id}`}>
                   <span className="field-label">
-                    {role === "moderator" ? "Facilitator reply" : "Add a reply"}
+                    {role === "moderator" ? t("live.qna.facilitatorReply") : t("live.qna.addReply")}
                   </span>
                   <textarea
                     className="textarea"
@@ -400,7 +403,7 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
                   onClick={() => void submitReply(question.id)}
                   type="button"
                 >
-                  Reply
+                  {t("live.qna.reply")}
                 </button>
               </div>
             ) : null}
@@ -413,7 +416,7 @@ export function QnaPanel({ role, sessionId, token, revision }: QnaPanelProps) {
           onClick={() => void load(page.nextCursor ?? undefined, true)}
           type="button"
         >
-          Load older questions
+          {t("live.qna.loadOlder")}
         </button>
       ) : null}
     </section>

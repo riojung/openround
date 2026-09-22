@@ -4,9 +4,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { Brand } from "../../components/brand";
+import { useLocale } from "../../components/locale-provider";
+import { LocalizedPolicyConsent } from "../../components/localized-policy-consent";
 import { apiFetch, humanError } from "../../lib/api";
 
 export default function WorkspaceInvitationPage() {
+  const { t } = useLocale();
   const router = useRouter();
   const [token, setToken] = useState("");
   const [acceptPolicies, setAcceptPolicies] = useState(false);
@@ -38,21 +41,18 @@ export default function WorkspaceInvitationPage() {
     <>
       <header className="shell topbar">
         <Brand />
-        <Link href="/">Home</Link>
+        <Link href="/">{t("delivery.common.home")}</Link>
       </header>
       <main className="shell auth-wrap">
         <section className="join-card auth-card" aria-labelledby="invite-title">
-          <p className="eyebrow">Workspace invitation</p>
+          <p className="eyebrow">{t("delivery.auth.invitation")}</p>
           <h1 id="invite-title" style={{ fontSize: "clamp(2.4rem, 8vw, 4rem)" }}>
-            Join the team
+            {t("delivery.auth.joinTeam")}
           </h1>
-          <p className="muted">
-            Accepting gives you the role chosen by the workspace owner. You can still use
-            participant mode without an account.
-          </p>
+          <p className="muted">{t("delivery.auth.invitationDescription")}</p>
           {!token ? (
             <p className="error" role="alert">
-              This invitation link is incomplete. Ask the workspace owner to send a new one.
+              {t("delivery.auth.invitationIncomplete")}
             </p>
           ) : (
             <form onSubmit={(event) => void accept(event)}>
@@ -63,13 +63,10 @@ export default function WorkspaceInvitationPage() {
                   required
                   type="checkbox"
                 />
-                <span>
-                  I accept the <Link href="/terms">Terms</Link> and acknowledge the{" "}
-                  <Link href="/privacy">Privacy notice</Link>.
-                </span>
+                <LocalizedPolicyConsent />
               </label>
               {error ? (
-                <p className="error" role="alert">
+                <p className="error" lang="en-CA" role="alert">
                   {error}
                 </p>
               ) : null}
@@ -78,7 +75,7 @@ export default function WorkspaceInvitationPage() {
                 disabled={!acceptPolicies || busy}
                 type="submit"
               >
-                {busy ? "Joining…" : "Accept invitation"}
+                {busy ? t("delivery.auth.joining") : t("delivery.auth.acceptInvitation")}
               </button>
             </form>
           )}

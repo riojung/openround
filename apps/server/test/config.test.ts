@@ -31,6 +31,12 @@ describe("production configuration", () => {
     expect(config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST).toEqual([]);
   });
 
+  it("keeps the authenticated session cookie distinct from the locale preference cookie", () => {
+    expect(() =>
+      ConfigSchema.parse({ ...productionConfig, COOKIE_NAME: "openround-locale" }),
+    ).toThrow(/Must differ from the openround-locale preference cookie/);
+  });
+
   it("parses a bounded workspace rollout allowlist", () => {
     const first = "11111111-1111-4111-8111-111111111111";
     const second = "22222222-2222-4222-8222-222222222222";

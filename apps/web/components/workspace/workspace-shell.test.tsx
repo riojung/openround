@@ -1,6 +1,11 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { LocaleProvider } from "../locale-provider";
+import { englishMessages } from "../../lib/i18n/catalog";
+import { workspacePageEnglishMessages } from "../../lib/i18n/domains/workspace-pages";
+import germanWorkspacePageMessages from "../../lib/i18n/domains/workspace-pages/de-DE";
+import germanMessages from "../../lib/i18n/messages/de-DE";
 
 const fixtures = vi.hoisted(() => ({
   pathname: "/library",
@@ -11,6 +16,8 @@ const fixtures = vi.hoisted(() => ({
       userId: "user-1",
       workspaceId: "workspace-1",
       email: "owner@example.com",
+      locale: "en-CA" as const,
+      localePreferenceSet: true,
       segment: "workplace" as const,
       role: "owner" as const,
       plan: "pro" as const,
@@ -98,17 +105,61 @@ describe("professional workspace shell", () => {
     expect(markup).toContain('href="/activity"');
     expect(markup).toContain('href="/help"');
     expect(markup).toContain('aria-label="Open account and workspace settings"');
-    expect(markup).toMatch(/<summary class="[^"]*createButton[^"]*" role="button">/);
-    expect(markup).toContain('aria-label="Appearance: system"');
-    expect(markup).toMatch(/aria-label="Appearance: system"[^>]*role="button"/);
+    expect(markup).toMatch(/<summary[^>]*class="[^"]*createButton[^"]*"[^>]*role="button"[^>]*>/);
+    expect(markup).toContain('aria-label="Language: English (Canada)"');
+    expect(markup).toContain('aria-label="Interface language"');
+    expect(markup).toContain('lang="en-CA" role="radio" tabindex="0"');
+    for (const language of ["Français", "Deutsch", "日本語", "한국어", "简体中文", "繁體中文"]) {
+      expect(markup).toContain(language);
+    }
+    expect(markup).toContain('aria-label="Appearance: System"');
+    expect(markup).toMatch(/aria-label="Appearance: System"[^>]*role="button"/);
     expect(markup).toContain('aria-label="Interface appearance"');
     expect(markup).toContain('role="radio"');
-    expect(markup.match(/tabindex="0"/g)).toHaveLength(1);
-    expect(markup.match(/tabindex="-1"/g)).toHaveLength(2);
+    expect(markup).toMatch(
+      /aria-label="Interface appearance"[^]*?aria-checked="true"[^>]*role="radio" tabindex="0"/,
+    );
     expect(markup).toContain("Create new");
     expect(markup).toContain('href="/create"');
     expect(markup).toContain('href="/create/presentation"');
     expect(markup).toContain("Questions, diagnosis, rechecks, and practice");
+  });
+
+  it("renders workspace navigation and global controls from a non-English catalog", () => {
+    const markup = renderToStaticMarkup(
+      <LocaleProvider
+        initialDomains={["workspace-pages"]}
+        initialLocale="de-DE"
+        initialMessages={{
+          ...englishMessages,
+          ...workspacePageEnglishMessages,
+          ...germanMessages,
+          ...germanWorkspacePageMessages,
+        }}
+      >
+        <WorkspaceShell
+          description="Lokalisierter Arbeitsbereich"
+          title="Bibliothek"
+          translationLevel="header"
+        >
+          <p>Lokalisierter Inhalt</p>
+        </WorkspaceShell>
+      </LocaleProvider>,
+    );
+
+    expect(markup).toContain('aria-label="Sprache: Deutsch"');
+    expect(markup).toContain('aria-label="Sprache der Benutzeroberfläche"');
+    expect(markup).toContain('placeholder="Bibliothek durchsuchen"');
+    expect(markup).toContain("Neu erstellen");
+    expect(markup).toContain("Abmelden");
+    expect(markup).toContain("Inhaber · Tarif Pro");
+    expect(markup).toContain(">Start</a>");
+    expect(markup).toContain(">Ergebnisse</a>");
+    expect(markup).toContain(">Arbeitsbereich</a>");
+    expect(markup).toContain('aria-label="Darstellung: System"');
+    expect(markup).toMatch(/<aside class="[^"]+" lang="de-DE">/);
+    expect(markup).toMatch(/<main class="[^"]+" id="main" lang="en-CA">/);
+    expect(markup).toMatch(/<header class="[^"]+" lang="de-DE">/);
   });
 
   it("does not expose creation controls to a read-only member", () => {

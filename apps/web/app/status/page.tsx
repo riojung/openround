@@ -7,7 +7,7 @@ export default function StatusPage() {
   return (
     <>
       <SiteHeader />
-      <main className="shell page-main" id="main">
+      <main className="shell page-main" id="main" lang="en-CA">
         <p className="eyebrow">Service status</p>
         <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5rem)" }}>All systems are in development.</h1>
         <div className="panel" style={{ maxWidth: 720 }}>

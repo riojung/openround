@@ -1,8 +1,18 @@
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SessionSnapshot } from "@openround/contracts";
 import { getHostPhaseView } from "../lib/host-phase";
+import { withEnglishLocale } from "../test-utils/english-locale";
 import { HostCommandBar, RecoveryCompass } from "./host-command-center";
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/host/test-session",
+}));
+
+function renderLocalized(node: ReactNode) {
+  return renderToStaticMarkup(withEnglishLocale(node));
+}
 
 function snapshot(phase: SessionSnapshot["phase"]): SessionSnapshot {
   return {
@@ -79,7 +89,7 @@ describe("host command center", () => {
   it("hides recommendations that are illegal in the current phase", () => {
     const revealed = snapshot("question_reveal");
     const revealedView = getHostPhaseView(revealed);
-    const revealedMarkup = renderToStaticMarkup(
+    const revealedMarkup = renderLocalized(
       <RecoveryCompass phaseView={revealedView} snapshot={revealed} />,
     );
 
@@ -87,7 +97,7 @@ describe("host command center", () => {
     expect(revealedMarkup).not.toContain("Try peer discussion");
 
     const locked = snapshot("question_locked");
-    const lockedMarkup = renderToStaticMarkup(
+    const lockedMarkup = renderLocalized(
       <RecoveryCompass phaseView={getHostPhaseView(locked)} snapshot={locked} />,
     );
     expect(lockedMarkup).toContain("Try peer discussion");
@@ -101,7 +111,7 @@ describe("host command center", () => {
       finishedAt: "2026-01-01T00:01:00.000Z",
     };
     const afterInterventionView = getHostPhaseView(afterIntervention);
-    const afterInterventionMarkup = renderToStaticMarkup(
+    const afterInterventionMarkup = renderLocalized(
       <RecoveryCompass phaseView={afterInterventionView} snapshot={afterIntervention} />,
     );
     expect(afterInterventionView.primary?.action).toBe("recheck.open");
@@ -117,7 +127,7 @@ describe("host command center", () => {
       strong: false,
     };
     const guidanceOnlyView = getHostPhaseView(guidanceOnly);
-    const guidanceOnlyMarkup = renderToStaticMarkup(
+    const guidanceOnlyMarkup = renderLocalized(
       <RecoveryCompass phaseView={guidanceOnlyView} snapshot={guidanceOnly} />,
     );
     expect(guidanceOnlyView.suggestionKind).toBe("guidance");
@@ -125,7 +135,7 @@ describe("host command center", () => {
   });
 
   it("places the primary command before overflow controls in DOM order", () => {
-    const markup = renderToStaticMarkup(
+    const markup = renderLocalized(
       <HostCommandBar
         busy={false}
         leading={<button type="button">Audience</button>}
