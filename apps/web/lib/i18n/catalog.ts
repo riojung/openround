@@ -100,9 +100,8 @@ function quizRouteDomains(path: string): LocaleDomain[] | null {
   switch (match[1]) {
     case undefined:
     case "preview":
-      return [...roundEditorDomains];
     case "rehearse":
-      return ["delivery-authoring", "report-round"];
+      return [...roundEditorDomains];
     case "assign":
       return ["account", "delivery-authoring", "report-round"];
     default:

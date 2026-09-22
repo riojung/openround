@@ -62,19 +62,22 @@ export function HostStage({
 export function RecoveryCompass({
   snapshot,
   phaseView,
+  displayPhaseLabel,
   showSteps = true,
   synthetic = false,
   children,
 }: {
   snapshot: SessionSnapshot;
   phaseView: HostPhaseView;
+  displayPhaseLabel?: string;
   showSteps?: boolean;
   synthetic?: boolean;
   children?: ReactNode;
 }) {
   const { t } = useLocale();
   const guidance = phaseView.suggestionKind === "none" ? null : snapshot.insight;
-  const phaseLabel = t(phaseKeys[phaseView.phaseLabel as keyof typeof phaseKeys]);
+  const phaseKey = phaseKeys[phaseView.phaseLabel as keyof typeof phaseKeys];
+  const phaseLabel = displayPhaseLabel ?? (phaseKey ? t(phaseKey) : phaseView.phaseLabel);
 
   if (!showSteps) {
     return (
@@ -175,6 +178,7 @@ export function HostCommandBar({
   phaseView,
   busy,
   onCommand,
+  getCommandLabel,
   primary = phaseView.primary,
   secondary = phaseView.secondary,
   primaryDisabled = false,
@@ -187,6 +191,7 @@ export function HostCommandBar({
   phaseView: HostPhaseView;
   busy: boolean;
   onCommand: (command: HostPhaseCommand) => void;
+  getCommandLabel?: (command: HostPhaseCommand) => string;
   primary?: HostPhaseCommand | null;
   secondary?: HostPhaseCommand[];
   primaryDisabled?: boolean;
@@ -197,8 +202,11 @@ export function HostCommandBar({
   inert?: boolean;
 }) {
   const { t } = useLocale();
-  const commandLabel = (command: HostPhaseCommand | null | undefined) =>
-    command ? t(commandKeys[command.label as keyof typeof commandKeys]) : "";
+  const commandLabel = (command: HostPhaseCommand | null | undefined) => {
+    if (!command) return "";
+    const commandKey = commandKeys[command.label as keyof typeof commandKeys];
+    return getCommandLabel?.(command) ?? (commandKey ? t(commandKey) : command.label);
+  };
   return (
     <nav
       aria-label={synthetic ? t("live.host.syntheticCommandsAria") : t("live.host.commandsAria")}

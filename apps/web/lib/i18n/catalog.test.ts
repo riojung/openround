@@ -80,6 +80,7 @@ describe("localized message catalogs", () => {
     expect(localeDomainsForPath("/quiz/example/rehearse")).toEqual([
       "delivery-authoring",
       "report-round",
+      "live-delivery",
     ]);
     expect(localeDomainsForPath("/quiz/example/assign")).toEqual([
       "account",
@@ -139,6 +140,7 @@ describe("localized message catalogs", () => {
     expect(localeDomainsForPath("/quiz/round-1/rehearse?source=editor")).toEqual([
       "delivery-authoring",
       "report-round",
+      "live-delivery",
     ]);
     expect(localeDomainsForPath("/quiz/round-1/assign?source=library")).toEqual([
       "account",

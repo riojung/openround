@@ -210,7 +210,7 @@ function Debrief({ controller }: { controller: RecoveryRehearsalController }) {
   );
 }
 
-function ActiveRehearsal({
+export function ActiveRehearsal({
   controller,
   onExit,
   startedAtMs,
@@ -240,16 +240,7 @@ function ActiveRehearsal({
     }
     return t(`reportRound.rehearsal.command.${command.action}`);
   };
-  const localizeCommand = (command: HostPhaseCommand): HostPhaseCommand => ({
-    ...command,
-    label: commandLabel(command),
-  });
-  const displayPhaseView = {
-    ...phaseView,
-    phaseLabel: t(`reportRound.rehearsal.phase.${step.id}`),
-    primary: phaseView.primary ? localizeCommand(phaseView.primary) : null,
-    secondary: phaseView.secondary.map(localizeCommand),
-  };
+  const displayPhaseLabel = t(`reportRound.rehearsal.phase.${step.id}`);
   const missing = plan.scenario.audienceSize - plan.scenario.responseCount;
   const localizedStepTitle =
     locale === "en-CA"
@@ -350,7 +341,7 @@ function ActiveRehearsal({
       <div className={styles.practiceLayout}>
         <HostStage className={styles.stageCard}>
           <div className={styles.stageMeta}>
-            <span>{displayPhaseView.phaseLabel}</span>
+            <span>{displayPhaseLabel}</span>
             <span>
               {t("reportRound.rehearsal.responses", {
                 count: formatNumber(locale, step.snapshot.answerCount),
@@ -446,7 +437,12 @@ function ActiveRehearsal({
           </div>
         </HostStage>
 
-        <RecoveryCompass phaseView={displayPhaseView} snapshot={step.snapshot} synthetic>
+        <RecoveryCompass
+          displayPhaseLabel={displayPhaseLabel}
+          phaseView={phaseView}
+          snapshot={step.snapshot}
+          synthetic
+        >
           <p>{t("reportRound.rehearsal.productionGuidance")}</p>
           <dl className={styles.snapshotStats}>
             <div>
@@ -476,9 +472,10 @@ function ActiveRehearsal({
       {step.command ? (
         <HostCommandBar
           busy={false}
+          getCommandLabel={commandLabel}
           onCommand={applyCommand}
           phaseView={phaseView}
-          primary={step.command ? localizeCommand(step.command) : null}
+          primary={step.command}
           secondary={[]}
           synthetic
         />
