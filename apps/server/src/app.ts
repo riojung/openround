@@ -62,6 +62,9 @@ export async function buildApp(
   } = {},
 ) {
   const app = Fastify({
+    // Forwarded client addresses affect IP rate-limit keys. Trust only the exact address of the
+    // deployment's dedicated Caddy-to-server link; an unset value keeps Fastify's safe default.
+    trustProxy: config.TRUSTED_PROXY_IP ?? false,
     logger: {
       level: config.LOG_LEVEL,
       redact: {

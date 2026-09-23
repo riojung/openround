@@ -17,6 +17,7 @@ describe("production configuration", () => {
   it("accepts a secure profile with sign-ups paused", () => {
     const config = ConfigSchema.parse(productionConfig);
 
+    expect(config.TRUSTED_PROXY_IP).toBeUndefined();
     expect(config.FEATURE_SIGNUPS).toBe(false);
     expect(config.COOKIE_SECURE).toBe("true");
     expect(config.AUDIT_RETENTION_DAYS).toBe(365);
@@ -29,6 +30,19 @@ describe("production configuration", () => {
     expect(config.FEATURE_GROUPS).toBe(false);
     expect(config.FEATURE_DISCOVER).toBe(false);
     expect(config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST).toEqual([]);
+  });
+
+  it("accepts only one literal trusted proxy address", () => {
+    expect(
+      ConfigSchema.parse({ ...productionConfig, TRUSTED_PROXY_IP: "172.30.255.2" })
+        .TRUSTED_PROXY_IP,
+    ).toBe("172.30.255.2");
+    expect(() =>
+      ConfigSchema.parse({ ...productionConfig, TRUSTED_PROXY_IP: "0.0.0.0/0" }),
+    ).toThrow(/Must be an IPv4 or IPv6 address/);
+    expect(() =>
+      ConfigSchema.parse({ ...productionConfig, TRUSTED_PROXY_IP: "server-ingress" }),
+    ).toThrow(/Must be an IPv4 or IPv6 address/);
   });
 
   it("keeps the authenticated session cookie distinct from the locale preference cookie", () => {

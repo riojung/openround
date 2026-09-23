@@ -6,7 +6,7 @@ system. This record should contain only aggregate results and pseudonymous study
 
 - Study dates (UTC):
 - Build commit and image digests:
-- Canadian staging environment:
+- Single-VM staging environment:
 - Research owner and independent reviewer:
 - Study protocol/version:
 - Participant counts by segment (higher education/workplace):

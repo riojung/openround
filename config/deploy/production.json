@@ -1,17 +1,22 @@
 {
   "schemaVersion": 1,
   "environment": "production",
-  "deploymentMode": "fly",
-  "publicWebUrl": "https://openround-ca-web.fly.dev",
-  "publicApiUrl": "https://openround-ca-server.fly.dev",
+  "deploymentMode": "single-vm",
+  "publicWebUrl": "https://app.openround.example",
+  "publicApiUrl": "https://app.openround.example",
+  "publicMediaUrl": "https://media.openround.example",
   "imageRepository": "ghcr.io/riojung/openround/openround",
   "imagePlatform": "linux/amd64",
   "billingMode": "stripe",
-  "fly": {
-    "serverApp": "openround-ca-server",
-    "webApp": "openround-ca-web",
-    "serverConfig": "config/deploy/fly/production-server.toml",
-    "webConfig": "config/deploy/fly/production-web.toml"
+  "singleVm": {
+    "host": "production-vm.openround.example",
+    "port": 22,
+    "user": "openround",
+    "deployPath": "/opt/openround/production",
+    "composeFiles": ["compose.single-vm.yaml"],
+    "deploymentFiles": ["infra/single-vm/Caddyfile", "infra/single-vm/postgres-init.sh"],
+    "knownHostsFile": "config/deploy/ssh/production_known_hosts",
+    "projectName": "openround-production"
   },
   "health": {
     "timeoutSeconds": 420,
@@ -20,7 +25,7 @@
   },
   "requireSigning": true,
   "requireReadinessGate": true,
-  "readinessTarget": "canadian-beta",
+  "readinessTarget": "single-vm-beta",
   "cosignIdentityRegexp": "^https://github\\.com/riojung/openround/\\.github/workflows/release\\.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$",
   "cosignOidcIssuer": "https://token.actions.githubusercontent.com"
 }

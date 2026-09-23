@@ -3,13 +3,29 @@
 ## Product and legal
 
 - Final name, domain, interface, scoring explanation, comparison claims, and asset register reviewed independently.
-- Canadian terms, privacy notice, cookie notice, acceptable use, content policy, DPA, subprocessors, retention, deletion, access, incident, and law-enforcement procedures approved.
+- Terms, privacy notice, cookie notice, acceptable use, content policy, DPA, subprocessors,
+  retention, deletion, access, incident, residency, and law-enforcement procedures are approved by
+  qualified counsel for every selected launch market.
 - Education onboarding uses anonymous guest mode, private results, friendly aliases, and accuracy scoring by default.
 - US school self-service remains disabled until US counsel approves COPPA, FERPA, contracts, and notices.
 
 ## Platform
 
-- Production secrets differ from development and are stored in a secret manager.
+- Production uses the reviewed remote `compose.single-vm.yaml` profile on one dedicated VM. Caddy,
+  web, API/realtime, PostgreSQL, Valkey, MinIO, and ClamAV share one failure domain. This is not a
+  high-availability design and carries no SLA; public production remains blocked until every item
+  in this checklist and the release ledger has current evidence.
+- The VM meets the measured CPU, memory, disk, IOPS, and network envelope; its supported OS,
+  Docker/Compose versions, security updates, firewall, disk alerts, time synchronization, and
+  dedicated non-root deployment account are documented and owned. Docker access is treated as
+  host-administrator privilege. Only required SSH and HTTPS traffic is admitted from approved
+  sources.
+- The deployment pins the VM's SSH host key in the checked known-hosts file using an independently
+  verified provisioning channel. Automation uses `StrictHostKeyChecking=yes`, never accepts a new
+  key interactively, and requires explicit review when a host is replaced.
+- Production secrets differ from development and originate in an approved secrets system. Any
+  temporary deployment environment file is mode `0600`, is transferred only over the pinned SSH
+  connection, and is removed according to the deployment runbook.
 - Production startup passes the fail-fast configuration checks: public web, API, and media URLs
   use HTTPS; creator cookies cannot be explicitly insecure; and SMTP is configured before the
   sign-up ceiling is enabled. Keep `FEATURE_SIGNUPS=false` until email delivery is verified. The
@@ -22,24 +38,30 @@
   before migration or promotion. Retain its non-secret JSON summary with the release evidence. A
   zero exit code proves schema and cross-field validation; it does not prove that external
   credentials authenticate. Remote probes must compare both the running server's `/health/live`
-  build ID and the web root's `X-OpenRound-Build-Id` with that candidate marker; target-region
+  build ID and the web root's `X-OpenRound-Build-Id` with that candidate marker; target-host
   probes independently compare the server marker.
 - Production metrics require a bearer token at startup. Keep `METRICS_ENABLED=false` until a
   private authenticated collector is ready; do not expose the route through the public ingress.
 - Application traffic uses a non-owner PostgreSQL role; only the migration job receives the
   owner-level `DATABASE_MIGRATION_URL`, and the production-like forced-RLS test passes.
-- Database and storage are in `ca-central-1`; realtime and Redis are in Toronto.
+- PostgreSQL, Valkey, MinIO, Caddy, web, API/realtime, and ClamAV run on the same production VM.
+  No local volume, VM snapshot, or second path on that host counts as an off-host backup.
 - `AUDIT_RETENTION_DAYS` matches the approved institutional policy, and a scheduled retention run
   has demonstrated that records at the cutoff are purged while newer records remain exportable.
-- Database backups, point-in-time recovery, and a restore exercise are current.
-- Production has Redis available for both the Streams transport adapter and owner-fenced
+- Encrypted PostgreSQL and MinIO backups leave the VM on the approved schedule, retain multiple
+  verified generations in a separately administered location, and have checksum/age alerting.
+  A current timed drill restores them onto a patched, clean replacement VM without relying on the
+  original host and demonstrates the approved RPO and RTO.
+- Production has Valkey available for both the Streams transport adapter and owner-fenced
   per-session mutation leases; PostgreSQL version compare-and-swap remains the durable fence.
-- Realtime starts with one always-on process. Before enabling a second, sticky routing is verified
-  for every enabled transport and target-region rolling restart, process-kill, Redis-failover, and
-  lease-expiry tests pass while lease/conflict metrics remain within rehearsed thresholds.
+- Realtime runs as one server container on the active topology. A second writer or multi-host
+  topology is a future architecture change and requires a separate load-balancing, shared-storage,
+  failover, lease-expiry, and rolling-deployment qualification before use.
 - TLS, origin allowlist, rate limits, CSP, private storage, ClamAV signature freshness and failure
   behaviour, email authentication, Stripe signatures, administrator controls, and log redaction
-  are verified.
+  are verified. The application and media DNS names both use valid public certificates, HTTP is
+  redirected to HTTPS, certificate-expiry monitoring has an owner, and no database, Valkey, MinIO
+  administration, metrics, or Docker socket is exposed publicly.
 - Keep `AUTHORING_AI_MODE=disabled` until the exact endpoint/model passes privacy, DPA,
   subprocessors, residency, source-retention, prompt-leakage, citation-quality, correction-rate,
   latency, cost, redirect, oversized-response, and failure-mode review. When enabled, use HTTPS,
@@ -67,6 +89,10 @@
   from a clean checkout.
 - `pnpm audit --audit-level low` passes; `THIRD_PARTY_NOTICES.md` matches
   `pnpm licenses:report`; release SBOMs, provenance, signatures, and container scans are retained.
+- Staging promotion uses the complete manifest from the protected manual **Staging images** workflow
+  on `main`; production promotion uses the complete manifest from the protected tag-triggered
+  release workflow. Both signatures verify against the exact allowlisted GitHub Actions identity
+  in the target config. A workstation build, signature, or reconstructed manifest is not accepted.
 - Database migration succeeds on a production-like copy and has a forward-repair plan.
 - Chromium, WebKit, Firefox, mobile Safari, and mobile Chrome critical flows pass.
 - Recovery interventions/rechecks, cohosting, Q&A moderation, hostile portability imports,
@@ -91,15 +117,18 @@
   because runner CPU and storage are variable. Only a controlled or target-environment run using
   the default 250/600/500 ms answer-p95/answer-p99/question-p95 gates qualifies as release capacity
   evidence.
-- Backup restore, Redis loss, realtime restart, Stripe replay, and failed-email exercises pass.
+- Clean replacement-VM restore, Valkey loss, server restart, whole-VM loss, Stripe replay, and
+  failed-email exercises pass. Whole-VM loss is expected to cause an outage until replacement and
+  restore complete; no availability commitment may imply otherwise.
 - The shared-store two-writer integration suite and the two-container cross-process/process-loss
   smoke pass against the release image.
 - External security review has no unresolved critical or high finding.
 
 For a disposable local production-path sample, start the full media Compose profile and run
 `CLIENTS=100 ASSERT_PERFORMANCE=true RESTART_SERVER=true pnpm load:compose`. Retain the JSON output
-with host hardware, container resource limits, build identifier, and date. Repeat from a load
-generator in the target region before using the result as release evidence.
+with host hardware, container resource limits, build identifier, and date. Repeat from an isolated
+load generator near the actual target VM before using the result as release evidence, and retain
+the VM resource limits and saturation signals.
 
 To exercise the local multi-writer path against one release image:
 
@@ -110,17 +139,22 @@ pnpm smoke:multi-process
 ```
 
 This proves application-level ownership, database fencing, adapter delivery, and takeover with
-direct WebSockets. It does not prove the hosted load balancer's affinity behaviour or managed Redis
-failover.
+direct WebSockets. It is future horizontal-scale evidence; the active single-VM topology runs one
+server container and this test does not provide host failover or high availability.
 
 For the local Phase 6 stress profiles, add `compose.test.yaml`, run the single-session harness with
 `CLIENTS=250 JOIN_BATCH_SIZE=25 ASSERT_PERFORMANCE=true RESTART_SERVER=true`, then run the
 `load`-profile container for ten staggered 100-client lobbies and a synchronized 1,000-client game
-burst. Do not translate either local result into a hosted SLO without a target-region rerun.
+burst. Do not translate either local result into a production capacity claim without a rerun on
+the provisioned target VM and its real network path.
 
 See [observability and operational controls](observability.md) for metric, trace, alert, and
-kill-switch guidance. Use the [Canadian staging workflow](staging-readiness.md) for the remote
-probe and target-region game, [evidence templates](../evidence/README.md) for non-code gates, and
+kill-switch guidance. Use the [single-VM staging workflow](staging-readiness.md) for the remote
+probe and target-host game, [evidence templates](../evidence/README.md) for non-code gates, and
 `pnpm readiness:require:beta:preflight` before creating a beta tag. After the workflow publishes
 and verifies the signed artifacts, accept that evidence for `signed-release` and run
 `pnpm readiness:require:beta` for the final beta decision.
+
+None of these instructions establishes that a staging or production VM exists. Provisioning,
+operational ownership, and every external evidence item must be verified separately before public
+traffic is approved.

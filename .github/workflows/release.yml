@@ -30,7 +30,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Require all pre-release Canadian beta gates
+      - name: Require all pre-release single-VM beta gates
         run: pnpm readiness:require:beta:preflight
       - name: Verify signed semantic-version tag from main
         id: candidate
@@ -155,8 +155,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse --verify HEAD)" = "${{ needs.preflight.outputs.candidate_commit }}"
+          api_url="$(jq -r '.publicApiUrl' config/deploy/production.json)"
           ./scripts/product-build.sh production \
-            --api-url https://openround-ca-server.fly.dev \
+            --api-url "$api_url" \
             --registry "ghcr.io/${GITHUB_REPOSITORY}/openround" \
             --push \
             --prepare \
@@ -227,8 +228,9 @@ jobs:
           steps.web_scan.outcome == 'success'
         run: |
           set -euo pipefail
+          api_url="$(jq -r '.publicApiUrl' config/deploy/production.json)"
           ./scripts/product-build.sh production \
-            --api-url https://openround-ca-server.fly.dev \
+            --api-url "$api_url" \
             --registry "ghcr.io/${GITHUB_REPOSITORY}/openround" \
             --finalize \
             --manifest artifacts/deploy/production/build-manifest.json

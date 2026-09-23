@@ -23,4 +23,7 @@ This profile is for short, low-volume pilots with synthetic or consenting adult 
    audience resynchronization after every socket reconnect. Do not treat the free pilot as
    evidence for the 250-participant mixed answer/chat/Pulse production gate.
 
-Client reconnection is mandatory because Cloud Run applies a request timeout to WebSocket connections. Move to the Canadian production profile before accepting payment or promising availability.
+Client reconnection is mandatory because Cloud Run applies a request timeout to WebSocket
+connections. Move to the reviewed single-VM production profile, and complete its regional,
+capacity, recovery, security, privacy, and legal gates, before accepting payment or promising
+availability.

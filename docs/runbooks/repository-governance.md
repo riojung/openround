@@ -46,7 +46,7 @@ ruleset insight before marking the release gate complete.
 ## Release controls
 
 1. Confirm `pnpm readiness:require:beta:preflight` succeeds against reviewed evidence. This target
-   includes every Canadian beta gate except the signed-release artifact that the tag will create.
+   includes every single-VM beta gate except the signed-release artifact that the tag will create.
 2. Confirm the latest `CI`, `Security`, and `Production-path smoke` runs match the candidate
    commit. The release preflight looks up successful runs for the exact tagged commit and rejects
    stale ledger links; retain target-region readiness separately with the deployment evidence.

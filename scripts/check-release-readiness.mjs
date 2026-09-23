@@ -50,18 +50,18 @@ const statusCounts = Object.fromEntries(
   ]),
 );
 
-const betaGates = ledger.gates.filter((gate) => gate.requiredFor.includes("canadian-beta"));
-assert.ok(betaGates.length > 0, "no gates are defined for target canadian-beta");
+const betaGates = ledger.gates.filter((gate) => gate.requiredFor.includes("single-vm-beta"));
+assert.ok(betaGates.length > 0, "no gates are defined for target single-vm-beta");
 for (const gate of betaGates) {
   if (gate.id === "signed-release") {
     assert.ok(
-      !gate.requiredFor.includes("canadian-beta-preflight"),
-      "signed-release must not be required for canadian-beta-preflight",
+      !gate.requiredFor.includes("single-vm-beta-preflight"),
+      "signed-release must not be required for single-vm-beta-preflight",
     );
   } else {
     assert.ok(
-      gate.requiredFor.includes("canadian-beta-preflight"),
-      `${gate.id}: canadian-beta gates except signed-release must be required for canadian-beta-preflight`,
+      gate.requiredFor.includes("single-vm-beta-preflight"),
+      `${gate.id}: single-vm-beta gates except signed-release must be required for single-vm-beta-preflight`,
     );
   }
 }

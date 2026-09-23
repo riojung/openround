@@ -21,20 +21,19 @@ education and workplace learning. Use this index to choose the shortest path for
 
 - [Implementation status](implementation-status.md) describes what is implemented and what remains a release gate.
 - [Release readiness ledger](release-readiness.json) is the machine-validated source of truth for
-  Canadian beta and GA promotion gates; [evidence templates](evidence/README.md) cover human and
+  single-VM beta and GA promotion gates; [evidence templates](evidence/README.md) cover human and
   provider verification.
 - [Production readiness](runbooks/production-readiness.md) is the promotion checklist for a public environment.
 - [Build, service, and deployment](runbooks/deployment.md) is the command reference for product
-  images, local service lifecycle, and digest-pinned Fly.io promotion.
-- [Canadian staging readiness](runbooks/staging-readiness.md),
+  images, local service lifecycle, and digest-pinned remote single-VM promotion.
+- [Single-VM staging readiness](runbooks/staging-readiness.md),
   [repository governance](runbooks/repository-governance.md),
   [backup and restore](runbooks/backup-restore.md), [upgrade](runbooks/upgrade.md),
   [audience interaction moderation](runbooks/audience-moderation.md),
   [incident response](runbooks/incident-response.md), and
   [observability](runbooks/observability.md) cover release and routine operations.
-- [Free-pilot Cloud Run guidance](../infra/cloudrun/README.md) and the
-  [Canadian Fly profile](../infra/fly/README.md) document provider boundaries and the one-shot
-  migration workflow.
+- [Free-pilot Cloud Run guidance](../infra/cloudrun/README.md) is a separate pilot reference. The
+  [Fly profile](../infra/fly/README.md) is legacy/reference material, not an active target.
 - [Privacy data map](privacy-data-map.md) identifies stored data, purpose, and retention behavior.
 - [Institution integrations](institution-integrations.md) documents creator OIDC, instructor LTI,
   audit export, residency evidence, and the capabilities that remain deliberately disabled.
@@ -44,12 +43,14 @@ education and workplace learning. Use this index to choose the shortest path for
 
 ## Release boundary
 
-The Compose stack is for local development and evaluation only. Hosted staging and production
-promotion uses the Fly.io deployment path, digest-pinned images, separate runtime and migration
-credentials, and the applicable readiness evidence. The repository and deployment scripts do not
-by themselves establish that an environment has been provisioned or deployed, nor do they
-establish legal approval, an availability commitment, school-contract readiness, external
-security assurance, or production capacity evidence.
+Development uses the local Compose stack. Staging and production use a remote single-VM Compose
+profile with digest-pinned images and separate runtime and migration credentials. This topology
+has one failure domain and provides no high availability or SLA. It remains blocked for public
+production until TLS, strict SSH host-key pinning, encrypted off-host backups, a clean
+replacement-VM restore drill, target-host capacity evidence, and all other readiness gates pass.
+The repository and deployment scripts do not establish that any environment has been provisioned
+or deployed, nor do they establish legal approval, school-contract readiness, external security
+assurance, or production capacity.
 
 The signed-in `/help` page is available in the default Compose profile and adapts its written
 steps and destinations to the active rollout. Its two captioned professional-builder videos are

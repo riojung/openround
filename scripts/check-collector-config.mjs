@@ -10,7 +10,7 @@ execFileSync(
     "--env",
     "OPENROUND_METRICS_TARGET=api.example.ca",
     "--env",
-    "OPENROUND_DEPLOYMENT=canada-staging",
+    "OPENROUND_DEPLOYMENT=single-vm-staging",
     "--env",
     "OPENROUND_OTLP_BACKEND_ENDPOINT=https://telemetry.example.invalid",
     "--env",

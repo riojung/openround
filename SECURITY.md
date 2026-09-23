@@ -10,7 +10,10 @@ Do not open a public issue for a suspected vulnerability. Before public release,
 
 ## Production requirements
 
-- Replace all example credentials, restrict database and Redis networking, and store secrets in the deployment platform's secret manager.
+- Replace all example credentials, keep PostgreSQL and Valkey on the internal Compose network, and
+  store the active single-VM secret files outside source control with mode `0600`. Back them up only
+  through the encrypted off-host operations process; never place them in image layers, manifests,
+  logs, or deployment receipts.
 - Use TLS for every public and service connection.
 - Run the application with a non-owner PostgreSQL role and test row-level-security policies with `app.workspace_id` set inside each tenant transaction.
 - Keep object storage private. A signed upload is not publishable until MIME, size, malware, and ownership checks mark the asset clean.
@@ -36,4 +39,4 @@ Do not open a public issue for a suspected vulnerability. Before public release,
 - Prometheus output, OTLP export, validated collector and Alertmanager templates, and routing tests
   are available. This repository does not operate the hosted collector or paging accounts and
   cannot establish that a production alert reached a named human responder.
-- Legal notices are placeholders pending Canadian and US counsel review.
+- Legal notices are placeholders pending qualified counsel review for the selected launch markets.
