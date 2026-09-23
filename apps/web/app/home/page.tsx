@@ -127,7 +127,7 @@ function HomeWorkspace() {
   );
 
   const loadSummary = useCallback(async () => {
-    if (!creator) return;
+    if (!creator || productFeatures?.workspaceShell !== true) return;
     setLoading(true);
     setError("");
     try {
@@ -137,7 +137,7 @@ function HomeWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [creator]);
+  }, [creator, productFeatures?.workspaceShell]);
 
   useEffect(() => {
     void loadSummary();
@@ -161,7 +161,6 @@ function HomeWorkspace() {
       }
       description={t("home.description")}
       eyebrow={t("home.eyebrow")}
-      requireBeta={false}
       title={t("home.title")}
       translationLevel="full"
     >

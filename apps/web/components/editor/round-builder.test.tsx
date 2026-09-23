@@ -29,6 +29,7 @@ describe("Round Builder shell", () => {
           previewDisabled={false}
           publishDisabled={false}
           publishLabel="Publish"
+          productFeatures={{ workspaceShell: true }}
           questionMapOpen
           saveState="saving"
           status="draft"
@@ -45,6 +46,35 @@ describe("Round Builder shell", () => {
     expect(markup).toContain('aria-label="Redo last edit"');
     expect(markup).toContain(">Preview</button>");
     expect(markup).toContain(">Publish</button>");
+  });
+
+  it("keeps the brand inside the signed-in legacy dashboard when workspace Home is unavailable", () => {
+    const markup = renderToStaticMarkup(
+      withEnglishLocale(
+        <BuilderCommandBar
+          canRedo={false}
+          canUndo={false}
+          inspectorOpen
+          onPreview={noop}
+          onPublish={noop}
+          onRedo={noop}
+          onTitleChange={noop}
+          onToggleInspector={noop}
+          onToggleQuestionMap={noop}
+          onUndo={noop}
+          previewDisabled
+          publishDisabled
+          publishLabel="Publish"
+          productFeatures={{ workspaceShell: false }}
+          questionMapOpen
+          saveState="saved"
+          title="Legacy Round"
+        />,
+      ),
+    );
+
+    expect(markup).toContain('class="brand" href="/dashboard"');
+    expect(markup).not.toContain('class="brand" href="/home"');
   });
 
   it("exposes every readiness issue as a navigable action", () => {

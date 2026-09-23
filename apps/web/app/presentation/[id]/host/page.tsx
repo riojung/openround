@@ -5,7 +5,10 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
-import { WorkspaceProvider } from "../../../../components/workspace/workspace-provider";
+import {
+  useWorkspace,
+  WorkspaceProvider,
+} from "../../../../components/workspace/workspace-provider";
 import { WorkspaceFeatureGate } from "../../../../components/workspace/workspace-shell";
 import styles from "../../../../components/presentation-live/presentation-live.module.css";
 import { recordAuthoringEvent } from "../../../../components/workspace/product-events";
@@ -23,6 +26,7 @@ interface PresentationRecord {
 
 function PresentationHostSetupContent() {
   const { locale, t } = useLocale();
+  const { productFeatures } = useWorkspace();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [presentation, setPresentation] = useState<PresentationRecord | null>(null);
@@ -60,7 +64,7 @@ function PresentationHostSetupContent() {
   return (
     <main className={styles.page}>
       <div className={styles.topbar}>
-        <CreatorBrand />
+        <CreatorBrand productFeatures={productFeatures} />
         <Link href={`/presentation/${id}`}>{t("live.presentationHost.backEditor")}</Link>
       </div>
       <section className={styles.setup}>

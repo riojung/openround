@@ -59,6 +59,14 @@ interface QuizRecord {
   currentVersionId: string | null;
 }
 
+interface EditorProductFeatures {
+  roundExperiences: boolean;
+  uxBeta: boolean;
+  builderV2: boolean;
+  practiceAssignments?: boolean;
+  workspaceShell: boolean;
+}
+
 function newChoices(type: ChoiceQuestionDraft["type"]): ChoiceDraft[] {
   if (type === "true_false") {
     return [
@@ -137,6 +145,7 @@ export default function QuizEditorPage() {
   const [mediaUploadsEnabled, setMediaUploadsEnabled] = useState(false);
   const [roundExperiencesAvailable, setRoundExperiencesAvailable] = useState(false);
   const [uxBeta, setUxBeta] = useState(false);
+  const [productFeatures, setProductFeatures] = useState<EditorProductFeatures | null>(null);
   const [practiceAssignmentsAvailable, setPracticeAssignmentsAvailable] = useState(false);
   const [mediaState, setMediaState] = useState<"idle" | "uploading" | "scanning">("idle");
   const [mediaPreviewUrl, setMediaPreviewUrl] = useState("");
@@ -233,12 +242,7 @@ export default function QuizEditorPage() {
       apiFetch<{
         creator: { role: "owner" | "editor" | "viewer" };
         entitlements: Entitlements;
-        productFeatures: {
-          roundExperiences: boolean;
-          uxBeta: boolean;
-          builderV2: boolean;
-          practiceAssignments?: boolean;
-        };
+        productFeatures: EditorProductFeatures;
       }>("/v1/auth/me"),
       apiFetch<{ quizzes: QuizRecord[] }>("/v1/quizzes"),
       loadBuilderRecovery<QuizDraft>(recoveryKey),
@@ -254,6 +258,7 @@ export default function QuizEditorPage() {
         setSaveState("saved");
         setEntitlements(account.entitlements);
         setCanEdit(account.creator.role === "owner" || account.creator.role === "editor");
+        setProductFeatures(account.productFeatures);
         setRoundExperiencesAvailable(account.productFeatures.roundExperiences);
         setUxBeta(account.productFeatures.uxBeta && account.productFeatures.builderV2);
         setPracticeAssignmentsAvailable(Boolean(account.productFeatures.practiceAssignments));
@@ -839,7 +844,7 @@ export default function QuizEditorPage() {
     return (
       <>
         <header className="shell topbar">
-          <CreatorBrand />
+          <CreatorBrand productFeatures={productFeatures} />
           <div className="button-row">
             <span className="muted" role="status">
               {saveState === "saving"
@@ -1231,6 +1236,7 @@ export default function QuizEditorPage() {
         previewDisabled={!draft?.questions.length || saveState === "saving"}
         publishDisabled={!draft?.questions.length || saveState === "saving" || publishLimitReached}
         publishLabel={t("delivery.common.publish")}
+        productFeatures={productFeatures}
         questionMapOpen={!questionMapCollapsed}
         saveState={saveState}
         status={quiz?.status}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { WorkspaceProductFeatures } from "@openround/contracts";
 import { CreatorBrand } from "../brand";
 import { useLocale } from "../locale-provider";
 import styles from "./round-builder.module.css";
@@ -14,6 +15,7 @@ export function BuilderCommandBar({
   previewDisabled,
   publishDisabled,
   publishLabel,
+  productFeatures,
   assignHref,
   questionMapOpen,
   inspectorOpen,
@@ -33,6 +35,7 @@ export function BuilderCommandBar({
   previewDisabled: boolean;
   publishDisabled: boolean;
   publishLabel: string;
+  productFeatures?: Pick<WorkspaceProductFeatures, "workspaceShell"> | null;
   assignHref?: string;
   questionMapOpen: boolean;
   inspectorOpen: boolean;
@@ -57,7 +60,7 @@ export function BuilderCommandBar({
             : t("delivery.builder.ready");
   return (
     <header className={styles.commandBar}>
-      <CreatorBrand />
+      <CreatorBrand productFeatures={productFeatures} />
       <div className={styles.titleGroup}>
         <label className="sr-only" htmlFor="quiz-title">
           {t("create.round.blank.titleLabel")}

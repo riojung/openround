@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Brand } from "../../../components/brand";
+import { Brand, creatorLandingHref } from "../../../components/brand";
 import { apiFetch, humanError } from "../../../lib/api";
 
 type Status = "checking" | "signed-out" | "ready" | "linking" | "error";
@@ -11,7 +11,7 @@ export default function LtiLinkPage() {
   const [status, setStatus] = useState<Status>("checking");
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
-  const [creatorSignedIn, setCreatorSignedIn] = useState(false);
+  const [creatorHref, setCreatorHref] = useState<"/" | "/home" | "/dashboard">("/");
 
   useEffect(() => {
     const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -24,18 +24,22 @@ export default function LtiLinkPage() {
     if (!savedToken) {
       setError("This LTI launch link is missing or has already been completed.");
       setStatus("error");
-      return;
+    } else {
+      setToken(savedToken);
     }
-    setToken(savedToken);
-    apiFetch("/v1/auth/me")
-      .then(() => {
-        setCreatorSignedIn(true);
-        setStatus("ready");
+    apiFetch<{ productFeatures?: { workspaceShell?: boolean } }>("/v1/auth/me")
+      .then(({ productFeatures }) => {
+        setCreatorHref(
+          creatorLandingHref({ workspaceShell: productFeatures?.workspaceShell === true }),
+        );
+        if (savedToken) setStatus("ready");
       })
       .catch((caught) => {
-        setCreatorSignedIn(false);
-        if ((caught as { status?: number }).status === 401) setStatus("signed-out");
-        else {
+        setCreatorHref("/");
+        if (!savedToken) return;
+        if ((caught as { status?: number }).status === 401) {
+          setStatus("signed-out");
+        } else {
           setError(humanError(caught));
           setStatus("error");
         }
@@ -62,8 +66,8 @@ export default function LtiLinkPage() {
   return (
     <>
       <header className="shell topbar" lang="en-CA">
-        <Brand href={creatorSignedIn ? "/home" : "/"} />
-        <Link href={creatorSignedIn ? "/home" : "/"}>Home</Link>
+        <Brand href={creatorHref} />
+        <Link href={creatorHref}>{creatorHref === "/dashboard" ? "Dashboard" : "Home"}</Link>
       </header>
       <main className="shell auth-wrap" id="main" lang="en-CA">
         <section className="join-card auth-card" aria-labelledby="lti-link-title">

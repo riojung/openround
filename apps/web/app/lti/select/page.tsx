@@ -20,8 +20,15 @@ export default function LtiSelectPage() {
   const [selectedQuizId, setSelectedQuizId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [productFeatures, setProductFeatures] = useState<{ workspaceShell: boolean } | null>(null);
 
   useEffect(() => {
+    void apiFetch<{ productFeatures?: { workspaceShell?: boolean } }>("/v1/auth/me")
+      .then((account) =>
+        setProductFeatures({ workspaceShell: account.productFeatures?.workspaceShell === true }),
+      )
+      .catch(() => setProductFeatures(null));
+
     const id = new URLSearchParams(window.location.search).get("launchId") ?? "";
     setLaunchId(id);
     if (!id) {
@@ -72,7 +79,7 @@ export default function LtiSelectPage() {
   return (
     <>
       <header className="shell topbar" lang="en-CA">
-        <CreatorBrand />
+        <CreatorBrand productFeatures={productFeatures} />
         <Link href="/dashboard">Dashboard</Link>
       </header>
       <main className="shell page-main" id="main" lang="en-CA">

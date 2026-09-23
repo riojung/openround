@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { WorkspaceProductFeatures } from "@openround/contracts";
 
 interface BrandProps {
   href?: string;
@@ -25,6 +26,18 @@ export function Brand({ href = "/", inverted = false, name = "OpenRound" }: Bran
   );
 }
 
-export function CreatorBrand(props: Omit<BrandProps, "href">) {
-  return <Brand {...props} href="/home" />;
+type CreatorNavigationFeatures = Pick<WorkspaceProductFeatures, "workspaceShell">;
+
+export function creatorLandingHref(
+  productFeatures: CreatorNavigationFeatures | null | undefined,
+): "/home" | "/dashboard" {
+  return productFeatures?.workspaceShell === true ? "/home" : "/dashboard";
+}
+
+interface CreatorBrandProps extends Omit<BrandProps, "href"> {
+  productFeatures?: CreatorNavigationFeatures | null;
+}
+
+export function CreatorBrand({ productFeatures, ...props }: CreatorBrandProps) {
+  return <Brand {...props} href={creatorLandingHref(productFeatures)} />;
 }

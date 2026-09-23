@@ -360,7 +360,7 @@ export function WorkspaceShell({
       </a>
       <aside className={styles.sidebar} lang={locale}>
         <div className={styles.brandWrap}>
-          <CreatorBrand />
+          <CreatorBrand productFeatures={productFeatures} />
         </div>
         <WorkspaceNav />
         <div className={styles.sidebarFooter}>
@@ -404,7 +404,7 @@ export function WorkspaceShell({
       <div className={styles.contentColumn}>
         <header className={styles.topHeader} lang={locale}>
           <div className={styles.mobileBrand}>
-            <CreatorBrand />
+            <CreatorBrand productFeatures={productFeatures} />
           </div>
           <Link className={styles.workspaceSwitch} href="/account">
             <ShellIcon name="workspace" />

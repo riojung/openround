@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
-import { Brand } from "./brand";
+import { Brand, creatorLandingHref } from "./brand";
 import { apiFetch, humanError } from "../lib/api";
 import { useLocale } from "./locale-provider";
 
@@ -13,7 +13,11 @@ interface CreatorSummary {
 type SessionState =
   | { status: "checking"; creator: null }
   | { status: "signed-out"; creator: null }
-  | { status: "signed-in"; creator: CreatorSummary };
+  | {
+      status: "signed-in";
+      creator: CreatorSummary;
+      productFeatures: { workspaceShell: boolean } | null;
+    };
 
 export function SiteHeader() {
   const { t } = useLocale();
@@ -25,9 +29,20 @@ export function SiteHeader() {
 
   useEffect(() => {
     let active = true;
-    apiFetch<{ creator: CreatorSummary }>("/v1/auth/me")
-      .then(({ creator }) => {
-        if (active) setSession({ status: "signed-in", creator });
+    apiFetch<{
+      creator: CreatorSummary;
+      productFeatures?: { workspaceShell?: boolean };
+    }>("/v1/auth/me")
+      .then(({ creator, productFeatures }) => {
+        if (active) {
+          setSession({
+            status: "signed-in",
+            creator,
+            productFeatures: {
+              workspaceShell: productFeatures?.workspaceShell === true,
+            },
+          });
+        }
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -55,13 +70,14 @@ export function SiteHeader() {
   }
 
   const signedIn = session.status === "signed-in";
+  const brandHref = signedIn ? creatorLandingHref(session.productFeatures) : "/";
 
   return (
     <header className="shell topbar site-header">
       <a className="skip-link" href="#main">
         {t("delivery.site.skip")}
       </a>
-      <Brand href={signedIn ? "/home" : "/"} />
+      <Brand href={brandHref} />
       <nav
         aria-busy={session.status === "checking"}
         aria-label={t("delivery.site.primaryNavigation")}

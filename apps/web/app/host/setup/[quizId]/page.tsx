@@ -43,6 +43,7 @@ interface ProductFeatures {
   audiencePulse: boolean;
   roomChat: boolean;
   uxBeta: boolean;
+  workspaceShell: boolean;
 }
 
 function defaultsFor(creator: Creator, entitlements: Entitlements): SessionSettings {
@@ -88,6 +89,7 @@ export default function HostSetupPage() {
     roomChatAvailable: false,
   });
   const [uxBeta, setUxBeta] = useState(false);
+  const [productFeatures, setProductFeatures] = useState<ProductFeatures | null>(null);
   const [creator, setCreator] = useState<Creator | null>(null);
   const [recipe, setRecipe] = useState<SetupRecipe | "custom">("recovery");
   const [busy, setBusy] = useState(false);
@@ -106,6 +108,7 @@ export default function HostSetupPage() {
       }>("/v1/auth/me"),
     ])
       .then(([quizResponse, account]) => {
+        setProductFeatures(account.productFeatures);
         if (!quizResponse.quiz.currentVersionId || !quizResponse.currentVersion) {
           setErrorIsRaw(false);
           setError(
@@ -274,7 +277,7 @@ export default function HostSetupPage() {
   return (
     <>
       <header className="shell topbar" data-ux-beta={uxBeta || undefined}>
-        <CreatorBrand />
+        <CreatorBrand productFeatures={productFeatures} />
         <div className="button-row">
           {quiz ? (
             <Link className="button-quiet small-button" href={`/quiz/${quiz.id}/preview`}>

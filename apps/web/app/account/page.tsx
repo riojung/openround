@@ -65,6 +65,7 @@ export default function AccountPage() {
   const [federatedIdentities, setFederatedIdentities] = useState<FederatedIdentity[]>([]);
   const [ltiRegistrations, setLtiRegistrations] = useState<LtiRegistration[]>([]);
   const [uxBeta, setUxBeta] = useState(false);
+  const [productFeatures, setProductFeatures] = useState<{ workspaceShell: boolean } | null>(null);
 
   useEffect(() => {
     tRef.current = t;
@@ -75,7 +76,7 @@ export default function AccountPage() {
       apiFetch<{
         creator: Creator;
         entitlements: Entitlements;
-        productFeatures?: { uxBeta?: boolean };
+        productFeatures?: { uxBeta?: boolean; workspaceShell?: boolean };
       }>("/v1/auth/me"),
       apiFetch<{ theme: BrandTheme | null; enabled: boolean }>("/v1/account/theme"),
       apiFetch<{ activeWorkspaceId: string; workspaces: WorkspaceSummary[] }>("/v1/workspaces"),
@@ -87,6 +88,7 @@ export default function AccountPage() {
         setCreator(account.creator);
         setEntitlements(account.entitlements);
         setUxBeta(Boolean(account.productFeatures?.uxBeta));
+        setProductFeatures({ workspaceShell: account.productFeatures?.workspaceShell === true });
         setSavedTheme(branding.theme);
         setTheme(
           branding.theme ?? {
@@ -809,6 +811,7 @@ export default function AccountPage() {
             <CreatorBrand
               inverted
               name={theme.organizationName || t("account.theme.defaultOrganizationName")}
+              productFeatures={productFeatures}
             />
             <p className="theme-preview-copy">{t("account.theme.preview")}</p>
           </div>
@@ -935,7 +938,7 @@ export default function AccountPage() {
   return (
     <>
       <header className="shell topbar">
-        <CreatorBrand />
+        <CreatorBrand productFeatures={productFeatures} />
         <Link className="button-quiet small-button" href="/dashboard">
           {t("account.legacy.dashboard")}
         </Link>

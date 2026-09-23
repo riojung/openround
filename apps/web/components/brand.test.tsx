@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { Brand, CreatorBrand } from "./brand";
+import { Brand, CreatorBrand, creatorLandingHref } from "./brand";
 
 describe("Brand", () => {
   it("keeps the home link named when responsive styles hide the visible name", () => {
@@ -18,11 +18,26 @@ describe("Brand", () => {
     expect(markup).toContain('<span aria-hidden="true">Acme Learning</span>');
   });
 
-  it("supports an authenticated home destination without changing the public default", () => {
+  it("routes creators only to workspace Home when that rollout is available", () => {
     const publicMarkup = renderToStaticMarkup(<Brand />);
-    const authenticatedMarkup = renderToStaticMarkup(<CreatorBrand />);
+    const betaMarkup = renderToStaticMarkup(
+      <CreatorBrand productFeatures={{ workspaceShell: true }} />,
+    );
+    const legacyMarkup = renderToStaticMarkup(
+      <CreatorBrand productFeatures={{ workspaceShell: false }} />,
+    );
+    const unresolvedMarkup = renderToStaticMarkup(<CreatorBrand />);
 
     expect(publicMarkup).toContain('href="/"');
-    expect(authenticatedMarkup).toContain('href="/home"');
+    expect(betaMarkup).toContain('href="/home"');
+    expect(legacyMarkup).toContain('href="/dashboard"');
+    expect(unresolvedMarkup).toContain('href="/dashboard"');
+  });
+
+  it("fails closed to the legacy dashboard until workspace features resolve", () => {
+    expect(creatorLandingHref(undefined)).toBe("/dashboard");
+    expect(creatorLandingHref(null)).toBe("/dashboard");
+    expect(creatorLandingHref({ workspaceShell: false })).toBe("/dashboard");
+    expect(creatorLandingHref({ workspaceShell: true })).toBe("/home");
   });
 });

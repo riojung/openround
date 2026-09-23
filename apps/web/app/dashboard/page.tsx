@@ -65,12 +65,17 @@ function LegacyDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
+  const [productFeatures, setProductFeatures] = useState<{ workspaceShell: boolean } | null>(null);
 
   const refresh = useCallback(
     async (includeArchived: boolean) => {
       try {
         const [me, list, folderList] = await Promise.all([
-          apiFetch<{ creator: Creator; entitlements: Entitlements }>("/v1/auth/me"),
+          apiFetch<{
+            creator: Creator;
+            entitlements: Entitlements;
+            productFeatures?: { workspaceShell?: boolean };
+          }>("/v1/auth/me"),
           apiFetch<{ quizzes: QuizRecord[] }>(
             `/v1/quizzes${includeArchived ? "?archived=true" : ""}`,
           ),
@@ -78,6 +83,7 @@ function LegacyDashboardPage() {
         ]);
         setCreator(me.creator);
         setEntitlements(me.entitlements);
+        setProductFeatures({ workspaceShell: me.productFeatures?.workspaceShell === true });
         setQuizzes(list.quizzes);
         setFolders(folderList.folders);
       } catch (caught) {
@@ -290,7 +296,7 @@ function LegacyDashboardPage() {
   return (
     <>
       <header className="shell topbar">
-        <CreatorBrand />
+        <CreatorBrand productFeatures={productFeatures} />
         <nav className="button-row" aria-label="Account navigation">
           <Link href="/account">Account</Link>
           <Link href="/pricing">

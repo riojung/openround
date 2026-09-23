@@ -119,6 +119,17 @@ test("brand navigation returns a signed-in creator to Home", async ({ page }) =>
 
   await expect(page).toHaveURL(/\/home$/);
   await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible();
+
+  await page.goto("/lti/link");
+  await expect(
+    page.getByText("This LTI launch link is missing or has already been completed."),
+  ).toBeVisible();
+  const ltiHeader = page.locator("header.topbar");
+  await expect(ltiHeader.getByRole("link", { name: "OpenRound" })).toHaveAttribute("href", "/home");
+  await expect(ltiHeader.getByRole("link", { name: "Home", exact: true })).toHaveAttribute(
+    "href",
+    "/home",
+  );
 });
 
 test("creator starts a blank Round with the selected first response type", async ({ page }) => {

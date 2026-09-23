@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { testEmail } from "./test-email";
 
-test("creator can return home, manage checkpoint sets, and sign out on a narrow screen", async ({
+test("creator can return to the signed-in dashboard and sign out on a narrow screen", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -17,20 +17,20 @@ test("creator can return home, manage checkpoint sets, and sign out on a narrow 
   await page.getByLabel(/I accept the Terms/).check();
   await page.getByRole("button", { name: "Send sign-in link" }).click();
   await page.getByRole("link", { name: "Continue to dashboard" }).click();
+  await page.goto("/");
+  const publicHeaderBrand = page
+    .locator("header.site-header")
+    .getByRole("link", { name: "OpenRound", exact: true });
+  await expect(publicHeaderBrand).toHaveAttribute("href", "/dashboard");
+  await publicHeaderBrand.click();
+  await expect(page).toHaveURL(/\/dashboard/);
 
   await page.getByLabel("Checkpoint set title").fill("Navigation quiz");
   await page.getByRole("button", { name: "Create checkpoint set" }).click();
   await expect(page).toHaveURL(/\/quiz\//);
-  await page.getByRole("link", { name: "OpenRound" }).click();
-  await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("link", { name: "Manage Rounds" })).toBeVisible();
-
-  await page.getByRole("button", { name: "Menu" }).click();
-  await expect(page.getByText(/Signed in as/)).toBeVisible();
-  await page
-    .getByRole("navigation", { name: "Mobile navigation" })
-    .getByRole("link", { name: "My Rounds", exact: true })
-    .click();
+  const creatorBrand = page.getByRole("link", { name: "OpenRound" });
+  await expect(creatorBrand).toHaveAttribute("href", "/dashboard");
+  await creatorBrand.click();
   await expect(page).toHaveURL(/\/dashboard/);
   await expect(
     page
@@ -38,9 +38,6 @@ test("creator can return home, manage checkpoint sets, and sign out on a narrow 
       .filter({ has: page.getByRole("heading", { name: "Navigation quiz", exact: true }) }),
   ).toHaveCount(1);
 
-  await page.getByRole("link", { name: "OpenRound" }).click();
-  await expect(page).toHaveURL(/\/$/);
-  await page.getByRole("button", { name: "Menu" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(mobileSignInLink).toBeVisible();

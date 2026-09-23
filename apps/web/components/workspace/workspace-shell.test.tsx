@@ -206,6 +206,8 @@ describe("professional workspace shell", () => {
 
     expect(markup).toContain("Legacy, account, practice, and assignment content");
     expect(markup).not.toContain("Loading your workspace");
+    expect(markup.match(/class="brand" href="\/dashboard"/g)).toHaveLength(2);
+    expect(markup).not.toContain('class="brand" href="/home"');
   });
 
   it("continues to gate beta surfaces when the workspace shell rollout is off", () => {
