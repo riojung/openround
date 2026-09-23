@@ -3,9 +3,12 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Brand } from "../../../../components/brand";
+import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
-import { WorkspaceProvider } from "../../../../components/workspace/workspace-provider";
+import {
+  useWorkspace,
+  WorkspaceProvider,
+} from "../../../../components/workspace/workspace-provider";
 import { WorkspaceFeatureGate } from "../../../../components/workspace/workspace-shell";
 import styles from "../../../../components/presentation-live/presentation-live.module.css";
 import { apiFetch, humanError } from "../../../../lib/api";
@@ -63,6 +66,7 @@ function PresentationReportContent() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { locale, t } = useLocale();
+  const { productFeatures } = useWorkspace();
   const [report, setReport] = useState<PresentationReport | null>(null);
   const [error, setError] = useState("");
 
@@ -78,7 +82,7 @@ function PresentationReportContent() {
   return (
     <main className={styles.page}>
       <header className={styles.topbar}>
-        <Brand />
+        <CreatorBrand productFeatures={productFeatures} />
         <div className="button-row">
           <Link href="/results">{t("live.presentationReport.allResults")}</Link>
           <Link href={`/presentation-session/${id}/host`}>

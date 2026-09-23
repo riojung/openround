@@ -3,10 +3,13 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brand } from "../../../../components/brand";
+import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import { PresentationMedia } from "../../../../components/presentation-live/presentation-media";
-import { WorkspaceProvider } from "../../../../components/workspace/workspace-provider";
+import {
+  useWorkspace,
+  WorkspaceProvider,
+} from "../../../../components/workspace/workspace-provider";
 import { WorkspaceFeatureGate } from "../../../../components/workspace/workspace-shell";
 import { recordAuthoringEvent } from "../../../../components/workspace/product-events";
 import styles from "../../../../components/presentation-live/presentation-live.module.css";
@@ -95,6 +98,7 @@ function advanceMessageKey(
 
 function PresentationHostContent() {
   const { locale, t } = useLocale();
+  const { productFeatures } = useWorkspace();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [snapshot, setSnapshot] = useState<HostSnapshot | null>(null);
@@ -181,7 +185,7 @@ function PresentationHostContent() {
   return (
     <main className={styles.page}>
       <header className={styles.topbar}>
-        <Brand />
+        <CreatorBrand productFeatures={productFeatures} />
         <div className="button-row">
           <Link href="/sessions">{t("live.common.sessions")}</Link>
           {snapshot?.phase === "finished" ? (

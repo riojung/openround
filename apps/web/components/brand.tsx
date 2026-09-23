@@ -1,12 +1,13 @@
 import Link from "next/link";
+import type { WorkspaceProductFeatures } from "@openround/contracts";
 
-export function Brand({
-  inverted = false,
-  name = "OpenRound",
-}: {
+interface BrandProps {
+  href?: string;
   inverted?: boolean;
   name?: string;
-}) {
+}
+
+export function Brand({ href = "/", inverted = false, name = "OpenRound" }: BrandProps) {
   const initials = name
     .trim()
     .split(/\s+/)
@@ -15,7 +16,7 @@ export function Brand({
     .join("");
 
   return (
-    <Link className="brand" href="/" style={inverted ? { color: "white" } : undefined}>
+    <Link className="brand" href={href} style={inverted ? { color: "white" } : undefined}>
       <span className="brand-mark" aria-hidden="true">
         {initials || "OR"}
       </span>
@@ -23,4 +24,20 @@ export function Brand({
       <span aria-hidden="true">{name}</span>
     </Link>
   );
+}
+
+type CreatorNavigationFeatures = Pick<WorkspaceProductFeatures, "workspaceShell">;
+
+export function creatorLandingHref(
+  productFeatures: CreatorNavigationFeatures | null | undefined,
+): "/home" | "/dashboard" {
+  return productFeatures?.workspaceShell === true ? "/home" : "/dashboard";
+}
+
+interface CreatorBrandProps extends Omit<BrandProps, "href"> {
+  productFeatures?: CreatorNavigationFeatures | null;
+}
+
+export function CreatorBrand({ productFeatures, ...props }: CreatorBrandProps) {
+  return <Brand {...props} href={creatorLandingHref(productFeatures)} />;
 }

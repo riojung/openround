@@ -10,7 +10,7 @@ import type {
   SessionStaffCredential,
   SessionSnapshot,
 } from "@openround/contracts";
-import { Brand } from "../../../components/brand";
+import { Brand, creatorLandingHref } from "../../../components/brand";
 import {
   AudiencePanel,
   enqueueAudienceRealtimeUpdate,
@@ -141,6 +141,7 @@ export default function HostPage() {
   const [embedCopyStatus, setEmbedCopyStatus] = useState("");
   const [staffManagementAvailable, setStaffManagementAvailable] = useState(false);
   const [cohostingAvailable, setCohostingAvailable] = useState(false);
+  const [creatorHref, setCreatorHref] = useState<"/" | "/home" | "/dashboard">("/");
   const [audienceOpen, setAudienceOpen] = useState(false);
   const [audienceTab, setAudienceTab] = useState<"participants" | "pulse" | "qna" | "chat">(
     "participants",
@@ -364,9 +365,20 @@ export default function HostPage() {
   }, [loadStaff]);
 
   useEffect(() => {
-    apiFetch<{ entitlements: { cohosting?: boolean } }>("/v1/auth/me")
-      .then(({ entitlements }) => setCohostingAvailable(Boolean(entitlements.cohosting)))
-      .catch(() => setCohostingAvailable(false));
+    apiFetch<{
+      entitlements: { cohosting?: boolean };
+      productFeatures?: { workspaceShell?: boolean };
+    }>("/v1/auth/me")
+      .then(({ entitlements, productFeatures }) => {
+        setCreatorHref(
+          creatorLandingHref({ workspaceShell: productFeatures?.workspaceShell === true }),
+        );
+        setCohostingAvailable(Boolean(entitlements.cohosting));
+      })
+      .catch(() => {
+        setCreatorHref("/");
+        setCohostingAvailable(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -647,7 +659,7 @@ export default function HostPage() {
     >
       <header className="shell live-topbar" inert={audienceOpen}>
         <span lang="">
-          <Brand inverted name={snapshot?.brandTheme?.organizationName} />
+          <Brand href={creatorHref} inverted name={snapshot?.brandTheme?.organizationName} />
         </span>
         <div className="button-row">
           <ExperiencePreferences />

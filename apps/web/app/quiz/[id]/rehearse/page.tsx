@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Brand } from "../../../../components/brand";
+import type { WorkspaceProductFeatures } from "@openround/contracts";
+import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import {
   RecoveryRehearsal,
@@ -27,6 +28,7 @@ export default function RehearsePage() {
     currentVersion: RecoveryRehearsalVersion | null;
     available: boolean;
     role: RehearsalWorkspaceRole;
+    productFeatures: Pick<WorkspaceProductFeatures, "workspaceShell">;
   } | null>(null);
   const [error, setError] = useState("");
 
@@ -39,7 +41,7 @@ export default function RehearsePage() {
       }>(`/v1/quizzes/${id}`),
       apiFetch<{
         creator: { role: RehearsalWorkspaceRole };
-        productFeatures: { recoveryRehearsal?: boolean };
+        productFeatures: Pick<WorkspaceProductFeatures, "recoveryRehearsal" | "workspaceShell">;
       }>("/v1/auth/me"),
     ])
       .then(([result, account]) => {
@@ -52,6 +54,7 @@ export default function RehearsePage() {
               status: result.quiz.status,
             }),
             role: account.creator.role,
+            productFeatures: account.productFeatures,
           });
         }
       })
@@ -82,7 +85,7 @@ export default function RehearsePage() {
         {t("reportRound.rehearsal.skip")}
       </a>
       <header className={styles.topbar}>
-        <Brand />
+        <CreatorBrand productFeatures={payload?.productFeatures} />
         <div className={styles.topbarActions}>
           <span className={styles.readOnlyBadge}>{t("reportRound.rehearsal.readOnlyBadge")}</span>
           <Link className={styles.quietLink} href={returnLink.href}>

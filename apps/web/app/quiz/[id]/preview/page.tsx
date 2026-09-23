@@ -8,9 +8,10 @@ import {
   type BrandTheme,
   type QuestionDraft,
   type QuizDraft,
+  type WorkspaceProductFeatures,
 } from "@openround/contracts";
 import { resolveExperienceTheme } from "@openround/experience";
-import { Brand } from "../../../../components/brand";
+import { CreatorBrand } from "../../../../components/brand";
 import { ExperiencePreferences } from "../../../../components/experience-preferences";
 import { useLocale } from "../../../../components/locale-provider";
 import { apiFetch, humanError } from "../../../../lib/api";
@@ -64,6 +65,10 @@ export default function QuizPreviewPage() {
   const router = useRouter();
   const [quiz, setQuiz] = useState<QuizRecord | null>(null);
   const [brandTheme, setBrandTheme] = useState<BrandTheme | null>(null);
+  const [productFeatures, setProductFeatures] = useState<Pick<
+    WorkspaceProductFeatures,
+    "workspaceShell"
+  > | null>(null);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [mediaSource, setMediaSource] = useState("");
@@ -81,10 +86,14 @@ export default function QuizPreviewPage() {
   useEffect(() => {
     Promise.all([
       apiFetch<{ quiz: QuizRecord }>(`/v1/quizzes/${id}`),
-      apiFetch<{ brandTheme: BrandTheme | null }>("/v1/auth/me"),
+      apiFetch<{
+        brandTheme: BrandTheme | null;
+        productFeatures: Pick<WorkspaceProductFeatures, "workspaceShell">;
+      }>("/v1/auth/me"),
     ])
       .then(([{ quiz: loadedQuiz }, account]) => {
         setBrandTheme(account.brandTheme);
+        setProductFeatures(account.productFeatures);
         const validation = previewValidationError(loadedQuiz.draft, t);
         if (!validation.content) {
           setError(validation.message);
@@ -138,7 +147,11 @@ export default function QuizPreviewPage() {
       style={experienceThemeStyle(experienceTheme)}
     >
       <header className="shell live-topbar">
-        <Brand inverted name={brandTheme?.organizationName} />
+        <CreatorBrand
+          inverted
+          name={brandTheme?.organizationName}
+          productFeatures={productFeatures}
+        />
         <div className="button-row">
           <ExperiencePreferences />
           <Link className="button-quiet small-button" href={`/quiz/${id}`}>

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { LtiLaunchView } from "@openround/contracts";
-import { Brand } from "../../../components/brand";
+import { CreatorBrand } from "../../../components/brand";
 import { apiFetch, humanError } from "../../../lib/api";
 
 interface QuizRecord {
@@ -20,8 +20,15 @@ export default function LtiSelectPage() {
   const [selectedQuizId, setSelectedQuizId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [productFeatures, setProductFeatures] = useState<{ workspaceShell: boolean } | null>(null);
 
   useEffect(() => {
+    void apiFetch<{ productFeatures?: { workspaceShell?: boolean } }>("/v1/auth/me")
+      .then((account) =>
+        setProductFeatures({ workspaceShell: account.productFeatures?.workspaceShell === true }),
+      )
+      .catch(() => setProductFeatures(null));
+
     const id = new URLSearchParams(window.location.search).get("launchId") ?? "";
     setLaunchId(id);
     if (!id) {
@@ -72,7 +79,7 @@ export default function LtiSelectPage() {
   return (
     <>
       <header className="shell topbar" lang="en-CA">
-        <Brand />
+        <CreatorBrand productFeatures={productFeatures} />
         <Link href="/dashboard">Dashboard</Link>
       </header>
       <main className="shell page-main" id="main" lang="en-CA">

@@ -10,8 +10,9 @@ import type {
   ReportV2,
   ReportV3,
   ResponseDistribution,
+  WorkspaceProductFeatures,
 } from "@openround/contracts";
-import { Brand } from "../../../components/brand";
+import { CreatorBrand } from "../../../components/brand";
 import { ParticipantIdentity } from "../../../components/participant-avatar";
 import { RecoveryStorySummary } from "../../../components/recovery-story";
 import { recordFollowupShared } from "../../../components/workspace/product-events";
@@ -769,7 +770,10 @@ export default function ReportPage() {
   const [context, setContext] = useState<ReportContext | null>(null);
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [followup, setFollowup] = useState<Followup | null>(null);
-  const [uxBeta, setUxBeta] = useState(false);
+  const [productFeatures, setProductFeatures] = useState<Pick<
+    WorkspaceProductFeatures,
+    "uxBeta" | "workspaceShell"
+  > | null>(null);
   const [activeTab, setActiveTab] = useState<ReportTab>("evidence");
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
@@ -806,10 +810,14 @@ export default function ReportPage() {
   }, [id, router]);
 
   useEffect(() => {
-    apiFetch<{ productFeatures?: { uxBeta?: boolean } }>("/v1/auth/me")
-      .then((account) => setUxBeta(Boolean(account.productFeatures?.uxBeta)))
-      .catch(() => setUxBeta(false));
+    apiFetch<{
+      productFeatures: Pick<WorkspaceProductFeatures, "uxBeta" | "workspaceShell">;
+    }>("/v1/auth/me")
+      .then((account) => setProductFeatures(account.productFeatures))
+      .catch(() => setProductFeatures(null));
   }, []);
+
+  const uxBeta = productFeatures?.uxBeta === true;
 
   const evidence = report?.schemaVersion === 2 || report?.schemaVersion === 3 ? report : null;
   const detailTabs: { id: ReportTab; label: string }[] = [
@@ -855,7 +863,7 @@ export default function ReportPage() {
   return (
     <>
       <header className="shell topbar" lang="en-CA">
-        <Brand />
+        <CreatorBrand productFeatures={productFeatures} />
         <Link className="button-quiet small-button" href="/dashboard">
           Dashboard
         </Link>
