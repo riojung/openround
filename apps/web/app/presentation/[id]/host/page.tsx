@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Brand } from "../../../../components/brand";
+import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import { WorkspaceProvider } from "../../../../components/workspace/workspace-provider";
 import { WorkspaceFeatureGate } from "../../../../components/workspace/workspace-shell";
@@ -60,7 +60,7 @@ function PresentationHostSetupContent() {
   return (
     <main className={styles.page}>
       <div className={styles.topbar}>
-        <Brand />
+        <CreatorBrand />
         <Link href={`/presentation/${id}`}>{t("live.presentationHost.backEditor")}</Link>
       </div>
       <section className={styles.setup}>

@@ -11,7 +11,7 @@ import type {
   ReportV3,
   ResponseDistribution,
 } from "@openround/contracts";
-import { Brand } from "../../../components/brand";
+import { CreatorBrand } from "../../../components/brand";
 import { ParticipantIdentity } from "../../../components/participant-avatar";
 import { RecoveryStorySummary } from "../../../components/recovery-story";
 import { recordFollowupShared } from "../../../components/workspace/product-events";
@@ -855,7 +855,7 @@ export default function ReportPage() {
   return (
     <>
       <header className="shell topbar" lang="en-CA">
-        <Brand />
+        <CreatorBrand />
         <Link className="button-quiet small-button" href="/dashboard">
           Dashboard
         </Link>

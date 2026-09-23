@@ -14,7 +14,7 @@ import type {
   WorkspaceMember,
   WorkspaceSummary,
 } from "@openround/contracts";
-import { Brand } from "../../components/brand";
+import { CreatorBrand } from "../../components/brand";
 import { useLocale } from "../../components/locale-provider";
 import { WorkspaceProvider } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
@@ -806,7 +806,7 @@ export default function AccountPage() {
             data-branded="true"
             style={liveThemeStyle(theme)}
           >
-            <Brand
+            <CreatorBrand
               inverted
               name={theme.organizationName || t("account.theme.defaultOrganizationName")}
             />
@@ -935,7 +935,7 @@ export default function AccountPage() {
   return (
     <>
       <header className="shell topbar">
-        <Brand />
+        <CreatorBrand />
         <Link className="button-quiet small-button" href="/dashboard">
           {t("account.legacy.dashboard")}
         </Link>

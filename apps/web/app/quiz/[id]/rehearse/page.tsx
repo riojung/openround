@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Brand } from "../../../../components/brand";
+import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import {
   RecoveryRehearsal,
@@ -82,7 +82,7 @@ export default function RehearsePage() {
         {t("reportRound.rehearsal.skip")}
       </a>
       <header className={styles.topbar}>
-        <Brand />
+        <CreatorBrand />
         <div className={styles.topbarActions}>
           <span className={styles.readOnlyBadge}>{t("reportRound.rehearsal.readOnlyBadge")}</span>
           <Link className={styles.quietLink} href={returnLink.href}>

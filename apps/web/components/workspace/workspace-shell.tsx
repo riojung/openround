@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Brand } from "../brand";
+import { CreatorBrand } from "../brand";
 import { useLocale } from "../locale-provider";
 import { humanError } from "../../lib/api";
 import type { MessageKey } from "../../lib/i18n/catalog";
@@ -360,7 +360,7 @@ export function WorkspaceShell({
       </a>
       <aside className={styles.sidebar} lang={locale}>
         <div className={styles.brandWrap}>
-          <Brand />
+          <CreatorBrand />
         </div>
         <WorkspaceNav />
         <div className={styles.sidebarFooter}>
@@ -404,7 +404,7 @@ export function WorkspaceShell({
       <div className={styles.contentColumn}>
         <header className={styles.topHeader} lang={locale}>
           <div className={styles.mobileBrand}>
-            <Brand />
+            <CreatorBrand />
           </div>
           <Link className={styles.workspaceSwitch} href="/account">
             <ShellIcon name="workspace" />

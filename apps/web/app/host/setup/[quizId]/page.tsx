@@ -12,7 +12,7 @@ import {
   type SessionSettings,
   type SessionSnapshot,
 } from "@openround/contracts";
-import { Brand } from "../../../../components/brand";
+import { CreatorBrand } from "../../../../components/brand";
 import { ExperiencePicker } from "../../../../components/experience-picker";
 import { useLocale } from "../../../../components/locale-provider";
 import { apiFetch, humanError } from "../../../../lib/api";
@@ -274,7 +274,7 @@ export default function HostSetupPage() {
   return (
     <>
       <header className="shell topbar" data-ux-beta={uxBeta || undefined}>
-        <Brand />
+        <CreatorBrand />
         <div className="button-row">
           {quiz ? (
             <Link className="button-quiet small-button" href={`/quiz/${quiz.id}/preview`}>

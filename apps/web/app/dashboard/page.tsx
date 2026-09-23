@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { Entitlements, QuizDraft } from "@openround/contracts";
 import { AuthoringAssistant } from "../../components/authoring-assistant";
-import { Brand } from "../../components/brand";
+import { CreatorBrand } from "../../components/brand";
 import { CheckpointSetImport } from "../../components/checkpoint-set-import";
 import { API_URL, apiFetch, humanError } from "../../lib/api";
 import { dashboardMessage } from "../../components/workspace/workspace-model";
@@ -290,7 +290,7 @@ function LegacyDashboardPage() {
   return (
     <>
       <header className="shell topbar">
-        <Brand />
+        <CreatorBrand />
         <nav className="button-row" aria-label="Account navigation">
           <Link href="/account">Account</Link>
           <Link href="/pricing">

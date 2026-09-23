@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Brand } from "../brand";
+import { CreatorBrand } from "../brand";
 import { useLocale } from "../locale-provider";
 import styles from "./round-builder.module.css";
 
@@ -57,7 +57,7 @@ export function BuilderCommandBar({
             : t("delivery.builder.ready");
   return (
     <header className={styles.commandBar}>
-      <Brand />
+      <CreatorBrand />
       <div className={styles.titleGroup}>
         <label className="sr-only" htmlFor="quiz-title">
           {t("create.round.blank.titleLabel")}

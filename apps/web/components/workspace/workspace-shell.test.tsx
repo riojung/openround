@@ -90,6 +90,7 @@ describe("professional workspace shell", () => {
       expect(markup).toContain(label);
     }
     expect(markup).toMatch(/aria-current="page"[^>]*href="\/library"/);
+    expect(markup.match(/class="brand" href="\/home"/g)).toHaveLength(2);
     expect(markup).toContain("Workspace content");
   });
 

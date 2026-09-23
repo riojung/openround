@@ -10,7 +10,7 @@ import {
   type QuizDraft,
 } from "@openround/contracts";
 import { resolveExperienceTheme } from "@openround/experience";
-import { Brand } from "../../../../components/brand";
+import { CreatorBrand } from "../../../../components/brand";
 import { ExperiencePreferences } from "../../../../components/experience-preferences";
 import { useLocale } from "../../../../components/locale-provider";
 import { apiFetch, humanError } from "../../../../lib/api";
@@ -138,7 +138,7 @@ export default function QuizPreviewPage() {
       style={experienceThemeStyle(experienceTheme)}
     >
       <header className="shell live-topbar">
-        <Brand inverted name={brandTheme?.organizationName} />
+        <CreatorBrand inverted name={brandTheme?.organizationName} />
         <div className="button-row">
           <ExperiencePreferences />
           <Link className="button-quiet small-button" href={`/quiz/${id}`}>

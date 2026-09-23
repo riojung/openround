@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brand } from "../../../../components/brand";
+import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import { PresentationMedia } from "../../../../components/presentation-live/presentation-media";
 import { WorkspaceProvider } from "../../../../components/workspace/workspace-provider";
@@ -181,7 +181,7 @@ function PresentationHostContent() {
   return (
     <main className={styles.page}>
       <header className={styles.topbar}>
-        <Brand />
+        <CreatorBrand />
         <div className="button-row">
           <Link href="/sessions">{t("live.common.sessions")}</Link>
           {snapshot?.phase === "finished" ? (

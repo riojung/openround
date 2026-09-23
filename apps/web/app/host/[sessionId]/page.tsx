@@ -141,6 +141,7 @@ export default function HostPage() {
   const [embedCopyStatus, setEmbedCopyStatus] = useState("");
   const [staffManagementAvailable, setStaffManagementAvailable] = useState(false);
   const [cohostingAvailable, setCohostingAvailable] = useState(false);
+  const [creatorSignedIn, setCreatorSignedIn] = useState(false);
   const [audienceOpen, setAudienceOpen] = useState(false);
   const [audienceTab, setAudienceTab] = useState<"participants" | "pulse" | "qna" | "chat">(
     "participants",
@@ -365,8 +366,14 @@ export default function HostPage() {
 
   useEffect(() => {
     apiFetch<{ entitlements: { cohosting?: boolean } }>("/v1/auth/me")
-      .then(({ entitlements }) => setCohostingAvailable(Boolean(entitlements.cohosting)))
-      .catch(() => setCohostingAvailable(false));
+      .then(({ entitlements }) => {
+        setCreatorSignedIn(true);
+        setCohostingAvailable(Boolean(entitlements.cohosting));
+      })
+      .catch(() => {
+        setCreatorSignedIn(false);
+        setCohostingAvailable(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -647,7 +654,11 @@ export default function HostPage() {
     >
       <header className="shell live-topbar" inert={audienceOpen}>
         <span lang="">
-          <Brand inverted name={snapshot?.brandTheme?.organizationName} />
+          <Brand
+            href={creatorSignedIn ? "/home" : "/"}
+            inverted
+            name={snapshot?.brandTheme?.organizationName}
+          />
         </span>
         <div className="button-row">
           <ExperiencePreferences />

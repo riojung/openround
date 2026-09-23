@@ -11,6 +11,7 @@ export default function LtiLinkPage() {
   const [status, setStatus] = useState<Status>("checking");
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
+  const [creatorSignedIn, setCreatorSignedIn] = useState(false);
 
   useEffect(() => {
     const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -27,8 +28,12 @@ export default function LtiLinkPage() {
     }
     setToken(savedToken);
     apiFetch("/v1/auth/me")
-      .then(() => setStatus("ready"))
+      .then(() => {
+        setCreatorSignedIn(true);
+        setStatus("ready");
+      })
       .catch((caught) => {
+        setCreatorSignedIn(false);
         if ((caught as { status?: number }).status === 401) setStatus("signed-out");
         else {
           setError(humanError(caught));
@@ -57,8 +62,8 @@ export default function LtiLinkPage() {
   return (
     <>
       <header className="shell topbar" lang="en-CA">
-        <Brand />
-        <Link href="/">Home</Link>
+        <Brand href={creatorSignedIn ? "/home" : "/"} />
+        <Link href={creatorSignedIn ? "/home" : "/"}>Home</Link>
       </header>
       <main className="shell auth-wrap" id="main" lang="en-CA">
         <section className="join-card auth-card" aria-labelledby="lti-link-title">

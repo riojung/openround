@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Brand } from "../../../../components/brand";
+import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import { WorkspaceProvider } from "../../../../components/workspace/workspace-provider";
 import { WorkspaceFeatureGate } from "../../../../components/workspace/workspace-shell";
@@ -78,7 +78,7 @@ function PresentationReportContent() {
   return (
     <main className={styles.page}>
       <header className={styles.topbar}>
-        <Brand />
+        <CreatorBrand />
         <div className="button-row">
           <Link href="/results">{t("live.presentationReport.allResults")}</Link>
           <Link href={`/presentation-session/${id}/host`}>

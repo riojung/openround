@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { Brand } from "./brand";
+import { Brand, CreatorBrand } from "./brand";
 
 describe("Brand", () => {
   it("keeps the home link named when responsive styles hide the visible name", () => {
@@ -16,5 +16,13 @@ describe("Brand", () => {
 
     expect(markup).toContain('<span class="sr-only">Acme Learning</span>');
     expect(markup).toContain('<span aria-hidden="true">Acme Learning</span>');
+  });
+
+  it("supports an authenticated home destination without changing the public default", () => {
+    const publicMarkup = renderToStaticMarkup(<Brand />);
+    const authenticatedMarkup = renderToStaticMarkup(<CreatorBrand />);
+
+    expect(publicMarkup).toContain('href="/"');
+    expect(authenticatedMarkup).toContain('href="/home"');
   });
 });

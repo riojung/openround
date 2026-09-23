@@ -1,12 +1,12 @@
 import Link from "next/link";
 
-export function Brand({
-  inverted = false,
-  name = "OpenRound",
-}: {
+interface BrandProps {
+  href?: string;
   inverted?: boolean;
   name?: string;
-}) {
+}
+
+export function Brand({ href = "/", inverted = false, name = "OpenRound" }: BrandProps) {
   const initials = name
     .trim()
     .split(/\s+/)
@@ -15,7 +15,7 @@ export function Brand({
     .join("");
 
   return (
-    <Link className="brand" href="/" style={inverted ? { color: "white" } : undefined}>
+    <Link className="brand" href={href} style={inverted ? { color: "white" } : undefined}>
       <span className="brand-mark" aria-hidden="true">
         {initials || "OR"}
       </span>
@@ -23,4 +23,8 @@ export function Brand({
       <span aria-hidden="true">{name}</span>
     </Link>
   );
+}
+
+export function CreatorBrand(props: Omit<BrandProps, "href">) {
+  return <Brand {...props} href="/home" />;
 }

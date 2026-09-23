@@ -61,7 +61,7 @@ export function SiteHeader() {
       <a className="skip-link" href="#main">
         {t("delivery.site.skip")}
       </a>
-      <Brand />
+      <Brand href={signedIn ? "/home" : "/"} />
       <nav
         aria-busy={session.status === "checking"}
         aria-label={t("delivery.site.primaryNavigation")}

@@ -39,6 +39,7 @@ describe("Round Builder shell", () => {
 
     expect(markup).toContain('id="quiz-title"');
     expect(markup).toContain('value="Safety refresher"');
+    expect(markup).toContain('class="brand" href="/home"');
     expect(markup).toContain("Saving…");
     expect(markup).toContain('aria-label="Undo last edit"');
     expect(markup).toContain('aria-label="Redo last edit"');

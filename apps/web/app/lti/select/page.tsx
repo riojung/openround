@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { LtiLaunchView } from "@openround/contracts";
-import { Brand } from "../../../components/brand";
+import { CreatorBrand } from "../../../components/brand";
 import { apiFetch, humanError } from "../../../lib/api";
 
 interface QuizRecord {
@@ -72,7 +72,7 @@ export default function LtiSelectPage() {
   return (
     <>
       <header className="shell topbar" lang="en-CA">
-        <Brand />
+        <CreatorBrand />
         <Link href="/dashboard">Dashboard</Link>
       </header>
       <main className="shell page-main" id="main" lang="en-CA">

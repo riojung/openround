@@ -12,7 +12,7 @@ import type {
   QuizDraft,
   RoundCategory,
 } from "@openround/contracts";
-import { Brand } from "../../../components/brand";
+import { CreatorBrand } from "../../../components/brand";
 import { BuilderCommandBar } from "../../../components/editor/builder-command-bar";
 import { DeliveryScoring } from "../../../components/editor/delivery-scoring";
 import { DiagnosticDetails } from "../../../components/editor/diagnostic-details";
@@ -839,7 +839,7 @@ export default function QuizEditorPage() {
     return (
       <>
         <header className="shell topbar">
-          <Brand />
+          <CreatorBrand />
           <div className="button-row">
             <span className="muted" role="status">
               {saveState === "saving"
