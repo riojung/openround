@@ -1,0 +1,49 @@
+{
+	email {$OPENROUND_ACME_EMAIL}
+}
+
+{$OPENROUND_APP_DOMAIN} {
+	encode zstd gzip
+
+	@backend path /v1/* /health/* /socket.io/*
+	reverse_proxy @backend server-ingress:4000 {
+		# Replace any caller-supplied chain before the API uses this value for rate limiting.
+		header_up X-Forwarded-For {http.request.remote.host}
+	}
+	reverse_proxy web:3000
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$OPENROUND_MEDIA_DOMAIN} {
+	request_body {
+		max_size 12MB
+	}
+
+	@minio_admin path /minio/admin/*
+	respond @minio_admin 404
+
+	reverse_proxy minio:9000
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

@@ -30,7 +30,7 @@ The remaining product gaps are deliberately sequenced after beta evidence:
 
 | Current priority | Remaining gap                                    | Evidence or implementation boundary                                                                                            |
 | ---------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| P1 evidence      | Hosted Free capacity above 20 and Pro above 100  | Do not change published limits before Canadian-region cost, abuse, support, soak, and failover evidence                        |
+| P1 evidence      | Hosted Free capacity above 20 and Pro above 100  | Do not change published limits before target-region cost, abuse, support, soak, and recovery evidence                          |
 | P1               | Accountless live time-flex/extra time            | Follow-up accommodation passes exist; live participant-specific timing still requires privacy-safe UX and usability validation |
 | P1/P2            | Accessible team discussion delivery              | Add only after the core command-center and recovery workflow pass observed trials                                              |
 | P2               | Exact-match short text and rank/order            | New response contracts remain outside the P0 beta                                                                              |

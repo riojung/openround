@@ -29,7 +29,7 @@ function usage() {
 
 Build environments: development (or dev), staging, production.
 Hosted builds require --api-url HTTPS, --registry REPOSITORY, and --push.
-Production images are always signed.`;
+The reviewed staging and production targets require signed images.`;
 }
 
 async function gitOutput(args) {

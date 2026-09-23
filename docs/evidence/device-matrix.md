@@ -2,7 +2,7 @@
 
 - Date/time (UTC):
 - Build commit and image digest:
-- Canadian staging URL (redacted if private):
+- Single-VM staging URL (redacted if private):
 - Test owner:
 
 Use real devices and the final QR hostname. Each row must cover scan/open, nickname join, answer,

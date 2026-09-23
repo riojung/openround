@@ -36,6 +36,15 @@ const optionalSecret = z.preprocess(
   z.string().min(1).optional(),
 );
 
+const optionalIpAddress = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z
+    .string()
+    .trim()
+    .refine((value) => isIP(value) !== 0, "Must be an IPv4 or IPv6 address")
+    .optional(),
+);
+
 const uuidAllowlist = z
   .string()
   .default("")
@@ -84,6 +93,7 @@ export const ConfigSchema = z
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
     HOST: z.string().default("0.0.0.0"),
     PORT: z.coerce.number().int().min(1).max(65_535).default(4000),
+    TRUSTED_PROXY_IP: optionalIpAddress,
     WEB_ORIGIN: z.string().url().default("http://localhost:3000"),
     PUBLIC_API_URL: z.string().url().default("http://localhost:4000"),
     COOKIE_NAME: z.string().default("openround_creator"),

@@ -1,0 +1,3 @@
+# Replace this placeholder with the pinned SSH host key for staging-vm.openround.example
+# before the first deployment. Generate it through an independently verified provisioning
+# channel; do not accept a key presented during deployment.

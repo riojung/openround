@@ -46,9 +46,10 @@ The repository contains a runnable differentiated product slice:
   and audited database-backed signup/session/media/experience/Pulse/chat kill switches
 - Dependency-aware readiness checks, fail-fast non-secret deployment preflight, per-request nonce
   Content Security Policy, HSTS, CodeQL/dependency review workflows, and a protected manual
-  Canadian-staging correctness/load/billing evidence workflow
+  single-VM staging correctness/load/billing evidence workflow
 - Responsive participant, host, presenter, creator, pricing, privacy, terms, and status surfaces
-- Community Compose stack, free-pilot guidance, Canadian Fly.io profiles, CI/security workflows, tests, and operations runbooks
+- Local Compose development stack, remote single-VM Compose deployment profile, legacy Fly reference,
+  CI/security workflows, tests, and operations runbooks
 
 Legal text, trademark clearance, external penetration testing, school agreements, production provider accounts, support staffing, and real design-partner evidence remain release gates rather than claims made by the software.
 
@@ -64,7 +65,7 @@ Legal text, trademark clearance, external penetration testing, school agreements
 | [Competitive strategy and roadmap](docs/competitive-strategy-and-roadmap.md)         | Market comparison, differentiation, and post-P0 phases                  |
 | [Architecture and protocol](docs/architecture.md)                                    | Components, data flows, correctness, security, and scale gates          |
 | [Institution integrations](docs/institution-integrations.md)                         | Configure and validate creator OIDC, LTI, audit, and pilot gates        |
-| [Build, service, and deployment runbook](docs/runbooks/deployment.md)                | Build images, operate local services, and promote hosted releases       |
+| [Build, service, and deployment runbook](docs/runbooks/deployment.md)                | Build images, operate local services, and promote single-VM releases    |
 | [Documentation index](docs/README.md)                                                | API, status, privacy, release, and operations references                |
 
 ## Quick start with Docker
@@ -147,9 +148,9 @@ for details; use the complete Compose profile above when testing durable Postgre
 
 ## Product build and operations
 
-Use the checked-in lifecycle scripts as the stable operator interface. Compose is a local
-development and evaluation tool only; staging and production deployments target the checked-in
-Fly.io profiles and immutable image digests.
+Use the checked-in lifecycle scripts as the stable operator interface. Development uses the local
+Compose stack on one host. Staging and production target a remote single VM running the hardened
+`compose.single-vm.yaml` profile with immutable application-image digests.
 
 Build the development product images, then start and inspect the local core services:
 
@@ -162,24 +163,60 @@ Build the development product images, then start and inspect the local core serv
 ```
 
 `service.sh` also supports `restart`, the `media` and `observability` profiles, and `--no-build`
-when the required images already exist. It intentionally refuses staging or production service
-lifecycle operations: hosted environments are not managed with Compose.
+when the required development images already exist. For staging and production it controls the
+currently deployed single-VM release over SSH; hosted lifecycle commands do not select profiles or
+build images. The command reads the checked-in `config/deploy/<environment>.json`, pins the SSH host
+key from its configured known-hosts file, and uses the SSH agent unless a mode-0600 private key is
+provided with `--ssh-identity`:
 
-A hosted build requires an HTTPS public API URL, registry prefix, and `--push`. For example:
+```bash
+./scripts/service.sh staging status
+./scripts/service.sh staging logs --follow
+./scripts/service.sh staging restart --ssh-identity /secure/path/to/deploy-key
+```
+
+These commands require a valid `current` release on the target and do not establish that a staging
+or production VM exists.
+
+A hosted build requires an HTTPS public API URL, registry prefix, and `--push`. The following is the
+underlying staging build command used by CI; operators can inspect it locally with `--dry-run`, but
+must not use a workstation-built or workstation-signed manifest for deployment:
 
 ```bash
 ./scripts/product-build.sh staging \
-  --api-url https://openround-ca-staging-server.fly.dev \
+  --api-url https://staging.openround.example \
   --registry ghcr.io/riojung/openround/openround \
-  --push
+  --push \
+  --dry-run
 ```
 
-Production images are built through the protected tag-triggered release workflow so keyless
-signing has the required GitHub Actions identity. Building or pushing an image does not deploy it
-or establish that a staging or production environment exists. Hosted promotion uses
+Deployable staging images come from the protected manual **Staging images** workflow on `main` so
+the scan, keyless signatures, verification, and manifest carry the allowlisted GitHub Actions
+identity. After reviewing the target config, dispatch the workflow and download the artifact for
+that exact main commit:
+
+```bash
+gh workflow run staging-images.yml --ref main
+gh run list --workflow staging-images.yml --branch main --limit 1
+mkdir -p artifacts/deploy/staging
+gh run download <successful-run-id> \
+  --name single-vm-staging-manifest-<full-main-commit> \
+  --dir artifacts/deploy/staging
+```
+
+Production images similarly come from the protected tag-triggered release workflow. Building or
+pushing an image does not deploy it or establish that a staging or production VM exists. Remote
+promotion uses
 `./scripts/deploy.sh` with a non-secret environment config, the build manifest, separate runtime
 and migration environment files, and an explicit `<environment>:<build-id>` confirmation. A
 production promotion additionally requires `--backup-reference`.
+
+The active hosted topology has one failure domain: Caddy, web, API/realtime, PostgreSQL, Valkey,
+MinIO, and ClamAV share one VM. It provides no high availability or SLA. Public production remains
+blocked until TLS, strict SSH host-key pinning, encrypted off-host backups, a timed clean
+replacement-VM restore drill, target-host capacity evidence, monitoring, and every other readiness
+gate are complete. The checked-in configuration is not evidence that either remote environment has
+been provisioned. Fly.io files remain legacy/reference material only.
 
 See the [deployment runbook](docs/runbooks/deployment.md) for the complete command reference,
 credential boundaries, preflight and migration sequence, readiness gates, and rollback policy.
@@ -236,9 +273,9 @@ evidence.
 For an already deployed environment, the manual `Staging readiness` GitHub workflow validates TLS,
 dependency health, public feature flags, protected metrics, and security headers from a hosted
 runner. Its complete 20- or 100-client latency game and soak run only on a self-hosted runner
-labeled `canada-staging` in the target region. It can separately replay signed, duplicate, stale,
+labeled `single-vm-staging` near the target VM. It can separately replay signed, duplicate, stale,
 invalid, and cancellation billing events against a dedicated staging workspace. See the
-[staging runbook](docs/runbooks/staging-readiness.md); the public probe is not target-region
+[staging runbook](docs/runbooks/staging-readiness.md); the public probe is not target-host
 performance evidence, and locally signed events do not replace a real Stripe test-mode checkout
 and delivery exercise.
 
@@ -266,8 +303,9 @@ pnpm smoke:multi-process
 
 The smoke splits clients across both writers, verifies cross-process broadcasts and database
 fencing, stops the primary container, and completes the game through the secondary. Direct
-WebSocket transport is used locally; a hosted load balancer must also prove sticky routing for any
-enabled polling transport before multiple realtime processes are promoted.
+WebSocket transport is used locally. This is future multi-host evidence only; the active remote
+profile runs one server container, and any later load-balanced topology must separately prove
+sticky routing for every enabled polling transport.
 
 To start the optional local Prometheus and Grafana profile with versioned alert rules and a
 provisioned operations dashboard:
@@ -314,13 +352,19 @@ on provider, human-review, legal, and beta evidence.
 
 ## Deployment profiles
 
-- **Community/self-hosted:** `compose.yaml`, Apache-2.0, billing disabled, operator-managed infrastructure and support.
+- **Development:** `compose.yaml` on one local host, billing disabled, and development-only example
+  credentials.
+- **Remote staging and production:** `compose.single-vm.yaml` on one operator-controlled VM,
+  deployed by immutable image digest over SSH with strict host-key checking. This topology has no
+  HA or SLA and is not approved for public production until the readiness ledger is complete.
+- **Community/self-hosted:** the same Apache-2.0 application with operator-managed infrastructure,
+  security, backups, and support.
 - **Free pilot:** [Cloud Run scale-to-zero guidance](infra/cloudrun/README.md) plus managed free
   tiers. No SLA; quota overruns can cost money; no school production data.
-- **Canadian hosted production:** [Fly deployment profile](infra/fly/README.md) with separate web
-  and always-on realtime containers in Toronto, PostgreSQL/object storage in `ca-central-1`, and
-  region-local managed Redis.
-- **US expansion:** an isolated US regional stack. Existing Canadian workspaces are never moved automatically.
+- **Legacy/reference:** the [Fly profile](infra/fly/README.md) is retained for historical design
+  context and is not an active deployment target.
+- **Future regional expansion:** isolated regional stacks remain a design option after residency,
+  capacity, high-availability, operational, and legal gates are satisfied.
 
 ## Security and privacy posture
 

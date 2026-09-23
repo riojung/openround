@@ -1,72 +1,69 @@
 # Build, service, and deployment runbook
 
-This runbook defines the supported operator interfaces for building OpenRound, controlling the
-local service stack, and promoting a release to a hosted environment. The scripts are safety
-wrappers around existing build, Compose, validation, migration, and Fly.io tooling; they are not
-evidence that a staging or production environment has been provisioned or deployed.
+This runbook defines the supported operator interfaces for building OpenRound and running every
+environment on one Linux host. It does not claim that a staging or production host, domain, backup,
+monitoring route, or provider account has been provisioned.
 
-## Environment boundary
+## Supported topology
 
-| Environment   | Runtime path                         | Image policy                                  |
-| ------------- | ------------------------------------ | --------------------------------------------- |
-| `development` | Local Docker Compose only            | Local images; pushing is not required         |
-| `staging`     | Fly.io hosted deployment             | Registry images selected by immutable digest  |
-| `production`  | Fly.io hosted deployment after gates | Registry images selected by digest and signed |
+| Environment   | Single-host implementation                      | Image policy                                 |
+| ------------- | ----------------------------------------------- | -------------------------------------------- |
+| `development` | Local `compose.yaml` and optional overlays      | Locally built images                         |
+| `staging`     | Remote `compose.single-vm.yaml` over pinned SSH | Registry images selected by immutable digest |
+| `production`  | Remote `compose.single-vm.yaml` after all gates | Signed digest-selected registry images       |
 
-Compose is local-only. Do not use Compose to represent, update, or roll back a hosted staging or
-production environment. Conversely, `service.sh` deliberately does not operate hosted services.
-The lifecycle wrapper uses the repository's existing `openround` Compose project, so it operates
-the same services and persistent volumes as the documented quick-start commands.
+The hosted stack places Caddy, web, API/realtime, PostgreSQL, Valkey, MinIO, and ClamAV on one VM.
+Only TCP 80/443 and UDP 443 are published by Compose. The database, cache, scanner, and MinIO
+administration port are not published. Caddy obtains TLS certificates and routes the application
+origin to web/API services and the separate media origin to MinIO.
 
-All three scripts accept the environment as the first positional argument. The explicit
-`--environment development|staging|production` form is an equivalent alias when it makes an
-automated invocation easier to read.
+This is an initial alpha/beta topology. A host, disk, kernel, Docker daemon, or availability-zone
+failure can interrupt every service at once. It has no high-availability or SLA claim. Keep
+encrypted database and media backups off the VM, rehearse restoration onto a clean replacement
+host, and do not call the deployment production-ready until the release ledger is complete.
 
 ## Command summary
 
+All wrappers accept the environment as their first positional argument. The explicit
+`--environment development|staging|production` form is equivalent.
+
 ### Build product images
 
-Build the development images:
+Build local development images:
 
 ```bash
 ./scripts/product-build.sh development
 ```
 
-Hosted builds require the target environment, the public HTTPS API URL compiled into the web
-application, a registry prefix, `--push`, and Docker with the Buildx plugin available:
+Hosted builds require a clean Git worktree, Buildx, an HTTPS application origin matching the
+checked-in target config, a registry prefix matching that config, and `--push`. This is the
+underlying command used by the protected staging-image workflow:
 
 ```bash
 ./scripts/product-build.sh staging \
-  --api-url https://openround-ca-staging-server.fly.dev \
+  --api-url https://staging.openround.example \
   --registry ghcr.io/riojung/openround/openround \
   --push
 ```
 
-The hosted API URL and registry must match the reviewed target configuration. Hosted builds also
-require a clean Git worktree so the full source commit can serve as the build identifier; do not
-build a release from staged, unstaged, or untracked changes. The wrapper restores Next.js's
-generated `next-env.d.ts` after the host build and verifies cleanliness again immediately before
-Buildx receives the Docker context.
-
-Production builds use this same script only inside the protected, tag-triggered
-`.github/workflows/release.yml` job. That job supplies the required GitHub Actions OIDC identity,
-builds the configured `linux/amd64` target, signs and verifies both images, and uploads the
-deployment manifest. High and critical fixed-vulnerability scan findings fail before signing. An
-arbitrary local signer cannot satisfy the configured production identity, and the policy must not
-be weakened to make a workstation build pass.
-
-The hosted build records its target platform, immutable image references, and build identifier in:
+Active staging requires signatures from `.github/workflows/staging-images.yml` running on `main`;
+an arbitrary workstation signature cannot satisfy its identity policy. Dispatch **Staging images**
+after the target config is reviewed, then download its signed manifest. Before a real deployment,
+replace the `.example` domains and placeholder host names in
+`config/deploy/staging.json` and `config/deploy/production.json`. The build writes digest-selected
+references and the full Git commit to:
 
 ```text
 artifacts/deploy/<environment>/build-manifest.json
 ```
 
-That manifest is deployment input and release evidence. Do not replace its digest references with
-mutable tags. A successful build or registry push does not change any running environment.
+Do not replace digest references with mutable tags or combine server and web images from different
+manifests. Production images are built by the protected tag-triggered release workflow, scanned,
+signed using its allowlisted OIDC identity, and verified before promotion.
 
-### Operate local services
+### Operate services
 
-The local service interface is:
+Local development supports fixed profiles:
 
 ```text
 ./scripts/service.sh development start|stop|restart|status|logs \
@@ -83,227 +80,160 @@ Examples:
 ./scripts/service.sh development stop --profile core
 ```
 
-- `core` runs the base local stack.
-- `media` adds the production-equivalent local quarantine and malware-scanning path.
-- `observability` includes the media overlay and adds the local metrics and dashboard services.
-- `--no-build` reuses existing images for actions that would otherwise build them.
-- `--follow` follows log output and is intended for the `logs` action.
+For staging and production the same interface operates the already-deployed remote release through
+strict host-key-checked SSH:
 
-Use `status` and the documented readiness endpoint after `start` or `restart`; process startup
-alone is not application readiness. Local data, reset behavior, profile requirements, and first
-use remain documented in the [quick start](../quick-start.md).
+```text
+./scripts/service.sh staging|production start|stop|restart|status|logs \
+  --config config/deploy/<environment>.json \
+  [--ssh-identity /path/to/private-key] [--follow]
+```
+
+The identity option is optional when a suitable key is already loaded in `ssh-agent`. A supplied
+identity must be a regular, non-symlink file with mode `0600`. Hosted lifecycle actions use the
+Compose project and current-release path from the checked-in configuration; they do not accept an
+arbitrary host or remote command.
 
 ### Deploy an environment
 
-Development deployment is a local convenience path:
+Development deployment starts the local Compose stack:
 
 ```bash
 ./scripts/deploy.sh development
 ```
 
-Use `service.sh` when explicit local start, stop, restart, status, or log control is needed.
-
-A hosted deployment has this interface:
+The hosted deployment contract is:
 
 ```text
 ./scripts/deploy.sh staging|production \
-  --config <deployment-config.json> \
-  [--manifest <build-manifest.json>] \
-  --runtime-env <runtime.env> \
-  --migration-env <migration.env> \
-  --confirm <environment>:<build-id> \
-  [--backup-reference <reference>] \
-  [--recover-lock]
+  --config config/deploy/<environment>.json \
+  [--manifest artifacts/deploy/<environment>/build-manifest.json] \
+  --runtime-env artifacts/deploy/<environment>/runtime.env \
+  --migration-env artifacts/deploy/<environment>/migration.env \
+  --confirm <environment>:<full-build-id> \
+  [--ssh-identity /path/to/private-key] \
+  [--backup-reference <reference>] [--recover-lock] [--dry-run]
 ```
 
-For a reviewed code-only rollback, omit `--migration-env` and use the distinct rollback contract:
+Production requires `--backup-reference`. The value identifies an operator-verified off-host
+backup or recovery anchor; passing a string neither creates a backup nor proves restoration.
+
+Code-only rollback selects a previously approved, schema-compatible manifest:
 
 ```text
 ./scripts/deploy.sh staging|production \
   --rollback \
-  --rollback-from <current-build-id> \
+  --rollback-from <current-full-build-id> \
   --manifest <target-build-manifest.json> \
-  --runtime-env <runtime.env> \
+  --runtime-env artifacts/deploy/<environment>/runtime.env \
   --confirm rollback:<environment>:<target-build-id>:from:<current-build-id> \
-  [--backup-reference <reference>]
+  [--ssh-identity /path/to/private-key] [--backup-reference <reference>]
 ```
 
-The default manifest is
-`artifacts/deploy/<environment>/build-manifest.json`; use `--manifest` only to select another
-reviewed manifest explicitly. The checked-in non-secret configuration files are:
+Rollback omits the migration file and never reverses a database migration.
+
+## Provision each hosted VM
+
+Provision staging and production independently. At minimum:
+
+1. Select a supported Linux VM whose architecture matches `imagePlatform` (`linux/amd64` or
+   `linux/arm64`). Start with measured resources; the example resource limits assume roughly four
+   vCPUs and 8 GB of memory.
+2. Install current Docker Engine and the Compose v2 plugin. Configure Docker to start at boot and
+   authenticate the deployment user to the image registry without putting a token in this repo.
+3. Create a dedicated non-root `openround` deployment user, its SSH key, and the configured deploy
+   root (for example `/opt/openround/staging`) owned only by that user. Docker control is effectively
+   host-administrator access even without `sudo`; restrict this account and key to the dedicated VM,
+   prohibit unrelated workloads, and do not grant additional passwordless administration.
+4. Permit inbound HTTP/HTTPS only (TCP 80/443 and optionally UDP 443) plus SSH from the approved
+   operator or CI network. Do not expose PostgreSQL, Valkey, MinIO administration, ClamAV, or the
+   Docker socket.
+5. Point the application and media DNS names at the VM. Caddy can obtain certificates only after
+   public DNS and the firewall are correct.
+6. Obtain the VM's SSH host key through an independently verified channel and place the exact entry
+   in `config/deploy/ssh/<environment>_known_hosts`. The checked-in comment is deliberately not a
+   usable key. Never populate it from an unverified connection or disable strict checking.
+7. Configure an external SMTP service. Configure an external telemetry/paging destination before
+   a customer beta. Schedule encrypted PostgreSQL and MinIO backups to storage that does not share
+   the VM's credentials or failure domain.
+
+The active non-secret target files are:
 
 ```text
 config/deploy/dev.json
 config/deploy/staging.json
 config/deploy/production.json
+compose.single-vm.yaml
+infra/single-vm/Caddyfile
+infra/single-vm/postgres-init.sh
 ```
 
-Production requires `--backup-reference`. The reference identifies the operator-verified backup
-or point-in-time recovery anchor for the release. Supplying it does not create a backup or prove
-that a restore works.
+The historical `infra/fly/` profiles remain reference material and are not the active target.
 
-Hosted deployments acquire one local lock per environment before migration or provider changes.
-If an interrupted command leaves a lock behind, inspect its recorded host, process ID, build, and
-start time first. `--recover-lock` only recovers a lock at least 30 minutes old, refuses a still-live
-owner process on the same host, and archives the stale record before acquiring a replacement. It
-is an explicit recovery tool, not a concurrency override; dry runs never create or recover locks.
+## Runtime and migration environment files
 
-## Secret-file boundary
-
-Runtime and migration credentials must remain separate:
-
-- The runtime environment file contains only credentials and settings required by the long-lived
-  application. It must use the non-owner PostgreSQL role and must not contain
-  `DATABASE_MIGRATION_URL`. The deployment script uses this file to run the exact image's
-  configuration preflight; it does not upload or replace Fly.io application secrets.
-- The migration environment file is provided only to the one-shot migration command. It contains
-  the owner-level `DATABASE_MIGRATION_URL` and must not be installed in, or passed to, the
-  long-lived server or web application.
-
-Both files must be regular non-symlink files, excluded from Git, mode `0600`, and located under the
-literal non-symlinked `artifacts/deploy/<environment>/` subtree. This fixed subtree is excluded from
-the Docker build context so credentials cannot be sent to BuildKit. The deployment script rejects
-files that do not meet that boundary. Prepare them with:
+Start from the checked-in templates, then restrict the copies:
 
 ```bash
 mkdir -p artifacts/deploy/staging
 chmod 700 artifacts/deploy/staging
-touch artifacts/deploy/staging/runtime.env artifacts/deploy/staging/migration.env
+cp .env.single-vm.example artifacts/deploy/staging/runtime.env
+cp .env.single-vm.migration.example artifacts/deploy/staging/migration.env
 chmod 600 artifacts/deploy/staging/runtime.env artifacts/deploy/staging/migration.env
 git check-ignore artifacts/deploy/staging/runtime.env artifacts/deploy/staging/migration.env
 ```
 
-`artifacts/` is ignored by this repository. Prefer a managed secret injection path in CI; if
-temporary files are required, remove them after the deployment evidence has been retained. Never
-put secret values in the non-secret deployment config, build manifest, command arguments, logs, or
-release artifacts.
+Replace every placeholder and make domain, billing, community-mode, regional, and feature-flag
+values agree with the reviewed target. Use URL-encoded passwords inside connection URLs. For the
+professional alpha, enable workspace features deliberately and prefer a workspace allowlist before
+broad enablement. Do not copy staging secrets into production.
 
-Provision the corresponding runtime secrets through the hosted provider's approved secret path
-before promotion. The candidate runtime file's key set must exactly match the server app's Fly
-secret names, while the web app must have no provider secrets; secret values remain local and are
-used only for the exact-image preflight. The operator also needs authenticated registry, Fly.io,
-and signing access appropriate to the target; the scripts validate tools and inputs but do not
-provision provider accounts.
+The runtime file is the complete reviewed Compose input for long-lived services. It includes the
+restricted application database URL and infrastructure credentials required by their respective
+containers, but must not contain `DATABASE_MIGRATION_URL`. The migration file contains only the
+owner-level `DATABASE_MIGRATION_URL` (and optional migrations directory) and is transferred only for
+the one-shot migration. Automation deletes the remote migration file after use. The server and web
+containers never receive that owner URL.
 
-## Staging promotion
+Both files must be regular non-symlink files, ignored by Git, mode `0600`, and located under the
+literal non-symlinked `artifacts/deploy/<environment>/` directory. Do not put secrets in target
+JSON, manifests, command arguments, logs, receipts, or release artifacts.
 
-1. Complete the applicable clean-checkout tests and review the non-secret
-   `config/deploy/staging.json` values, public URLs, regions, feature ceilings, and service names.
-2. Build and push the staging images:
+## Promotion sequence
 
-   ```bash
-   ./scripts/product-build.sh staging \
-     --api-url https://openround-ca-staging-server.fly.dev \
-     --registry ghcr.io/riojung/openround/openround \
-     --push
-   ```
+For staging:
 
-3. Read the build identifier and digest-pinned image references from
-   `artifacts/deploy/staging/build-manifest.json`. Review the manifest as an immutable unit; do not
-   combine a web image from one build with a server image from another.
-4. Prepare separate ignored `0600` runtime and migration files, then deploy using the exact build
-   identifier as the confirmation value:
+1. Review and update `config/deploy/staging.json`, DNS, host-key pin, runtime values, and VM sizing.
+2. Dispatch the protected **Staging images** workflow from `main`. It builds, scans, signs, and
+   verifies both image digests. Download and review its complete manifest.
+3. Run the deploy command first with `--dry-run`, then without it using the exact confirmation value.
+4. The deployer verifies inputs and gates, uploads a private incoming release, validates Compose,
+   pulls exact images, runs the candidate configuration check, verifies the embedded web build ID,
+   starts data dependencies, runs the one-shot migration, and activates the full stack under a
+   remote deployment lock.
+5. The deployer verifies public API readiness and web/server build markers. If post-activation
+   verification fails, it attempts to restore the previously active release. Retain the non-secret
+   deployment receipt and failure evidence.
+6. Run the [staging readiness workflow](staging-readiness.md), physical-device tests, restore drill,
+   and target-region load/soak checks. A public health response is not capacity evidence.
 
-   ```bash
-   ./scripts/deploy.sh staging \
-     --config config/deploy/staging.json \
-     --manifest artifacts/deploy/staging/build-manifest.json \
-     --runtime-env artifacts/deploy/staging/runtime.env \
-     --migration-env artifacts/deploy/staging/migration.env \
-     --confirm staging:<build-id>
-   ```
-
-5. Retain the non-secret preflight summary and deployment evidence. Run the
-   [staging readiness](staging-readiness.md) workflow and the target-region checks required for the
-   release. Repository tests and a public probe are not production-capacity evidence.
-
-The explicit confirmation binds operator intent to both the target environment and the manifest's
-build identifier. Copy the identifier from the reviewed manifest; do not use a tag or a shortened
-guess.
-
-## Production promotion
-
-Production is a separate build and promotion. Do not promote merely because the same source
-revision passed locally.
-
-1. Complete the [production readiness checklist](production-readiness.md), including required
-   legal, security, accessibility, provider, restore, staging, target-region load, observability,
-   incident-response, and human approval evidence. The deployment script can enforce mechanical
-   checks, but it cannot manufacture these approvals.
-2. Confirm a current backup or point-in-time recovery anchor and a successful restore exercise.
-   Record the approved anchor as the `--backup-reference` value.
-3. Create the approved signed semantic-version tag. The protected `Release images` workflow runs
-   the production build under the allowlisted GitHub Actions OIDC identity, scans the images, and
-   uploads `release-deployment-manifest-<tag>` together with the per-image release evidence.
-4. Download and review its `build-manifest.json`, including the `linux/amd64` target, build
-   identifier, digest-pinned images, and signing result. Place the reviewed file at
-   `artifacts/deploy/production/build-manifest.json`, then prepare production-only ignored `0600`
-   runtime and migration files.
-5. Promote the reviewed manifest:
-
-   ```bash
-   ./scripts/deploy.sh production \
-     --config config/deploy/production.json \
-     --manifest artifacts/deploy/production/build-manifest.json \
-     --runtime-env artifacts/deploy/production/runtime.env \
-     --migration-env artifacts/deploy/production/migration.env \
-     --confirm production:<build-id> \
-     --backup-reference <verified-backup-or-pitr-reference>
-   ```
-
-6. Verify dependency readiness and the web and server build markers before increasing traffic.
-   Observe the rehearsed promotion signals and stop when a gate is not met.
-
-Neither this command nor the checked-in Fly.io profile claims that the production apps, domains,
-managed data services, paging routes, or provider accounts exist. Provisioning and credential
-verification remain operator responsibilities.
-
-## Deployment sequence and credential isolation
-
-For a hosted deployment, the scripts keep these phases distinct and use the exact digest-selected
-server image from the reviewed manifest:
-
-1. **Validate inputs and gates.** Check the environment/config/manifest relationship, confirmation
-   string, target platform, immutable image references, secret-file permissions, reviewed Fly
-   environment, and environment-specific gates.
-2. **Configuration preflight.** Run `node dist/config-check.js` with the runtime environment. This
-   combines the runtime secrets with the checked Fly non-secret environment, then validates the
-   exact candidate application's schema, public origins, persistence/coordination mode, rollout
-   ceilings, and cross-field configuration without exposing secret values. It does not prove that
-   external credentials authenticate or that provider secrets have not drifted.
-3. **One-shot migration.** Run `node dist/migrate.js` separately with only the migration
-   environment. Migrations are forward-only and rerunnable; the owner credential never enters the
-   long-lived application environment.
-4. **Fly.io release.** Update the hosted web and server applications using the reviewed image
-   digests, then wait for the configured health/readiness checks. A live process is not sufficient;
-   dependency readiness must pass.
-5. **Post-deploy verification.** Compare the running server and web build markers with the
-   manifest, then run the environment's smoke, observability, and promotion checks.
-
-Do not merge configuration preflight and migration into one privileged long-lived process. If
-preflight fails, do not migrate. If migration fails, do not promote application images; preserve
-the failure evidence and follow the migration's forward-repair plan.
+Production repeats the process with an independently reviewed signed release manifest, all
+[production readiness](production-readiness.md) gates complete, a verified off-host backup
+reference, a rehearsed replacement-host restore, named responders, and a rollback decision owner.
 
 ## Failure and rollback policy
 
-- Stop when a build, signature, preflight, migration, Fly.io readiness, build-marker, or promotion
-  gate fails. Do not change the confirmation value to bypass a mismatch.
-- Application rollback is **code-only**: redeploy a previously approved manifest whose immutable
-  web and server digests are compatible with the current schema.
-- Do not reverse a production database migration. Database changes are forward-only; use the
-  release's documented forward repair when a schema or data correction is required.
-- A prior image is not a safe rollback candidate unless its code tolerates the current schema.
-  Expand/contract changes must keep old and new application versions compatible throughout the
-  rollout window.
-- A rollback uses `--rollback`, omits the owner-only migration file, verifies that the selected
-  target is a Git ancestor of `--rollback-from`, and checks that the running build markers are in
-  the expected source/target state before changing either app. The confirmation must exactly match
-  `rollback:<environment>:<target-build-id>:from:<current-build-id>`.
-- A production rollback still requires a current `--backup-reference`; this control is not waived
-  during an incident.
-- After rollback or forward repair, verify readiness, build markers, live-session behavior,
-  reports, background work, and observability before closing the incident. Follow the
-  [incident-response runbook](incident-response.md) for ownership and communication.
+- Stop on signature, configuration, migration, pull, Compose readiness, public health, build-marker,
+  backup, or release-gate failure. Do not weaken a check to make a deployment pass.
+- Remote deploy and lifecycle actions share a lock. `--recover-lock` is only for a verified dead
+  owner after the minimum stale interval; it is not a concurrency override.
+- Database migrations are forward-only. Repair schema/data with a reviewed forward migration.
+- A code rollback is safe only when the older images tolerate the current schema. Preserve
+  expand/contract compatibility during every rollout window.
+- Keep at least the current and previous approved release available on the VM, but treat the
+  off-host database/media backup as the disaster-recovery source when the host is lost.
+- After rollback or recovery, verify readiness, build markers, live-session behavior, reports,
+  background work, email, media, and telemetry before closing the incident.
 
-See the [upgrade and rollback runbook](upgrade.md) for schema compatibility rules and the
-[backup and restore runbook](backup-restore.md) for recovery evidence.
+See the [upgrade runbook](upgrade.md), [backup and restore runbook](backup-restore.md), and
+[incident-response runbook](incident-response.md) for the corresponding evidence and ownership.

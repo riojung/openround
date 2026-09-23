@@ -1,23 +1,30 @@
 {
   "schemaVersion": 1,
   "environment": "staging",
-  "deploymentMode": "fly",
-  "publicWebUrl": "https://openround-ca-staging-web.fly.dev",
-  "publicApiUrl": "https://openround-ca-staging-server.fly.dev",
+  "deploymentMode": "single-vm",
+  "publicWebUrl": "https://staging.openround.example",
+  "publicApiUrl": "https://staging.openround.example",
+  "publicMediaUrl": "https://media-staging.openround.example",
   "imageRepository": "ghcr.io/riojung/openround/openround",
   "imagePlatform": "linux/amd64",
   "billingMode": "disabled",
-  "fly": {
-    "serverApp": "openround-ca-staging-server",
-    "webApp": "openround-ca-staging-web",
-    "serverConfig": "config/deploy/fly/staging-server.toml",
-    "webConfig": "config/deploy/fly/staging-web.toml"
+  "singleVm": {
+    "host": "staging-vm.openround.example",
+    "port": 22,
+    "user": "openround",
+    "deployPath": "/opt/openround/staging",
+    "composeFiles": ["compose.single-vm.yaml"],
+    "deploymentFiles": ["infra/single-vm/Caddyfile", "infra/single-vm/postgres-init.sh"],
+    "knownHostsFile": "config/deploy/ssh/staging_known_hosts",
+    "projectName": "openround-staging"
   },
   "health": {
     "timeoutSeconds": 300,
     "intervalSeconds": 5,
     "requestTimeoutSeconds": 8
   },
-  "requireSigning": false,
-  "requireReadinessGate": false
+  "requireSigning": true,
+  "requireReadinessGate": false,
+  "cosignIdentityRegexp": "^https://github\\.com/riojung/openround/\\.github/workflows/staging-images\\.yml@refs/heads/main$",
+  "cosignOidcIssuer": "https://token.actions.githubusercontent.com"
 }

@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { Buffer } from "node:buffer";
+import { lstat, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { URL } from "node:url";
 
@@ -32,10 +34,12 @@ const CONFIG_KEYS = new Set([
   "deploymentMode",
   "publicWebUrl",
   "publicApiUrl",
+  "publicMediaUrl",
   "imageRepository",
   "imagePlatform",
   "billingMode",
   "fly",
+  "singleVm",
   "health",
   "requireSigning",
   "requireReadinessGate",
@@ -44,6 +48,16 @@ const CONFIG_KEYS = new Set([
   "cosignOidcIssuer",
 ]);
 const FLY_KEYS = new Set(["serverApp", "webApp", "serverConfig", "webConfig"]);
+const SINGLE_VM_KEYS = new Set([
+  "host",
+  "port",
+  "user",
+  "deployPath",
+  "composeFiles",
+  "deploymentFiles",
+  "knownHostsFile",
+  "projectName",
+]);
 const HEALTH_KEYS = new Set(["timeoutSeconds", "intervalSeconds", "requestTimeoutSeconds"]);
 const MANIFEST_KEYS = new Set([
   "schemaVersion",
@@ -58,6 +72,148 @@ const MANIFEST_KEYS = new Set([
 const SOURCE_KEYS = new Set(["commit", "dirty"]);
 const IMAGES_KEYS = new Set(["server", "web"]);
 const IMAGE_KEYS = new Set(["repository", "tag", "digest", "ref", "signed"]);
+const SSH_HOST_PATTERN =
+  /^(?=.{1,253}$)(?!-)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+const SSH_USER_PATTERN = /^[a-z_][a-z0-9_-]{0,31}$/;
+const REMOTE_PATH_PATTERN = /^\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/;
+const REPOSITORY_PATH_PATTERN = /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/;
+const COMPOSE_PROJECT_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+const HOSTED_IMAGE_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
+const SINGLE_VM_RUNTIME_ENV_KEYS = new Set([
+  "NODE_ENV",
+  "HOST",
+  "PORT",
+  "WEB_ORIGIN",
+  "PUBLIC_API_URL",
+  "COOKIE_NAME",
+  "COOKIE_DOMAIN",
+  "COOKIE_SECURE",
+  "ALLOW_INSECURE_LOCAL_HTTP",
+  "DATABASE_URL",
+  "REDIS_URL",
+  "SESSION_MUTATION_LEASE_TTL_MS",
+  "SESSION_MUTATION_LEASE_WAIT_MS",
+  "RUN_MIGRATIONS",
+  "ALLOW_IN_MEMORY",
+  "COMMUNITY_MODE",
+  "MAX_SESSION_PARTICIPANTS",
+  "RETENTION_INTERVAL_MINUTES",
+  "REPORT_WORKER_INTERVAL_MS",
+  "REPORT_WORKER_LEASE_MS",
+  "AUTHORING_AI_MODE",
+  "AUTHORING_AI_ENDPOINT",
+  "AUTHORING_AI_API_KEY",
+  "AUTHORING_AI_MODEL",
+  "AUTHORING_AI_PROVIDER_NAME",
+  "AUTHORING_WORKER_INTERVAL_MS",
+  "AUTHORING_WORKER_LEASE_MS",
+  "AUTHORING_EXTRACTION_TIMEOUT_MS",
+  "OIDC_MODE",
+  "OIDC_ISSUER",
+  "OIDC_CLIENT_ID",
+  "OIDC_CLIENT_SECRET",
+  "OIDC_CLIENT_AUTH",
+  "OIDC_PROVIDER_NAME",
+  "OIDC_TRANSACTION_TTL_SECONDS",
+  "LTI_MODE",
+  "LTI_TOOL_PRIVATE_JWK",
+  "LTI_TOOL_KEY_ID",
+  "LTI_TRANSACTION_TTL_SECONDS",
+  "LTI_LAUNCH_TTL_SECONDS",
+  "AUDIT_RETENTION_DAYS",
+  "COMMUNITY_REPORT_RETENTION_DAYS",
+  "MEDIA_QUARANTINE_RETENTION_HOURS",
+  "FEATURE_SIGNUPS",
+  "FEATURE_SESSION_CREATION",
+  "FEATURE_MEDIA_UPLOADS",
+  "FEATURE_ROUND_EXPERIENCES",
+  "FEATURE_AUDIENCE_PULSE",
+  "FEATURE_ROOM_CHAT",
+  "FEATURE_UX_BETA",
+  "FEATURE_RECOVERY_REHEARSAL",
+  "FEATURE_PRACTICE_ASSIGNMENTS",
+  "FEATURE_WORKSPACE_SHELL",
+  "FEATURE_BUILDER_V2",
+  "FEATURE_PRESENTATIONS",
+  "FEATURE_GROUPS",
+  "FEATURE_DISCOVER",
+  "THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST",
+  "UX_BETA_WORKSPACE_ALLOWLIST",
+  "METRICS_ENABLED",
+  "METRICS_TOKEN",
+  "TRACING_ENABLED",
+  "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+  "OTEL_SERVICE_NAME",
+  "OTEL_SERVICE_VERSION",
+  "SMTP_URL",
+  "EMAIL_FROM",
+  "DEVELOPMENT_EMAIL_INBOX_URL",
+  "AUTH_DEBUG_MAGIC_LINKS",
+  "POLICY_VERSION",
+  "BILLING_MODE",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "STRIPE_PRO_PRICE_ID",
+  "S3_ENDPOINT",
+  "S3_PUBLIC_ENDPOINT",
+  "S3_REGION",
+  "S3_BUCKET",
+  "S3_ACCESS_KEY_ID",
+  "S3_SECRET_ACCESS_KEY",
+  "S3_FORCE_PATH_STYLE",
+  "MEDIA_SCAN_MODE",
+  "CLAMAV_HOST",
+  "CLAMAV_PORT",
+  "CLAMAV_TIMEOUT_MS",
+  "ADMIN_TOKEN",
+  "LOG_LEVEL",
+  "OPENROUND_APP_DOMAIN",
+  "OPENROUND_MEDIA_DOMAIN",
+  "OPENROUND_ACME_EMAIL",
+  "OPENROUND_SERVER_INGRESS_SUBNET",
+  "OPENROUND_CADDY_PROXY_IP",
+  "POSTGRES_DB",
+  "POSTGRES_OWNER_USER",
+  "POSTGRES_OWNER_PASSWORD",
+  "POSTGRES_APP_USER",
+  "POSTGRES_APP_PASSWORD",
+  "VALKEY_PASSWORD",
+  "MINIO_ROOT_USER",
+  "MINIO_ROOT_PASSWORD",
+  "MINIO_APP_ACCESS_KEY",
+  "MINIO_APP_SECRET_KEY",
+  "MINIO_BUCKET",
+  "OPENROUND_LOG_MAX_SIZE",
+  "OPENROUND_LOG_MAX_FILES",
+  "OPENROUND_POSTGRES_SHM_SIZE",
+  "OPENROUND_POSTGRES_CPUS",
+  "OPENROUND_POSTGRES_MEMORY_LIMIT",
+  "OPENROUND_POSTGRES_PIDS_LIMIT",
+  "VALKEY_AUTO_AOF_REWRITE_PERCENTAGE",
+  "VALKEY_MAXMEMORY",
+  "OPENROUND_VALKEY_CPUS",
+  "OPENROUND_VALKEY_MEMORY_LIMIT",
+  "OPENROUND_VALKEY_PIDS_LIMIT",
+  "OPENROUND_MINIO_CPUS",
+  "OPENROUND_MINIO_MEMORY_LIMIT",
+  "OPENROUND_MINIO_PIDS_LIMIT",
+  "OPENROUND_INIT_CPUS",
+  "OPENROUND_INIT_MEMORY_LIMIT",
+  "OPENROUND_CLAMAV_CPUS",
+  "OPENROUND_CLAMAV_MEMORY_LIMIT",
+  "OPENROUND_CLAMAV_PIDS_LIMIT",
+  "OPENROUND_MIGRATE_CPUS",
+  "OPENROUND_MIGRATE_MEMORY_LIMIT",
+  "OPENROUND_SERVER_CPUS",
+  "OPENROUND_SERVER_MEMORY_LIMIT",
+  "OPENROUND_SERVER_PIDS_LIMIT",
+  "OPENROUND_WEB_CPUS",
+  "OPENROUND_WEB_MEMORY_LIMIT",
+  "OPENROUND_WEB_PIDS_LIMIT",
+  "OPENROUND_CADDY_CPUS",
+  "OPENROUND_CADDY_MEMORY_LIMIT",
+  "OPENROUND_CADDY_PIDS_LIMIT",
+]);
 
 export function normalizeEnvironment(value) {
   const normalized = String(value ?? "")
@@ -244,11 +400,60 @@ function assertRepositoryRelativePath(value, label) {
     typeof value !== "string" ||
     !value ||
     isAbsolute(value) ||
-    value.split(/[\\/]/).includes("..")
+    !REPOSITORY_PATH_PATTERN.test(value) ||
+    value.split("/").some((segment) => segment === "." || segment === "..")
   ) {
-    throw new Error(`${label} must be a repository-relative path without parent traversal`);
+    throw new Error(`${label} must be a safe repository-relative path without parent traversal`);
   }
   return value;
+}
+
+function assertRepositoryRelativePaths(value, label, { allowEmpty = false } = {}) {
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0)) {
+    throw new Error(`${label} must be ${allowEmpty ? "an" : "a non-empty"} array`);
+  }
+  const seen = new Set();
+  for (const [index, path] of value.entries()) {
+    assertRepositoryRelativePath(path, `${label}[${index}]`);
+    if (seen.has(path)) throw new Error(`${label} must not contain duplicate paths`);
+    seen.add(path);
+  }
+  return value;
+}
+
+export function validateSingleVmConfig(input) {
+  assertExactKeys(input, SINGLE_VM_KEYS, "deployment config singleVm");
+  if (!SSH_HOST_PATTERN.test(String(input.host ?? "")) || input.host.includes("..")) {
+    throw new Error("deployment config singleVm.host must be a DNS name or IPv4 address");
+  }
+  if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
+    throw new Error("deployment config singleVm.port must be an integer from 1 through 65535");
+  }
+  if (!SSH_USER_PATTERN.test(String(input.user ?? ""))) {
+    throw new Error("deployment config singleVm.user is invalid");
+  }
+  if (
+    !REMOTE_PATH_PATTERN.test(String(input.deployPath ?? "")) ||
+    input.deployPath === "/" ||
+    input.deployPath.split("/").includes("..")
+  ) {
+    throw new Error("deployment config singleVm.deployPath must be a safe absolute path");
+  }
+  assertRepositoryRelativePaths(input.composeFiles, "deployment config singleVm.composeFiles");
+  assertRepositoryRelativePaths(
+    input.deploymentFiles,
+    "deployment config singleVm.deploymentFiles",
+    { allowEmpty: true },
+  );
+  const overlap = input.composeFiles.filter((path) => input.deploymentFiles.includes(path));
+  if (overlap.length > 0) {
+    throw new Error("deployment config singleVm files must not overlap");
+  }
+  assertRepositoryRelativePath(input.knownHostsFile, "deployment config singleVm.knownHostsFile");
+  if (!COMPOSE_PROJECT_PATTERN.test(String(input.projectName ?? ""))) {
+    throw new Error("deployment config singleVm.projectName is invalid");
+  }
+  return input;
 }
 
 export function validateDeployConfig(input, expectedEnvironment) {
@@ -270,24 +475,61 @@ export function validateDeployConfig(input, expectedEnvironment) {
       if (!["http:", "https:"].includes(url.protocol)) throw new Error(`${key} must use HTTP(S)`);
     }
     if (input.fly !== undefined) throw new Error("development config must not define fly settings");
+    if (input.singleVm !== undefined) {
+      throw new Error("development config must not define hosted singleVm settings");
+    }
+    if (input.publicMediaUrl !== undefined) {
+      throw new Error("development config must not define publicMediaUrl");
+    }
   } else {
-    if (input.deploymentMode !== "fly") throw new Error("hosted deploymentMode must be fly");
-    if (input.imagePlatform !== "linux/amd64") {
-      throw new Error("hosted deployment imagePlatform must be linux/amd64");
+    if (!new Set(["fly", "single-vm"]).has(input.deploymentMode)) {
+      throw new Error("hosted deploymentMode must be fly or single-vm");
+    }
+    if (!HOSTED_IMAGE_PLATFORMS.has(input.imagePlatform)) {
+      throw new Error("hosted deployment imagePlatform must be linux/amd64 or linux/arm64");
     }
     input.publicWebUrl = assertHttpsOrigin(input.publicWebUrl, "publicWebUrl");
     input.publicApiUrl = assertHttpsOrigin(input.publicApiUrl, "publicApiUrl");
     if (!new Set(["disabled", "stripe"]).has(input.billingMode)) {
       throw new Error("hosted deployment billingMode must be disabled or stripe");
     }
-    assertExactKeys(input.fly, FLY_KEYS, "deployment config fly");
-    for (const key of ["serverApp", "webApp"]) {
-      if (!APP_NAME_PATTERN.test(String(input.fly[key] ?? ""))) {
-        throw new Error(`deployment config fly.${key} is invalid`);
+    if (input.deploymentMode === "fly") {
+      if (input.singleVm !== undefined) {
+        throw new Error("Fly deployment config must not define singleVm settings");
       }
-    }
-    for (const key of ["serverConfig", "webConfig"]) {
-      assertRepositoryRelativePath(input.fly[key], `deployment config fly.${key}`);
+      if (input.publicMediaUrl !== undefined) {
+        throw new Error("Fly deployment config must not define single-VM publicMediaUrl");
+      }
+      if (input.imagePlatform !== "linux/amd64") {
+        throw new Error("Fly deployment imagePlatform must be linux/amd64");
+      }
+      assertExactKeys(input.fly, FLY_KEYS, "deployment config fly");
+      for (const key of ["serverApp", "webApp"]) {
+        if (!APP_NAME_PATTERN.test(String(input.fly[key] ?? ""))) {
+          throw new Error(`deployment config fly.${key} is invalid`);
+        }
+      }
+      if (input.fly.serverApp === input.fly.webApp) {
+        throw new Error("deployment config Fly server and web apps must differ");
+      }
+      if (input.publicWebUrl === input.publicApiUrl) {
+        throw new Error("deployment config Fly web and API origins must differ");
+      }
+      for (const key of ["serverConfig", "webConfig"]) {
+        assertRepositoryRelativePath(input.fly[key], `deployment config fly.${key}`);
+      }
+    } else {
+      if (input.fly !== undefined) {
+        throw new Error("single-vm deployment config must not define fly settings");
+      }
+      validateSingleVmConfig(input.singleVm);
+      input.publicMediaUrl = assertHttpsOrigin(input.publicMediaUrl, "publicMediaUrl");
+      if (input.publicWebUrl !== input.publicApiUrl) {
+        throw new Error("single-vm deployment must use one public web and API origin");
+      }
+      if (input.publicMediaUrl === input.publicWebUrl) {
+        throw new Error("single-vm media and application origins must differ");
+      }
     }
   }
   assertExactKeys(input.health, HEALTH_KEYS, "deployment config health");
@@ -436,8 +678,8 @@ export function validateBuildManifest(input, expected = {}) {
   }
   if (Number.isNaN(Date.parse(input.createdAt)))
     throw new Error("build manifest createdAt is invalid");
-  if (input.imagePlatform !== "linux/amd64") {
-    throw new Error("build manifest imagePlatform must be linux/amd64");
+  if (!HOSTED_IMAGE_PLATFORMS.has(input.imagePlatform)) {
+    throw new Error("build manifest imagePlatform must be linux/amd64 or linux/arm64");
   }
   if (expected.imagePlatform && input.imagePlatform !== expected.imagePlatform) {
     throw new Error("build manifest imagePlatform does not match the target config");
@@ -523,6 +765,38 @@ export function validateEnvFileKeys(keysOrContent, kind) {
       throw new Error("runtime environment must not contain DATABASE_MIGRATION_URL");
     }
     if (keys.length === 0) throw new Error("runtime environment must not be empty");
+  } else if (kind === "single-vm-runtime") {
+    for (const key of keys) {
+      if (!SINGLE_VM_RUNTIME_ENV_KEYS.has(key)) {
+        throw new Error(`single-vm runtime environment must not contain ${key}`);
+      }
+    }
+    if (unique.has("DATABASE_MIGRATION_URL")) {
+      throw new Error("single-vm runtime environment must not contain DATABASE_MIGRATION_URL");
+    }
+    for (const required of [
+      "COMMUNITY_MODE",
+      "OPENROUND_APP_DOMAIN",
+      "OPENROUND_MEDIA_DOMAIN",
+      "OPENROUND_ACME_EMAIL",
+      "POSTGRES_OWNER_PASSWORD",
+      "POSTGRES_APP_PASSWORD",
+      "DATABASE_URL",
+      "VALKEY_PASSWORD",
+      "REDIS_URL",
+      "MINIO_ROOT_USER",
+      "MINIO_ROOT_PASSWORD",
+      "MINIO_APP_ACCESS_KEY",
+      "MINIO_APP_SECRET_KEY",
+      "SMTP_URL",
+      "EMAIL_FROM",
+      "METRICS_TOKEN",
+      "ADMIN_TOKEN",
+    ]) {
+      if (!unique.has(required)) {
+        throw new Error(`single-vm runtime environment requires ${required}`);
+      }
+    }
   } else if (kind === "migration") {
     const allowed = new Set(["DATABASE_MIGRATION_URL", "OPENROUND_MIGRATIONS_DIR"]);
     for (const key of keys) {
@@ -606,12 +880,130 @@ export async function assertPrivateIgnoredEnvFile(path, kind, repositoryRoot) {
   }
   const content = await readFile(canonicalPath, "utf8");
   const keys = validateEnvFileKeys(parseEnvFileKeys(content, `${kind} environment`), kind);
-  return { absolute: canonicalPath, relative: relative(repositoryRoot, canonicalPath), keys };
+  return {
+    absolute: canonicalPath,
+    relative: relative(repositoryRoot, canonicalPath),
+    keys,
+    content,
+  };
+}
+
+export async function resolveCheckedRepositoryFile(
+  path,
+  repositoryRoot,
+  label,
+  { requireGitClean = false } = {},
+) {
+  const absolute = resolve(repositoryRoot, path);
+  const canonicalRoot = await realpath(repositoryRoot);
+  const metadata = await lstat(absolute);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error(`${label} must be a regular, non-symlink file`);
+  }
+  const canonicalPath = await realpath(absolute);
+  if (!canonicalPath.startsWith(`${canonicalRoot}${sep}`)) {
+    throw new Error(`${label} resolves outside the repository`);
+  }
+  if (requireGitClean) {
+    const repositoryPath = relative(canonicalRoot, canonicalPath);
+    try {
+      await run("git", ["ls-files", "--error-unmatch", "--", repositoryPath], {
+        cwd: canonicalRoot,
+        capture: true,
+      });
+    } catch (error) {
+      throw new Error(`${label} must be tracked by Git`, { cause: error });
+    }
+    try {
+      await run("git", ["diff", "--quiet", "HEAD", "--", repositoryPath], {
+        cwd: canonicalRoot,
+        capture: true,
+      });
+    } catch (error) {
+      throw new Error(`${label} must match the reviewed HEAD revision`, { cause: error });
+    }
+  }
+  return canonicalPath;
+}
+
+export async function resolveSshIdentityFile(path, cwd) {
+  if (path === undefined) return undefined;
+  const absolute = resolve(cwd, path);
+  const metadata = await lstat(absolute);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error("SSH identity file must be a regular, non-symlink file");
+  }
+  if ((metadata.mode & 0o777) !== 0o600) {
+    throw new Error("SSH identity file must have mode 0600");
+  }
+  return await realpath(absolute);
+}
+
+export async function createPrivateFileSnapshot(content, name = "snapshot") {
+  if (typeof content !== "string" && !Buffer.isBuffer(content)) {
+    throw new Error("Private snapshot content must be a string or Buffer");
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new Error("Private snapshot name is invalid");
+  const directory = await mkdtemp(join(tmpdir(), "openround-ops-"));
+  const path = join(directory, name);
+  try {
+    await writeFile(path, content, { mode: 0o600 });
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+  return {
+    path,
+    async cleanup() {
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+export function sshArgv(singleVm, knownHostsFile, remoteArguments, { identityFile } = {}) {
+  validateSingleVmConfig(singleVm);
+  if (typeof knownHostsFile !== "string" || !isAbsolute(knownHostsFile)) {
+    throw new Error("SSH known-hosts file must be an absolute path");
+  }
+  if (
+    !Array.isArray(remoteArguments) ||
+    remoteArguments.some((value) => typeof value !== "string")
+  ) {
+    throw new Error("SSH remote arguments must be a string array");
+  }
+  const remoteCommand = remoteArguments.map(shellDisplayToken).join(" ");
+  return [
+    "-T",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=yes",
+    "-o",
+    `UserKnownHostsFile=${knownHostsFile}`,
+    "-o",
+    "ConnectTimeout=15",
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=4",
+    ...(identityFile ? ["-i", identityFile] : []),
+    "-p",
+    String(singleVm.port),
+    `${singleVm.user}@${singleVm.host}`,
+    remoteCommand,
+  ];
 }
 
 export async function run(command, args, options = {}) {
   if (!Array.isArray(args) || args.some((argument) => typeof argument !== "string")) {
     throw new Error("Command arguments must be a string array");
+  }
+  if (
+    options.input !== undefined &&
+    typeof options.input !== "string" &&
+    !Buffer.isBuffer(options.input)
+  ) {
+    throw new Error("Command input must be a string or Buffer");
   }
   if (options.dryRun) {
     const printable = [command, ...args].map(shellDisplayToken).join(" ");
@@ -622,7 +1014,11 @@ export async function run(command, args, options = {}) {
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
-      stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
+      stdio: [
+        options.input === undefined ? "ignore" : "pipe",
+        options.capture ? "pipe" : "inherit",
+        options.capture ? "pipe" : "inherit",
+      ],
       shell: false,
     });
     let stdout = "";
@@ -632,6 +1028,12 @@ export async function run(command, args, options = {}) {
       child.stderr.setEncoding("utf8");
       child.stdout.on("data", (chunk) => (stdout += chunk));
       child.stderr.on("data", (chunk) => (stderr += chunk));
+    }
+    if (options.input !== undefined) {
+      child.stdin.on("error", (error) => {
+        if (error.code !== "EPIPE") reject(error);
+      });
+      child.stdin.end(options.input);
     }
     child.on("error", reject);
     child.on("close", (code, signal) => {
@@ -654,7 +1056,11 @@ export function shellDisplayToken(value) {
 export async function assertCommandAvailable(command, { cwd, dryRun = false } = {}) {
   if (dryRun) return;
   const versionArguments =
-    command === "cosign" || command === "flyctl" ? ["version"] : ["--version"];
+    command === "cosign" || command === "flyctl"
+      ? ["version"]
+      : command === "ssh"
+        ? ["-V"]
+        : ["--version"];
   await run(command, versionArguments, { cwd, capture: true });
 }
 

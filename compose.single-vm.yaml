@@ -1,0 +1,420 @@
+name: ${OPENROUND_COMPOSE_PROJECT_NAME:-openround}
+
+x-logging: &default-logging
+  driver: local
+  options:
+    max-size: ${OPENROUND_LOG_MAX_SIZE:-10m}
+    max-file: "${OPENROUND_LOG_MAX_FILES:-5}"
+
+x-app-security: &app-security
+  init: true
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+
+services:
+  postgres:
+    image: postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-openround}
+      POSTGRES_USER: ${POSTGRES_OWNER_USER:-openround_owner}
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?Set POSTGRES_OWNER_PASSWORD}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-openround_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD}
+      POSTGRES_INITDB_ARGS: --data-checksums
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -h 127.0.0.1']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 60s
+    shm_size: ${OPENROUND_POSTGRES_SHM_SIZE:-256m}
+    cpus: ${OPENROUND_POSTGRES_CPUS:-1.5}
+    mem_limit: ${OPENROUND_POSTGRES_MEMORY_LIMIT:-1280m}
+    pids_limit: ${OPENROUND_POSTGRES_PIDS_LIMIT:-256}
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/single-vm/postgres-init.sh:/docker-entrypoint-initdb.d/001-runtime-role.sh:ro
+    networks:
+      - data
+
+  valkey:
+    image: valkey/valkey@sha256:d827e7f7552cdee40cc7482dbae9da020f42bc47669af6f71182a4ef76a22773
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?Set VALKEY_PASSWORD}
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        exec valkey-server \
+          --appendonly yes \
+          --appendfsync everysec \
+          --auto-aof-rewrite-percentage "${VALKEY_AUTO_AOF_REWRITE_PERCENTAGE:-100}" \
+          --maxmemory "${VALKEY_MAXMEMORY:-384mb}" \
+          --maxmemory-policy noeviction \
+          --requirepass "$$VALKEY_PASSWORD"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'REDISCLI_AUTH="$$VALKEY_PASSWORD" valkey-cli -h 127.0.0.1 ping | grep -q PONG',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    cpus: ${OPENROUND_VALKEY_CPUS:-0.5}
+    mem_limit: ${OPENROUND_VALKEY_MEMORY_LIMIT:-512m}
+    pids_limit: ${OPENROUND_VALKEY_PIDS_LIMIT:-128}
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - valkey-data:/data
+    networks:
+      - data
+
+  minio:
+    image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+      MINIO_API_CORS_ALLOW_ORIGIN: https://${OPENROUND_APP_DOMAIN:?Set OPENROUND_APP_DOMAIN}
+      MINIO_API_CORS_ALLOW_CREDENTIALS_WITH_WILDCARD: "off"
+      MINIO_BROWSER: "off"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 60s
+    cpus: ${OPENROUND_MINIO_CPUS:-1.0}
+    mem_limit: ${OPENROUND_MINIO_MEMORY_LIMIT:-768m}
+    pids_limit: ${OPENROUND_MINIO_PIDS_LIMIT:-256}
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - minio-data:/data
+    networks:
+      - edge
+
+  minio-init:
+    image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+      MINIO_APP_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:?Set MINIO_APP_ACCESS_KEY}
+      MINIO_APP_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?Set MINIO_APP_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET:-openround-media}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if [ "$$MINIO_ROOT_USER" = "$$MINIO_APP_ACCESS_KEY" ]; then
+          echo "MINIO_APP_ACCESS_KEY must differ from MINIO_ROOT_USER" >&2
+          exit 1
+        fi
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/$$MINIO_BUCKET"
+        mc anonymous set none "local/$$MINIO_BUCKET"
+        cat > /tmp/openround-media-policy.json <<EOF
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
+              "Resource": ["arn:aws:s3:::$$MINIO_BUCKET"]
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+              "Resource": ["arn:aws:s3:::$$MINIO_BUCKET/*"]
+            }
+          ]
+        }
+        EOF
+        mc admin policy create local openround-media /tmp/openround-media-policy.json
+        mc admin user add local "$$MINIO_APP_ACCESS_KEY" "$$MINIO_APP_SECRET_KEY"
+        mc admin policy attach local openround-media --user "$$MINIO_APP_ACCESS_KEY"
+    restart: "no"
+    cpus: ${OPENROUND_INIT_CPUS:-0.25}
+    mem_limit: ${OPENROUND_INIT_MEMORY_LIMIT:-192m}
+    pids_limit: 64
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - edge
+
+  clamav:
+    image: clamav/clamav@sha256:cc16781fe005e49de6a8fc1231b63b265f74b18fc2a6347c670c35716914c3b6
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping=1 >/dev/null 2>&1"]
+      interval: 20s
+      timeout: 10s
+      retries: 40
+      start_period: 120s
+    restart: unless-stopped
+    stop_grace_period: 45s
+    cpus: ${OPENROUND_CLAMAV_CPUS:-1.25}
+    mem_limit: ${OPENROUND_CLAMAV_MEMORY_LIMIT:-1536m}
+    pids_limit: ${OPENROUND_CLAMAV_PIDS_LIMIT:-256}
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - clamav-data:/var/lib/clamav
+    networks:
+      - scan
+
+  migrate:
+    profiles: ["operations"]
+    image: ${OPENROUND_SERVER_IMAGE:?Set OPENROUND_SERVER_IMAGE to an immutable release reference}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["node", "dist/migrate.js"]
+    environment:
+      DATABASE_MIGRATION_URL: ${DATABASE_MIGRATION_URL:-}
+      OPENROUND_MIGRATIONS_DIR: /app/migrations
+    restart: "no"
+    cpus: ${OPENROUND_MIGRATE_CPUS:-1.0}
+    mem_limit: ${OPENROUND_MIGRATE_MEMORY_LIMIT:-768m}
+    pids_limit: 128
+    logging: *default-logging
+    <<: *app-security
+    networks:
+      - data
+
+  server:
+    image: ${OPENROUND_SERVER_IMAGE:?Set OPENROUND_SERVER_IMAGE to an immutable release reference}
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4000
+      TRUSTED_PROXY_IP: ${OPENROUND_CADDY_PROXY_IP:-172.30.255.2}
+      WEB_ORIGIN: https://${OPENROUND_APP_DOMAIN:?Set OPENROUND_APP_DOMAIN}
+      PUBLIC_API_URL: https://${OPENROUND_APP_DOMAIN:?Set OPENROUND_APP_DOMAIN}
+      COOKIE_NAME: ${COOKIE_NAME:-openround_creator}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      COOKIE_SECURE: "true"
+      ALLOW_INSECURE_LOCAL_HTTP: "false"
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL for the restricted runtime role}
+      REDIS_URL: ${REDIS_URL:?Set REDIS_URL with the Valkey password}
+      SESSION_MUTATION_LEASE_TTL_MS: ${SESSION_MUTATION_LEASE_TTL_MS:-15000}
+      SESSION_MUTATION_LEASE_WAIT_MS: ${SESSION_MUTATION_LEASE_WAIT_MS:-5000}
+      RUN_MIGRATIONS: "false"
+      ALLOW_IN_MEMORY: "false"
+      COMMUNITY_MODE: ${COMMUNITY_MODE:-false}
+      MAX_SESSION_PARTICIPANTS: ${MAX_SESSION_PARTICIPANTS:-100}
+      RETENTION_INTERVAL_MINUTES: ${RETENTION_INTERVAL_MINUTES:-60}
+      REPORT_WORKER_INTERVAL_MS: ${REPORT_WORKER_INTERVAL_MS:-2000}
+      REPORT_WORKER_LEASE_MS: ${REPORT_WORKER_LEASE_MS:-120000}
+      COMMUNITY_REPORT_RETENTION_DAYS: ${COMMUNITY_REPORT_RETENTION_DAYS:-365}
+      MEDIA_QUARANTINE_RETENTION_HOURS: ${MEDIA_QUARANTINE_RETENTION_HOURS:-24}
+      FEATURE_SIGNUPS: ${FEATURE_SIGNUPS:-true}
+      FEATURE_SESSION_CREATION: ${FEATURE_SESSION_CREATION:-true}
+      FEATURE_MEDIA_UPLOADS: ${FEATURE_MEDIA_UPLOADS:-true}
+      FEATURE_ROUND_EXPERIENCES: ${FEATURE_ROUND_EXPERIENCES:-true}
+      FEATURE_AUDIENCE_PULSE: ${FEATURE_AUDIENCE_PULSE:-true}
+      FEATURE_ROOM_CHAT: ${FEATURE_ROOM_CHAT:-true}
+      FEATURE_UX_BETA: ${FEATURE_UX_BETA:-false}
+      FEATURE_RECOVERY_REHEARSAL: ${FEATURE_RECOVERY_REHEARSAL:-false}
+      FEATURE_PRACTICE_ASSIGNMENTS: ${FEATURE_PRACTICE_ASSIGNMENTS:-false}
+      FEATURE_WORKSPACE_SHELL: ${FEATURE_WORKSPACE_SHELL:-false}
+      FEATURE_BUILDER_V2: ${FEATURE_BUILDER_V2:-false}
+      FEATURE_PRESENTATIONS: ${FEATURE_PRESENTATIONS:-false}
+      FEATURE_GROUPS: ${FEATURE_GROUPS:-false}
+      FEATURE_DISCOVER: ${FEATURE_DISCOVER:-false}
+      THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST: ${THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST:-}
+      UX_BETA_WORKSPACE_ALLOWLIST: ${UX_BETA_WORKSPACE_ALLOWLIST:-}
+      AUTHORING_AI_MODE: ${AUTHORING_AI_MODE:-disabled}
+      AUTHORING_AI_ENDPOINT: ${AUTHORING_AI_ENDPOINT:-}
+      AUTHORING_AI_API_KEY: ${AUTHORING_AI_API_KEY:-}
+      AUTHORING_AI_MODEL: ${AUTHORING_AI_MODEL:-operator-configured}
+      AUTHORING_AI_PROVIDER_NAME: ${AUTHORING_AI_PROVIDER_NAME:-operator}
+      AUTHORING_WORKER_INTERVAL_MS: ${AUTHORING_WORKER_INTERVAL_MS:-3000}
+      AUTHORING_WORKER_LEASE_MS: ${AUTHORING_WORKER_LEASE_MS:-120000}
+      AUTHORING_EXTRACTION_TIMEOUT_MS: ${AUTHORING_EXTRACTION_TIMEOUT_MS:-20000}
+      OIDC_MODE: ${OIDC_MODE:-disabled}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_CLIENT_AUTH: ${OIDC_CLIENT_AUTH:-client_secret_post}
+      OIDC_PROVIDER_NAME: ${OIDC_PROVIDER_NAME:-Institution sign-in}
+      OIDC_TRANSACTION_TTL_SECONDS: ${OIDC_TRANSACTION_TTL_SECONDS:-300}
+      LTI_MODE: ${LTI_MODE:-disabled}
+      LTI_TOOL_PRIVATE_JWK: ${LTI_TOOL_PRIVATE_JWK:-}
+      LTI_TOOL_KEY_ID: ${LTI_TOOL_KEY_ID:-openround-lti-1}
+      LTI_TRANSACTION_TTL_SECONDS: ${LTI_TRANSACTION_TTL_SECONDS:-300}
+      LTI_LAUNCH_TTL_SECONDS: ${LTI_LAUNCH_TTL_SECONDS:-900}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_TOKEN: ${METRICS_TOKEN:?Set METRICS_TOKEN}
+      TRACING_ENABLED: ${TRACING_ENABLED:-false}
+      # The schema requires a URL when this variable is present. It remains unused while tracing
+      # is disabled; operators enabling tracing must replace this loopback placeholder.
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://127.0.0.1:4318/v1/traces}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-openround-server}
+      OTEL_SERVICE_VERSION: ${OTEL_SERVICE_VERSION:-0.1.0}
+      SMTP_URL: ${SMTP_URL:?Set SMTP_URL for hosted sign-in email}
+      EMAIL_FROM: ${EMAIL_FROM:?Set EMAIL_FROM}
+      DEVELOPMENT_EMAIL_INBOX_URL: ""
+      AUTH_DEBUG_MAGIC_LINKS: "false"
+      POLICY_VERSION: ${POLICY_VERSION:-2026-09-14-draft}
+      BILLING_MODE: ${BILLING_MODE:-disabled}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRO_PRICE_ID: ${STRIPE_PRO_PRICE_ID:-}
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: https://${OPENROUND_MEDIA_DOMAIN:?Set OPENROUND_MEDIA_DOMAIN}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${MINIO_BUCKET:-openround-media}
+      S3_ACCESS_KEY_ID: ${MINIO_APP_ACCESS_KEY:?Set MINIO_APP_ACCESS_KEY}
+      S3_SECRET_ACCESS_KEY: ${MINIO_APP_SECRET_KEY:?Set MINIO_APP_SECRET_KEY}
+      S3_FORCE_PATH_STYLE: "true"
+      MEDIA_SCAN_MODE: clamav
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      CLAMAV_TIMEOUT_MS: ${CLAMAV_TIMEOUT_MS:-30000}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OPENROUND_MIGRATIONS_DIR: /app/migrations
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:4000/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 45s
+    cpus: ${OPENROUND_SERVER_CPUS:-2.0}
+    mem_limit: ${OPENROUND_SERVER_MEMORY_LIMIT:-1536m}
+    pids_limit: ${OPENROUND_SERVER_PIDS_LIMIT:-256}
+    logging: *default-logging
+    <<: *app-security
+    networks:
+      server-ingress:
+        aliases:
+          - server-ingress
+      edge:
+      data:
+      scan:
+
+  web:
+    image: ${OPENROUND_WEB_IMAGE:?Set OPENROUND_WEB_IMAGE to an immutable release reference}
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: https://${OPENROUND_APP_DOMAIN:?Set OPENROUND_APP_DOMAIN}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    cpus: ${OPENROUND_WEB_CPUS:-1.0}
+    mem_limit: ${OPENROUND_WEB_MEMORY_LIMIT:-640m}
+    pids_limit: ${OPENROUND_WEB_PIDS_LIMIT:-192}
+    logging: *default-logging
+    <<: *app-security
+    networks:
+      - edge
+
+  caddy:
+    image: caddy@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    depends_on:
+      server:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      OPENROUND_APP_DOMAIN: ${OPENROUND_APP_DOMAIN:?Set OPENROUND_APP_DOMAIN}
+      OPENROUND_MEDIA_DOMAIN: ${OPENROUND_MEDIA_DOMAIN:?Set OPENROUND_MEDIA_DOMAIN}
+      OPENROUND_ACME_EMAIL: ${OPENROUND_ACME_EMAIL:?Set OPENROUND_ACME_EMAIL}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    restart: unless-stopped
+    stop_grace_period: 30s
+    cpus: ${OPENROUND_CADDY_CPUS:-0.5}
+    mem_limit: ${OPENROUND_CADDY_MEMORY_LIMIT:-256m}
+    pids_limit: ${OPENROUND_CADDY_PIDS_LIMIT:-128}
+    logging: *default-logging
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - ./infra/single-vm/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      edge:
+      server-ingress:
+        ipv4_address: ${OPENROUND_CADDY_PROXY_IP:-172.30.255.2}
+
+networks:
+  edge:
+  server-ingress:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${OPENROUND_SERVER_INGRESS_SUBNET:-172.30.255.0/29}
+  data:
+    internal: true
+  scan:
+
+volumes:
+  caddy-config:
+  caddy-data:
+  clamav-data:
+  minio-data:
+  postgres-data:
+  valkey-data:

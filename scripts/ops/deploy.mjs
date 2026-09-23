@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { lstat, open, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { join, relative, resolve } from "node:path";
 import process from "node:process";
@@ -12,13 +13,17 @@ import {
   assertNoEnvironmentKeyOverlap,
   assertPathWithin,
   assertPrivateIgnoredEnvFile,
+  createPrivateFileSnapshot,
   ensureIgnoredEnvFile,
   isHostedEnvironment,
   normalizeEnvironment,
   parseCliArguments,
   parseFlyTomlEnvironment,
   readStrictJson,
+  resolveCheckedRepositoryFile,
+  resolveSshIdentityFile,
   run,
+  sshArgv,
   validateBuildManifest,
   validateDeployConfig,
   validateDeploymentConfirmation,
@@ -30,11 +35,21 @@ import { main as serviceMain } from "./service.mjs";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const staleLockAgeMilliseconds = 30 * 60 * 1_000;
+export const HOSTED_DEPLOYMENT_AUTOMATION_FILES = Object.freeze([
+  "scripts/deploy.sh",
+  "scripts/ops/deploy.mjs",
+  "scripts/ops/lib.mjs",
+  "scripts/ops/service.mjs",
+]);
+const READINESS_GATE_INPUT_FILES = Object.freeze([
+  "scripts/check-release-readiness.mjs",
+  "docs/release-readiness.json",
+]);
 
 function usage() {
   return `Usage: scripts/deploy.sh development [--dry-run]
        scripts/deploy.sh <staging|production> --config PATH --manifest PATH \\
-         --runtime-env PATH --migration-env PATH --confirm ENVIRONMENT:BUILD_ID [options]
+         --runtime-env PATH --migration-env PATH --confirm ENVIRONMENT:BUILD_ID [--ssh-identity PATH] [options]
        scripts/deploy.sh --environment <environment> [options]
 
 Production additionally requires --backup-reference REFERENCE. Use --recover-lock only after
@@ -61,6 +76,42 @@ function backupReference(value) {
     throw new Error("--backup-reference must be a non-secret provider backup identifier");
   }
   return value;
+}
+
+async function sha256File(path) {
+  return createHash("sha256")
+    .update(await readFile(path))
+    .digest("hex");
+}
+
+async function currentOperationsRevision() {
+  const result = await run("git", ["rev-parse", "HEAD"], {
+    cwd: repositoryRoot,
+    capture: true,
+  });
+  return assertFullGitSha(result.stdout.trim(), "operations HEAD");
+}
+
+async function assertOperationsRevision(expectedRevision) {
+  const currentRevision = await currentOperationsRevision();
+  if (currentRevision !== expectedRevision) {
+    throw new Error("Operations HEAD changed during deployment preflight; restart the deployment");
+  }
+  return true;
+}
+
+export async function resolveReviewedDeploymentInputHashes(paths, root = repositoryRoot) {
+  if (!Array.isArray(paths) || paths.length === 0 || new Set(paths).size !== paths.length) {
+    throw new Error("Reviewed deployment input paths must be a non-empty unique array");
+  }
+  const hashes = {};
+  for (const path of paths) {
+    const checkedPath = await resolveCheckedRepositoryFile(path, root, `deployment input ${path}`, {
+      requireGitClean: true,
+    });
+    hashes[path] = await sha256File(checkedPath);
+  }
+  return hashes;
 }
 
 function processIsRunning(pid) {
@@ -165,7 +216,14 @@ async function writeReceipt({
       server: config.manifest.images.server.ref,
       web: config.manifest.images.web.ref,
     },
-    fly: { serverApp: config.fly.serverApp, webApp: config.fly.webApp },
+    ...(config.deploymentMode === "single-vm"
+      ? {
+          singleVm: {
+            host: config.singleVm.host,
+            projectName: config.singleVm.projectName,
+          },
+        }
+      : { fly: { serverApp: config.fly.serverApp, webApp: config.fly.webApp } }),
     ...(backup ? { backupReference: backup } : {}),
     verification: {
       configuration: true,
@@ -175,6 +233,11 @@ async function writeReceipt({
       serverLive: true,
       serverReady: true,
       webBuildId: true,
+      mediaLive: config.deploymentMode === "single-vm" ? true : "not_applicable",
+    },
+    operations: {
+      commit: config.operationsRevision,
+      files: config.deploymentInputHashes,
     },
   };
   const temporary = `${path}.tmp-${process.pid}`;
@@ -234,6 +297,25 @@ export async function waitForWebBuild(config, buildId) {
     await delay(config.health.intervalSeconds * 1_000);
   }
   throw new Error(`Web build ID did not converge before timeout (${lastProblem})`);
+}
+
+export async function waitForMediaHealth(config) {
+  const deadline = Date.now() + config.health.timeoutSeconds * 1_000;
+  let lastProblem = "no response received";
+  while (Date.now() < deadline) {
+    try {
+      const response = await request(
+        `${config.publicMediaUrl}/minio/health/live`,
+        config.health.requestTimeoutSeconds,
+      );
+      if (response.ok) return;
+      lastProblem = `media status=${response.status}`;
+    } catch (error) {
+      lastProblem = error.message;
+    }
+    await delay(config.health.intervalSeconds * 1_000);
+  }
+  throw new Error(`Media health did not converge before timeout (${lastProblem})`);
 }
 
 function assertConfigCheckSummary(summary, config, buildId) {
@@ -370,6 +452,24 @@ async function verifyRollbackAncestry(targetBuildId, sourceBuildId) {
   }
 }
 
+export async function verifyForwardDeploymentAncestry(activeBuildId, targetBuildId) {
+  assertFullGitSha(targetBuildId, "deployment target build ID");
+  if (activeBuildId === undefined) return true;
+  assertFullGitSha(activeBuildId, "active remote build ID");
+  try {
+    await run("git", ["merge-base", "--is-ancestor", activeBuildId, targetBuildId], {
+      cwd: repositoryRoot,
+      capture: true,
+    });
+  } catch (error) {
+    throw new Error(
+      "Normal deployment target must descend from the active remote build; use the explicit rollback contract to deploy an older build",
+      { cause: error },
+    );
+  }
+  return true;
+}
+
 async function verifySignatures(config, manifest, dryRun) {
   if (!config.requireSigning) return;
   for (const component of ["server", "web"]) {
@@ -447,16 +547,913 @@ async function validateFlyConfigs(config, serverConfigPath, webConfigPath, dryRu
   }
 }
 
-async function deployHosted({ environment, parsed, dryRun }) {
-  const expectedConfig = `config/deploy/${configFileName(environment)}`;
-  const configPath = strictTargetPath(parsed.values.get("config"), expectedConfig, "--config");
-  const config = await readStrictJson(configPath, validateDeployConfig, environment);
-  const expectedServerConfig = `config/deploy/fly/${environment}-server.toml`;
-  const serverConfigPath = strictTargetPath(
-    config.fly.serverConfig,
-    expectedServerConfig,
-    "server Fly config",
+export const REMOTE_PREPARE_SCRIPT = [
+  "set -eu",
+  'base="$1"',
+  'token="$2"',
+  "umask 077",
+  'mkdir -p "$base/incoming"',
+  "# Never sweep while another remote mutation owns the deployment lock. Old upload directories",
+  "# are safe to remove because every deployment uses a fresh, unguessable token.",
+  'if [ ! -d "$base/.deploy.lock" ]; then',
+  '  find "$base/incoming" -mindepth 1 -maxdepth 1 -type d -mtime +0 -exec rm -rf -- {} \\;',
+  "fi",
+  'incoming="$base/incoming/$token"',
+  'if ! mkdir "$incoming"; then',
+  '  echo "Incoming deployment already exists" >&2',
+  "  exit 72",
+  "fi",
+  'chmod 700 "$incoming"',
+].join("\n");
+
+export const REMOTE_WRITE_SCRIPT = [
+  "set -eu",
+  'target="$1"',
+  'mode="$2"',
+  "directory=${target%/*}",
+  "umask 077",
+  'mkdir -p "$directory"',
+  'temporary="$target.tmp.$$"',
+  "cleanup_write() {",
+  "  status=$?",
+  '  rm -f "$temporary"',
+  "  trap - EXIT HUP INT TERM",
+  '  exit "$status"',
+  "}",
+  "trap cleanup_write EXIT",
+  "trap 'exit 129' HUP",
+  "trap 'exit 130' INT",
+  "trap 'exit 143' TERM",
+  'cat > "$temporary"',
+  'chmod "$mode" "$temporary"',
+  'mv -f "$temporary" "$target"',
+  "trap - EXIT HUP INT TERM",
+].join("\n");
+
+export const REMOTE_CURRENT_BUILD_SCRIPT = [
+  "set -eu",
+  'base="$1"',
+  'if [ ! -f "$base/current-build" ]; then exit 0; fi',
+  'build=$(cat "$base/current-build")',
+  'case "$build" in',
+  '  *[!0-9a-f]*|"") echo "Invalid remote current-build state" >&2; exit 65 ;;',
+  "esac",
+  'printf "%s\\n" "$build"',
+].join("\n");
+
+export const REMOTE_DEPLOY_SCRIPT = [
+  "set -eu",
+  'base="$1"',
+  'project="$2"',
+  'build="$3"',
+  'token="$4"',
+  'recover="$5"',
+  'rollback="$6"',
+  'expected_current="$7"',
+  'rollback_source="$8"',
+  'incoming="$base/incoming/$token"',
+  'release="$base/releases/$build"',
+  'replaced="$base/releases/.replaced-$build-$token"',
+  "had_replaced=0",
+  'lock="$base/.deploy.lock"',
+  'mkdir -p "$base/releases"',
+  'if ! mkdir "$lock" 2>/dev/null; then',
+  '  if [ "$recover" != "1" ]; then',
+  '    echo "Another remote deployment or lifecycle operation holds $lock" >&2',
+  "    exit 73",
+  "  fi",
+  '  owner=$(cat "$lock/pid" 2>/dev/null || true)',
+  '  started=$(cat "$lock/started" 2>/dev/null || true)',
+  "  now=$(date +%s)",
+  '  case "$owner:$started" in',
+  '    *[!0-9:]*|:|*:) echo "Remote lock metadata is invalid" >&2; exit 73 ;;',
+  "  esac",
+  '  if kill -0 "$owner" 2>/dev/null; then',
+  '    echo "Remote lock owner $owner is still running" >&2',
+  "    exit 73",
+  "  fi",
+  "  age=$((now - started))",
+  '  if [ "$age" -lt 1800 ]; then',
+  '    echo "Remote lock is not old enough for explicit recovery" >&2',
+  "    exit 73",
+  "  fi",
+  '  rm -rf "$lock"',
+  '  mkdir "$lock"',
+  "fi",
+  "cleanup_lock() {",
+  "  status=$?",
+  '  rm -rf "$lock"',
+  "  trap - EXIT HUP INT TERM",
+  '  exit "$status"',
+  "}",
+  "trap cleanup_lock EXIT",
+  "trap 'exit 129' HUP",
+  "trap 'exit 130' INT",
+  "trap 'exit 143' TERM",
+  'printf "%s\\n" "$$" > "$lock/pid"',
+  'date +%s > "$lock/started"',
+  'previous=$(readlink "$base/current" 2>/dev/null || true)',
+  "activation_started=0",
+  "committed=0",
+  "recovery_succeeded=1",
+  "valid_release_link() {",
+  '  candidate="$1"',
+  '  case "$candidate" in releases/*) candidate_build=${candidate#releases/} ;; *) return 1 ;; esac',
+  '  case "$candidate_build" in *[!0-9a-f]*|"") return 1 ;; esac',
+  '  case "${#candidate_build}" in 40|64) ;; *) return 1 ;; esac',
+  '  [ "$candidate" = "releases/$candidate_build" ]',
+  "}",
+  "load_release() {",
+  '  selected="$1"',
+  '  compose_files=""',
+  "  while IFS= read -r relative_file; do",
+  '    [ -n "$relative_file" ] || continue',
+  '    [ -f "$selected/$relative_file" ] || { echo "Missing deployed Compose file" >&2; return 66; }',
+  '    if [ -z "$compose_files" ]; then compose_files="$selected/$relative_file"; else compose_files="$compose_files:$selected/$relative_file"; fi',
+  '  done < "$selected/.compose-files"',
+  '  [ -n "$compose_files" ] || { echo "No deployed Compose files" >&2; return 66; }',
+  "  COMPOSE_FILE=$compose_files",
+  "  COMPOSE_PROJECT_NAME=$project",
+  "  export COMPOSE_FILE COMPOSE_PROJECT_NAME",
+  "}",
+  "restore_previous() {",
+  '  if [ -z "$previous" ]; then',
+  '    docker compose --env-file "$release/.env" down --remove-orphans',
+  '    rm -f "$base/current" "$base/current-build"',
+  "    return 0",
+  "  fi",
+  '  valid_release_link "$previous" || { echo "Invalid previous release link" >&2; return 1; }',
+  '  previous_path="$base/$previous"',
+  '  [ -d "$previous_path" ] || return 1',
+  '  load_release "$previous_path"',
+  '  docker compose --env-file "$previous_path/.env" up --detach --wait --remove-orphans',
+  '  ln -s "$previous" "$base/current.rollback.$token"',
+  '  mv -Tf "$base/current.rollback.$token" "$base/current"',
+  "  previous_build=${previous#releases/}",
+  '  printf "%s\\n" "$previous_build" > "$base/current-build.rollback.$token"',
+  '  mv -f "$base/current-build.rollback.$token" "$base/current-build"',
+  "}",
+  "prune_releases() {",
+  '  rm -rf "$base/releases"/.replaced-*',
+  '  protected_previous=""',
+  '  if [ -n "$previous" ]; then protected_previous=${previous#releases/}; fi',
+  "  extra_kept=0",
+  '  for candidate in $(ls -1dt "$base/releases"/[0-9a-f]* 2>/dev/null || true); do',
+  '    [ -d "$candidate" ] || continue',
+  "    candidate_build=${candidate##*/}",
+  '    case "$candidate_build" in *[!0-9a-f]*|"") continue ;; esac',
+  '    case "${#candidate_build}" in 40|64) ;; *) continue ;; esac',
+  '    if [ "$candidate_build" = "$build" ] || [ "$candidate_build" = "$protected_previous" ]; then continue; fi',
+  '    if [ "$extra_kept" -eq 0 ]; then extra_kept=1; else rm -rf "$candidate"; fi',
+  "  done",
+  "}",
+  "cleanup() {",
+  "  status=$?",
+  '  rm -f "$release/.migration.env" 2>/dev/null || true',
+  '  rm -rf "$incoming" 2>/dev/null || true',
+  '  if [ "$status" -ne 0 ] && [ "$committed" = "0" ] && [ "$activation_started" = "1" ]; then',
+  '    echo "Activation failed; restoring previous release" >&2',
+  "    if ! restore_previous; then",
+  '      echo "Previous release restore or first-release teardown also failed" >&2',
+  "      recovery_succeeded=0",
+  "      status=74",
+  "    fi",
+  "  fi",
+  '  if [ "$status" -ne 0 ] && [ "$committed" = "0" ] && [ "$recovery_succeeded" = "1" ]; then',
+  '    rm -rf "$release"',
+  '    if [ "$had_replaced" = "1" ] && [ -d "$replaced" ]; then mv "$replaced" "$release"; fi',
+  "  fi",
+  '  rm -rf "$lock"',
+  "  trap - EXIT HUP INT TERM",
+  '  exit "$status"',
+  "}",
+  "trap cleanup EXIT",
+  "trap 'exit 129' HUP",
+  "trap 'exit 130' INT",
+  "trap 'exit 143' TERM",
+  'if [ -n "$previous" ] && ! valid_release_link "$previous"; then',
+  '  echo "Invalid current release link" >&2',
+  "  exit 65",
+  "fi",
+  'if [ -n "$previous" ] && [ ! -f "$base/current-build" ]; then echo "Current release state is incomplete" >&2; exit 65; fi',
+  'if [ -f "$base/current-build" ]; then',
+  '  active_build=$(cat "$base/current-build")',
+  '  case "$active_build" in *[!0-9a-f]*|"") echo "Invalid current-build state" >&2; exit 65 ;; esac',
+  '  case "${#active_build}" in 40|64) ;; *) echo "Invalid current-build state" >&2; exit 65 ;; esac',
+  '  [ -n "$previous" ] || { echo "Current release state is incomplete" >&2; exit 65; }',
+  '  [ "$previous" = "releases/$active_build" ] || { echo "Current release pointers disagree" >&2; exit 65; }',
+  '  [ "$active_build" = "$expected_current" ] || { echo "Active build changed after deployment preflight" >&2; exit 75; }',
+  '  [ "$active_build" != "$build" ] || { echo "Target build is already active" >&2; exit 70; }',
+  '  if [ "$rollback" = "1" ] && [ "$active_build" != "$rollback_source" ]; then echo "Rollback source is no longer active" >&2; exit 71; fi',
+  "fi",
+  'if [ ! -f "$base/current-build" ] && [ "$expected_current" != "none" ]; then echo "Active build changed after deployment preflight" >&2; exit 75; fi',
+  'if [ "$rollback" = "1" ] && [ ! -f "$base/current-build" ]; then echo "Rollback source is not deployed" >&2; exit 71; fi',
+  '[ -d "$incoming" ] || { echo "Incoming release is missing" >&2; exit 66; }',
+  'if [ -e "$release" ]; then mv "$release" "$replaced"; had_replaced=1; fi',
+  'mv "$incoming" "$release"',
+  'chmod 700 "$release"',
+  'load_release "$release"',
+  'docker compose --env-file "$release/.env" config --quiet',
+  'docker compose --env-file "$release/.env" pull',
+  'docker compose --env-file "$release/.env" run --rm --no-deps server node dist/config-check.js',
+  'server_build=$(docker compose --env-file "$release/.env" run --rm --no-deps --entrypoint /bin/cat server /app/BUILD_ID)',
+  '[ "$server_build" = "$build" ] || { echo "Server image BUILD_ID does not match release" >&2; exit 67; }',
+  'web_build=$(docker compose --env-file "$release/.env" run --rm --no-deps --entrypoint /bin/cat web /app/BUILD_ID)',
+  '[ "$web_build" = "$build" ] || { echo "Web image BUILD_ID does not match release" >&2; exit 67; }',
+  "activation_started=1",
+  'docker compose --env-file "$release/.env" up --detach --wait postgres valkey minio clamav',
+  'if [ "$rollback" = "0" ]; then',
+  '  docker compose --env-file "$release/.env" --env-file "$release/.migration.env" --profile operations run --rm migrate',
+  "fi",
+  'rm -f "$release/.migration.env"',
+  'docker compose --env-file "$release/.env" up --detach --wait --remove-orphans',
+  'if [ -n "$previous" ]; then',
+  '  ln -s "$previous" "$base/previous.new.$token"',
+  '  mv -Tf "$base/previous.new.$token" "$base/previous"',
+  "fi",
+  'ln -s "releases/$build" "$base/current.new.$token"',
+  'mv -Tf "$base/current.new.$token" "$base/current"',
+  'printf "%s\\n" "$build" > "$base/current-build.tmp.$token"',
+  'mv -f "$base/current-build.tmp.$token" "$base/current-build"',
+  "committed=1",
+  'prune_releases || echo "Warning: old release cleanup did not complete" >&2',
+  'docker image prune --force --filter until=168h >/dev/null 2>&1 || echo "Warning: dangling image cleanup did not complete" >&2',
+].join("\n");
+
+export const REMOTE_RESTORE_PREVIOUS_SCRIPT = [
+  "set -eu",
+  'base="$1"',
+  'project="$2"',
+  'expected="$3"',
+  'lock="$base/.deploy.lock"',
+  'if ! mkdir "$lock" 2>/dev/null; then echo "Remote deployment lock is held" >&2; exit 73; fi',
+  "cleanup_restore() {",
+  "  status=$?",
+  '  rm -rf "$lock"',
+  "  trap - EXIT HUP INT TERM",
+  '  exit "$status"',
+  "}",
+  "trap cleanup_restore EXIT",
+  "trap 'exit 129' HUP",
+  "trap 'exit 130' INT",
+  "trap 'exit 143' TERM",
+  'printf "%s\\n" "$$" > "$lock/pid"',
+  'date +%s > "$lock/started"',
+  'previous=$(readlink "$base/previous" 2>/dev/null || true)',
+  'case "$previous" in "releases/$expected") ;; *) echo "Previous release does not match expected build" >&2; exit 68 ;; esac',
+  'release="$base/$previous"',
+  'compose_files=""',
+  "while IFS= read -r relative_file; do",
+  '  [ -n "$relative_file" ] || continue',
+  '  [ -f "$release/$relative_file" ] || exit 66',
+  '  if [ -z "$compose_files" ]; then compose_files="$release/$relative_file"; else compose_files="$compose_files:$release/$relative_file"; fi',
+  'done < "$release/.compose-files"',
+  "COMPOSE_FILE=$compose_files",
+  "COMPOSE_PROJECT_NAME=$project",
+  "export COMPOSE_FILE COMPOSE_PROJECT_NAME",
+  'docker compose --env-file "$release/.env" up --detach --wait --remove-orphans',
+  'current=$(readlink "$base/current" 2>/dev/null || true)',
+  'case "$current" in releases/*) current_build=${current#releases/} ;; *) echo "Invalid current release link" >&2; exit 68 ;; esac',
+  'case "$current_build" in *[!0-9a-f]*|"") echo "Invalid current release link" >&2; exit 68 ;; esac',
+  'case "${#current_build}" in 40|64) ;; *) echo "Invalid current release link" >&2; exit 68 ;; esac',
+  '[ "$current" = "releases/$current_build" ] || { echo "Invalid current release link" >&2; exit 68; }',
+  'ln -s "$current" "$base/previous.restore.$$"',
+  'mv -Tf "$base/previous.restore.$$" "$base/previous"',
+  'ln -s "$previous" "$base/current.restore.$$"',
+  'mv -Tf "$base/current.restore.$$" "$base/current"',
+  'printf "%s\\n" "$expected" > "$base/current-build.tmp.$$"',
+  'mv -f "$base/current-build.tmp.$$" "$base/current-build"',
+].join("\n");
+
+export const REMOTE_REMOVE_INCOMING_SCRIPT = [
+  "set -eu",
+  'base="$1"',
+  'token="$2"',
+  'rm -rf "$base/incoming/$token"',
+].join("\n");
+
+export const REMOTE_DEACTIVATE_FAILED_CURRENT_SCRIPT = [
+  "set -eu",
+  'base="$1"',
+  'project="$2"',
+  'expected="$3"',
+  'lock="$base/.deploy.lock"',
+  'if ! mkdir "$lock" 2>/dev/null; then echo "Remote deployment lock is held" >&2; exit 73; fi',
+  "cleanup_deactivate() {",
+  "  status=$?",
+  '  rm -rf "$lock"',
+  "  trap - EXIT HUP INT TERM",
+  '  exit "$status"',
+  "}",
+  "trap cleanup_deactivate EXIT",
+  "trap 'exit 129' HUP",
+  "trap 'exit 130' INT",
+  "trap 'exit 143' TERM",
+  'printf "%s\\n" "$$" > "$lock/pid"',
+  'date +%s > "$lock/started"',
+  'current=$(readlink "$base/current" 2>/dev/null || true)',
+  'case "$current" in "releases/$expected") ;; *) echo "Failed release is no longer current" >&2; exit 75 ;; esac',
+  'current_build=$(cat "$base/current-build" 2>/dev/null || true)',
+  '[ "$current_build" = "$expected" ] || { echo "Failed release pointers disagree" >&2; exit 75; }',
+  'release="$base/$current"',
+  '[ -d "$release" ] || { echo "Failed release directory is missing" >&2; exit 66; }',
+  'compose_files=""',
+  "while IFS= read -r relative_file; do",
+  '  [ -n "$relative_file" ] || continue',
+  '  [ -f "$release/$relative_file" ] || exit 66',
+  '  if [ -z "$compose_files" ]; then compose_files="$release/$relative_file"; else compose_files="$compose_files:$release/$relative_file"; fi',
+  'done < "$release/.compose-files"',
+  '[ -n "$compose_files" ] || { echo "No deployed Compose files" >&2; exit 66; }',
+  "COMPOSE_FILE=$compose_files",
+  "COMPOSE_PROJECT_NAME=$project",
+  "export COMPOSE_FILE COMPOSE_PROJECT_NAME",
+  'docker compose --env-file "$release/.env" down --remove-orphans',
+  'rm -f "$base/current" "$base/current-build"',
+  'rm -rf "$release"',
+].join("\n");
+
+async function sshRun(
+  config,
+  knownHostsFile,
+  identityFile,
+  remoteArguments,
+  { capture = false, dryRun = false, input, interruptGuard } = {},
+) {
+  const result = await run(
+    "ssh",
+    sshArgv(config.singleVm, knownHostsFile, remoteArguments, { identityFile }),
+    {
+      cwd: repositoryRoot,
+      capture,
+      dryRun,
+      input,
+    },
   );
+  interruptGuard?.throwIfInterrupted();
+  return result;
+}
+
+async function remoteWrite(
+  config,
+  knownHostsFile,
+  identityFile,
+  remotePath,
+  content,
+  mode,
+  dryRun,
+  interruptGuard,
+) {
+  await sshRun(
+    config,
+    knownHostsFile,
+    identityFile,
+    ["sh", "-c", REMOTE_WRITE_SCRIPT, "--", remotePath, mode],
+    { dryRun, input: content, interruptGuard },
+  );
+}
+
+function createDeploymentInterruptGuard() {
+  let interruptedSignal;
+  const handlers = new Map();
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    const handler = () => {
+      interruptedSignal ??= signal;
+    };
+    handlers.set(signal, handler);
+    process.once(signal, handler);
+  }
+  return {
+    throwIfInterrupted() {
+      if (!interruptedSignal) return;
+      const error = new Error(`Deployment interrupted by ${interruptedSignal}`);
+      error.exitCode = interruptedSignal === "SIGINT" ? 130 : 143;
+      throw error;
+    },
+    dispose() {
+      for (const [signal, handler] of handlers) process.removeListener(signal, handler);
+    },
+  };
+}
+
+async function readRemoteCurrentBuild(
+  config,
+  knownHostsFile,
+  identityFile,
+  dryRun,
+  interruptGuard,
+) {
+  const result = await sshRun(
+    config,
+    knownHostsFile,
+    identityFile,
+    ["sh", "-c", REMOTE_CURRENT_BUILD_SCRIPT, "--", config.singleVm.deployPath],
+    { capture: !dryRun, dryRun, interruptGuard },
+  );
+  if (dryRun || !result.stdout.trim()) return undefined;
+  const buildId = result.stdout.trim();
+  assertFullGitSha(buildId, "remote current build ID");
+  return buildId;
+}
+
+export function assertRemoteTargetNotActive(currentBuildId, targetBuildId) {
+  if (currentBuildId && currentBuildId === targetBuildId) {
+    throw new Error(`Build ${targetBuildId} is already the active single-VM release`);
+  }
+  return true;
+}
+
+export function assertRemoteRollbackSource(currentBuildId, expectedSourceBuildId) {
+  if (currentBuildId !== expectedSourceBuildId) {
+    throw new Error(
+      `Rollback source ${expectedSourceBuildId} is not the active single-VM release (${currentBuildId ?? "none"})`,
+    );
+  }
+  return true;
+}
+
+async function restorePreviousRemoteBuild(config, knownHostsFile, identityFile, previousBuildId) {
+  await sshRun(
+    config,
+    knownHostsFile,
+    identityFile,
+    ["sh", "-se", "--", config.singleVm.deployPath, config.singleVm.projectName, previousBuildId],
+    { input: REMOTE_RESTORE_PREVIOUS_SCRIPT },
+  );
+}
+
+async function deactivateFailedCurrentRemoteBuild(
+  config,
+  knownHostsFile,
+  identityFile,
+  expectedBuildId,
+) {
+  await sshRun(config, knownHostsFile, identityFile, [
+    "sh",
+    "-c",
+    REMOTE_DEACTIVATE_FAILED_CURRENT_SCRIPT,
+    "--",
+    config.singleVm.deployPath,
+    config.singleVm.projectName,
+    expectedBuildId,
+  ]);
+}
+
+async function resolveSingleVmFiles(config, identityPath) {
+  const knownHostsFile = await resolveCheckedRepositoryFile(
+    config.singleVm.knownHostsFile,
+    repositoryRoot,
+    "SSH known-hosts file",
+    { requireGitClean: true },
+  );
+  const identityFile = await resolveSshIdentityFile(identityPath, repositoryRoot);
+  const knownHostsContent = await readFile(knownHostsFile);
+  const deploymentFiles = new Map();
+  const deploymentInputHashes = {};
+  deploymentInputHashes[config.singleVm.knownHostsFile] = createHash("sha256")
+    .update(knownHostsContent)
+    .digest("hex");
+  for (const path of [...config.singleVm.composeFiles, ...config.singleVm.deploymentFiles]) {
+    const absolutePath = await resolveCheckedRepositoryFile(
+      path,
+      repositoryRoot,
+      `single-VM deployment file ${path}`,
+      { requireGitClean: true },
+    );
+    const metadata = await lstat(absolutePath);
+    const content = await readFile(absolutePath);
+    const mode = (metadata.mode & 0o111) === 0 ? "0644" : "0755";
+    deploymentFiles.set(path, { content, mode });
+    deploymentInputHashes[path] = createHash("sha256").update(content).digest("hex");
+  }
+  return { knownHostsContent, identityFile, deploymentFiles, deploymentInputHashes };
+}
+
+function releaseEnvironment(content, manifest, keys) {
+  const reserved = ["OPENROUND_SERVER_IMAGE", "OPENROUND_WEB_IMAGE", "OPENROUND_BUILD_ID"];
+  assertNoEnvironmentKeyOverlap(
+    keys,
+    reserved,
+    "runtime environment file",
+    "release image environment",
+  );
+  return `${content.endsWith("\n") ? content : `${content}\n`}OPENROUND_SERVER_IMAGE=${manifest.images.server.ref}\nOPENROUND_WEB_IMAGE=${manifest.images.web.ref}\nOPENROUND_BUILD_ID=${manifest.buildId}\n`;
+}
+
+function environmentFileValue(content, key) {
+  for (const line of String(content)
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const equalsAt = trimmed.indexOf("=");
+    if (equalsAt > 0 && trimmed.slice(0, equalsAt).trim() === key) {
+      return trimmed.slice(equalsAt + 1).trim();
+    }
+  }
+  return undefined;
+}
+
+const PLAIN_DNS_HOSTNAME_PATTERN =
+  /^(?=.{1,253}$)(?!-)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+
+export function validateSingleVmRuntimeValues(content, config) {
+  const configuredDomain = environmentFileValue(content, "OPENROUND_APP_DOMAIN");
+  if (configuredDomain !== new URL(config.publicWebUrl).hostname) {
+    throw new Error("OPENROUND_APP_DOMAIN must match the reviewed single-VM public origin");
+  }
+  const mediaDomain = environmentFileValue(content, "OPENROUND_MEDIA_DOMAIN");
+  if (
+    !PLAIN_DNS_HOSTNAME_PATTERN.test(String(mediaDomain ?? "")) ||
+    mediaDomain === configuredDomain ||
+    mediaDomain !== new URL(config.publicMediaUrl).hostname
+  ) {
+    throw new Error(
+      "OPENROUND_MEDIA_DOMAIN must match the reviewed media origin and be distinct from OPENROUND_APP_DOMAIN",
+    );
+  }
+  for (const key of [
+    "OPENROUND_APP_DOMAIN",
+    "OPENROUND_MEDIA_DOMAIN",
+    "OPENROUND_ACME_EMAIL",
+    "POSTGRES_OWNER_PASSWORD",
+    "POSTGRES_APP_PASSWORD",
+    "DATABASE_URL",
+    "VALKEY_PASSWORD",
+    "REDIS_URL",
+    "MINIO_ROOT_USER",
+    "MINIO_ROOT_PASSWORD",
+    "MINIO_APP_ACCESS_KEY",
+    "MINIO_APP_SECRET_KEY",
+    "SMTP_URL",
+    "EMAIL_FROM",
+    "METRICS_TOKEN",
+    "ADMIN_TOKEN",
+  ]) {
+    const value = environmentFileValue(content, key);
+    if (!value || value.includes("replace-")) {
+      throw new Error(`${key} must contain a non-placeholder value`);
+    }
+  }
+  const configuredBilling = environmentFileValue(content, "BILLING_MODE") ?? "disabled";
+  if (configuredBilling !== config.billingMode) {
+    throw new Error("BILLING_MODE must match the reviewed single-VM deployment config");
+  }
+  const productionSafeValues = {
+    NODE_ENV: "production",
+    COOKIE_SECURE: "true",
+    ALLOW_INSECURE_LOCAL_HTTP: "false",
+    ALLOW_IN_MEMORY: "false",
+    RUN_MIGRATIONS: "false",
+  };
+  for (const [key, expected] of Object.entries(productionSafeValues)) {
+    const value = environmentFileValue(content, key);
+    if (value !== undefined && value !== expected) {
+      throw new Error(`${key} must be ${expected} for a hosted single-VM deployment`);
+    }
+  }
+  if (environmentFileValue(content, "COMMUNITY_MODE") !== "false") {
+    throw new Error("COMMUNITY_MODE must be false for a hosted single-VM deployment");
+  }
+  return true;
+}
+
+async function deploySingleVm({ environment, parsed, dryRun, config }) {
+  const manifestPath = resolve(
+    repositoryRoot,
+    parsed.values.get("manifest") ?? `artifacts/deploy/${environment}/build-manifest.json`,
+  );
+  const manifest = await readStrictJson(manifestPath, validateBuildManifest, {
+    environment,
+    imageRepository: config.imageRepository,
+    imagePlatform: config.imagePlatform,
+    publicApiUrl: config.publicApiUrl,
+    requireSigning: config.requireSigning,
+  });
+  config.manifest = manifest;
+
+  const rollback = parsed.flags.has("rollback");
+  const rollbackFrom = parsed.values.get("rollback-from");
+  if (rollback) {
+    assertFullGitSha(rollbackFrom, "rollback source build ID");
+    validateRollbackConfirmation(
+      parsed.values.get("confirm"),
+      environment,
+      manifest.buildId,
+      rollbackFrom,
+    );
+    await verifyRollbackAncestry(manifest.buildId, rollbackFrom);
+  } else {
+    if (rollbackFrom) throw new Error("--rollback-from requires --rollback");
+    validateDeploymentConfirmation(parsed.values.get("confirm"), environment, manifest.buildId);
+  }
+  if (!rollback && config.operationsRevision !== manifest.buildId) {
+    throw new Error("Normal single-VM deploys require operations HEAD to match the build manifest");
+  }
+
+  const runtimePath = parsed.values.get("runtime-env");
+  const migrationPath = parsed.values.get("migration-env");
+  if (!runtimePath || (!rollback && !migrationPath)) {
+    throw new Error(
+      "Hosted deployments require --runtime-env and, unless rolling back, --migration-env",
+    );
+  }
+  if (rollback && migrationPath) {
+    throw new Error("--migration-env must be omitted with --rollback");
+  }
+  const configuredSecretsRoot = join(repositoryRoot, "artifacts", "deploy", environment);
+  const selectedRuntimePath = resolve(repositoryRoot, runtimePath);
+  assertPathWithin(selectedRuntimePath, configuredSecretsRoot, "runtime environment file");
+  const selectedMigrationPath = migrationPath ? resolve(repositoryRoot, migrationPath) : undefined;
+  if (selectedMigrationPath) {
+    assertPathWithin(selectedMigrationPath, configuredSecretsRoot, "migration environment file");
+  }
+  const secretsRoot = await realpath(configuredSecretsRoot);
+  if (secretsRoot !== configuredSecretsRoot) {
+    throw new Error("Deployment secrets directory must not contain symlinked path components");
+  }
+  const runtimeEnv = await assertPrivateIgnoredEnvFile(
+    runtimePath,
+    "single-vm-runtime",
+    repositoryRoot,
+  );
+  const migrationEnv = migrationPath
+    ? await assertPrivateIgnoredEnvFile(migrationPath, "migration", repositoryRoot)
+    : undefined;
+  if (runtimeEnv.absolute !== selectedRuntimePath) {
+    throw new Error("runtime environment file path must not contain symlinked path components");
+  }
+  if (migrationEnv && migrationEnv.absolute !== selectedMigrationPath) {
+    throw new Error("migration environment file path must not contain symlinked path components");
+  }
+  assertPathWithin(runtimeEnv.absolute, secretsRoot, "runtime environment file");
+  if (migrationEnv)
+    assertPathWithin(migrationEnv.absolute, secretsRoot, "migration environment file");
+  await ensureIgnoredEnvFile(runtimeEnv, repositoryRoot, "runtime");
+  if (migrationEnv) await ensureIgnoredEnvFile(migrationEnv, repositoryRoot, "migration");
+
+  let backup;
+  if (environment === "production") {
+    backup = backupReference(parsed.values.get("backup-reference"));
+  } else if (parsed.values.has("backup-reference")) {
+    backup = backupReference(parsed.values.get("backup-reference"));
+  }
+
+  const { knownHostsContent, identityFile, deploymentFiles, deploymentInputHashes } =
+    await resolveSingleVmFiles(config, parsed.values.get("ssh-identity"));
+  config.deploymentInputHashes = {
+    ...config.deploymentInputHashes,
+    ...deploymentInputHashes,
+  };
+  await assertOperationsRevision(config.operationsRevision);
+  for (const command of [
+    "ssh",
+    ...(rollback ? ["git"] : []),
+    ...(config.requireSigning ? ["cosign"] : []),
+  ]) {
+    await assertCommandAvailable(command, { cwd: repositoryRoot, dryRun });
+  }
+  if (config.requireReadinessGate) {
+    await run(
+      process.execPath,
+      ["scripts/check-release-readiness.mjs", `--require=${config.readinessTarget}`],
+      { cwd: repositoryRoot, dryRun },
+    );
+  }
+  await verifySignatures(config, manifest, dryRun);
+  if (rollback) await verifyRollbackSource(config, rollbackFrom, manifest.buildId, dryRun);
+
+  const runtimeContent = runtimeEnv.content;
+  validateSingleVmRuntimeValues(runtimeContent, config);
+
+  const knownHostsSnapshot = await createPrivateFileSnapshot(knownHostsContent, "known_hosts");
+  const knownHostsFile = knownHostsSnapshot.path;
+  const startedAt = new Date().toISOString();
+  const token = dryRun ? "dry-run" : randomUUID();
+  const incomingRoot = `${config.singleVm.deployPath}/incoming/${token}`;
+  const interruptGuard = createDeploymentInterruptGuard();
+  let remotePrepared = false;
+  let previousBuildId;
+  let lockPath;
+  try {
+    lockPath = dryRun
+      ? undefined
+      : await acquireLock(environment, manifest.buildId, {
+          recover: parsed.flags.has("recover-lock"),
+        });
+    interruptGuard.throwIfInterrupted();
+    previousBuildId = await readRemoteCurrentBuild(
+      config,
+      knownHostsFile,
+      identityFile,
+      dryRun,
+      interruptGuard,
+    );
+    if (rollback && !dryRun) assertRemoteRollbackSource(previousBuildId, rollbackFrom);
+    assertRemoteTargetNotActive(previousBuildId, manifest.buildId);
+    if (!rollback && !dryRun) {
+      await verifyForwardDeploymentAncestry(previousBuildId, manifest.buildId);
+    }
+    // Treat preparation as cleanup-owned before the SSH call starts. If a signal lands after the
+    // remote directory is created but before SSH returns, removing a missing token is still safe.
+    remotePrepared = !dryRun;
+    await sshRun(
+      config,
+      knownHostsFile,
+      identityFile,
+      ["sh", "-c", REMOTE_PREPARE_SCRIPT, "--", config.singleVm.deployPath, token],
+      { dryRun, interruptGuard },
+    );
+
+    for (const [relativePath, file] of deploymentFiles) {
+      await remoteWrite(
+        config,
+        knownHostsFile,
+        identityFile,
+        `${incomingRoot}/${relativePath}`,
+        file.content,
+        file.mode,
+        dryRun,
+        interruptGuard,
+      );
+    }
+    await remoteWrite(
+      config,
+      knownHostsFile,
+      identityFile,
+      `${incomingRoot}/.compose-files`,
+      `${config.singleVm.composeFiles.join("\n")}\n`,
+      "0600",
+      dryRun,
+      interruptGuard,
+    );
+    await remoteWrite(
+      config,
+      knownHostsFile,
+      identityFile,
+      `${incomingRoot}/.env`,
+      releaseEnvironment(runtimeContent, manifest, runtimeEnv.keys),
+      "0600",
+      dryRun,
+      interruptGuard,
+    );
+    if (migrationEnv) {
+      await remoteWrite(
+        config,
+        knownHostsFile,
+        identityFile,
+        `${incomingRoot}/.migration.env`,
+        migrationEnv.content,
+        "0600",
+        dryRun,
+        interruptGuard,
+      );
+    }
+    interruptGuard.throwIfInterrupted();
+    interruptGuard.dispose();
+    await sshRun(
+      config,
+      knownHostsFile,
+      identityFile,
+      [
+        "sh",
+        "-se",
+        "--",
+        config.singleVm.deployPath,
+        config.singleVm.projectName,
+        manifest.buildId,
+        token,
+        parsed.flags.has("recover-lock") ? "1" : "0",
+        rollback ? "1" : "0",
+        previousBuildId ?? "none",
+        rollback ? rollbackFrom : "none",
+      ],
+      { dryRun, input: REMOTE_DEPLOY_SCRIPT },
+    );
+    remotePrepared = false;
+
+    if (rollback) {
+      process.stdout.write("Code rollback selected; forward-only database migration is skipped.\n");
+    }
+    if (!dryRun) {
+      try {
+        await waitForDeploymentHealth(config, manifest.buildId);
+        await waitForWebBuild(config, manifest.buildId);
+        await waitForMediaHealth(config);
+      } catch (error) {
+        if (previousBuildId) {
+          try {
+            await restorePreviousRemoteBuild(config, knownHostsFile, identityFile, previousBuildId);
+            await waitForDeploymentHealth(config, previousBuildId);
+            await waitForWebBuild(config, previousBuildId);
+            await waitForMediaHealth(config);
+          } catch (restoreError) {
+            throw new AggregateError(
+              [error, restoreError],
+              "Candidate health verification failed and the previous single-VM release could not be restored",
+              { cause: restoreError },
+            );
+          }
+          throw new Error(
+            `Candidate health verification failed; restored previous build ${previousBuildId}`,
+            { cause: error },
+          );
+        }
+        try {
+          await deactivateFailedCurrentRemoteBuild(
+            config,
+            knownHostsFile,
+            identityFile,
+            manifest.buildId,
+          );
+        } catch (deactivateError) {
+          throw new AggregateError(
+            [error, deactivateError],
+            "First-release health verification failed and the failed single-VM release could not be deactivated",
+            { cause: deactivateError },
+          );
+        }
+        throw new Error("First-release health verification failed; deactivated failed release", {
+          cause: error,
+        });
+      }
+      const receipt = await writeReceipt({
+        environment,
+        buildId: manifest.buildId,
+        config,
+        manifestPath,
+        backup,
+        startedAt,
+        rollback,
+        rollbackFrom,
+      });
+      process.stdout.write(`Deployment receipt: ${receipt}\n`);
+    } else {
+      process.stdout.write(
+        "Dry run complete; no remote files, migration, deployment, health probe, or receipt ran.\n",
+      );
+    }
+  } catch (error) {
+    if (remotePrepared) {
+      try {
+        await sshRun(
+          config,
+          knownHostsFile,
+          identityFile,
+          ["sh", "-c", REMOTE_REMOVE_INCOMING_SCRIPT, "--", config.singleVm.deployPath, token],
+          { dryRun },
+        );
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "Single-VM deployment failed and its incoming secret files could not be removed",
+          { cause: cleanupError },
+        );
+      }
+    }
+    throw error;
+  } finally {
+    interruptGuard.dispose();
+    if (lockPath) await rm(lockPath, { force: true });
+    await knownHostsSnapshot.cleanup();
+  }
+}
+
+async function deployHosted({ environment, parsed, dryRun }) {
+  const operationsRevision = await currentOperationsRevision();
+  const expectedConfig = `config/deploy/${configFileName(environment)}`;
+  const selectedConfigPath = strictTargetPath(
+    parsed.values.get("config"),
+    expectedConfig,
+    "--config",
+  );
+  const configPath = await resolveCheckedRepositoryFile(
+    selectedConfigPath,
+    repositoryRoot,
+    "deployment config",
+    { requireGitClean: true },
+  );
+  const config = await readStrictJson(configPath, validateDeployConfig, environment);
+  const reviewedAutomationFiles = [
+    ...HOSTED_DEPLOYMENT_AUTOMATION_FILES,
+    ...(config.requireReadinessGate ? READINESS_GATE_INPUT_FILES : []),
+  ];
+  config.operationsRevision = operationsRevision;
+  config.deploymentInputHashes = {
+    ...(await resolveReviewedDeploymentInputHashes(reviewedAutomationFiles)),
+    [expectedConfig]: await sha256File(configPath),
+  };
+  if (config.deploymentMode === "single-vm") {
+    await deploySingleVm({ environment, parsed, dryRun, config });
+    return;
+  }
+  const expectedServerConfig = `config/deploy/fly/${environment}-server.toml`;
+  const serverConfigPath = await resolveCheckedRepositoryFile(
+    strictTargetPath(config.fly.serverConfig, expectedServerConfig, "server Fly config"),
+    repositoryRoot,
+    "server Fly config",
+    { requireGitClean: true },
+  );
+  config.deploymentInputHashes[expectedServerConfig] = await sha256File(serverConfigPath);
   const flyEnvironment = validateFlyRuntimeEnvironment(
     parseFlyTomlEnvironment(await readFile(serverConfigPath, "utf8")),
     config,
@@ -467,7 +1464,14 @@ async function deployHosted({ environment, parsed, dryRun }) {
     FEATURE_MEDIA_UPLOADS: "true",
   };
   const expectedWebConfig = `config/deploy/fly/${environment}-web.toml`;
-  const webConfigPath = strictTargetPath(config.fly.webConfig, expectedWebConfig, "web Fly config");
+  const webConfigPath = await resolveCheckedRepositoryFile(
+    strictTargetPath(config.fly.webConfig, expectedWebConfig, "web Fly config"),
+    repositoryRoot,
+    "web Fly config",
+    { requireGitClean: true },
+  );
+  config.deploymentInputHashes[expectedWebConfig] = await sha256File(webConfigPath);
+  await assertOperationsRevision(config.operationsRevision);
   const flyWebEnvironment = validateFlyWebEnvironment(
     parseFlyTomlEnvironment(await readFile(webConfigPath, "utf8")),
     config,
@@ -620,7 +1624,7 @@ async function deployHosted({ environment, parsed, dryRun }) {
       [
         "deploy",
         "--config",
-        config.fly.serverConfig,
+        serverConfigPath,
         "--app",
         config.fly.serverApp,
         "--image",
@@ -638,7 +1642,7 @@ async function deployHosted({ environment, parsed, dryRun }) {
       [
         "deploy",
         "--config",
-        config.fly.webConfig,
+        webConfigPath,
         "--app",
         config.fly.webApp,
         "--image",
@@ -685,6 +1689,7 @@ export async function main(argv = process.argv.slice(2)) {
       "backup-reference",
       "profile",
       "rollback-from",
+      "ssh-identity",
     ],
     booleanOptions: ["dry-run", "no-build", "rollback", "recover-lock", "help"],
   });
@@ -713,6 +1718,7 @@ export async function main(argv = process.argv.slice(2)) {
       "confirm",
       "backup-reference",
       "rollback-from",
+      "ssh-identity",
     ];
     if (hostedOptions.some((option) => parsed.values.has(option))) {
       throw new Error("Hosted deployment options are not valid for development");

@@ -13,6 +13,7 @@ import {
 async function main() {
   const apiUrl = requiredUrl("READINESS_API_URL");
   const webUrl = requiredUrl("READINESS_WEB_URL");
+  const mediaUrl = requiredUrl("READINESS_MEDIA_URL");
   const allowHttp = process.env.READINESS_ALLOW_HTTP === "true";
   const outputPath =
     process.env.READINESS_OUTPUT?.trim() || "artifacts/readiness/remote-probe.json";
@@ -31,9 +32,20 @@ async function main() {
     uxBeta: requiredBoolean(process.env, "READINESS_EXPECT_UX_BETA"),
     recoveryRehearsal: requiredBoolean(process.env, "READINESS_EXPECT_RECOVERY_REHEARSAL"),
     practiceAssignments: requiredBoolean(process.env, "READINESS_EXPECT_PRACTICE_ASSIGNMENTS"),
+    presentations: requiredBoolean(process.env, "READINESS_EXPECT_PRESENTATIONS"),
+  };
+  const expectedWorkspaceFeatures = {
+    uxBeta: expectedFeatures.uxBeta,
+    recoveryRehearsal: expectedFeatures.recoveryRehearsal,
+    practiceAssignments: expectedFeatures.practiceAssignments,
+    workspaceShell: requiredBoolean(process.env, "READINESS_EXPECT_WORKSPACE_SHELL"),
+    builderV2: requiredBoolean(process.env, "READINESS_EXPECT_BUILDER_V2"),
+    presentations: expectedFeatures.presentations,
+    groups: requiredBoolean(process.env, "READINESS_EXPECT_GROUPS"),
+    discover: requiredBoolean(process.env, "READINESS_EXPECT_DISCOVER"),
   };
 
-  for (const target of [apiUrl, webUrl]) assertSecureReadinessUrl(target, allowHttp);
+  for (const target of [apiUrl, webUrl, mediaUrl]) assertSecureReadinessUrl(target, allowHttp);
 
   function requiredUrl(name: string) {
     return new URL(requiredEnvironmentString(process.env, name));
@@ -92,6 +104,14 @@ async function main() {
     assert.equal(ready.body.mediaScanning, "enabled", "media-enabled staging must enable scanning");
   }
 
+  const mediaHealth = await request("/minio/health/live", mediaUrl);
+  assert.equal(mediaHealth.status, 200, "public media TLS origin is not healthy");
+  assert.equal(
+    new URL(mediaHealth.url).origin,
+    mediaUrl.origin,
+    "public media health redirected to an unexpected origin",
+  );
+
   const featuresResult = await jsonResponse("/v1/features");
   const features = featuresResult.body;
   const expectedWebOrigin = normalizedOrigin(
@@ -110,10 +130,10 @@ async function main() {
   const account = await jsonResponse("/v1/auth/me", creatorCookie);
   const productFeatures = account.body.productFeatures as Record<string, unknown> | undefined;
   assert.ok(productFeatures, "authenticated account omitted productFeatures");
-  for (const feature of ["uxBeta", "recoveryRehearsal", "practiceAssignments"] as const) {
+  for (const [feature, expected] of Object.entries(expectedWorkspaceFeatures)) {
     assert.equal(
       productFeatures[feature],
-      expectedFeatures[feature],
+      expected,
       `synthetic workspace ${feature} does not match its required expectation`,
     );
   }
@@ -130,7 +150,7 @@ async function main() {
   assert.equal(
     activeWorkspace.homeRegion,
     expectedHomeRegion,
-    "synthetic workspace is not assigned to the expected Canadian home region",
+    "synthetic workspace is not assigned to the expected home region",
   );
 
   const metrics = await request("/metrics");
@@ -192,17 +212,19 @@ async function main() {
     targets: {
       apiOrigin: apiUrl.origin,
       webOrigin: webUrl.origin,
+      mediaOrigin: mediaUrl.origin,
       finalWebUrl: finalWebUrl.href,
     },
-    health: { live: live.body, ready: ready.body },
+    health: { live: live.body, ready: ready.body, mediaStatus: mediaHealth.status },
     publicFeatures: features,
     syntheticWorkspace: {
       homeRegion: activeWorkspace.homeRegion,
-      productFeatures: {
-        uxBeta: productFeatures.uxBeta,
-        recoveryRehearsal: productFeatures.recoveryRehearsal,
-        practiceAssignments: productFeatures.practiceAssignments,
-      },
+      productFeatures: Object.fromEntries(
+        Object.keys(expectedWorkspaceFeatures).map((feature) => [
+          feature,
+          productFeatures[feature],
+        ]),
+      ),
     },
     metrics: metricsExpectation,
     securityHeaders: observedHeaders,

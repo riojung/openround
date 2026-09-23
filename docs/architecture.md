@@ -15,7 +15,7 @@ flowchart TB
   Creator[Creator browser]
   Host[Host or presenter browser]
   Player[Participant browser]
-  Edge[Caddy or hosted edge]
+  Edge[Caddy reverse proxy]
   Web[Next.js web]
   Server[Fastify + Socket.IO server]
   Worker[Database-backed report and authoring workers]
@@ -64,7 +64,7 @@ The browser receives all public pages from Next.js. Fastify owns versioned REST 
 | `packages/insights`    | Pure deterministic diagnostic measurements and facilitator recommendation rules                                                                                |
 | `packages/experience`  | Immutable preset registry, semantic-token validation, brand layering, and contrast checks                                                                      |
 | `packages/db`          | Repository interface, PostgreSQL implementation, in-memory development implementation, and migrations                                                          |
-| `infra`                | Caddy routing, PostgreSQL runtime role initialization, and Cloud Run/Fly deployment profiles                                                                   |
+| `infra`                | Caddy routing, PostgreSQL runtime-role initialization, active single-VM files, and legacy deployment references                                                |
 | `tests`                | Browser, integration, smoke, multi-writer, restart/recovery, and load scenarios                                                                                |
 
 The application follows one domain model and one release train. Splitting web and realtime deployment does not create independent business services or databases.
@@ -86,7 +86,7 @@ The application follows one domain model and one release train. Splitting web an
 - Converts only validated experience tokens into CSS variables and applies device-local contrast,
   motion, and mute preferences last.
 - Uses same-origin `/v1` and `/socket.io` routes by default, while allowing an explicit API origin
-  at image build time for split hosted deployments.
+  at image build time for legacy or future split deployments.
 - Generates a per-request script nonce and enforced Content Security Policy, serves HSTS and other
   browser hardening headers, and dynamically renders pages so Next.js can apply the nonce to its
   runtime scripts. Inline styles remain permitted for the constrained React style properties used
@@ -598,20 +598,43 @@ reachable `OPENROUND_STORAGE_URL` and an explicit non-loopback `OPENROUND_STORAG
 
 Community mode disables application billing gates and lets the operator configure the participant ceiling, up to the supported P0 ceiling. The included configuration and credentials are development examples, not internet-safe defaults.
 
-### Hosted regional profile
+### Remote single-VM profile
 
-The launch topology uses separately deployable web and always-on API/realtime containers with one active realtime writer, a regional PostgreSQL database, private object storage, and regional managed Redis. The Canadian and later US stacks are isolated. Each workspace has an immutable home region; existing Canadian workspaces are never moved automatically.
+The active staging and production topology uses `compose.single-vm.yaml` on one remote VM. Caddy
+terminates TLS and routes one public application origin to the web and API/realtime containers; a
+separate TLS media name routes constrained MinIO traffic. PostgreSQL, Valkey, MinIO, ClamAV, the
+web process, and one API/realtime process all share that VM. Application images are selected by
+immutable digest and migrations run once with a credential that is not installed in the long-lived
+server.
 
-A future global code directory may contain only code, region, and expiry. Direct links and QR codes carry the regional host so participant traffic stays within the workspace's region.
+This topology deliberately minimizes early operational complexity, but the VM, its disks, and its
+network are one failure domain. It provides no high availability or SLA. Public production is
+blocked until strict SSH host-key pinning, TLS and certificate monitoring, encrypted off-host
+database/object backups, a clean replacement-VM restore drill, target-host capacity evidence,
+monitoring, and every release-readiness gate are complete. Checked-in profiles do not prove that a
+remote environment exists.
 
-### Horizontal scale gate
+The workspace home-region field remains an immutable policy/audit attribute. It does not by itself
+prove physical residency. Any residency claim requires provider inventory, backup-location,
+network, and operational evidence for the selected VM and off-host systems.
 
-The code includes per-session Redis leases, PostgreSQL compare-and-swap fencing, the Redis Streams Socket.IO adapter, canonical snapshot fallback, and local two-writer/process-loss tests. One active realtime process remains the conservative hosted default until the target provider passes all of these gates:
+The Fly files and split-provider topology are legacy/reference material only. A future multi-host
+or multi-region design may reuse the application boundaries after separate residency, routing,
+failover, and operational qualification.
+
+### Future horizontal scale gate
+
+The code includes per-session Redis leases, PostgreSQL compare-and-swap fencing, the Redis Streams
+Socket.IO adapter, canonical snapshot fallback, and local two-writer/process-loss tests. The active
+single-VM profile runs one API/realtime container. Multiple writers or hosts remain disabled until
+a future topology passes all of these gates:
 
 1. Sticky routing is verified for every enabled Socket.IO transport through the real load balancer.
-2. Reconnect, replay, duplicate command/answer, lease expiry, rolling deploy, and process-kill tests pass with 250 regional clients.
-3. Managed Redis failover is exercised while monitoring lease, version-conflict, acknowledgement, and replay-fallback signals.
-4. Every session is proven to route only within its immutable home region.
+2. Reconnect, replay, duplicate command/answer, lease expiry, rolling deploy, and process-kill tests
+   pass with 250 clients through the actual target networking path.
+3. Shared PostgreSQL, Redis-compatible coordination, and object storage have qualified failover
+   behavior while lease, version-conflict, acknowledgement, and replay-fallback signals are watched.
+4. Every session is proven to route only within its approved deployment boundary.
 
 ## Failure behavior
 
@@ -622,6 +645,7 @@ The code includes per-session Redis leases, PostgreSQL compare-and-swap fencing,
 | Duplicate or stale host command      | Previously applied command is idempotent; incompatible expected version returns `STALE_VERSION` and triggers sync.                                             |
 | Realtime process loss                | A surviving process can load canonical state; cache-journal gaps fall back to a snapshot.                                                                      |
 | Redis unavailable                    | Production coordination is unhealthy and readiness should fail rather than silently allowing uncoordinated writers. Durable PostgreSQL data remains canonical. |
+| Whole single VM unavailable          | The service is unavailable; no automatic failover is claimed. Recover on a clean replacement VM from verified encrypted off-host backups.                      |
 | Object fails validation or scanning  | Object is not promoted or served; cleanup removes rejected/quarantined content according to policy.                                                            |
 | Billing webhook retry                | Signature and provider event identity are checked; processing is idempotent before entitlement changes.                                                        |
 | Report worker/process loss           | Expired leases make pending jobs claimable again; durable evidence remains unchanged.                                                                          |
@@ -642,28 +666,30 @@ runtime switches without a restart; every guarded request reads the shared state
 plus global audit record commit in one transaction. A workspace UUID allowlist supports the
 design-partner stage. Runtime switches cannot enable missing infrastructure or override a disabled
 startup ceiling, and they do not interrupt active games. Retention runs on an interval in the
-server process. Production promotion also requires external uptime checks, centralized
-logs/metrics, alert routing, backup verification, and operator ownership; see the
+server process. Production promotion also requires strict SSH host-key verification, valid TLS for
+application and media names, external uptime checks, centralized logs/metrics, alert routing,
+encrypted off-host backup verification, a clean replacement-VM restore drill, target-host capacity
+evidence, and named operator ownership; see the
 [observability](runbooks/observability.md) and
 [production readiness](runbooks/production-readiness.md) runbooks.
 
 ## Key decisions and tradeoffs
 
-| Decision                           | Benefit                                                                | Cost or constraint                                                                        |
-| ---------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Modular monolith                   | One model, transaction boundary, and release train for a small team    | Components cannot be scaled or released as independent services without later extraction  |
-| Pure game engine                   | Deterministic tests and no infrastructure coupling                     | Orchestration must translate engine events into persistence and role-filtered transport   |
-| PostgreSQL as source of truth      | Durable acknowledgements, reports, tenancy, and recovery in one system | Every accepted answer reaches durable storage before acknowledgement                      |
-| Redis for coordination, not truth  | Fast leases, replay, codes, and fan-out without risking durable loss   | Production realtime requires Redis health and provider-specific failover testing          |
-| Immutable quiz versions            | Running sessions cannot change underneath participants                 | Creators must republish edits for future sessions                                         |
-| Session-scoped guests              | Low-friction joining and reduced child/privacy surface                 | No cross-session learner history or roster identity in P0                                 |
-| Q&A outside game state             | Conversation traffic and moderation do not bloat live snapshots        | Q&A requires its own persistence, limits, retention, and realtime events                  |
-| Audience outbox outside game state | Durable chat/Pulse acknowledgements and cross-process fan-out          | At-least-once delivery requires event deduplication and separate audience synchronization |
-| Frozen semantic experience tokens  | Consistent accessible visuals across roles and process restoration     | Preset revisions require explicit versions; arbitrary theme code is unsupported           |
-| Database-backed background jobs    | Reports and authoring survive process loss and retry safely            | Job latency and exhausted failures require operator monitoring                            |
-| Human-reviewed authoring AI        | Citations and draft-only output reduce ungrounded publishing risk      | Provider quality/cost still require evaluation; human verification remains mandatory      |
-| One regional home per workspace    | Clear residency and routing boundary                                   | Cross-region migration and global sessions are deferred                                   |
-| One launch realtime process        | Lower early operational risk                                           | Horizontal capacity waits on sticky-session and failure testing                           |
+| Decision                           | Benefit                                                                | Cost or constraint                                                                         |
+| ---------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Modular monolith                   | One model, transaction boundary, and release train for a small team    | Components cannot be scaled or released as independent services without later extraction   |
+| Pure game engine                   | Deterministic tests and no infrastructure coupling                     | Orchestration must translate engine events into persistence and role-filtered transport    |
+| PostgreSQL as source of truth      | Durable acknowledgements, reports, tenancy, and recovery in one system | Every accepted answer reaches durable storage before acknowledgement                       |
+| Valkey for coordination, not truth | Fast leases, replay, codes, and fan-out without risking durable loss   | The active single VM becomes unavailable when its local coordination service is unhealthy  |
+| Immutable quiz versions            | Running sessions cannot change underneath participants                 | Creators must republish edits for future sessions                                          |
+| Session-scoped guests              | Low-friction joining and reduced child/privacy surface                 | No cross-session learner history or roster identity in P0                                  |
+| Q&A outside game state             | Conversation traffic and moderation do not bloat live snapshots        | Q&A requires its own persistence, limits, retention, and realtime events                   |
+| Audience outbox outside game state | Durable chat/Pulse acknowledgements and cross-process fan-out          | At-least-once delivery requires event deduplication and separate audience synchronization  |
+| Frozen semantic experience tokens  | Consistent accessible visuals across roles and process restoration     | Preset revisions require explicit versions; arbitrary theme code is unsupported            |
+| Database-backed background jobs    | Reports and authoring survive process loss and retry safely            | Job latency and exhausted failures require operator monitoring                             |
+| Human-reviewed authoring AI        | Citations and draft-only output reduce ungrounded publishing risk      | Provider quality/cost still require evaluation; human verification remains mandatory       |
+| One regional home per workspace    | Clear residency and routing boundary                                   | Cross-region migration and global sessions are deferred                                    |
+| One remote VM and realtime process | Lower early operational complexity                                     | One failure domain, no HA/SLA, and recovery depends on off-host backup plus replacement VM |
 
 ## Implementation map
 

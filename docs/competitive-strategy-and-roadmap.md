@@ -19,7 +19,7 @@ absent should be read as historical audit findings.
 
 The current product frontier is live time-flex, hosted capacity evidence, team discussion delivery,
 short-text/rank response types, slide companion workflows, and contract-gated NRPS/AGS. The
-Canadian beta remains blocked by deployment, operational, accessibility, security, legal, device,
+Single-VM beta remains blocked by deployment, operational, accessibility, security, legal, device,
 and design-partner evidence rather than a missing P0 feature epic.
 
 ## Executive decision
@@ -249,7 +249,7 @@ live recommendations must remain fast, explainable, testable, and available to s
 
 The schedule assumes one full-time engineer plus fractional product/design, accessibility,
 security, and research support. It starts after the current P0 branch is merged and does not replace
-the existing Canadian production-readiness gates.
+the existing single-VM production-readiness gates.
 
 | Phase                           |      Timing | Scope                                                                                                                                                                                           | Exit gate                                                                                                                                                                            |
 | ------------------------------- | ----------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

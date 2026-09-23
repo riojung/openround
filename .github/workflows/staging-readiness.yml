@@ -25,17 +25,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: canada-staging-readiness
+  group: single-vm-staging-readiness
   cancel-in-progress: false
 
 jobs:
   remote-readiness:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: canada-staging
+    environment: single-vm-staging
     env:
       READINESS_API_URL: ${{ vars.OPENROUND_API_URL }}
       READINESS_WEB_URL: ${{ vars.OPENROUND_WEB_URL }}
+      READINESS_MEDIA_URL: ${{ vars.OPENROUND_MEDIA_URL }}
       READINESS_EXPECTED_WEB_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
       READINESS_EXPECT_BILLING: ${{ vars.OPENROUND_EXPECTED_BILLING }}
       READINESS_EXPECT_COMMUNITY_MODE: ${{ vars.OPENROUND_EXPECTED_COMMUNITY_MODE }}
@@ -45,9 +46,15 @@ jobs:
       READINESS_EXPECT_UX_BETA: ${{ vars.OPENROUND_EXPECTED_UX_BETA }}
       READINESS_EXPECT_RECOVERY_REHEARSAL: ${{ vars.OPENROUND_EXPECTED_RECOVERY_REHEARSAL }}
       READINESS_EXPECT_PRACTICE_ASSIGNMENTS: ${{ vars.OPENROUND_EXPECTED_PRACTICE_ASSIGNMENTS }}
+      READINESS_EXPECT_WORKSPACE_SHELL: ${{ vars.OPENROUND_EXPECTED_WORKSPACE_SHELL }}
+      READINESS_EXPECT_BUILDER_V2: ${{ vars.OPENROUND_EXPECTED_BUILDER_V2 }}
+      READINESS_EXPECT_PRESENTATIONS: ${{ vars.OPENROUND_EXPECTED_PRESENTATIONS }}
+      READINESS_EXPECT_GROUPS: ${{ vars.OPENROUND_EXPECTED_GROUPS }}
+      READINESS_EXPECT_DISCOVER: ${{ vars.OPENROUND_EXPECTED_DISCOVER }}
       READINESS_EXPECTED_BUILD_ID: ${{ github.sha }}
-      READINESS_EXPECTED_HOME_REGION: ca-central-1
-      READINESS_EXPECT_METRICS: protected
+      READINESS_EXPECTED_HOME_REGION: ${{ vars.OPENROUND_EXPECTED_HOME_REGION }}
+      # Caddy intentionally does not route /metrics; the private collector uses the Compose network.
+      READINESS_EXPECT_METRICS: disabled
       READINESS_OUTPUT: artifacts/readiness/remote-probe.json
     steps:
       - uses: actions/checkout@v7
@@ -65,6 +72,7 @@ jobs:
         run: |
           test -n "$READINESS_API_URL"
           test -n "$READINESS_WEB_URL"
+          test -n "$READINESS_MEDIA_URL"
           test -n "$READINESS_EXPECTED_WEB_ORIGIN"
           test -n "$READINESS_EXPECT_BILLING"
           test -n "$READINESS_EXPECT_COMMUNITY_MODE"
@@ -74,6 +82,11 @@ jobs:
           test -n "$READINESS_EXPECT_UX_BETA"
           test -n "$READINESS_EXPECT_RECOVERY_REHEARSAL"
           test -n "$READINESS_EXPECT_PRACTICE_ASSIGNMENTS"
+          test -n "$READINESS_EXPECT_WORKSPACE_SHELL"
+          test -n "$READINESS_EXPECT_BUILDER_V2"
+          test -n "$READINESS_EXPECT_PRESENTATIONS"
+          test -n "$READINESS_EXPECT_GROUPS"
+          test -n "$READINESS_EXPECT_DISCOVER"
           test -n "$READINESS_EXPECTED_BUILD_ID"
           test -n "$READINESS_EXPECTED_HOME_REGION"
           test -n "$READINESS_EXPECT_METRICS"
@@ -86,16 +99,16 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: canada-staging-remote-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          name: single-vm-staging-remote-probe-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/readiness/remote-probe.json
           if-no-files-found: warn
           retention-days: 30
 
   target-region-load:
     needs: remote-readiness
-    runs-on: [self-hosted, canada-staging]
+    runs-on: [self-hosted, single-vm-staging]
     timeout-minutes: 90
-    environment: canada-staging
+    environment: single-vm-staging
     env:
       LOAD_BASE_URL: ${{ vars.OPENROUND_API_URL }}
       LOAD_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
@@ -142,7 +155,7 @@ jobs:
                   name: process.env.RUNNER_NAME,
                   os: process.env.RUNNER_OS,
                   architecture: process.env.RUNNER_ARCH,
-                  requiredLabels: ["self-hosted", "canada-staging"],
+                  requiredLabels: ["self-hosted", "single-vm-staging"],
                 },
               }, null, 2)}\n`,
               { mode: 0o600 },
@@ -187,11 +200,11 @@ jobs:
               { mode: 0o600 },
             );
           '
-      - name: Upload Canada-local load and soak evidence
+      - name: Upload target-region load and soak evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: canada-staging-load-${{ github.run_id }}-${{ github.run_attempt }}
+          name: single-vm-staging-load-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             artifacts/readiness/load-runner-provenance.json
             artifacts/readiness/target-region-load.json
@@ -205,7 +218,7 @@ jobs:
     needs: remote-readiness
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: canada-staging
+    environment: single-vm-staging
     env:
       STRIPE_REHEARSAL_BASE_URL: ${{ vars.OPENROUND_API_URL }}
       STRIPE_REHEARSAL_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
@@ -233,7 +246,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: canada-staging-stripe-replay-${{ github.run_id }}-${{ github.run_attempt }}
+          name: single-vm-staging-stripe-replay-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/readiness/stripe-replay.json
           if-no-files-found: warn
           retention-days: 30
