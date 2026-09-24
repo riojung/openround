@@ -9,7 +9,9 @@ async function signIn(page: Page, email: string) {
   await page.goto("/signin");
   await page.getByRole("button", { name: "Education" }).click();
   await page.getByLabel("Email address").fill(email);
-  await page.getByLabel(/I accept the Terms/).check();
+  const policyConsent = page.getByLabel(/I accept the Terms/);
+  await policyConsent.click();
+  await expect(policyConsent).toBeChecked();
   await page.getByRole("button", { name: "Send sign-in link" }).click();
   await page.getByRole("link", { name: "Continue to dashboard" }).click();
   await expect(page).toHaveURL(/\/dashboard/);
