@@ -10,10 +10,26 @@ describe("join preflight contracts", () => {
     ).toBe(false);
   });
 
-  it("exposes only the nickname policy", () => {
+  it("defaults legacy responses to the canonical Round destination", () => {
     expect(JoinPreflightResponseSchema.parse({ nicknamePolicy: "friendly_only" })).toEqual({
       nicknamePolicy: "friendly_only",
+      artifactType: "round",
+      destination: "/join",
     });
+    expect(
+      JoinPreflightResponseSchema.parse({
+        nicknamePolicy: "custom",
+        artifactType: "presentation",
+        destination: "/join",
+      }),
+    ).toMatchObject({ artifactType: "presentation", destination: "/join" });
+    expect(
+      JoinPreflightResponseSchema.safeParse({
+        nicknamePolicy: "custom",
+        artifactType: "presentation",
+        destination: "https://example.com/join",
+      }).success,
+    ).toBe(false);
     expect(
       JoinPreflightResponseSchema.safeParse({
         nicknamePolicy: "custom",

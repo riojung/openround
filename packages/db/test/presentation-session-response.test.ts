@@ -46,7 +46,12 @@ function fixture() {
       },
     ],
   };
-  const response = (participant: string, submittedAt = new Date(now.getTime() + 1_000)) =>
+  const response = (
+    participant: string,
+    submittedAt = new Date(now.getTime() + 1_000),
+    idempotencyKey?: string,
+    requestHash?: string,
+  ) =>
     ({
       id: randomUUID(),
       workspaceId,
@@ -59,11 +64,44 @@ function fixture() {
       score: 975,
       responseMs: 1_000,
       submittedAt,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      ...(requestHash ? { requestHash } : {}),
     }) satisfies PresentationSessionResponseRecord;
   return { workspaceId, sessionId, participantId, blockId, now, content, response };
 }
 
 describe("presentation response acceptance", () => {
+  it("defaults legacy sessions to timed learning semantics and explicit timestamps", async () => {
+    const repository = createPresentationSessionRepository(new MemoryRepository());
+    const setup = fixture();
+    const session = await repository.createSession({
+      id: setup.sessionId,
+      workspaceId: setup.workspaceId,
+      presentationId: randomUUID(),
+      presentationVersionId: randomUUID(),
+      title: setup.content.title,
+      content: setup.content,
+      code: "5555554",
+      status: "active",
+      phase: "question_open",
+      currentBlockIndex: 0,
+      revision: 0,
+      createdBy: randomUUID(),
+      createdAt: setup.now,
+      updatedAt: setup.now,
+      finishedAt: null,
+      liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+      retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+    });
+    expect(session).toMatchObject({
+      settings: { timeMode: "timed" },
+      trustMode: "learning",
+      eventSeq: 0,
+      questionOpenedAt: setup.now,
+    });
+    expect(session.questionClosesAt).toEqual(new Date(setup.now.getTime() + 20_000));
+  });
+
   it("enforces the participant limit inside the session mutation", async () => {
     const repository = createPresentationSessionRepository(new MemoryRepository());
     const setup = fixture();
@@ -101,6 +139,10 @@ describe("presentation response acceptance", () => {
     ]);
     expect(results.map(({ status }) => status).sort()).toEqual(["accepted", "full"]);
     expect(await repository.listParticipants(setup.sessionId)).toHaveLength(1);
+    await expect(repository.getSessionById(setup.sessionId)).resolves.toMatchObject({
+      revision: 0,
+      eventSeq: 1,
+    });
 
     const reportExpiresAt = new Date(setup.now.getTime() + 30 * 86_400_000);
     const finished = await repository.transitionSession({
@@ -146,6 +188,10 @@ describe("presentation response acceptance", () => {
     expect(first.status).toBe("accepted");
     const duplicate = await repository.acceptResponse(setup.response(setup.participantId), 3);
     expect(duplicate.status).toBe("duplicate");
+    await expect(repository.getSessionById(setup.sessionId)).resolves.toMatchObject({
+      revision: 3,
+      eventSeq: 1,
+    });
 
     await repository.transitionSession({
       workspaceId: setup.workspaceId,
@@ -158,6 +204,292 @@ describe("presentation response acceptance", () => {
     });
     const afterReveal = await repository.acceptResponse(setup.response(randomUUID()), 3);
     expect(afterReveal).toEqual({ status: "phase_closed" });
+    await expect(repository.getSessionById(setup.sessionId)).resolves.toMatchObject({
+      revision: 4,
+      eventSeq: 2,
+    });
+  });
+
+  it("resolves an idempotent retry before stale phase checks", async () => {
+    const repository = createPresentationSessionRepository(new MemoryRepository());
+    const setup = fixture();
+    await repository.createSession({
+      id: setup.sessionId,
+      workspaceId: setup.workspaceId,
+      presentationId: randomUUID(),
+      presentationVersionId: randomUUID(),
+      title: setup.content.title,
+      content: setup.content,
+      code: "1234566",
+      status: "active",
+      phase: "question_open",
+      currentBlockIndex: 0,
+      revision: 3,
+      createdBy: randomUUID(),
+      createdAt: setup.now,
+      updatedAt: setup.now,
+      finishedAt: null,
+      liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+      retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+    });
+    const idempotencyKey = randomUUID();
+    const requestHash = "a".repeat(64);
+    const accepted = await repository.acceptResponse(
+      setup.response(setup.participantId, undefined, idempotencyKey, requestHash),
+      3,
+    );
+    expect(accepted.status).toBe("accepted");
+    await repository.transitionSession({
+      workspaceId: setup.workspaceId,
+      sessionId: setup.sessionId,
+      expectedRevision: 3,
+      phase: "question_reveal",
+      currentBlockIndex: 0,
+      status: "active",
+      event: { type: "question.revealed", blockIndex: 0, blockId: setup.blockId },
+    });
+    const retry = await repository.acceptResponse(
+      setup.response(setup.participantId, undefined, idempotencyKey, requestHash),
+      3,
+    );
+    expect(retry.status).toBe("duplicate");
+    const conflictingRetry = await repository.acceptResponse(
+      setup.response(setup.participantId, undefined, idempotencyKey, "b".repeat(64)),
+      3,
+    );
+    expect(conflictingRetry.status).toBe("idempotency_conflict");
+    const secondAttempt = await repository.acceptResponse(
+      setup.response(setup.participantId, undefined, randomUUID()),
+      4,
+    );
+    expect(secondAttempt).toEqual({ status: "phase_closed" });
+  });
+
+  it("distinguishes a second response key from an idempotent retry", async () => {
+    const repository = createPresentationSessionRepository(new MemoryRepository());
+    const setup = fixture();
+    await repository.createSession({
+      id: setup.sessionId,
+      workspaceId: setup.workspaceId,
+      presentationId: randomUUID(),
+      presentationVersionId: randomUUID(),
+      title: setup.content.title,
+      content: setup.content,
+      code: "1234565",
+      status: "active",
+      phase: "question_open",
+      currentBlockIndex: 0,
+      revision: 1,
+      createdBy: randomUUID(),
+      createdAt: setup.now,
+      updatedAt: setup.now,
+      finishedAt: null,
+      liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+      retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+    });
+    await expect(
+      repository.acceptResponse(
+        { ...setup.response(randomUUID(), undefined, randomUUID()), blockId: randomUUID() },
+        1,
+      ),
+    ).resolves.toEqual({ status: "phase_closed" });
+    await expect(
+      repository.acceptResponse(
+        { ...setup.response(randomUUID(), undefined, randomUUID()), questionId: randomUUID() },
+        1,
+      ),
+    ).resolves.toEqual({ status: "phase_closed" });
+    await expect(
+      repository.acceptResponse(setup.response(randomUUID(), undefined, randomUUID()), 0),
+    ).resolves.toEqual({ status: "phase_closed" });
+    await repository.acceptResponse(
+      setup.response(setup.participantId, undefined, randomUUID()),
+      1,
+    );
+    const second = await repository.acceptResponse(
+      setup.response(setup.participantId, undefined, randomUUID()),
+      1,
+    );
+    expect(second.status).toBe("already_responded");
+  });
+
+  it("supports flex windows and idempotent transition commands", async () => {
+    const repository = createPresentationSessionRepository(new MemoryRepository());
+    const setup = fixture();
+    await repository.createSession({
+      id: setup.sessionId,
+      workspaceId: setup.workspaceId,
+      presentationId: randomUUID(),
+      presentationVersionId: randomUUID(),
+      title: setup.content.title,
+      content: setup.content,
+      code: "1234564",
+      status: "active",
+      phase: "lobby",
+      currentBlockIndex: -1,
+      revision: 0,
+      settings: { timeMode: "flex" },
+      createdBy: randomUUID(),
+      createdAt: setup.now,
+      updatedAt: setup.now,
+      finishedAt: null,
+      liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+      retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+    });
+    const commandId = randomUUID();
+    const opened = await repository.transitionSessionCommand({
+      workspaceId: setup.workspaceId,
+      sessionId: setup.sessionId,
+      commandId,
+      expectedRevision: 0,
+      phase: "question_open",
+      currentBlockIndex: 0,
+      status: "active",
+      occurredAt: setup.now,
+      event: { type: "question.launched", blockIndex: 0, blockId: setup.blockId },
+    });
+    expect(opened.status).toBe("accepted");
+    if (opened.status !== "accepted") throw new Error("Expected accepted transition");
+    expect(opened.session).toMatchObject({ eventSeq: 1, questionClosesAt: null });
+
+    const retry = await repository.transitionSessionCommand({
+      workspaceId: setup.workspaceId,
+      sessionId: setup.sessionId,
+      commandId,
+      expectedRevision: 0,
+      phase: "question_open",
+      currentBlockIndex: 0,
+      status: "active",
+      event: { type: "question.launched", blockIndex: 0, blockId: setup.blockId },
+    });
+    expect(retry.status).toBe("duplicate");
+    const conflictingReuse = await repository.transitionSessionCommand({
+      workspaceId: setup.workspaceId,
+      sessionId: setup.sessionId,
+      commandId,
+      expectedRevision: 1,
+      phase: "question_reveal",
+      currentBlockIndex: 0,
+      status: "active",
+      event: { type: "question.revealed", blockIndex: 0, blockId: setup.blockId },
+    });
+    expect(conflictingReuse.status).toBe("idempotency_conflict");
+    expect(await repository.listTimeline(setup.sessionId)).toHaveLength(1);
+    const accepted = await repository.acceptResponse(
+      setup.response(setup.participantId, new Date(setup.now.getTime() + 60_000), randomUUID()),
+      1,
+    );
+    expect(accepted.status).toBe("accepted");
+  });
+
+  it("expires and revokes scoped presentation credentials", async () => {
+    const repository = createPresentationSessionRepository(new MemoryRepository());
+    const setup = fixture();
+    await repository.createSession({
+      id: setup.sessionId,
+      workspaceId: setup.workspaceId,
+      presentationId: randomUUID(),
+      presentationVersionId: randomUUID(),
+      title: setup.content.title,
+      content: setup.content,
+      code: "1234563",
+      status: "active",
+      phase: "lobby",
+      currentBlockIndex: -1,
+      revision: 0,
+      createdBy: randomUUID(),
+      createdAt: setup.now,
+      updatedAt: setup.now,
+      finishedAt: null,
+      liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+      retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+    });
+    const credential = await repository.createCredential({
+      id: randomUUID(),
+      workspaceId: setup.workspaceId,
+      sessionId: setup.sessionId,
+      role: "companion",
+      tokenHash: "a".repeat(64),
+      createdAt: setup.now,
+      expiresAt: new Date(setup.now.getTime() + 60_000),
+      revokedAt: null,
+    });
+    await expect(
+      repository.findValidCredential(setup.sessionId, credential.tokenHash, "host", setup.now),
+    ).resolves.toBeNull();
+    await expect(
+      repository.findValidCredential(setup.sessionId, credential.tokenHash, "companion", setup.now),
+    ).resolves.toMatchObject({ id: credential.id });
+    await repository.revokeCredential(
+      setup.workspaceId,
+      setup.sessionId,
+      credential.id,
+      new Date(setup.now.getTime() + 1_000),
+    );
+    await expect(
+      repository.findValidCredential(
+        setup.sessionId,
+        credential.tokenHash,
+        "companion",
+        new Date(setup.now.getTime() + 2_000),
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("rolls back the room when its initial credential cannot be created", async () => {
+    const memory = new MemoryRepository();
+    const repository = createPresentationSessionRepository(memory);
+    const setup = fixture();
+    const sessionInput = (id: string, code: string) => ({
+      id,
+      workspaceId: setup.workspaceId,
+      presentationId: randomUUID(),
+      presentationVersionId: randomUUID(),
+      title: setup.content.title,
+      content: setup.content,
+      code,
+      status: "active" as const,
+      phase: "lobby" as const,
+      currentBlockIndex: -1,
+      revision: 0,
+      createdBy: randomUUID(),
+      createdAt: setup.now,
+      updatedAt: setup.now,
+      finishedAt: null,
+      liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+      retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+    });
+    const firstId = randomUUID();
+    const sharedTokenHash = "c".repeat(64);
+    await repository.createSessionWithCredential(sessionInput(firstId, "7654310"), {
+      id: randomUUID(),
+      workspaceId: setup.workspaceId,
+      sessionId: firstId,
+      role: "host",
+      tokenHash: sharedTokenHash,
+      createdAt: setup.now,
+      expiresAt: new Date(setup.now.getTime() + 60_000),
+      revokedAt: null,
+    });
+
+    const failedId = randomUUID();
+    await expect(
+      repository.createSessionWithCredential(sessionInput(failedId, "7654311"), {
+        id: randomUUID(),
+        workspaceId: setup.workspaceId,
+        sessionId: failedId,
+        role: "host",
+        tokenHash: sharedTokenHash,
+        createdAt: setup.now,
+        expiresAt: new Date(setup.now.getTime() + 60_000),
+        revokedAt: null,
+      }),
+    ).rejects.toThrow("credential already exists");
+    await expect(repository.getSessionById(failedId)).resolves.toBeNull();
+    await expect(memory.getLiveRoomCode("7654311")).resolves.toBeNull();
+    await expect(
+      repository.createSession(sessionInput(failedId, "7654311")),
+    ).resolves.toMatchObject({ id: failedId });
   });
 
   it("rejects an otherwise current response after the server deadline", async () => {

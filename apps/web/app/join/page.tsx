@@ -13,6 +13,7 @@ import {
   completeJoinPreflight,
   failJoinPreflight,
   idleJoinPreflightState,
+  joinArtifactFor,
   nicknameForJoin,
   shouldCollectJoinNickname,
 } from "../../lib/join-preflight";
@@ -30,6 +31,7 @@ function JoinForm() {
   const preflightRequestId = useRef(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const artifactType = joinArtifactFor(preflight, code);
   const collectNickname = shouldCollectJoinNickname(preflight, code);
 
   useEffect(() => {
@@ -43,7 +45,7 @@ function JoinForm() {
     setPreflight(beginJoinPreflight(code, requestId));
     const timer = window.setTimeout(() => {
       void apiFetch<JoinPreflightResponse>(
-        `/v1/sessions/join/preflight?${new URLSearchParams({ code })}`,
+        `/v1/live-rooms/join/preflight?${new URLSearchParams({ code })}`,
         { signal: controller.signal },
       )
         .then((response) => {
@@ -76,6 +78,22 @@ function JoinForm() {
     setBusy(true);
     setError("");
     try {
+      if (artifactType === "presentation") {
+        const joined = await apiFetch<{
+          participantToken: string;
+          snapshot: { id: string };
+        }>("/v1/presentation-sessions/join", {
+          method: "POST",
+          body: JSON.stringify({ code, nickname: nickname.trim() }),
+        });
+        sessionStorage.setItem(
+          `openround:presentation-participant:${joined.snapshot.id}`,
+          joined.participantToken,
+        );
+        sessionStorage.setItem("openround:last-code", code);
+        router.push(`/presentation-session/${joined.snapshot.id}/play`);
+        return;
+      }
       const requestedNickname = nicknameForJoin(preflight, code, nickname);
       const joined = await apiFetch<JoinResponse>("/v1/sessions/join", {
         method: "POST",
@@ -101,9 +119,15 @@ function JoinForm() {
     <section className="join-card auth-card" aria-labelledby="join-heading">
       <p className="eyebrow">{t("delivery.join.eyebrow")}</p>
       <h1 id="join-heading" style={{ fontSize: "clamp(2.5rem, 9vw, 4.4rem)" }}>
-        {t("delivery.join.title")}
+        {artifactType === "presentation"
+          ? t("delivery.join.presentationTitle")
+          : t("delivery.join.title")}
       </h1>
-      <p className="muted">{t("delivery.join.description")}</p>
+      <p className="muted">
+        {artifactType === "presentation"
+          ? t("delivery.join.presentationDescription")
+          : t("delivery.join.description")}
+      </p>
       <form onSubmit={submit}>
         <div className="field">
           <label htmlFor="join-code">{t("delivery.join.codeLabel")}</label>
@@ -129,6 +153,7 @@ function JoinForm() {
               maxLength={32}
               onChange={(event) => setNickname(event.target.value)}
               placeholder={t("delivery.join.nicknamePlaceholder")}
+              required={artifactType === "presentation"}
               value={nickname}
             />
           </div>
@@ -137,7 +162,9 @@ function JoinForm() {
             A privacy-friendly nickname will be assigned when you join.
           </p>
         )}
-        <AvatarPicker disabled={busy} onChange={setAvatarId} value={avatarId} />
+        {artifactType === "round" ? (
+          <AvatarPicker disabled={busy} onChange={setAvatarId} value={avatarId} />
+        ) : null}
         {preflight.code === code && preflight.status === "checking" ? (
           <p className="muted" role="status">
             Checking room name settings…
@@ -153,15 +180,28 @@ function JoinForm() {
             {error}
           </p>
         ) : null}
-        <button className="button full-width" disabled={busy || code.length !== 7} type="submit">
-          {busy ? t("delivery.join.joining") : t("delivery.join.submit")}
+        <button
+          className="button full-width"
+          disabled={
+            busy ||
+            code.length !== 7 ||
+            preflight.status === "checking" ||
+            (artifactType === "presentation" && !nickname.trim())
+          }
+          type="submit"
+        >
+          {busy
+            ? t("delivery.join.joining")
+            : artifactType === "presentation"
+              ? t("delivery.join.presentationTitle")
+              : t("delivery.join.submit")}
         </button>
       </form>
       <p className="muted" style={{ fontSize: "0.84rem", marginTop: 18, marginBottom: 0 }}>
         By joining, you agree to the session rules and <Link href="/privacy">privacy notice</Link>.
       </p>
       <p className="muted" style={{ fontSize: "0.84rem", marginBottom: 0 }}>
-        Joining a Presentation? <Link href="/presentation/join">Use Presentation join</Link>.
+        Round and Presentation codes both work here.
       </p>
     </section>
   );

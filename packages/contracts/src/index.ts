@@ -44,6 +44,7 @@ export const errorCodes = [
   "PARTICIPANT_LIMIT",
   "PHASE_CLOSED",
   "ALREADY_RESPONDED",
+  "IDEMPOTENCY_CONFLICT",
   "IMPORT_VALIDATION_FAILED",
   "EXPORT_VALIDATION_FAILED",
   "FOLLOWUP_NOT_OPEN",
@@ -172,6 +173,11 @@ export const EntitlementsSchema = z.object({
   followups: z.boolean(),
   cohosting: z.boolean().default(false),
   authoringJobsPerMonth: z.number().int().nonnegative().nullable(),
+  maxPracticePersonalLinks: z.number().int().nonnegative().default(0),
+  recoveryTrails: z.boolean().default(false),
+  maxRecoveryStages: z.number().int().nonnegative().default(0),
+  conceptHealth: z.boolean().default(false),
+  decisionReplay: z.boolean().default(false),
 });
 export type Entitlements = z.infer<typeof EntitlementsSchema>;
 
@@ -863,14 +869,20 @@ export type ScoringMode = z.infer<typeof ScoringModeSchema>;
 export const ResultVisibilitySchema = z.enum(["private", "leaderboard"]);
 export type ResultVisibility = z.infer<typeof ResultVisibilitySchema>;
 
+export const TrustModeSchema = z.enum(["learning", "verified"]);
+export type TrustMode = z.infer<typeof TrustModeSchema>;
+
 export const SessionSettingsSchema = z.object({
   audienceLimit: z.number().int().min(1).max(250),
   scoringMode: ScoringModeSchema,
   resultVisibility: ResultVisibilitySchema,
   allowLateJoin: z.boolean(),
   nicknamePolicy: z.enum(["custom", "friendly_only"]),
+  trustMode: TrustModeSchema.default("learning"),
 });
-export type SessionSettings = z.infer<typeof SessionSettingsSchema>;
+/** Input remains source-compatible while parsing always resolves an explicit trust mode. */
+export type SessionSettings = z.input<typeof SessionSettingsSchema>;
+export type ResolvedSessionSettings = z.output<typeof SessionSettingsSchema>;
 
 export const SessionPhaseSchema = z.enum([
   "lobby",
@@ -1130,7 +1142,10 @@ export const SessionSnapshotSchema = z.object({
   insight: CheckpointInsightSchema.optional(),
   responseDistribution: ResponseDistributionSchema.optional(),
 });
-export type SessionSnapshot = z.infer<typeof SessionSnapshotSchema>;
+export type ResolvedSessionSnapshot = z.output<typeof SessionSnapshotSchema>;
+export type SessionSnapshot = Omit<ResolvedSessionSnapshot, "settings"> & {
+  settings: SessionSettings;
+};
 
 export const EventEnvelopeSchema = z.object({
   eventId: z.string(),
@@ -1160,9 +1175,12 @@ export type JoinPreflightRequest = z.infer<typeof JoinPreflightRequestSchema>;
 export const JoinPreflightResponseSchema = z
   .object({
     nicknamePolicy: z.enum(["custom", "friendly_only"]),
+    artifactType: z.enum(["round", "presentation"]).default("round"),
+    destination: z.string().startsWith("/").default("/join"),
   })
   .strict();
-export type JoinPreflightResponse = z.infer<typeof JoinPreflightResponseSchema>;
+export type JoinPreflightResponse = z.input<typeof JoinPreflightResponseSchema>;
+export type ResolvedJoinPreflightResponse = z.output<typeof JoinPreflightResponseSchema>;
 
 export const JoinRequestSchema = z.object({
   code: z
@@ -1180,7 +1198,10 @@ export const JoinResponseSchema = z.object({
   participantToken: z.string(),
   snapshot: SessionSnapshotSchema,
 });
-export type JoinResponse = z.infer<typeof JoinResponseSchema>;
+export type ResolvedJoinResponse = z.output<typeof JoinResponseSchema>;
+export type JoinResponse = Omit<ResolvedJoinResponse, "snapshot"> & {
+  snapshot: SessionSnapshot;
+};
 
 export const SessionStaffRoleSchema = z.enum(["cohost", "presenter"]);
 export type SessionStaffRole = z.infer<typeof SessionStaffRoleSchema>;
@@ -1827,7 +1848,10 @@ export const SyncResponseSchema = z.object({
   replay: z.array(EventEnvelopeSchema),
   replayComplete: z.boolean(),
 });
-export type SyncResponse = z.infer<typeof SyncResponseSchema>;
+export type ResolvedSyncResponse = z.output<typeof SyncResponseSchema>;
+export type SyncResponse = Omit<ResolvedSyncResponse, "snapshot"> & {
+  snapshot: SessionSnapshot;
+};
 
 export const MediaScanStatusSchema = z.enum(["pending", "clean", "rejected"]);
 export type MediaScanStatus = z.infer<typeof MediaScanStatusSchema>;
@@ -1974,6 +1998,7 @@ export type FollowupPurpose = z.infer<typeof FollowupPurposeSchema>;
 export const ReportSummarySchema = z.object({
   id: z.string().uuid(),
   sessionId: z.string().uuid(),
+  trustMode: TrustModeSchema.default("learning"),
   quizId: z.string().uuid(),
   title: z.string().min(1).max(160),
   status: z.enum(["pending", "ready", "failed"]),
@@ -1992,6 +2017,7 @@ export type ReportSummary = z.infer<typeof ReportSummarySchema>;
 
 const FollowupSummaryBaseSchema = z.object({
   id: z.string().uuid(),
+  trustMode: TrustModeSchema.default("learning"),
   sourceQuizVersionId: z.string().uuid(),
   quizId: z.string().uuid(),
   title: z.string().min(1).max(160),
@@ -2065,6 +2091,8 @@ export const ProductEventNameSchema = z.enum([
   "insight_shown",
   "intervention_started",
   "recheck_opened",
+  "linked_recheck_opened",
+  "report_reconciled",
   "report_viewed",
   "followup_shared",
   "practice_assignment_created",
@@ -2130,6 +2158,16 @@ export const ProductEventSchema = z
         code: "custom",
         path: ["dimensions", "artifactType"],
         message: "Presentation delivery events require the presentation artifact type",
+      });
+    }
+    if (
+      (event.name === "linked_recheck_opened" || event.name === "report_reconciled") &&
+      !event.dimensions.artifactType
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["dimensions", "artifactType"],
+        message: "Recovery evidence events require an artifact type",
       });
     }
     if (event.name === "setup_recipe_selected" && !event.dimensions.recipe) {
@@ -2235,6 +2273,7 @@ const ReportParticipantSchema = z.object({
 const ReportBaseShape = {
   id: z.string().uuid(),
   sessionId: z.string().uuid(),
+  trustMode: TrustModeSchema.default("learning"),
   status: z.enum(["pending", "ready", "failed"]),
   generatedAt: z.string().datetime().nullable(),
   expiresAt: z.string().datetime(),
@@ -2361,9 +2400,13 @@ export const ReportV3Schema = ReportV2Schema.extend({
 });
 
 export const ReportSchema = z.union([ReportV3Schema, ReportV2Schema, LegacyReportSchema]);
-export type Report = z.infer<typeof ReportSchema>;
-export type ReportV2 = z.infer<typeof ReportV2Schema>;
-export type ReportV3 = z.infer<typeof ReportV3Schema>;
+/** Input aliases preserve compatibility while schema parsing resolves the trust-mode default. */
+export type Report = z.input<typeof ReportSchema>;
+export type ReportV2 = z.input<typeof ReportV2Schema>;
+export type ReportV3 = z.input<typeof ReportV3Schema>;
+export type ResolvedReport = z.output<typeof ReportSchema>;
+export type ResolvedReportV2 = z.output<typeof ReportV2Schema>;
+export type ResolvedReportV3 = z.output<typeof ReportV3Schema>;
 
 export const FollowupTimeModeSchema = z.enum(["timed", "flex"]);
 export type FollowupTimeMode = z.infer<typeof FollowupTimeModeSchema>;
@@ -2423,6 +2466,7 @@ export type CreatePracticeAssignment = z.infer<typeof CreatePracticeAssignmentSc
 
 const FollowupBaseSchema = z.object({
   id: z.string().uuid(),
+  trustMode: TrustModeSchema.default("learning"),
   sourceQuizVersionId: z.string().uuid(),
   title: z.string(),
   conceptKeys: z.array(ConceptKeySchema),
@@ -2502,6 +2546,7 @@ export type FollowupAnswerSubmit = z.infer<typeof FollowupAnswerSubmitSchema>;
 export const FollowupSnapshotSchema = z.object({
   mode: z.literal("followup"),
   purpose: FollowupPurposeSchema,
+  trustMode: TrustModeSchema.default("learning"),
   followupId: z.string().uuid(),
   attemptId: z.string().uuid(),
   version: z.number().int().nonnegative(),
@@ -2967,6 +3012,596 @@ export const PresentationSessionPhaseSchema = z.enum([
 ]);
 export type PresentationSessionPhase = z.infer<typeof PresentationSessionPhaseSchema>;
 
+export const PresentationSessionStatusSchema = z.enum(["active", "finished"]);
+export type PresentationSessionStatus = z.infer<typeof PresentationSessionStatusSchema>;
+
+export const PresentationTimeModeSchema = z.enum(["timed", "flex"]);
+export type PresentationTimeMode = z.infer<typeof PresentationTimeModeSchema>;
+
+export const PresentationSessionSettingsSchema = z
+  .object({
+    timeMode: PresentationTimeModeSchema.default("timed"),
+    trustMode: TrustModeSchema.default("learning"),
+  })
+  .strict();
+export type PresentationSessionSettings = z.input<typeof PresentationSessionSettingsSchema>;
+export type ResolvedPresentationSessionSettings = z.output<
+  typeof PresentationSessionSettingsSchema
+>;
+
+/** Content that is safe for every live Presentation role. */
+export const PresentationLiveContentBlockSchema = z
+  .object({
+    id: z.string().uuid(),
+    kind: z.literal("content"),
+    layout: ContentSlideLayoutSchema,
+    title: z.string().max(160),
+    body: z.string().max(4_000),
+    mediaId: z.string().uuid().nullable(),
+    mediaAlt: z.string().max(300).nullable(),
+  })
+  .strict();
+export type PresentationLiveContentBlock = z.infer<typeof PresentationLiveContentBlockSchema>;
+
+/** Learner and companion question projection. It intentionally excludes answer and authoring data. */
+export const PresentationParticipantQuestionBlockSchema = z
+  .object({
+    id: z.string().uuid(),
+    kind: z.literal("question"),
+    question: ParticipantQuestionSchema,
+  })
+  .strict();
+export type PresentationParticipantQuestionBlock = z.infer<
+  typeof PresentationParticipantQuestionBlockSchema
+>;
+
+/** Host answer material is a separate phase-fenced projection and excludes source metadata. */
+export const PresentationRevealedAnswerSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("choice"),
+      correctChoiceIds: z.array(z.string().uuid()).min(1).max(6),
+      explanation: z.string().max(1_000),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("numeric"),
+      correctValue: z.string().max(64),
+      tolerance: z.string().max(64),
+      unit: z.string().max(32).nullable(),
+      explanation: z.string().max(1_000),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("unscored"),
+      explanation: z.string().max(1_000),
+    })
+    .strict(),
+]);
+export type PresentationRevealedAnswer = z.infer<typeof PresentationRevealedAnswerSchema>;
+
+export const PresentationHostQuestionBlockSchema = z
+  .object({
+    id: z.string().uuid(),
+    kind: z.literal("question"),
+    question: FacilitatorQuestionSchema,
+    revealedAnswer: PresentationRevealedAnswerSchema.nullable().default(null),
+  })
+  .strict();
+export type PresentationHostQuestionBlock = z.infer<typeof PresentationHostQuestionBlockSchema>;
+
+export const PresentationParticipantCurrentBlockSchema = z.discriminatedUnion("kind", [
+  PresentationLiveContentBlockSchema,
+  PresentationParticipantQuestionBlockSchema,
+]);
+export type PresentationParticipantCurrentBlock = z.infer<
+  typeof PresentationParticipantCurrentBlockSchema
+>;
+
+export const PresentationHostCurrentBlockSchema = z.discriminatedUnion("kind", [
+  PresentationLiveContentBlockSchema,
+  PresentationHostQuestionBlockSchema,
+]);
+export type PresentationHostCurrentBlock = z.infer<typeof PresentationHostCurrentBlockSchema>;
+
+export const PresentationRoomStatusSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+    joinedCount: z.number().int().nonnegative(),
+    connectedCount: z.number().int().nonnegative(),
+    notCurrentlyConnectedCount: z.number().int().nonnegative(),
+    responseCount: z.number().int().nonnegative(),
+    sampledAt: z.string().datetime(),
+  })
+  .strict()
+  .superRefine((status, ctx) => {
+    if (status.connectedCount + status.notCurrentlyConnectedCount !== status.joinedCount) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Connected and disconnected counts must equal the joined count",
+        path: ["connectedCount"],
+      });
+    }
+    if (status.responseCount > status.joinedCount) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Response count cannot exceed the joined count",
+        path: ["responseCount"],
+      });
+    }
+  });
+export type PresentationRoomStatus = z.infer<typeof PresentationRoomStatusSchema>;
+
+const PresentationSnapshotBaseFields = {
+  sessionId: z.string().uuid(),
+  artifactType: z.literal("presentation"),
+  presentationId: z.string().uuid(),
+  presentationVersionId: z.string().uuid(),
+  title: z.string().min(1).max(160),
+  code: z.string().regex(/^\d{7}$/),
+  status: PresentationSessionStatusSchema,
+  phase: PresentationSessionPhaseSchema,
+  currentBlockIndex: z.number().int().min(-1),
+  blockCount: z.number().int().nonnegative(),
+  revision: z.number().int().nonnegative(),
+  seq: z.number().int().nonnegative(),
+  serverTime: z.string().datetime(),
+  questionOpenedAt: z.string().datetime().nullable(),
+  questionClosesAt: z.string().datetime().nullable(),
+  acceptingResponses: z.boolean(),
+  settings: PresentationSessionSettingsSchema,
+};
+
+export const PresentationHostParticipantSchema = z
+  .object({
+    id: z.string().uuid(),
+    nickname: z.string().min(1).max(32),
+    joinedAt: z.string().datetime(),
+    score: z.number().int().nonnegative(),
+    rank: z.number().int().positive(),
+  })
+  .strict();
+export type PresentationHostParticipant = z.infer<typeof PresentationHostParticipantSchema>;
+
+export const PresentationHostSnapshotSchema = z
+  .object({
+    ...PresentationSnapshotBaseFields,
+    projection: z.literal("host"),
+    currentBlock: PresentationHostCurrentBlockSchema.nullable(),
+    participantCount: z.number().int().nonnegative(),
+    responseCount: z.number().int().nonnegative(),
+    participants: z.array(PresentationHostParticipantSchema),
+    roomStatus: PresentationRoomStatusSchema,
+    finishedAt: z.string().datetime().nullable(),
+  })
+  .strict()
+  .superRefine((snapshot, ctx) => {
+    if (
+      snapshot.currentBlock?.kind === "question" &&
+      !["question_reveal", "intervention", "finished"].includes(snapshot.phase) &&
+      snapshot.currentBlock.revealedAnswer !== null
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Answer material cannot be delivered before reveal",
+        path: ["currentBlock", "revealedAnswer"],
+      });
+    }
+  });
+export type PresentationHostSnapshot = z.infer<typeof PresentationHostSnapshotSchema>;
+
+export const PresentationResponseReceiptSchema = z
+  .object({
+    responseId: z.string().uuid(),
+    blockId: z.string().uuid(),
+    idempotencyKey: z.string().min(1).max(160),
+    acceptedAt: z.string().datetime(),
+  })
+  .strict();
+export type PresentationResponseReceipt = z.infer<typeof PresentationResponseReceiptSchema>;
+
+export const PresentationParticipantSnapshotSchema = z
+  .object({
+    ...PresentationSnapshotBaseFields,
+    projection: z.literal("participant"),
+    participantId: z.string().uuid(),
+    currentBlock: PresentationParticipantCurrentBlockSchema.nullable(),
+    participantCount: z.number().int().nonnegative(),
+    responseSubmitted: z.boolean(),
+    responseReceipt: PresentationResponseReceiptSchema.nullable().optional(),
+    standing: z
+      .object({
+        rank: z.number().int().positive(),
+        score: z.number().int().nonnegative(),
+      })
+      .strict()
+      .nullable(),
+    responseResult: z
+      .object({
+        correct: z.boolean().nullable(),
+        score: z.number().int().nonnegative(),
+      })
+      .strict()
+      .nullable(),
+    finishedAt: z.string().datetime().nullable(),
+  })
+  .strict();
+export type PresentationParticipantSnapshot = z.infer<typeof PresentationParticipantSnapshotSchema>;
+
+const PresentationRestSnapshotAliasFields = {
+  id: z.string().uuid(),
+  eventSeq: z.number().int().nonnegative(),
+  trustMode: TrustModeSchema,
+};
+
+const PresentationRestV1RatingAliasFields = {
+  min: z.number().int().min(1).max(9).optional(),
+  max: z.number().int().min(2).max(10).optional(),
+  minLabel: z.string().max(80).optional(),
+  maxLabel: z.string().max(80).optional(),
+};
+
+function validatePresentationRestV1RatingAliases(
+  question: {
+    type: PresentationParticipantQuestionBlock["question"]["type"];
+    rating?: { min: number; max: number; minLabel: string; maxLabel: string };
+    min?: number;
+    max?: number;
+    minLabel?: string;
+    maxLabel?: string;
+  },
+  ctx: z.RefinementCtx,
+) {
+  const aliases = [question.min, question.max, question.minLabel, question.maxLabel];
+  if (question.type !== "rating") {
+    if (aliases.some((value) => value !== undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Legacy rating aliases are valid only for rating questions",
+        path: ["min"],
+      });
+    }
+    return;
+  }
+  if (
+    !question.rating ||
+    question.min !== question.rating.min ||
+    question.max !== question.rating.max ||
+    question.minLabel !== question.rating.minLabel ||
+    question.maxLabel !== question.rating.maxLabel
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Legacy rating aliases must match the canonical rating fields",
+      path: ["min"],
+    });
+  }
+}
+
+export const PresentationRestV1ParticipantQuestionSchema = z
+  .object({
+    ...ParticipantQuestionSchema.shape,
+    ...PresentationRestV1RatingAliasFields,
+  })
+  .strict()
+  .superRefine(validatePresentationRestV1RatingAliases);
+
+export const PresentationRestV1HostQuestionSchema = z
+  .object({
+    ...FacilitatorQuestionSchema.shape,
+    ...PresentationRestV1RatingAliasFields,
+  })
+  .strict()
+  .superRefine(validatePresentationRestV1RatingAliases);
+
+export const PresentationRestV1ParticipantCurrentBlockSchema = z.discriminatedUnion("kind", [
+  PresentationLiveContentBlockSchema,
+  z
+    .object({
+      id: z.string().uuid(),
+      kind: z.literal("question"),
+      question: PresentationRestV1ParticipantQuestionSchema,
+    })
+    .strict(),
+]);
+
+export const PresentationRestV1HostCurrentBlockSchema = z.discriminatedUnion("kind", [
+  PresentationLiveContentBlockSchema,
+  z
+    .object({
+      id: z.string().uuid(),
+      kind: z.literal("question"),
+      question: PresentationRestV1HostQuestionSchema,
+      revealedAnswer: PresentationRevealedAnswerSchema.nullable(),
+    })
+    .strict(),
+]);
+
+function validatePresentationRestV1SnapshotAliases(
+  snapshot: {
+    id: string;
+    sessionId: string;
+    eventSeq: number;
+    seq: number;
+    trustMode: TrustMode;
+    settings: { trustMode: TrustMode };
+  },
+  ctx: z.RefinementCtx,
+) {
+  if (snapshot.id !== snapshot.sessionId) {
+    ctx.addIssue({ code: "custom", message: "REST session ID alias must match", path: ["id"] });
+  }
+  if (snapshot.eventSeq !== snapshot.seq) {
+    ctx.addIssue({
+      code: "custom",
+      message: "REST event sequence alias must match",
+      path: ["eventSeq"],
+    });
+  }
+  if (snapshot.trustMode !== snapshot.settings.trustMode) {
+    ctx.addIssue({
+      code: "custom",
+      message: "REST trust mode alias must match",
+      path: ["trustMode"],
+    });
+  }
+}
+
+/**
+ * Version-1 REST compatibility projection retained while existing Presentation clients migrate
+ * to the canonical realtime contracts. The canonical snapshot is validated before aliases and
+ * legacy rating fields are added, so the current block is intentionally opaque at this layer.
+ */
+export const PresentationRestV1HostSnapshotSchema = z
+  .object({
+    ...PresentationHostSnapshotSchema.shape,
+    ...PresentationRestSnapshotAliasFields,
+    currentBlock: PresentationRestV1HostCurrentBlockSchema.nullable(),
+    leaderboard: z.array(PresentationHostParticipantSchema),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict()
+  .superRefine((snapshot, ctx) => {
+    validatePresentationRestV1SnapshotAliases(snapshot, ctx);
+    if (
+      snapshot.currentBlock?.kind === "question" &&
+      !["question_reveal", "intervention", "finished"].includes(snapshot.phase) &&
+      snapshot.currentBlock.revealedAnswer !== null
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Answer material cannot be delivered before reveal",
+        path: ["currentBlock", "revealedAnswer"],
+      });
+    }
+    if (
+      snapshot.participants.length !== snapshot.leaderboard.length ||
+      snapshot.participants.some((participant, index) => {
+        const legacy = snapshot.leaderboard[index];
+        return (
+          !legacy ||
+          participant.id !== legacy.id ||
+          participant.nickname !== legacy.nickname ||
+          participant.joinedAt !== legacy.joinedAt ||
+          participant.score !== legacy.score ||
+          participant.rank !== legacy.rank
+        );
+      })
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "REST leaderboard alias must match participants",
+        path: ["leaderboard"],
+      });
+    }
+  });
+export type PresentationRestV1HostSnapshot = z.infer<typeof PresentationRestV1HostSnapshotSchema>;
+
+export const PresentationRestV1ParticipantSnapshotSchema = z
+  .object({
+    ...PresentationParticipantSnapshotSchema.shape,
+    ...PresentationRestSnapshotAliasFields,
+    currentBlock: PresentationRestV1ParticipantCurrentBlockSchema.nullable(),
+  })
+  .strict()
+  .superRefine(validatePresentationRestV1SnapshotAliases);
+export type PresentationRestV1ParticipantSnapshot = z.infer<
+  typeof PresentationRestV1ParticipantSnapshotSchema
+>;
+
+/** Compatibility exports retained for code written before the REST contract acquired a name. */
+export const PresentationHostRestSnapshotSchema = PresentationRestV1HostSnapshotSchema;
+export type PresentationHostRestSnapshot = PresentationRestV1HostSnapshot;
+export const PresentationParticipantRestSnapshotSchema =
+  PresentationRestV1ParticipantSnapshotSchema;
+export type PresentationParticipantRestSnapshot = PresentationRestV1ParticipantSnapshot;
+
+export const PresentationRestV1HostSnapshotResponseSchema = z
+  .object({ snapshot: PresentationRestV1HostSnapshotSchema })
+  .strict();
+export const PresentationRestV1ParticipantSnapshotResponseSchema = z
+  .object({ snapshot: PresentationRestV1ParticipantSnapshotSchema })
+  .strict();
+
+/** Exact legacy list item returned by `GET /v1/presentation-sessions`. */
+export const PresentationRestV1SessionListItemSchema = z
+  .object({
+    id: z.string().uuid(),
+    artifactType: z.literal("presentation"),
+    presentationId: z.string().uuid(),
+    presentationVersionId: z.string().uuid(),
+    title: z.string().min(1).max(160),
+    code: z.string().regex(/^\d{7}$/),
+    status: PresentationSessionStatusSchema,
+    phase: PresentationSessionPhaseSchema,
+    currentBlockIndex: z.number().int().min(-1),
+    blockCount: z.number().int().nonnegative(),
+    revision: z.number().int().nonnegative(),
+    settings: PresentationSessionSettingsSchema,
+    trustMode: TrustModeSchema,
+    eventSeq: z.number().int().nonnegative(),
+    currentBlock: PresentationRestV1HostCurrentBlockSchema.nullable(),
+    questionOpenedAt: z.string().datetime().nullable(),
+    questionClosesAt: z.string().datetime().nullable(),
+    acceptingResponses: z.boolean(),
+    participantCount: z.number().int().nonnegative(),
+    responseCount: z.number().int().nonnegative(),
+    participants: z.array(PresentationHostParticipantSchema),
+    leaderboard: z.array(PresentationHostParticipantSchema),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+    finishedAt: z.string().datetime().nullable(),
+  })
+  .strict()
+  .superRefine((snapshot, ctx) => {
+    if (snapshot.trustMode !== snapshot.settings.trustMode) {
+      ctx.addIssue({
+        code: "custom",
+        message: "REST trust mode alias must match",
+        path: ["trustMode"],
+      });
+    }
+    if (
+      snapshot.participants.length !== snapshot.leaderboard.length ||
+      snapshot.participants.some((participant, index) => {
+        const legacy = snapshot.leaderboard[index];
+        return !legacy || participant.id !== legacy.id || participant.joinedAt !== legacy.joinedAt;
+      })
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "REST leaderboard alias must match participants",
+        path: ["leaderboard"],
+      });
+    }
+  });
+export type PresentationRestV1SessionListItem = z.infer<
+  typeof PresentationRestV1SessionListItemSchema
+>;
+export const PresentationRestV1SessionListResponseSchema = z
+  .object({ sessions: z.array(PresentationRestV1SessionListItemSchema) })
+  .strict();
+
+export const PresentationCompanionSnapshotSchema = z
+  .object({
+    ...PresentationSnapshotBaseFields,
+    projection: z.literal("companion"),
+    currentBlock: PresentationParticipantCurrentBlockSchema.nullable(),
+    roomStatus: PresentationRoomStatusSchema,
+    primaryAction: z.enum(["advance", "none"]),
+    finishedAt: z.string().datetime().nullable(),
+  })
+  .strict();
+export type PresentationCompanionSnapshot = z.infer<typeof PresentationCompanionSnapshotSchema>;
+
+export const PresentationRoleSnapshotSchema = z.discriminatedUnion("projection", [
+  PresentationHostSnapshotSchema,
+  PresentationParticipantSnapshotSchema,
+  PresentationCompanionSnapshotSchema,
+]);
+export type PresentationRoleSnapshot = z.infer<typeof PresentationRoleSnapshotSchema>;
+
+export const PresentationSocketEventNameSchema = z.enum([
+  "presentation.join",
+  "presentation.sync.request",
+  "presentation.command",
+  "presentation.response.submit",
+  "presentation.session.updated",
+  "presentation.room-status.updated",
+]);
+export type PresentationSocketEventName = z.infer<typeof PresentationSocketEventNameSchema>;
+
+export const PresentationEventEnvelopeSchema = z
+  .object({
+    eventId: z.string().uuid(),
+    sessionId: z.string().uuid(),
+    revision: z.number().int().nonnegative(),
+    seq: z.number().int().nonnegative(),
+    type: z.enum(["presentation.session.updated", "presentation.room-status.updated"]),
+    serverTime: z.string().datetime(),
+    payload: z.unknown(),
+  })
+  .strict();
+export type PresentationEventEnvelope<T = unknown> = Omit<
+  z.infer<typeof PresentationEventEnvelopeSchema>,
+  "payload"
+> & { payload: T };
+
+const PresentationSyncFenceFields = {
+  sessionId: z.string().uuid(),
+  afterSeq: z.number().int().nonnegative().default(0),
+};
+const PresentationCredentialSchema = z.string().min(32).max(1_000);
+
+export const PresentationRestV1CreateSessionResponseSchema = z
+  .object({
+    snapshot: PresentationRestV1HostSnapshotSchema,
+    controlToken: PresentationCredentialSchema,
+    controlCredentialId: z.string().uuid(),
+  })
+  .strict();
+export type PresentationRestV1CreateSessionResponse = z.infer<
+  typeof PresentationRestV1CreateSessionResponseSchema
+>;
+
+export const PresentationRestV1JoinSessionResponseSchema = z
+  .object({
+    participantToken: PresentationCredentialSchema,
+    snapshot: PresentationRestV1ParticipantSnapshotSchema,
+  })
+  .strict();
+export type PresentationRestV1JoinSessionResponse = z.infer<
+  typeof PresentationRestV1JoinSessionResponseSchema
+>;
+
+export const PresentationSyncRequestSchema = z.discriminatedUnion("projection", [
+  z
+    .object({
+      ...PresentationSyncFenceFields,
+      projection: z.literal("host"),
+      controlToken: PresentationCredentialSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...PresentationSyncFenceFields,
+      projection: z.literal("participant"),
+      participantToken: PresentationCredentialSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...PresentationSyncFenceFields,
+      projection: z.literal("companion"),
+      companionToken: PresentationCredentialSchema,
+    })
+    .strict(),
+]);
+export type PresentationSyncRequest = z.input<typeof PresentationSyncRequestSchema>;
+
+export const PresentationSyncResponseSchema = z
+  .object({
+    resetRequired: z.boolean(),
+    events: z.array(PresentationEventEnvelopeSchema).max(1_000),
+    snapshot: PresentationRoleSnapshotSchema,
+  })
+  .strict();
+export type PresentationSyncResponse = z.infer<typeof PresentationSyncResponseSchema>;
+
+export const PresentationCommandSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+    controlToken: PresentationCredentialSchema,
+    commandId: z.string().uuid(),
+    expectedRevision: z.number().int().nonnegative(),
+    action: z.literal("advance"),
+  })
+  .strict();
+export type PresentationCommand = z.infer<typeof PresentationCommandSchema>;
+
 export const CreatePresentationSessionSchema = z.object({
   presentationId: z.string().uuid(),
 });
@@ -2996,7 +3631,129 @@ export const PresentationSessionResponseSchema = z
   );
 export type PresentationSessionResponse = z.infer<typeof PresentationSessionResponseSchema>;
 
-export const SubmitPresentationSessionResponseSchema = z.object({
-  participantToken: z.string().min(32).max(1_000),
+const PresentationResponseFenceFields = {
+  participantToken: PresentationCredentialSchema,
+  blockId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  idempotencyKey: z.string().min(1).max(160),
   response: PresentationSessionResponseSchema,
-});
+};
+
+export const PresentationResponseSubmitSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+    ...PresentationResponseFenceFields,
+  })
+  .strict();
+export type PresentationResponseSubmit = z.infer<typeof PresentationResponseSubmitSchema>;
+
+/** REST compatibility shape: the session ID continues to come from the route parameter. */
+export const SubmitPresentationSessionResponseSchema = z
+  .object(PresentationResponseFenceFields)
+  .strict();
+export type SubmitPresentationSessionResponse = z.infer<
+  typeof SubmitPresentationSessionResponseSchema
+>;
+
+/**
+ * Read-only compatibility contract for pre-realtime `/v1` clients. The server derives the live
+ * block/revision fence and a block-scoped idempotency key before entering the authoritative path.
+ */
+export const LegacySubmitPresentationSessionResponseSchema = z
+  .object({
+    participantToken: PresentationCredentialSchema,
+    response: PresentationSessionResponseSchema,
+  })
+  .strict();
+export type LegacySubmitPresentationSessionResponse = z.infer<
+  typeof LegacySubmitPresentationSessionResponseSchema
+>;
+
+export const PresentationRestResponseSubmitSchema = z.union([
+  SubmitPresentationSessionResponseSchema,
+  LegacySubmitPresentationSessionResponseSchema,
+]);
+export type PresentationRestResponseSubmit = z.infer<typeof PresentationRestResponseSubmitSchema>;
+
+export const PresentationResponseAckSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+    blockId: z.string().uuid(),
+    idempotencyKey: z.string().min(1).max(160),
+    accepted: z.boolean(),
+    duplicate: z.boolean(),
+    responseId: z.string().uuid(),
+    acceptedAt: z.string().datetime(),
+    snapshot: PresentationParticipantSnapshotSchema,
+  })
+  .strict()
+  .superRefine((ack, ctx) => {
+    if (!ack.accepted && ack.duplicate) {
+      ctx.addIssue({
+        code: "custom",
+        message: "A duplicate acknowledgement must reference an accepted response",
+        path: ["duplicate"],
+      });
+    }
+    if (ack.snapshot.sessionId !== ack.sessionId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "The acknowledgement snapshot must belong to the acknowledged session",
+        path: ["snapshot", "sessionId"],
+      });
+    }
+    const receipt = ack.snapshot.responseReceipt;
+    if (
+      receipt &&
+      (receipt.responseId !== ack.responseId ||
+        receipt.blockId !== ack.blockId ||
+        receipt.idempotencyKey !== ack.idempotencyKey ||
+        receipt.acceptedAt !== ack.acceptedAt)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "The acknowledgement must match its durable response receipt",
+        path: ["snapshot", "responseReceipt"],
+      });
+    }
+  });
+export type PresentationResponseAck = z.infer<typeof PresentationResponseAckSchema>;
+
+/** Version-1 REST acknowledgement with legacy timestamp/revision aliases. */
+export const PresentationRestV1ResponseAckSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+    blockId: z.string().uuid(),
+    idempotencyKey: z.string().min(1).max(160),
+    accepted: z.boolean(),
+    duplicate: z.boolean(),
+    responseId: z.string().uuid(),
+    acceptedAt: z.string().datetime(),
+    snapshot: PresentationRestV1ParticipantSnapshotSchema,
+    revision: z.number().int().nonnegative(),
+    submittedAt: z.string().datetime(),
+  })
+  .strict()
+  .superRefine((ack, ctx) => {
+    const receipt = ack.snapshot.responseReceipt;
+    if (
+      ack.snapshot.sessionId !== ack.sessionId ||
+      ack.submittedAt !== ack.acceptedAt ||
+      (receipt &&
+        (receipt.responseId !== ack.responseId ||
+          receipt.blockId !== ack.blockId ||
+          receipt.idempotencyKey !== ack.idempotencyKey ||
+          receipt.acceptedAt !== ack.acceptedAt))
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "The REST acknowledgement must match its durable response receipt",
+        path: ["snapshot", "responseReceipt"],
+      });
+    }
+  });
+export type PresentationRestV1ResponseAck = z.infer<typeof PresentationRestV1ResponseAckSchema>;
+
+/** Compatibility exports retained for existing imports of the original unversioned name. */
+export const PresentationRestResponseAckSchema = PresentationRestV1ResponseAckSchema;
+export type PresentationRestResponseAck = PresentationRestV1ResponseAck;

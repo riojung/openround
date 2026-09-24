@@ -18,6 +18,11 @@ describe("plan entitlements", () => {
       brandTheme: false,
       followups: false,
       cohosting: false,
+      maxPracticePersonalLinks: 0,
+      recoveryTrails: false,
+      maxRecoveryStages: 0,
+      conceptHealth: false,
+      decisionReplay: true,
       authoringJobsPerMonth: 3,
     });
     expect(entitlementsFor("pro", config)).toEqual({
@@ -29,6 +34,11 @@ describe("plan entitlements", () => {
       brandTheme: true,
       followups: true,
       cohosting: true,
+      maxPracticePersonalLinks: 100,
+      recoveryTrails: true,
+      maxRecoveryStages: 4,
+      conceptHealth: true,
+      decisionReplay: true,
       authoringJobsPerMonth: 100,
     });
   });
@@ -39,6 +49,7 @@ describe("plan entitlements", () => {
       ALLOW_IN_MEMORY: "true",
       COMMUNITY_MODE: "true",
       MAX_SESSION_PARTICIPANTS: 72,
+      MAX_PRACTICE_PERSONAL_LINKS: 240,
       COMMUNITY_REPORT_RETENTION_DAYS: 730,
     });
     const entitlements = entitlementsFor("free", config);
@@ -51,6 +62,11 @@ describe("plan entitlements", () => {
       brandTheme: true,
       followups: true,
       cohosting: true,
+      maxPracticePersonalLinks: 240,
+      recoveryTrails: true,
+      maxRecoveryStages: 4,
+      conceptHealth: true,
+      decisionReplay: true,
       authoringJobsPerMonth: null,
     });
     expect(retentionExpiry(new Date("2026-01-01T00:00:00.000Z"), entitlements).toISOString()).toBe(

@@ -26,6 +26,27 @@ const realtimeEventTypes = new Set([
   "chat.reaction.updated",
 ]);
 
+export const RECOVERY_FUNNEL_STAGES = [
+  "create",
+  "publish",
+  "join",
+  "answer_acknowledged",
+  "intervention",
+  "linked_recheck",
+  "report_reconciled",
+] as const;
+export type RecoveryFunnelStage = (typeof RECOVERY_FUNNEL_STAGES)[number];
+
+const recoveryFunnelStageByProductEvent = new Map<string, RecoveryFunnelStage>([
+  ["creation_completed", "create"],
+  ["round_published", "publish"],
+  ["participant_joined", "join"],
+  ["response_saved_acknowledged", "answer_acknowledged"],
+  ["intervention_started", "intervention"],
+  ["linked_recheck_opened", "linked_recheck"],
+  ["report_reconciled", "report_reconciled"],
+]);
+
 export class MetricsService {
   readonly registry = new Registry();
   private pool: DatabasePoolMetrics | null = null;
@@ -237,6 +258,52 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private readonly recoveryFunnelStages = new Counter({
+    name: "openround_recovery_funnel_stages_total",
+    help: "Durably recorded recovery funnel stages by bounded rollout dimensions",
+    labelNames: ["stage", "artifact_type", "segment"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly presentationAdmissions = new Counter({
+    name: "openround_presentation_admission_attempts_total",
+    help: "Presentation participant admission attempts by bounded transport and outcome",
+    labelNames: ["transport", "outcome"] as const,
+    registers: [this.registry],
+  });
+
+  private readonly presentationAdmissionDuration = new Histogram({
+    name: "openround_presentation_admission_duration_seconds",
+    help: "Time to decide and acknowledge a Presentation participant admission",
+    labelNames: ["transport", "outcome"] as const,
+    buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+    registers: [this.registry],
+  });
+
+  private readonly presentationResponseDuration = new Histogram({
+    name: "openround_presentation_response_acknowledgement_duration_seconds",
+    help: "Time to durably decide and acknowledge a Presentation response",
+    labelNames: ["transport", "outcome"] as const,
+    buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.6, 1, 2.5],
+    registers: [this.registry],
+  });
+
+  private readonly presentationClientReceipts = new Histogram({
+    name: "openround_presentation_client_event_receipt_duration_seconds",
+    help: "Time until a Presentation browser acknowledges a projected realtime event",
+    labelNames: ["event_type", "projection", "outcome"] as const,
+    buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+    registers: [this.registry],
+  });
+
+  private readonly presentationBroadcastDuration = new Histogram({
+    name: "openround_presentation_broadcast_duration_seconds",
+    help: "Time to build and emit one role-projected Presentation update",
+    labelNames: ["outcome"] as const,
+    buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+    registers: [this.registry],
+  });
+
   private readonly audienceEvents = new Counter({
     name: "openround_audience_events_total",
     help: "Durable audience interaction events by bounded event type and outcome",
@@ -321,6 +388,56 @@ export class MetricsService {
       duration_bucket: event.dimensions.durationBucket ?? "none",
       artifact_type: event.dimensions.artifactType ?? "none",
     });
+    const stage = recoveryFunnelStageByProductEvent.get(event.name);
+    if (stage) {
+      this.recoveryFunnelStages.inc({
+        stage,
+        artifact_type:
+          event.dimensions.artifactType === "round" ||
+          event.dimensions.artifactType === "presentation"
+            ? event.dimensions.artifactType
+            : "none",
+        segment:
+          event.dimensions.segment === "education" || event.dimensions.segment === "workplace"
+            ? event.dimensions.segment
+            : "none",
+      });
+    }
+  }
+
+  recordPresentationAdmission(
+    transport: "rest" | "socket",
+    outcome: "accepted" | "duplicate" | "rate_limited" | "full" | "invalid" | "error",
+    seconds?: number,
+  ) {
+    this.presentationAdmissions.inc({ transport, outcome });
+    if (seconds !== undefined) {
+      this.presentationAdmissionDuration.observe({ transport, outcome }, Math.max(0, seconds));
+    }
+  }
+
+  observePresentationResponse(
+    transport: "rest" | "socket",
+    outcome: "accepted" | "duplicate" | "rejected" | "rate_limited" | "error",
+    seconds: number,
+  ) {
+    this.presentationResponseDuration.observe({ transport, outcome }, Math.max(0, seconds));
+  }
+
+  observePresentationClientReceipt(
+    eventType: "presentation.session.updated" | "presentation.room-status.updated",
+    projection: "host" | "participant" | "companion",
+    outcome: "acknowledged" | "timeout",
+    seconds: number,
+  ) {
+    this.presentationClientReceipts.observe(
+      { event_type: eventType, projection, outcome },
+      Math.max(0, seconds),
+    );
+  }
+
+  observePresentationBroadcast(outcome: "success" | "error", seconds: number) {
+    this.presentationBroadcastDuration.observe({ outcome }, Math.max(0, seconds));
   }
 
   recordAudienceEvent(type: string, outcome: "published" | "duplicate" | "retry", lag: number) {

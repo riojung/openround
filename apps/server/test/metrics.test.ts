@@ -66,6 +66,86 @@ describe("MetricsService", () => {
     expect(rendered).not.toMatch(/presentationId|artifactId|title|sourceText/);
   });
 
+  it("records bounded Presentation admission and broadcast health without room labels", async () => {
+    const metrics = new MetricsService();
+
+    metrics.recordPresentationAdmission("socket", "rate_limited", 0.01);
+    metrics.recordPresentationAdmission("rest", "accepted", 0.12);
+    metrics.observePresentationResponse("socket", "accepted", 0.08);
+    metrics.observePresentationClientReceipt(
+      "presentation.session.updated",
+      "participant",
+      "acknowledged",
+      0.2,
+    );
+    metrics.observePresentationBroadcast("success", 0.08);
+
+    const rendered = await metrics.render();
+    expect(rendered).toContain(
+      'openround_presentation_admission_attempts_total{transport="socket",outcome="rate_limited"} 1',
+    );
+    expect(rendered).toContain(
+      'openround_presentation_admission_attempts_total{transport="rest",outcome="accepted"} 1',
+    );
+    expect(rendered).toContain(
+      'openround_presentation_broadcast_duration_seconds_count{outcome="success"} 1',
+    );
+    expect(rendered).toContain(
+      'openround_presentation_admission_duration_seconds_count{transport="rest",outcome="accepted"} 1',
+    );
+    expect(rendered).toContain(
+      'openround_presentation_response_acknowledgement_duration_seconds_count{transport="socket",outcome="accepted"} 1',
+    );
+    expect(rendered).toContain(
+      'openround_presentation_client_event_receipt_duration_seconds_count{event_type="presentation.session.updated",projection="participant",outcome="acknowledged"} 1',
+    );
+    expect(rendered).not.toMatch(/sessionId|workspaceId|joinCode/);
+  });
+
+  it("projects only authoritative recovery events into bounded funnel stages", async () => {
+    const metrics = new MetricsService();
+
+    for (const name of [
+      "creation_completed",
+      "round_published",
+      "participant_joined",
+      "response_saved_acknowledged",
+      "intervention_started",
+      "linked_recheck_opened",
+      "report_reconciled",
+    ]) {
+      metrics.recordProductEvent({
+        name,
+        dimensions: { artifactType: "round", segment: "education" },
+      });
+    }
+    metrics.recordProductEvent({
+      name: "recheck_opened",
+      dimensions: { artifactType: "round", segment: "education" },
+    });
+    metrics.recordProductEvent({
+      name: "report_viewed",
+      dimensions: { artifactType: "round", segment: "education" },
+    });
+
+    const rendered = await metrics.render();
+    for (const stage of [
+      "create",
+      "publish",
+      "join",
+      "answer_acknowledged",
+      "intervention",
+      "linked_recheck",
+      "report_reconciled",
+    ]) {
+      expect(rendered).toContain(
+        `openround_recovery_funnel_stages_total{stage="${stage}",artifact_type="round",segment="education"} 1`,
+      );
+    }
+    expect(rendered).not.toContain('stage="recheck_opened"');
+    expect(rendered).not.toContain('stage="report_viewed"');
+  });
+
   it("records audit retention without workspace labels", async () => {
     const metrics = new MetricsService();
     metrics.recordRetention({

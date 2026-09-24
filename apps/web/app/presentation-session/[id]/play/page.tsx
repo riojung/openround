@@ -3,6 +3,12 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type {
+  ConfidenceValue,
+  PresentationParticipantQuestionBlock,
+  PresentationParticipantSnapshot,
+  PresentationResponseAck,
+} from "@openround/contracts";
 import { Brand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import { PresentationMedia } from "../../../../components/presentation-live/presentation-media";
@@ -10,123 +16,110 @@ import styles from "../../../../components/presentation-live/presentation-live.m
 import { apiFetch, humanError } from "../../../../lib/api";
 import { formatNumber } from "../../../../lib/i18n/format";
 import {
-  shouldApplyLiveSnapshot,
-  type LiveSnapshotFence,
-} from "../../../../lib/live-snapshot-fence";
-
-interface ParticipantContentBlock {
-  id: string;
-  kind: "content";
-  layout: string;
-  title: string;
-  body: string;
-  mediaId: string | null;
-  mediaAlt: string | null;
-}
-
-interface ParticipantQuestionBlock {
-  id: string;
-  kind: "question";
-  question: {
-    id: string;
-    type: "single_select" | "true_false" | "multi_select" | "poll" | "numeric" | "rating";
-    prompt: string;
-    confidence: "off" | "optional" | "required";
-    mediaId: string | null;
-    mediaAlt: string | null;
-    choices?: Array<{ id: string; label: string }>;
-    min?: number;
-    max?: number;
-    minLabel?: string;
-    maxLabel?: string;
-  };
-}
-
-interface ParticipantSnapshot {
-  id: string;
-  title: string;
-  status: "active" | "finished";
-  phase: "lobby" | "content" | "question_open" | "question_reveal" | "intervention" | "finished";
-  currentBlockIndex: number;
-  blockCount: number;
-  revision: number;
-  currentBlock: ParticipantContentBlock | ParticipantQuestionBlock | null;
-  participantCount: number;
-  questionClosesAt: string | null;
-  acceptingResponses: boolean;
-  responseSubmitted: boolean;
-  standing: { rank: number; score: number } | null;
-  responseResult: { correct: boolean | null; score: number } | null;
-}
+  createPresentationRealtimeController,
+  presentationSaveStateForBlock,
+  type PresentationConnectionState,
+  type PresentationRealtimeController,
+  type PresentationSaveStatus,
+} from "../../../../lib/presentation-realtime";
+import { clientUuid } from "../../../../lib/uuid";
 
 export default function PresentationParticipantPage() {
   const { locale, t } = useLocale();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const [snapshot, setSnapshot] = useState<ParticipantSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<PresentationParticipantSnapshot | null>(null);
   const [selectedChoiceIds, setSelectedChoiceIds] = useState<string[]>([]);
   const [numericValue, setNumericValue] = useState("");
   const [ratingValue, setRatingValue] = useState<number | null>(null);
-  const [confidence, setConfidence] = useState<number | null>(null);
+  const [confidence, setConfidence] = useState<ConfidenceValue | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [now, setNow] = useState(() => Date.now());
+  const [connection, setConnection] = useState<PresentationConnectionState>("connecting");
+  const [saveStatus, setSaveStatus] = useState<PresentationSaveStatus>({
+    blockId: null,
+    state: "idle",
+  });
   const blockId = useRef<string | null>(null);
-  const requestSequence = useRef(0);
-  const appliedSnapshot = useRef<LiveSnapshotFence>({ requestId: 0, revision: -1 });
+  const controllerRef =
+    useRef<PresentationRealtimeController<PresentationParticipantSnapshot> | null>(null);
 
-  const applySnapshot = useCallback((incoming: ParticipantSnapshot, requestId: number) => {
-    const fence = { requestId, revision: incoming.revision };
-    if (!shouldApplyLiveSnapshot(appliedSnapshot.current, fence)) return false;
-    appliedSnapshot.current = fence;
+  const applySnapshot = useCallback((incoming: PresentationParticipantSnapshot) => {
     if (incoming.currentBlock?.id !== blockId.current) {
       blockId.current = incoming.currentBlock?.id ?? null;
       setSelectedChoiceIds([]);
       setNumericValue("");
       setRatingValue(null);
       setConfidence(null);
+      setSaveStatus({
+        blockId: incoming.currentBlock?.id ?? null,
+        state: incoming.responseSubmitted ? "saved" : "idle",
+      });
     }
     setSnapshot(incoming);
-    return true;
   }, []);
 
-  const refresh = useCallback(async () => {
+  const fetchSnapshot = useCallback(async () => {
     const token = sessionStorage.getItem(`openround:presentation-participant:${id}`);
     if (!token) {
-      router.replace("/presentation/join");
-      return;
+      router.replace("/join");
+      throw new Error("Participant credential required");
     }
-    const requestId = ++requestSequence.current;
     try {
-      const response = await apiFetch<{ snapshot: ParticipantSnapshot }>(
+      const response = await apiFetch<{ snapshot: PresentationParticipantSnapshot }>(
         `/v1/presentation-sessions/${id}/participant`,
         { headers: { authorization: `Bearer ${token}` } },
       );
-      if (!applySnapshot(response.snapshot, requestId)) return;
       setError("");
+      return response.snapshot;
     } catch (caught) {
-      if (requestId < appliedSnapshot.current.requestId) return;
       if ((caught as { status?: number }).status === 401) {
         sessionStorage.removeItem(`openround:presentation-participant:${id}`);
-        router.replace("/presentation/join");
+        router.replace("/join");
       } else {
         setError(humanError(caught));
       }
+      throw caught;
     }
-  }, [applySnapshot, id, router]);
+  }, [id, router]);
 
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 1_500);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+    const participantToken = sessionStorage.getItem(`openround:presentation-participant:${id}`);
+    if (!participantToken) {
+      router.replace("/join");
+      return;
+    }
+    const controller = createPresentationRealtimeController<PresentationParticipantSnapshot>({
+      sessionId: id,
+      credential: { projection: "participant", participantToken },
+      fetchSnapshot,
+      onSnapshot: applySnapshot,
+      onConnectionState: setConnection,
+      onSaveState: (state, responseBlockId) => setSaveStatus({ blockId: responseBlockId, state }),
+      onError: (caught) => setError(humanError(caught)),
+    });
+    controllerRef.current = controller;
+    controller.start();
+    const timer = window.setInterval(() => {
+      if (controller.needsFallbackPolling()) void controller.reconcile();
+    }, 1_500);
+    return () => {
+      window.clearInterval(timer);
+      controller.stop();
+      if (controllerRef.current === controller) controllerRef.current = null;
+    };
+  }, [applySnapshot, fetchSnapshot, id, router]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timer);
   }, []);
 
-  function toggleChoice(question: ParticipantQuestionBlock["question"], choiceId: string) {
+  function toggleChoice(
+    question: PresentationParticipantQuestionBlock["question"],
+    choiceId: string,
+  ) {
     if (question.type !== "multi_select") {
       setSelectedChoiceIds([choiceId]);
       return;
@@ -141,22 +134,50 @@ export default function PresentationParticipantPage() {
   async function submitResponse() {
     const token = sessionStorage.getItem(`openround:presentation-participant:${id}`);
     const block = snapshot?.currentBlock;
-    if (!token || block?.kind !== "question") return;
+    const controller = controllerRef.current;
+    if (!token || block?.kind !== "question" || !controller) return;
+    const currentSnapshot = snapshot;
+    if (!currentSnapshot) return;
     const question = block.question;
     const response =
       question.type === "numeric"
         ? { numericValue, ...(confidence ? { confidence } : {}) }
         : question.type === "rating"
-          ? { ratingValue, ...(confidence ? { confidence } : {}) }
+          ? { ratingValue: ratingValue!, ...(confidence ? { confidence } : {}) }
           : { choiceIds: selectedChoiceIds, ...(confidence ? { confidence } : {}) };
     setBusy(true);
     setError("");
+    const idempotencyKey = `${id}:${block.id}:${clientUuid()}`;
     try {
-      await apiFetch(`/v1/presentation-sessions/${id}/responses`, {
-        method: "POST",
-        body: JSON.stringify({ participantToken: token, response }),
-      });
-      await refresh();
+      await controller.submitResponse(
+        {
+          sessionId: id,
+          participantToken: token,
+          blockId: block.id,
+          expectedRevision: currentSnapshot.revision,
+          idempotencyKey,
+          response,
+        },
+        async () => {
+          const accepted = await apiFetch<PresentationResponseAck>(
+            `/v1/presentation-sessions/${id}/responses`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                participantToken: token,
+                blockId: block.id,
+                expectedRevision: currentSnapshot.revision,
+                idempotencyKey,
+                response,
+              }),
+            },
+          );
+          // The POST acknowledgement already contains the durable receipt and authoritative
+          // participant projection. A second GET can fail after the response was safely stored,
+          // which would incorrectly tell the participant that saving failed.
+          return accepted;
+        },
+      );
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -165,6 +186,7 @@ export default function PresentationParticipantPage() {
   }
 
   const block = snapshot?.currentBlock ?? null;
+  const saveState = presentationSaveStateForBlock(saveStatus, block?.id ?? null);
   const canSubmit =
     block?.kind === "question" &&
     snapshot?.phase === "question_open" &&
@@ -179,6 +201,16 @@ export default function PresentationParticipantPage() {
   const remainingSeconds = snapshot?.questionClosesAt
     ? Math.max(0, Math.ceil((new Date(snapshot.questionClosesAt).getTime() - now) / 1_000))
     : null;
+  const deliveryStatus =
+    saveState === "saving"
+      ? "Saving…"
+      : saveState === "reconnecting_not_saved"
+        ? "Reconnecting—not yet saved"
+        : saveState === "saved" || snapshot?.responseSubmitted
+          ? "Saved"
+          : connection === "connected" || connection === "fallback"
+            ? "Connected"
+            : "Reconnecting—not yet saved";
 
   return (
     <main className={styles.page}>
@@ -193,6 +225,9 @@ export default function PresentationParticipantPage() {
         </span>
       </header>
       <div className={styles.stage}>
+        <p aria-live="polite" className="muted" role="status">
+          {deliveryStatus}
+        </p>
         {error ? (
           <p className="error" lang="en-CA" role="alert">
             {error}
@@ -247,7 +282,7 @@ export default function PresentationParticipantPage() {
                   participant
                   sessionId={id}
                 />
-                {block.question.choices ? (
+                {block.question.choices.length ? (
                   <div className={styles.choiceGrid}>
                     {block.question.choices.map((choice) => (
                       <button
@@ -286,9 +321,12 @@ export default function PresentationParticipantPage() {
                       </option>
                       {Array.from(
                         {
-                          length: (block.question.max ?? 5) - (block.question.min ?? 1) + 1,
+                          length:
+                            (block.question.rating?.max ?? 5) -
+                            (block.question.rating?.min ?? 1) +
+                            1,
                         },
-                        (_, index) => (block.question.min ?? 1) + index,
+                        (_, index) => (block.question.rating?.min ?? 1) + index,
                       ).map((value) => (
                         <option key={value} value={value}>
                           {formatNumber(locale, value)}
@@ -307,7 +345,13 @@ export default function PresentationParticipantPage() {
                     })}
                     <select
                       disabled={snapshot.responseSubmitted}
-                      onChange={(event) => setConfidence(Number(event.target.value))}
+                      onChange={(event) =>
+                        setConfidence(
+                          event.target.value
+                            ? (Number(event.target.value) as ConfidenceValue)
+                            : null,
+                        )
+                      }
                       value={confidence ?? ""}
                     >
                       <option value="">{t("live.presentationPlay.chooseConfidence")}</option>
@@ -341,7 +385,7 @@ export default function PresentationParticipantPage() {
                   ) : snapshot?.acceptingResponses ? (
                     <button
                       className="button"
-                      disabled={!canSubmit || busy}
+                      disabled={!canSubmit || busy || !controllerRef.current?.canMutate()}
                       onClick={() => void submitResponse()}
                       type="button"
                     >

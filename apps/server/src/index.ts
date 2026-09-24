@@ -1,5 +1,9 @@
 import { loadConfig } from "./config.js";
 import { startTelemetry } from "./tracing.js";
+import {
+  evidenceWorkspaceFeatureEnabled,
+  professionalWorkspaceFeatureEnabled,
+} from "./workspace-rollout.js";
 
 const config = loadConfig();
 const telemetry = startTelemetry(config);
@@ -16,8 +20,16 @@ const {
   reportWorker,
   authoringWorker,
   metrics,
+  cache,
+  presentationService,
 } = await buildApp(config);
-const realtime = await attachRealtime(app.server, sessions, config, metrics, interactions);
+const realtime = await attachRealtime(app.server, sessions, config, metrics, interactions, {
+  service: presentationService,
+  consumeAdmission: cache.consumeRateLimit.bind(cache),
+  isEnabled: (workspaceId) =>
+    professionalWorkspaceFeatureEnabled(config, workspaceId, "presentations") &&
+    evidenceWorkspaceFeatureEnabled(config, workspaceId, "presentationRealtime"),
+});
 const audienceOutboxTimer = setInterval(() => {
   void audienceOutboxWorker
     .runUntilIdle()

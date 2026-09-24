@@ -138,9 +138,21 @@ describe("new artifact data lifecycle", () => {
       joinedAt: now,
       lastSeenAt: now,
     });
-    await sessions.transitionSession({
+    const credential = await sessions.createCredential({
+      id: randomUUID(),
       workspaceId: owner.workspaceId,
       sessionId,
+      role: "host",
+      tokenHash: "b".repeat(64),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+      revokedAt: null,
+    });
+    const commandId = randomUUID();
+    await sessions.transitionSessionCommand({
+      workspaceId: owner.workspaceId,
+      sessionId,
+      commandId,
       expectedRevision: 0,
       phase: "content",
       currentBlockIndex: 0,
@@ -192,11 +204,16 @@ describe("new artifact data lifecycle", () => {
       presentationSessions: [{ id: sessionId }],
       presentationSessionParticipants: [{ id: participantId, nickname: "River" }],
       presentationSessionTimeline: [{ sessionId, type: "content.presented" }],
+      presentationSessionCommandReceipts: [{ sessionId, commandId }],
+      presentationSessionCredentials: [{ id: credential.id, role: "host" }],
       collaborationGroups: [{ id: groupId }],
       collaborationGroupArtifacts: [{ artifactId: presentationId }],
       collaborationGroupMessages: [{ body: "Review before the session." }],
     });
     expect((exported as Record<string, unknown>).presentationSessionParticipants).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ tokenHash: expect.anything() })]),
+    );
+    expect((exported as Record<string, unknown>).presentationSessionCredentials).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ tokenHash: expect.anything() })]),
     );
 

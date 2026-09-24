@@ -46,15 +46,20 @@ function PresentationHostSetupContent() {
     setBusy(true);
     setError("");
     try {
-      const { snapshot } = await apiFetch<{ snapshot: { id: string } }>(
-        "/v1/presentation-sessions",
-        {
-          method: "POST",
-          body: JSON.stringify({ presentationId: id }),
-        },
-      );
+      const { snapshot, controlToken } = await apiFetch<{
+        snapshot: { sessionId?: string; id?: string };
+        controlToken?: string;
+      }>("/v1/presentation-sessions", {
+        method: "POST",
+        body: JSON.stringify({ presentationId: id }),
+      });
+      const sessionId = snapshot.sessionId ?? snapshot.id;
+      if (!sessionId) throw new Error("Presentation session identifier is missing");
+      if (controlToken) {
+        sessionStorage.setItem(`openround:presentation-host:${sessionId}`, controlToken);
+      }
       recordAuthoringEvent("presentation_host_started", "presentation");
-      router.push(`/presentation-session/${snapshot.id}/host`);
+      router.push(`/presentation-session/${sessionId}/host`);
     } catch (caught) {
       setError(humanError(caught));
       setBusy(false);

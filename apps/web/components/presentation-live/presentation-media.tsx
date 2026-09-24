@@ -31,7 +31,7 @@ export function PresentationMedia({
     let active = true;
     const path = participant
       ? `/v1/presentation-sessions/${sessionId}/media/${mediaId}`
-      : `/v1/media/${mediaId}`;
+      : `/v1/presentation-sessions/${sessionId}/host-media/${mediaId}`;
     void apiFetch<{ downloadUrl: string }>(path, {
       ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}),
     })

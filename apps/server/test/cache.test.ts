@@ -47,4 +47,12 @@ describe("session event cache", () => {
     await cache.releaseSessionCode(code, firstOwner);
     expect(await cache.reserveSessionCode(code, secondOwner, 1_000)).toBe(true);
   });
+
+  it("shares bounded fixed-window admission counters by semantic key", async () => {
+    const cache = new MemorySessionCache();
+    expect(await cache.consumeRateLimit("presentation:join:room:1234567", 2, 60_000)).toBe(true);
+    expect(await cache.consumeRateLimit("presentation:join:room:1234567", 2, 60_000)).toBe(true);
+    expect(await cache.consumeRateLimit("presentation:join:room:1234567", 2, 60_000)).toBe(false);
+    expect(await cache.consumeRateLimit("presentation:join:room:7654321", 2, 60_000)).toBe(true);
+  });
 });

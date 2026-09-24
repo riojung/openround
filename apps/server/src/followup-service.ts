@@ -56,6 +56,7 @@ function view(record: FollowupRecord): Followup {
   return FollowupSchema.parse({
     id: record.id,
     purpose: record.purpose,
+    trustMode: record.trustMode ?? "learning",
     sourceQuizVersionId: record.sourceQuizVersionId,
     sourceSessionId: record.sourceSessionId,
     sourceReportId: record.sourceReportId,
@@ -220,6 +221,7 @@ export class FollowupService {
       sourceQuizVersionId: session.quizVersionId,
       sourceSessionId: report.sessionId,
       sourceReportId: report.id,
+      trustMode: session.trustMode ?? session.state.settings.trustMode ?? "learning",
       title,
       content,
       conceptKeys,
@@ -341,6 +343,7 @@ export class FollowupService {
       sourceQuizVersionId: version.id,
       sourceSessionId: null,
       sourceReportId: null,
+      trustMode: "learning",
       title,
       content,
       conceptKeys: [],
@@ -754,6 +757,7 @@ export class FollowupService {
       return FollowupSnapshotSchema.parse({
         mode: "followup",
         purpose: followup.purpose,
+        trustMode: followup.trustMode ?? "learning",
         followupId: followup.id,
         attemptId: attempt.id,
         version: attempt.version,
@@ -785,6 +789,7 @@ export class FollowupService {
     return FollowupSnapshotSchema.parse({
       mode: "followup",
       purpose: followup.purpose,
+      trustMode: followup.trustMode ?? "learning",
       followupId: followup.id,
       attemptId: attempt.id,
       version: attempt.version,

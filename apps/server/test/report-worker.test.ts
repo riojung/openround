@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { MemoryRepository } from "@openround/db";
 import { createGameState } from "@openround/game-engine";
+import { MetricsService } from "../src/metrics.js";
+import { ProductEventDispatcher } from "../src/product-events.js";
 import { ReportWorker } from "../src/report-worker.js";
 import { createPendingReport } from "../src/reporting.js";
 
@@ -39,8 +41,14 @@ describe("report worker", () => {
     const pending = createPendingReport(state, expiresAt);
     await repository.saveReport(workspaceId, pending);
 
-    const worker = new ReportWorker(repository, 60_000);
+    const metrics = new MetricsService();
+    const productEvents = new ProductEventDispatcher(repository, metrics);
+    const worker = new ReportWorker(repository, 60_000, metrics, {
+      dispatcher: productEvents,
+      workspaceEnabled: () => true,
+    });
     await expect(worker.runOnce(now)).resolves.toBe("completed");
+    await productEvents.drain();
     await expect(worker.runOnce(now)).resolves.toBe("idle");
     await expect(repository.getReport(workspaceId, pending.id)).resolves.toMatchObject({
       id: pending.id,
@@ -49,5 +57,20 @@ describe("report worker", () => {
       status: "ready",
       generatedAt: now.toISOString(),
     });
+    expect(repository.productEvents).toEqual([
+      expect.objectContaining({
+        workspaceId,
+        name: "report_reconciled",
+        occurredAt: now.toISOString(),
+        dimensions: {
+          artifactType: "round",
+          betaVersion: "p0-2026",
+          segment: "workplace",
+        },
+      }),
+    ]);
+    await expect(metrics.render()).resolves.toContain(
+      'openround_recovery_funnel_stages_total{stage="report_reconciled",artifact_type="round",segment="workplace"} 1',
+    );
   });
 });

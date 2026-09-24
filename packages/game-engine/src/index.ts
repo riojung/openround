@@ -19,6 +19,7 @@ import {
   type QuizDraft,
   type ResponseDistribution,
   type ResponsePayload,
+  type ResolvedSessionSettings,
   type RoundKind,
   type SessionPhase,
   type SessionSettings,
@@ -27,7 +28,7 @@ import {
 import { resolveExperienceTheme } from "@openround/experience";
 import { deriveCheckpointInsight } from "@openround/insights";
 
-export const CURRENT_GAME_STATE_SCHEMA_VERSION = 4;
+export const CURRENT_GAME_STATE_SCHEMA_VERSION = 5;
 
 /** Browser-safe stable fallback used for legacy and avatar-less participants. */
 export function avatarIdForSeed(seed: string): AvatarId {
@@ -63,6 +64,13 @@ function participantsWithAvatars(
     normalized[id] = { ...participant, avatarId: avatarIdForSeed(participant.id || id) };
   }
   return normalized;
+}
+
+function settingsWithTrustMode(settings: SessionSettings): ResolvedSessionSettings {
+  return {
+    ...settings,
+    trustMode: settings.trustMode ?? "learning",
+  };
 }
 
 export interface EngineAnswer {
@@ -120,7 +128,7 @@ export interface GameState {
   intervention: EngineIntervention | null;
   interventions: Record<string, EngineIntervention>;
   lobbyLocked: boolean;
-  settings: SessionSettings;
+  settings: ResolvedSessionSettings;
   brandTheme: BrandTheme | null;
   experienceTheme: ExperienceThemeSnapshot;
   participants: Record<string, EngineParticipant>;
@@ -215,8 +223,9 @@ export function upgradeGameState(input: GameState): GameState {
     );
   }
   const participants = participantsWithAvatars(legacy.participants);
+  const settings = settingsWithTrustMode(legacy.settings);
   if (legacy.stateSchemaVersion === CURRENT_GAME_STATE_SCHEMA_VERSION) {
-    return participants === legacy.participants ? legacy : { ...legacy, participants };
+    return { ...legacy, participants, settings };
   }
   const category = legacy.quiz.category ?? "general";
   const presetId = legacy.quiz.experiencePreset?.id;
@@ -233,6 +242,7 @@ export function upgradeGameState(input: GameState): GameState {
     experienceTheme:
       legacy.experienceTheme ??
       resolveExperienceTheme({ category, presetId, brandTheme: legacy.brandTheme }),
+    settings,
     participants,
     answers: Object.fromEntries(
       Object.entries(legacy.answers ?? {}).map(([id, answer]) => [id, legacyAnswer(answer)]),
@@ -291,7 +301,7 @@ export function createGameState(input: {
     intervention: null,
     interventions: {},
     lobbyLocked: false,
-    settings: input.settings,
+    settings: settingsWithTrustMode(input.settings),
     brandTheme,
     experienceTheme:
       input.experienceTheme ??

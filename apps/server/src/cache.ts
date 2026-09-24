@@ -22,6 +22,8 @@ export interface SessionCache {
   acquireMutationLease(sessionId: string, owner: string, ttlMs: number): Promise<boolean>;
   renewMutationLease(sessionId: string, owner: string, ttlMs: number): Promise<boolean>;
   releaseMutationLease(sessionId: string, owner: string): Promise<void>;
+  /** Atomic fixed-window admission counter shared by HTTP and Socket.IO paths. */
+  consumeRateLimit(key: string, maximum: number, windowMs: number): Promise<boolean>;
   delete(sessionId: string): Promise<void>;
   close(): Promise<void>;
 }
@@ -31,6 +33,7 @@ export class MemorySessionCache implements SessionCache {
   private readonly events = new Map<string, CachedSessionEvent[]>();
   private readonly codeReservations = new Map<string, { owner: string; expiresAt: number }>();
   private readonly leases = new Map<string, { owner: string; expiresAt: number }>();
+  private readonly rateLimits = new Map<string, { count: number; expiresAt: number }>();
 
   async get(sessionId: string) {
     const state = this.states.get(sessionId);
@@ -97,6 +100,22 @@ export class MemorySessionCache implements SessionCache {
     if (this.leases.get(sessionId)?.owner === owner) this.leases.delete(sessionId);
   }
 
+  async consumeRateLimit(key: string, maximum: number, windowMs: number) {
+    const now = Date.now();
+    const current = this.rateLimits.get(key);
+    if (!current || current.expiresAt <= now) {
+      this.rateLimits.set(key, { count: 1, expiresAt: now + windowMs });
+      return true;
+    }
+    current.count += 1;
+    if (this.rateLimits.size > 10_000) {
+      for (const [candidate, bucket] of this.rateLimits) {
+        if (bucket.expiresAt <= now) this.rateLimits.delete(candidate);
+      }
+    }
+    return current.count <= maximum;
+  }
+
   async delete(sessionId: string) {
     this.states.delete(sessionId);
     this.events.delete(sessionId);
@@ -105,6 +124,7 @@ export class MemorySessionCache implements SessionCache {
   async close() {
     this.codeReservations.clear();
     this.leases.clear();
+    this.rateLimits.clear();
   }
 }
 
@@ -248,6 +268,22 @@ export class RedisSessionCache implements SessionCache {
       `openround:mutation:${sessionId}`,
       owner,
     );
+  }
+
+  async consumeRateLimit(key: string, maximum: number, windowMs: number) {
+    const result = await this.redis.eval(
+      `local count = redis.call('incr', KEYS[1])
+       if count == 1 then
+         redis.call('pexpire', KEYS[1], ARGV[1])
+       end
+       if count <= tonumber(ARGV[2]) then return 1 end
+       return 0`,
+      1,
+      `openround:rate-limit:${key}`,
+      String(windowMs),
+      String(maximum),
+    );
+    return Number(result) === 1;
   }
 
   async delete(sessionId: string) {

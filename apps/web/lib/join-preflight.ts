@@ -5,6 +5,8 @@ export interface JoinPreflightState {
   code: string;
   status: "idle" | "checking" | "ready" | "failed";
   nicknamePolicy: JoinPreflightResponse["nicknamePolicy"] | null;
+  artifactType: "round" | "presentation" | null;
+  destination: string | null;
   message: string;
 }
 
@@ -13,6 +15,8 @@ export const idleJoinPreflightState: JoinPreflightState = {
   code: "",
   status: "idle",
   nicknamePolicy: null,
+  artifactType: null,
+  destination: null,
   message: "",
 };
 
@@ -22,6 +26,8 @@ export function beginJoinPreflight(code: string, requestId: number): JoinPreflig
     code,
     status: "checking",
     nicknamePolicy: null,
+    artifactType: null,
+    destination: null,
     message: "",
   };
 }
@@ -36,6 +42,8 @@ export function completeJoinPreflight(
     ...current,
     status: "ready",
     nicknamePolicy: response.nicknamePolicy,
+    artifactType: response.artifactType ?? "round",
+    destination: response.destination ?? "/join",
     message: "",
   };
 }
@@ -46,10 +54,23 @@ export function failJoinPreflight(
   message: string,
 ): JoinPreflightState {
   if (current.requestId !== requestId || current.status !== "checking") return current;
-  return { ...current, status: "failed", nicknamePolicy: null, message };
+  return {
+    ...current,
+    status: "failed",
+    nicknamePolicy: null,
+    artifactType: null,
+    destination: null,
+    message,
+  };
+}
+
+export function joinArtifactFor(state: JoinPreflightState, code: string) {
+  if (state.code === code && state.status === "ready") return state.artifactType ?? "round";
+  return "round";
 }
 
 export function shouldCollectJoinNickname(state: JoinPreflightState, code: string) {
+  if (joinArtifactFor(state, code) === "presentation") return true;
   return !(
     state.code === code &&
     state.status === "ready" &&

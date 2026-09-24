@@ -11,6 +11,7 @@ import {
 import { MemorySessionCache } from "../src/cache.js";
 import { ConfigSchema } from "../src/config.js";
 import { MetricsService } from "../src/metrics.js";
+import { ProductEventDispatcher } from "../src/product-events.js";
 import { hashToken } from "../src/security.js";
 import { SessionService } from "../src/session-service.js";
 
@@ -829,6 +830,123 @@ describe("session service ordering", () => {
       duplicate: true,
     });
     expect(repository.answers).toHaveLength(1);
+    service.close();
+  });
+
+  it("records linked rechecks separately from same-question revotes", async () => {
+    const repository = new MemoryRepository();
+    const metrics = new MetricsService();
+    const productEvents = new ProductEventDispatcher(repository, metrics);
+    const workspaceId = randomUUID();
+    const betaConfig = {
+      ...config,
+      FEATURE_UX_BETA: true,
+      UX_BETA_WORKSPACE_ALLOWLIST: [workspaceId],
+    };
+    const service = new SessionService(
+      repository,
+      new MemorySessionCache(),
+      betaConfig,
+      metrics,
+      productEvents,
+    );
+    const diagnosticId = randomUUID();
+    const linkedRecheckId = randomUUID();
+    const diagnosticCorrectId = randomUUID();
+    const recheckCorrectId = randomUUID();
+    const quiz: QuizDraft = {
+      title: "Funnel evidence",
+      description: "",
+      questions: [
+        {
+          id: diagnosticId,
+          type: "true_false",
+          prompt: "A durable write precedes its acknowledgement.",
+          choices: [
+            { id: diagnosticCorrectId, label: "True", isCorrect: true },
+            { id: randomUUID(), label: "False", isCorrect: false },
+          ],
+          timeLimitSeconds: 20,
+          basePoints: 1_000,
+          explanation: "The server acknowledges only after persistence.",
+          mediaId: null,
+          mediaAlt: null,
+          linkedRecheckQuestionId: linkedRecheckId,
+        },
+        {
+          id: linkedRecheckId,
+          type: "true_false",
+          delivery: "recheck",
+          prompt: "A retry may be acknowledged from its durable receipt.",
+          choices: [
+            { id: recheckCorrectId, label: "True", isCorrect: true },
+            { id: randomUUID(), label: "False", isCorrect: false },
+          ],
+          timeLimitSeconds: 20,
+          basePoints: 0,
+          explanation: "Idempotent retries reuse the saved result.",
+          mediaId: null,
+          mediaAlt: null,
+        },
+      ],
+    };
+
+    const openRecheck = async (mode: "linked" | "revote", code: string) => {
+      const hostToken = `host-${mode}-token-long-enough`;
+      let state = createGameState({
+        sessionId: randomUUID(),
+        code,
+        quiz,
+        settings: {
+          audienceLimit: 20,
+          scoringMode: "accuracy",
+          resultVisibility: "private",
+          allowLateJoin: true,
+          nicknamePolicy: "custom",
+        },
+      });
+      for (const action of ["start", "lock"] as const) {
+        state = applyHostCommand(state, {
+          commandId: randomUUID(),
+          expectedVersion: state.version,
+          action,
+          nowMs: Date.now(),
+          newRoundId: randomUUID,
+        }).state;
+      }
+      await repository.createSession({
+        ...storedSession({ state, hostToken }),
+        workspaceId,
+      });
+      await service.hostCommand({
+        sessionId: state.sessionId,
+        hostToken,
+        commandId: randomUUID(),
+        expectedVersion: state.version,
+        action: "recheck.open",
+        recheckMode: mode,
+        ...(mode === "linked" ? { recheckQuestionId: linkedRecheckId } : {}),
+      });
+    };
+
+    await openRecheck("linked", "2233445");
+    await openRecheck("revote", "2233446");
+    await productEvents.drain();
+
+    expect(repository.productEvents.filter(({ name }) => name === "recheck_opened")).toHaveLength(
+      2,
+    );
+    expect(repository.productEvents.filter(({ name }) => name === "linked_recheck_opened")).toEqual(
+      [
+        expect.objectContaining({
+          workspaceId,
+          dimensions: { artifactType: "round", betaVersion: "p0-2026" },
+        }),
+      ],
+    );
+    await expect(metrics.render()).resolves.toContain(
+      'openround_recovery_funnel_stages_total{stage="linked_recheck",artifact_type="round",segment="none"} 1',
+    );
     service.close();
   });
 

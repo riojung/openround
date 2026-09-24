@@ -2,6 +2,10 @@
 
 Research date: 2026-09-18
 
+> **Current priority note (2026-09-23):** This document preserves the catch-up UX benchmark and
+> implementation record. The broader current market scan and evidence-gated post-beta priorities
+> are in the [2026 market research and development plan](market-research-and-development-plan-2026-09.md).
+
 This document benchmarks the products named in StudyGlen's “10 Best Free Kahoot Alternatives in
 2026” guide against current first-party product material and the OpenRound implementation. It
 combines a repository audit, a local end-to-end product walkthrough, current vendor documentation,

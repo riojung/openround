@@ -32,6 +32,16 @@ groups:
           summary: Authoritative realtime broadcasts are failing
           runbook: docs/runbooks/observability.md
 
+      - alert: OpenRoundPresentationBroadcastFailures
+        expr: |
+          sum(rate(openround_presentation_broadcast_duration_seconds_count{outcome="error"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Presentation realtime broadcasts are failing
+          runbook: docs/runbooks/observability.md
+
   - name: openround-latency
     rules:
       - alert: OpenRoundAnswerAcknowledgementP99High
@@ -79,6 +89,88 @@ groups:
           severity: page
         annotations:
           summary: Participant clients are not acknowledging live events
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundPresentationAnswerAcknowledgementP99High
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (
+              rate(openround_presentation_response_acknowledgement_duration_seconds_bucket{
+                outcome="accepted"
+              }[10m])
+            )
+          ) > 0.6
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: Presentation answer acknowledgement p99 is above 600 ms
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundPresentationJoinP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(openround_presentation_admission_duration_seconds_bucket{
+                outcome="accepted"
+              }[10m])
+            )
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Presentation participant join p95 is above 500 ms
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundPresentationAnswerAcknowledgementP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(openround_presentation_response_acknowledgement_duration_seconds_bucket{
+                outcome="accepted"
+              }[10m])
+            )
+          ) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Presentation answer acknowledgement p95 is above 250 ms
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundPresentationClientReceiptP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(openround_presentation_client_event_receipt_duration_seconds_bucket{
+                projection="participant",
+                outcome="acknowledged"
+              }[10m])
+            )
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Presentation participant event receipt p95 is above 500 ms
+          runbook: docs/runbooks/observability.md
+
+      - alert: OpenRoundPresentationClientReceiptTimeouts
+        expr: |
+          sum(rate(openround_presentation_client_event_receipt_duration_seconds_count{
+            projection="participant",
+            outcome="timeout"
+          }[5m])) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Presentation participants are not acknowledging live events
           runbook: docs/runbooks/observability.md
 
   - name: openround-coordination

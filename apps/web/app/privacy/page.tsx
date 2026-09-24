@@ -41,6 +41,14 @@ export default function PrivacyPage() {
           addresses. Instructor OIDC/LTI does not identify live participants; learner launch, roster
           access, and grade passback remain disabled in this release.
         </p>
+        <h2>Learning mode</h2>
+        <p>
+          Learning mode is accountless and session-scoped: it does not create a persistent learner
+          profile or connect activity across sessions. Participation is pseudonymous rather than
+          fully anonymous because the facilitator can see the alias chosen or assigned for that
+          session. What other participants can see is controlled separately by the session&apos;s
+          result and identity-visibility settings.
+        </p>
         <h2>Retention and control</h2>
         <p>
           Hosted Free session reports expire after 30 days. Pro defaults to 365 days. Creators can
@@ -48,8 +56,8 @@ export default function PrivacyPage() {
         </p>
         <h2>Schools</h2>
         <p>
-          Students must use anonymous guest mode. Institutional use requires an approved agreement
-          and applicable privacy review. No direct child account is offered.
+          Students must use accountless Learning mode. Institutional use requires an approved
+          agreement and applicable privacy review. No direct child account is offered.
         </p>
         <h2>Contact</h2>
         <p>

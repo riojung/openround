@@ -55,18 +55,19 @@ Legal text, trademark clearance, external penetration testing, school agreements
 
 ## Documentation
 
-| Guide                                                                                | Use it for                                                              |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| In-product guidance                                                                  | Sign in and open `/help` for rollout-matched steps and available videos |
-| [Quick start](docs/quick-start.md)                                                   | Start the complete local stack and run a first quiz                     |
-| [User guide](docs/user-guide.md)                                                     | Create, publish, host, join, report, export, and delete                 |
-| [Product and experience design](docs/design.md)                                      | Product goals, role journeys, states, content, and accessibility        |
-| [2026 Kahoot-alternatives UX gap plan](docs/kahoot-alternatives-2026-ux-gap-plan.md) | Current benchmark, UX gaps, strategy, and implementation sequence       |
-| [Competitive strategy and roadmap](docs/competitive-strategy-and-roadmap.md)         | Market comparison, differentiation, and post-P0 phases                  |
-| [Architecture and protocol](docs/architecture.md)                                    | Components, data flows, correctness, security, and scale gates          |
-| [Institution integrations](docs/institution-integrations.md)                         | Configure and validate creator OIDC, LTI, audit, and pilot gates        |
-| [Build, service, and deployment runbook](docs/runbooks/deployment.md)                | Build images, operate local services, and promote single-VM releases    |
-| [Documentation index](docs/README.md)                                                | API, status, privacy, release, and operations references                |
+| Guide                                                                                             | Use it for                                                              |
+| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| In-product guidance                                                                               | Sign in and open `/help` for rollout-matched steps and available videos |
+| [Quick start](docs/quick-start.md)                                                                | Start the complete local stack and run a first quiz                     |
+| [User guide](docs/user-guide.md)                                                                  | Create, publish, host, join, report, export, and delete                 |
+| [Product and experience design](docs/design.md)                                                   | Product goals, role journeys, states, content, and accessibility        |
+| [2026 market research and development plan](docs/market-research-and-development-plan-2026-09.md) | Current market evidence, user needs, priorities, and gated roadmap      |
+| [2026 Kahoot-alternatives UX gap plan](docs/kahoot-alternatives-2026-ux-gap-plan.md)              | Current benchmark, UX gaps, strategy, and implementation sequence       |
+| [Competitive strategy and roadmap](docs/competitive-strategy-and-roadmap.md)                      | Market comparison, differentiation, and post-P0 phases                  |
+| [Architecture and protocol](docs/architecture.md)                                                 | Components, data flows, correctness, security, and scale gates          |
+| [Institution integrations](docs/institution-integrations.md)                                      | Configure and validate creator OIDC, LTI, audit, and pilot gates        |
+| [Build, service, and deployment runbook](docs/runbooks/deployment.md)                             | Build images, operate local services, and promote single-VM releases    |
+| [Documentation index](docs/README.md)                                                             | API, status, privacy, release, and operations references                |
 
 ## Quick start with Docker
 

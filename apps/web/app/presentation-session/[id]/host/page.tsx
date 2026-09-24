@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { PresentationHostSnapshot } from "@openround/contracts";
 import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import { PresentationMedia } from "../../../../components/presentation-live/presentation-media";
@@ -10,66 +11,19 @@ import {
   useWorkspace,
   WorkspaceProvider,
 } from "../../../../components/workspace/workspace-provider";
-import { WorkspaceFeatureGate } from "../../../../components/workspace/workspace-shell";
 import { recordAuthoringEvent } from "../../../../components/workspace/product-events";
 import styles from "../../../../components/presentation-live/presentation-live.module.css";
 import { apiFetch, humanError } from "../../../../lib/api";
 import { formatNumber } from "../../../../lib/i18n/format";
 import {
-  shouldApplyLiveSnapshot,
-  type LiveSnapshotFence,
-} from "../../../../lib/live-snapshot-fence";
-
-interface ContentBlock {
-  id: string;
-  kind: "content";
-  layout: string;
-  title: string;
-  body: string;
-  speakerNotes: string;
-  mediaId: string | null;
-  mediaAlt: string | null;
-}
-
-interface QuestionBlock {
-  id: string;
-  kind: "question";
-  question: {
-    id: string;
-    type: string;
-    prompt: string;
-    explanation: string;
-    mediaId: string | null;
-    mediaAlt: string | null;
-    choices?: Array<{ id: string; label: string; isCorrect: boolean }>;
-    min?: number;
-    max?: number;
-    correctValue?: string;
-    delivery?: "main" | "recheck";
-    linkedRecheckQuestionId?: string | null;
-  };
-}
-
-interface HostSnapshot {
-  id: string;
-  title: string;
-  code: string;
-  status: "active" | "finished";
-  phase: "lobby" | "content" | "question_open" | "question_reveal" | "intervention" | "finished";
-  currentBlockIndex: number;
-  blockCount: number;
-  revision: number;
-  currentBlock: ContentBlock | QuestionBlock | null;
-  participantCount: number;
-  responseCount: number;
-  questionClosesAt: string | null;
-  acceptingResponses: boolean;
-  participants: Array<{ id: string; nickname: string; score: number; rank: number }>;
-  leaderboard: Array<{ id: string; nickname: string; score: number; rank: number }>;
-}
+  createPresentationRealtimeController,
+  type PresentationConnectionState,
+  type PresentationRealtimeController,
+} from "../../../../lib/presentation-realtime";
+import { clientUuid } from "../../../../lib/uuid";
 
 function advanceMessageKey(
-  snapshot: HostSnapshot,
+  snapshot: PresentationHostSnapshot,
 ):
   | "live.presentationSession.advance.start"
   | "live.presentationSession.advance.reveal"
@@ -82,8 +36,7 @@ function advanceMessageKey(
   if (
     snapshot.phase === "question_reveal" &&
     snapshot.currentBlock?.kind === "question" &&
-    snapshot.currentBlock.question.delivery !== "recheck" &&
-    snapshot.currentBlock.question.linkedRecheckQuestionId
+    snapshot.currentBlock.question.linkedRecheckAvailable
   ) {
     return "live.presentationSession.advance.intervention";
   }
@@ -101,29 +54,21 @@ function PresentationHostContent() {
   const { productFeatures } = useWorkspace();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const [snapshot, setSnapshot] = useState<HostSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<PresentationHostSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [now, setNow] = useState(() => Date.now());
+  const [connection, setConnection] = useState<PresentationConnectionState>("connecting");
   const connectionState = useRef({ hadSuccess: false, failedAfterSuccess: false, tracked: false });
-  const requestSequence = useRef(0);
-  const appliedSnapshot = useRef<LiveSnapshotFence>({ requestId: 0, revision: -1 });
+  const controllerRef = useRef<PresentationRealtimeController<PresentationHostSnapshot> | null>(
+    null,
+  );
 
-  const applySnapshot = useCallback((incoming: HostSnapshot, requestId: number) => {
-    const fence = { requestId, revision: incoming.revision };
-    if (!shouldApplyLiveSnapshot(appliedSnapshot.current, fence)) return false;
-    appliedSnapshot.current = fence;
-    setSnapshot(incoming);
-    return true;
-  }, []);
-
-  const refresh = useCallback(async () => {
-    const requestId = ++requestSequence.current;
+  const fetchSnapshot = useCallback(async () => {
     try {
-      const response = await apiFetch<{ snapshot: HostSnapshot }>(
+      const response = await apiFetch<{ snapshot: PresentationHostSnapshot }>(
         `/v1/presentation-sessions/${id}`,
       );
-      if (!applySnapshot(response.snapshot, requestId)) return;
       if (connectionState.current.failedAfterSuccess && !connectionState.current.tracked) {
         recordAuthoringEvent("presentation_reconnected", "presentation");
         connectionState.current.tracked = true;
@@ -131,21 +76,61 @@ function PresentationHostContent() {
       connectionState.current.hadSuccess = true;
       connectionState.current.failedAfterSuccess = false;
       setError("");
+      return response.snapshot;
     } catch (caught) {
-      if (requestId < appliedSnapshot.current.requestId) return;
       if (connectionState.current.hadSuccess) {
         connectionState.current.failedAfterSuccess = true;
       }
       if ((caught as { status?: number }).status === 401) router.replace("/signin");
       else setError(humanError(caught));
+      throw caught;
     }
-  }, [applySnapshot, id, router]);
+  }, [id, router]);
 
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 1_500);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
+    let disposed = false;
+    let controller: PresentationRealtimeController<PresentationHostSnapshot> | null = null;
+    let timer: number | null = null;
+    const start = async () => {
+      let controlToken = sessionStorage.getItem(`openround:presentation-host:${id}`);
+      if (!controlToken) {
+        try {
+          const pass = await apiFetch<{ controlToken: string }>(
+            `/v1/presentation-sessions/${id}/control-pass`,
+            { method: "POST" },
+          );
+          controlToken = pass.controlToken;
+          sessionStorage.setItem(`openround:presentation-host:${id}`, controlToken);
+        } catch {
+          // Authenticated REST remains available while realtime is disabled or rolling out.
+        }
+      }
+      if (disposed) return;
+      controller = createPresentationRealtimeController<PresentationHostSnapshot>({
+        sessionId: id,
+        credential: controlToken ? { projection: "host", controlToken } : null,
+        fetchSnapshot,
+        onSnapshot: setSnapshot,
+        onConnectionState: setConnection,
+        onRoomStatus: (roomStatus) => {
+          setSnapshot((current) => (current ? { ...current, roomStatus } : current));
+        },
+        onError: (caught) => setError(humanError(caught)),
+      });
+      controllerRef.current = controller;
+      controller.start();
+      timer = window.setInterval(() => {
+        if (controller?.needsFallbackPolling()) void controller.reconcile();
+      }, 1_500);
+    };
+    void start();
+    return () => {
+      disposed = true;
+      if (timer !== null) window.clearInterval(timer);
+      controller?.stop();
+      if (controllerRef.current === controller) controllerRef.current = null;
+    };
+  }, [fetchSnapshot, id]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 250);
@@ -154,21 +139,34 @@ function PresentationHostContent() {
 
   async function advance() {
     if (!snapshot || snapshot.phase === "finished") return;
-    const requestId = ++requestSequence.current;
+    const controller = controllerRef.current;
+    if (!controller?.canMutate()) return;
+    const controlToken = sessionStorage.getItem(`openround:presentation-host:${id}`) ?? "fallback";
     setBusy(true);
     setError("");
     try {
-      const response = await apiFetch<{ snapshot: HostSnapshot }>(
-        `/v1/presentation-sessions/${id}/advance`,
+      await controller.command(
         {
-          method: "POST",
-          body: JSON.stringify({ expectedRevision: snapshot.revision }),
+          sessionId: id,
+          controlToken,
+          commandId: clientUuid(),
+          expectedRevision: snapshot.revision,
+          action: "advance",
+        },
+        async () => {
+          const response = await apiFetch<{ snapshot: PresentationHostSnapshot }>(
+            `/v1/presentation-sessions/${id}/advance`,
+            {
+              method: "POST",
+              body: JSON.stringify({ expectedRevision: snapshot.revision }),
+            },
+          );
+          return response.snapshot;
         },
       );
-      applySnapshot(response.snapshot, requestId);
     } catch (caught) {
       setError(humanError(caught));
-      await refresh();
+      await controller.reconcile();
     } finally {
       setBusy(false);
     }
@@ -176,7 +174,7 @@ function PresentationHostContent() {
 
   const block = snapshot?.currentBlock ?? null;
   const joinUrl = snapshot
-    ? `${typeof window === "undefined" ? "" : window.location.origin}/presentation/join?code=${snapshot.code}`
+    ? `${typeof window === "undefined" ? "" : window.location.origin}/join?code=${snapshot.code}`
     : "";
   const remainingSeconds = snapshot?.questionClosesAt
     ? Math.max(0, Math.ceil((new Date(snapshot.questionClosesAt).getTime() - now) / 1_000))
@@ -196,6 +194,13 @@ function PresentationHostContent() {
         </div>
       </header>
       <div className={styles.stage}>
+        <p aria-live="polite" className="muted" role="status">
+          {connection === "connected"
+            ? "Connected"
+            : connection === "fallback"
+              ? "Connected using compatibility mode"
+              : "Reconnecting…"}
+        </p>
         {error ? (
           <p className="error" lang="en-CA" role="alert">
             {error}
@@ -256,15 +261,14 @@ function PresentationHostContent() {
                       mediaId={block.question.mediaId}
                       sessionId={id}
                     />
-                    {block.question.choices ? (
+                    {block.question.choices.length ? (
                       <div className={styles.choiceGrid}>
                         {block.question.choices.map((choice) => (
                           <div
                             className={styles.choice}
                             data-correct={
-                              snapshot.phase === "question_reveal" ||
-                              snapshot.phase === "intervention"
-                                ? choice.isCorrect
+                              block.revealedAnswer?.kind === "choice"
+                                ? block.revealedAnswer.correctChoiceIds.includes(choice.id)
                                 : undefined
                             }
                             key={choice.id}
@@ -279,10 +283,18 @@ function PresentationHostContent() {
                     ) : (
                       <p>{t("live.presentationSession.ratingResponse")}</p>
                     )}
-                    {(snapshot.phase === "question_reveal" || snapshot.phase === "intervention") &&
-                    block.question.explanation ? (
+                    {block.revealedAnswer?.kind === "numeric" ? (
                       <p className="notice" lang="">
-                        {block.question.explanation}
+                        {block.revealedAnswer.correctValue}
+                        {block.revealedAnswer.tolerance !== "0"
+                          ? ` ± ${block.revealedAnswer.tolerance}`
+                          : ""}
+                        {block.revealedAnswer.unit ? ` ${block.revealedAnswer.unit}` : ""}
+                      </p>
+                    ) : null}
+                    {block.revealedAnswer?.explanation ? (
+                      <p className="notice" lang="">
+                        {block.revealedAnswer.explanation}
                       </p>
                     ) : null}
                   </>
@@ -303,36 +315,35 @@ function PresentationHostContent() {
               <div>
                 <span className={styles.statusPill}>{t("live.presentationSession.joinCode")}</span>
                 <p className={styles.joinCode}>{snapshot.code}</p>
-                <Link href={`/presentation/join?code=${snapshot.code}`}>
+                <Link href={`/join?code=${snapshot.code}`}>
                   {t("live.presentationSession.openJoin")}
                 </Link>
               </div>
               <div className={styles.metricRow}>
                 <div className={styles.metric}>
-                  <strong>{formatNumber(locale, snapshot.participantCount)}</strong>
+                  <strong>{formatNumber(locale, snapshot.roomStatus.joinedCount)}</strong>
                   <span>{t("live.common.participants")}</span>
                 </div>
                 <div className={styles.metric}>
-                  <strong>{formatNumber(locale, snapshot.responseCount)}</strong>
+                  <strong>{formatNumber(locale, snapshot.roomStatus.responseCount)}</strong>
                   <span>{t("live.presentationSession.responsesNow")}</span>
                 </div>
               </div>
+              <p className="muted" aria-live="polite">
+                {formatNumber(locale, snapshot.roomStatus.connectedCount)} connected ·{" "}
+                {formatNumber(locale, snapshot.roomStatus.notCurrentlyConnectedCount)} not currently
+                connected
+              </p>
               <p>
                 {t("live.presentationSession.blockProgress", {
                   current: formatNumber(locale, Math.max(snapshot.currentBlockIndex + 1, 0)),
                   total: formatNumber(locale, snapshot.blockCount),
                 })}
               </p>
-              {block?.kind === "content" && block.speakerNotes ? (
-                <div className="notice">
-                  <strong>{t("live.presentationSession.speakerNotes")}</strong>
-                  <p lang="">{block.speakerNotes}</p>
-                </div>
-              ) : null}
               {snapshot.phase !== "finished" ? (
                 <button
                   className="button full-width"
-                  disabled={busy}
+                  disabled={busy || !controllerRef.current?.canMutate()}
                   onClick={() => void advance()}
                   type="button"
                 >
@@ -356,7 +367,7 @@ function PresentationHostContent() {
                     })}
                   </summary>
                   <ol className={styles.leaderboard}>
-                    {snapshot.leaderboard.map((participant) => (
+                    {snapshot.participants.map((participant) => (
                       <li key={participant.id}>
                         <span lang="">{participant.nickname}</span>
                         <strong>{formatNumber(locale, participant.score)}</strong>
@@ -376,9 +387,7 @@ function PresentationHostContent() {
 export default function PresentationHostPage() {
   return (
     <WorkspaceProvider>
-      <WorkspaceFeatureGate feature="presentations">
-        <PresentationHostContent />
-      </WorkspaceFeatureGate>
+      <PresentationHostContent />
     </WorkspaceProvider>
   );
 }

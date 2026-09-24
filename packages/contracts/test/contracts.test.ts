@@ -15,6 +15,7 @@ import {
   FollowupSummarySchema,
   HostCommandSchema,
   JoinRequestSchema,
+  LegacyReportSchema,
   normalizeDecimalString,
   OperationalFeaturesUpdateSchema,
   ParticipantQuestionSchema,
@@ -36,6 +37,26 @@ import {
 } from "../src/index.js";
 
 describe("public contracts", () => {
+  it("defaults legacy reports to Learning mode", () => {
+    expect(
+      LegacyReportSchema.parse({
+        id: randomUUID(),
+        sessionId: randomUUID(),
+        status: "ready",
+        generatedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        metrics: {
+          participantCount: 0,
+          completedCount: 0,
+          answerCount: 0,
+          accuracyPercent: 0,
+        },
+        questions: [],
+        participants: [],
+      }).trustMode,
+    ).toBe("learning");
+  });
+
   it("accepts every presentation-session error emitted by the API", () => {
     for (const code of [
       "PRECONDITION_REQUIRED",
@@ -197,19 +218,38 @@ describe("public contracts", () => {
         followups: false,
         authoringJobsPerMonth: 3,
       }),
-    ).toMatchObject({ maxPublishedQuizzes: 5, csvExport: false });
-    expect(
-      EntitlementsSchema.parse({
-        plan: "pro",
-        maxParticipants: 100,
-        maxPublishedQuizzes: null,
-        reportRetentionDays: 365,
-        csvExport: true,
-        brandTheme: true,
-        followups: true,
-        authoringJobsPerMonth: 100,
-      }).maxPublishedQuizzes,
-    ).toBeNull();
+    ).toMatchObject({
+      maxPublishedQuizzes: 5,
+      csvExport: false,
+      maxPracticePersonalLinks: 0,
+      recoveryTrails: false,
+      maxRecoveryStages: 0,
+      conceptHealth: false,
+      decisionReplay: false,
+    });
+    const paid = EntitlementsSchema.parse({
+      plan: "pro",
+      maxParticipants: 100,
+      maxPublishedQuizzes: null,
+      reportRetentionDays: 365,
+      csvExport: true,
+      brandTheme: true,
+      followups: true,
+      authoringJobsPerMonth: 100,
+      maxPracticePersonalLinks: 25,
+      recoveryTrails: true,
+      maxRecoveryStages: 4,
+      conceptHealth: true,
+      decisionReplay: true,
+    });
+    expect(paid).toMatchObject({
+      maxPublishedQuizzes: null,
+      maxPracticePersonalLinks: 25,
+      recoveryTrails: true,
+      maxRecoveryStages: 4,
+      conceptHealth: true,
+      decisionReplay: true,
+    });
   });
 
   it("identifies the source Round in follow-up history summaries", () => {
@@ -349,6 +389,8 @@ describe("public contracts", () => {
       "insight_shown",
       "intervention_started",
       "recheck_opened",
+      "linked_recheck_opened",
+      "report_reconciled",
       "report_viewed",
       "followup_shared",
       "practice_assignment_created",
@@ -372,11 +414,13 @@ describe("public contracts", () => {
             ? { artifactType: "presentation" }
             : name === "setup_recipe_selected"
               ? { recipe: "recovery" }
-              : name === "rehearsal_started"
-                ? { scenario: "split_room" }
-                : name === "rehearsal_completed"
-                  ? { scenario: "split_room", durationBucket: "1_to_5m" }
-                  : {};
+              : name === "linked_recheck_opened" || name === "report_reconciled"
+                ? { artifactType: "round" }
+                : name === "rehearsal_started"
+                  ? { scenario: "split_room" }
+                  : name === "rehearsal_completed"
+                    ? { scenario: "split_room", durationBucket: "1_to_5m" }
+                    : {};
       expect(
         ProductEventBatchSchema.safeParse({
           events: [{ name, occurredAt: new Date().toISOString(), dimensions }],
@@ -395,6 +439,8 @@ describe("public contracts", () => {
       { name: "creation_abandoned", dimensions: {} },
       { name: "presentation_host_started", dimensions: { artifactType: "round" } },
       { name: "presentation_reconnected", dimensions: { artifactType: "round" } },
+      { name: "linked_recheck_opened", dimensions: {} },
+      { name: "report_reconciled", dimensions: {} },
       { name: "setup_recipe_selected", dimensions: {} },
       { name: "rehearsal_started", dimensions: {} },
       { name: "rehearsal_completed", dimensions: { scenario: "split_room" } },
