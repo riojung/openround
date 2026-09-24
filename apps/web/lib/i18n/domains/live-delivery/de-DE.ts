@@ -367,6 +367,8 @@ const messages = {
   "live.presentationReport.facilitationTimeline": "Zeitplan für die Erleichterung",
   "live.presentationReport.hostView": "Hostansicht",
   "live.presentationReport.loading": "Laden Präsentationsbericht...",
+  "live.presentationReport.failed":
+    "Der Präsentationsbericht konnte nicht erstellt werden. Versuchen Sie es später erneut oder wenden Sie sich an den Support.",
   "live.presentationReport.notAssessed": "Nicht bewertet.",
   "live.presentationReport.notAssessedDescription":
     "Darstellung Exposition wird nicht als Lern Beweise behandelt.",

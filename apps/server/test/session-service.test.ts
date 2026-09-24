@@ -940,12 +940,16 @@ describe("session service ordering", () => {
       [
         expect.objectContaining({
           workspaceId,
-          dimensions: { artifactType: "round", betaVersion: "p0-2026" },
+          dimensions: {
+            artifactType: "round",
+            segment: "workplace",
+            betaVersion: "p0-2026",
+          },
         }),
       ],
     );
     await expect(metrics.render()).resolves.toContain(
-      'openround_recovery_funnel_stages_total{stage="linked_recheck",artifact_type="round",segment="none"} 1',
+      'openround_recovery_funnel_stages_total{stage="linked_recheck",artifact_type="round",segment="workplace"} 1',
     );
     service.close();
   });

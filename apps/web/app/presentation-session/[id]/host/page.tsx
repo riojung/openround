@@ -17,6 +17,7 @@ import { apiFetch, humanError } from "../../../../lib/api";
 import { formatNumber } from "../../../../lib/i18n/format";
 import {
   createPresentationRealtimeController,
+  presentationRemainingSeconds,
   type PresentationConnectionState,
   type PresentationRealtimeController,
 } from "../../../../lib/presentation-realtime";
@@ -60,9 +61,15 @@ function PresentationHostContent() {
   const [now, setNow] = useState(() => Date.now());
   const [connection, setConnection] = useState<PresentationConnectionState>("connecting");
   const connectionState = useRef({ hadSuccess: false, failedAfterSuccess: false, tracked: false });
+  const snapshotReceivedAt = useRef(Date.now());
   const controllerRef = useRef<PresentationRealtimeController<PresentationHostSnapshot> | null>(
     null,
   );
+
+  const applySnapshot = useCallback((incoming: PresentationHostSnapshot) => {
+    snapshotReceivedAt.current = Date.now();
+    setSnapshot(incoming);
+  }, []);
 
   const fetchSnapshot = useCallback(async () => {
     try {
@@ -110,7 +117,7 @@ function PresentationHostContent() {
         sessionId: id,
         credential: controlToken ? { projection: "host", controlToken } : null,
         fetchSnapshot,
-        onSnapshot: setSnapshot,
+        onSnapshot: applySnapshot,
         onConnectionState: setConnection,
         onRoomStatus: (roomStatus) => {
           setSnapshot((current) => (current ? { ...current, roomStatus } : current));
@@ -130,7 +137,7 @@ function PresentationHostContent() {
       controller?.stop();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [fetchSnapshot, id]);
+  }, [applySnapshot, fetchSnapshot, id]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 250);
@@ -176,9 +183,7 @@ function PresentationHostContent() {
   const joinUrl = snapshot
     ? `${typeof window === "undefined" ? "" : window.location.origin}/join?code=${snapshot.code}`
     : "";
-  const remainingSeconds = snapshot?.questionClosesAt
-    ? Math.max(0, Math.ceil((new Date(snapshot.questionClosesAt).getTime() - now) / 1_000))
-    : null;
+  const remainingSeconds = presentationRemainingSeconds(snapshot, snapshotReceivedAt.current, now);
 
   return (
     <main className={styles.page}>

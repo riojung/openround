@@ -1,5 +1,6 @@
 "use client";
 
+import type { PresentationReportEnvelope, PresentationReportV1 } from "@openround/contracts";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -12,70 +13,61 @@ import {
 import styles from "../../../../components/presentation-live/presentation-live.module.css";
 import { apiFetch, humanError } from "../../../../lib/api";
 
-interface PresentationReport {
-  sessionId: string;
-  title: string;
-  status: "active" | "finished";
-  participantCount: number;
-  responseCount: number;
-  evidenceNote: string;
-  evidence: Array<
-    | {
-        blockId: string;
-        blockIndex: number;
-        kind: "content";
-        title: string;
-        assessmentStatus: "not_assessed";
-      }
-    | {
-        blockId: string;
-        blockIndex: number;
-        kind: "question";
-        prompt: string;
-        questionTypeLabel: string;
-        respondents: number;
-        correct: number | null;
-        accuracyPercent: number | null;
-        totalScore: number;
-        averageResponseMs: number | null;
-      }
-  >;
-  leaderboard: Array<{
-    id: string;
-    nickname: string;
-    score: number;
-    rank: number;
-  }>;
-  recovery: Array<{
-    sourceQuestionId: string;
-    recheckQuestionId: string;
-    eligible: number;
-    recovered: number;
-    recoveryPercent: number | null;
-  }>;
-  timeline: Array<{
-    sequence: number;
-    type: string;
-    blockIndex: number | null;
-    occurredAt: string;
-  }>;
-}
-
 function PresentationReportContent() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { locale, t } = useLocale();
   const { productFeatures } = useWorkspace();
-  const [report, setReport] = useState<PresentationReport | null>(null);
+  const [report, setReport] = useState<PresentationReportV1 | null>(null);
+  const [reportFailed, setReportFailed] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    void apiFetch<{ report: PresentationReport }>(`/v1/presentation-sessions/${id}/report`)
-      .then(({ report: loaded }) => setReport(loaded))
-      .catch((caught) => {
-        if ((caught as { status?: number }).status === 401) router.replace("/signin");
-        else setError(humanError(caught));
-      });
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    let retryAttempts = 0;
+    setReport(null);
+    setReportFailed(false);
+    setError("");
+    const load = async () => {
+      try {
+        const result = await apiFetch<PresentationReportEnvelope>(
+          `/v1/presentation-sessions/${id}/report`,
+        );
+        if (cancelled) return;
+        setError("");
+        retryAttempts = 0;
+        if (result.report) {
+          setReport(result.report);
+        }
+        if (result.reportStatus === "ready") {
+          return;
+        }
+        if (result.reportStatus === "failed") {
+          setReport(null);
+          setReportFailed(true);
+          return;
+        }
+        pollTimer = setTimeout(() => void load(), 1_000);
+      } catch (caught) {
+        if (cancelled) return;
+        if ((caught as { status?: number }).status === 401) {
+          router.replace("/signin");
+          return;
+        }
+        setError(humanError(caught));
+        if (retryAttempts < 5) {
+          const retryDelayMs = Math.min(10_000, 1_000 * 2 ** retryAttempts);
+          retryAttempts += 1;
+          pollTimer = setTimeout(() => void load(), retryDelayMs);
+        }
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
+    };
   }, [id, router]);
 
   return (
@@ -95,8 +87,17 @@ function PresentationReportContent() {
             {error}
           </p>
         ) : null}
+        {reportFailed ? (
+          <p className="error" lang="en-CA" role="alert">
+            {t("live.presentationReport.failed")}
+          </p>
+        ) : null}
         {!report ? (
-          <section className={styles.reportCard}>{t("live.presentationReport.loading")}</section>
+          !reportFailed ? (
+            <section className={styles.reportCard} role="status" aria-live="polite">
+              {t("live.presentationReport.loading")}
+            </section>
+          ) : null
         ) : (
           <>
             <section className={styles.reportCard}>

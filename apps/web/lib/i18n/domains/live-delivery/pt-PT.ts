@@ -365,6 +365,8 @@ const messages = {
   "live.presentationReport.facilitationTimeline": "Linha do tempo de facilitação",
   "live.presentationReport.hostView": "Vista da máquina",
   "live.presentationReport.loading": "Carregando relatório de apresentação...",
+  "live.presentationReport.failed":
+    "Não foi possível gerar o relatório da apresentação. Tente novamente mais tarde ou contacte o suporte.",
   "live.presentationReport.notAssessed": "Não avaliado.",
   "live.presentationReport.notAssessedDescription":
     "A exposição à apresentação não é tratada como evidência de aprendizagem.",

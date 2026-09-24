@@ -17,6 +17,9 @@ import {
   type PresentationSessionParticipantRecord,
   type PresentationParticipantSnapshotProjection,
   type PresentationParticipantJoin,
+  type PresentationSessionReportCompletion,
+  type PresentationSessionReportJob,
+  type PresentationSessionReportRecord,
   type PresentationSessionRecord,
   type PresentationSessionRepository,
   type PresentationResponseAcceptance,
@@ -223,6 +226,29 @@ function mapTimeline(row: QueryResultRow): PresentationSessionTimelineRecord {
   };
 }
 
+function mapReport(row: QueryResultRow): PresentationSessionReportRecord {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    sessionId: String(row.session_id),
+    status: row.status,
+    schemaVersion: Number(row.schema_version),
+    payload: row.payload ?? null,
+    generatedAt:
+      row.generated_at == null
+        ? null
+        : row.generated_at instanceof Date
+          ? row.generated_at
+          : new Date(String(row.generated_at)),
+    expiresAt:
+      row.retention_expires_at instanceof Date
+        ? row.retention_expires_at
+        : new Date(String(row.retention_expires_at)),
+    createdAt: row.created_at instanceof Date ? row.created_at : new Date(String(row.created_at)),
+    updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(String(row.updated_at)),
+  };
+}
+
 export class MemoryPresentationSessionRepository
   implements PresentationSessionRepository, MemoryRepositoryLifecycleExtension
 {
@@ -232,6 +258,11 @@ export class MemoryPresentationSessionRepository
   private readonly timeline = new Map<string, PresentationSessionTimelineRecord>();
   private readonly commandReceipts = new Map<string, PresentationSessionCommandReceiptRecord>();
   private readonly credentials = new Map<string, PresentationSessionCredentialRecord>();
+  private readonly reports = new Map<string, PresentationSessionReportRecord>();
+  private readonly reportJobs = new Map<
+    string,
+    { attempts: number; availableAt: Date; leaseToken: string | null; lastError: string | null }
+  >();
 
   constructor(
     private readonly liveRooms: Pick<Repository, "claimLiveRoomCode" | "releaseLiveRoomCode">,
@@ -259,6 +290,9 @@ export class MemoryPresentationSessionRepository
       presentationSessionCredentials: [...this.credentials.values()]
         .filter((credential) => sessionIds.has(credential.sessionId))
         .map(({ tokenHash: _tokenHash, ...credential }) => clone(credential)),
+      presentationSessionReports: [...this.reports.values()]
+        .filter((report) => sessionIds.has(report.sessionId))
+        .map(clone),
     };
   }
 
@@ -303,6 +337,38 @@ export class MemoryPresentationSessionRepository
     for (const [id, credential] of this.credentials) {
       if (credential.sessionId === sessionId) this.credentials.delete(id);
     }
+    for (const [id, report] of this.reports) {
+      if (report.sessionId === sessionId) {
+        this.reports.delete(id);
+        this.reportJobs.delete(id);
+      }
+    }
+  }
+
+  private enqueueReport(session: PresentationSessionRecord) {
+    if (session.status !== "finished") return;
+    const existing = [...this.reports.values()].find((report) => report.sessionId === session.id);
+    if (existing) return;
+    const createdAt = session.finishedAt ?? session.updatedAt;
+    const report: PresentationSessionReportRecord = {
+      id: session.id,
+      workspaceId: session.workspaceId,
+      sessionId: session.id,
+      status: "pending",
+      schemaVersion: 1,
+      payload: null,
+      generatedAt: null,
+      expiresAt: new Date(session.retentionExpiresAt),
+      createdAt: new Date(createdAt),
+      updatedAt: new Date(createdAt),
+    };
+    this.reports.set(report.id, report);
+    this.reportJobs.set(report.id, {
+      attempts: 0,
+      availableAt: new Date(createdAt),
+      leaseToken: null,
+      lastError: null,
+    });
   }
 
   async listSessions(workspaceId: string, now = new Date()) {
@@ -335,8 +401,12 @@ export class MemoryPresentationSessionRepository
           normalized.finishedAt ?? normalized.updatedAt,
         );
       }
+      this.enqueueReport(normalized);
       return clone(normalized);
     } catch (error) {
+      this.sessions.delete(normalized.id);
+      this.reports.delete(normalized.id);
+      this.reportJobs.delete(normalized.id);
       await this.liveRooms.releaseLiveRoomCode("presentation", normalized.id);
       throw error;
     }
@@ -376,10 +446,13 @@ export class MemoryPresentationSessionRepository
           normalized.finishedAt ?? normalized.updatedAt,
         );
       }
+      this.enqueueReport(normalized);
       return { session: clone(normalized), credential: clone(credential) };
     } catch (error) {
       this.sessions.delete(normalized.id);
       this.credentials.delete(credential.id);
+      this.reports.delete(normalized.id);
+      this.reportJobs.delete(normalized.id);
       await this.liveRooms.releaseLiveRoomCode("presentation", normalized.id);
       throw error;
     }
@@ -456,6 +529,10 @@ export class MemoryPresentationSessionRepository
       };
       this.commandReceipts.set(`${session.id}:${commandId}`, receipt);
     }
+    // Publish the report job only after every report input for this transition is visible. The
+    // memory worker can run concurrently while this async method is suspended, so enqueueing
+    // before the final timeline record would diverge from PostgreSQL transaction semantics.
+    if (becomingFinished) this.enqueueReport(updated);
     return clone(updated);
   }
 
@@ -656,6 +733,101 @@ export class MemoryPresentationSessionRepository
       .filter((event) => event.sessionId === sessionId)
       .sort((left, right) => left.sequence - right.sequence)
       .map(clone);
+  }
+
+  async getReport(workspaceId: string, sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.workspaceId !== workspaceId) return null;
+    const report = [...this.reports.values()].find(
+      (candidate) => candidate.sessionId === sessionId,
+    );
+    return report ? clone(report) : null;
+  }
+
+  async claimReportJob(now: Date, leaseUntil: Date) {
+    const candidate = [...this.reportJobs.entries()]
+      .filter(([id, job]) => this.reports.get(id)?.status === "pending" && job.availableAt <= now)
+      .sort(
+        (left, right) =>
+          left[1].availableAt.getTime() - right[1].availableAt.getTime() ||
+          left[0].localeCompare(right[0]),
+      )[0];
+    if (!candidate) return null;
+    const [reportId, metadata] = candidate;
+    const report = this.reports.get(reportId)!;
+    const leaseToken = randomUUID();
+    metadata.attempts += 1;
+    metadata.availableAt = new Date(leaseUntil);
+    metadata.leaseToken = leaseToken;
+    return {
+      reportId,
+      workspaceId: report.workspaceId,
+      sessionId: report.sessionId,
+      attempts: metadata.attempts,
+      leaseToken,
+      expiresAt: new Date(report.expiresAt),
+    };
+  }
+
+  async completeReportJob(
+    job: PresentationSessionReportJob,
+    report: PresentationSessionReportCompletion,
+  ) {
+    if (job.reportId !== report.reportId || job.sessionId !== report.sessionId) {
+      throw new Error("Completed Presentation report does not match the claimed job");
+    }
+    if (!Number.isInteger(report.schemaVersion) || report.schemaVersion < 1) {
+      throw new Error("Presentation report schema version must be a positive integer");
+    }
+    const current = this.reports.get(job.reportId);
+    const metadata = this.reportJobs.get(job.reportId);
+    if (
+      !current ||
+      !metadata ||
+      current.workspaceId !== job.workspaceId ||
+      current.sessionId !== job.sessionId ||
+      current.status !== "pending" ||
+      metadata.leaseToken !== job.leaseToken
+    ) {
+      throw new Error("The claimed Presentation report job is no longer pending");
+    }
+    this.reports.set(job.reportId, {
+      ...current,
+      status: "ready",
+      schemaVersion: report.schemaVersion,
+      payload: clone(report.payload),
+      generatedAt: new Date(report.generatedAt),
+      updatedAt: new Date(),
+    });
+    this.reportJobs.delete(job.reportId);
+  }
+
+  async retryReportJob(
+    job: PresentationSessionReportJob,
+    error: string,
+    availableAt: Date,
+    failed: boolean,
+  ) {
+    const report = this.reports.get(job.reportId);
+    const metadata = this.reportJobs.get(job.reportId);
+    if (
+      !report ||
+      !metadata ||
+      report.workspaceId !== job.workspaceId ||
+      report.sessionId !== job.sessionId ||
+      report.status !== "pending" ||
+      metadata.leaseToken !== job.leaseToken
+    ) {
+      return;
+    }
+    metadata.lastError = error.slice(0, 2_000);
+    metadata.availableAt = new Date(availableAt);
+    metadata.leaseToken = null;
+    report.updatedAt = new Date();
+    if (failed) {
+      report.status = "failed";
+      this.reportJobs.delete(job.reportId);
+    }
   }
 
   async createCredential(input: PresentationSessionCredentialRecord) {
@@ -1302,6 +1474,118 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
         [sessionId],
       );
       return result.rows.map(mapTimeline);
+    });
+  }
+
+  async getReport(workspaceId: string, sessionId: string) {
+    return this.transaction(workspaceId, async (client) => {
+      const result = await client.query(
+        `SELECT report.*, session.retention_expires_at
+         FROM presentation_session_reports AS report
+         JOIN presentation_live_sessions AS session
+           ON session.workspace_id = report.workspace_id AND session.id = report.session_id
+         WHERE report.workspace_id = $1 AND report.session_id = $2`,
+        [workspaceId, sessionId],
+      );
+      return result.rows[0] ? mapReport(result.rows[0]) : null;
+    });
+  }
+
+  async claimReportJob(now: Date, leaseUntil: Date): Promise<PresentationSessionReportJob | null> {
+    return this.transaction(null, async (client) => {
+      const leaseToken = randomUUID();
+      const selected = await client.query(
+        `SELECT report.id, report.workspace_id, report.session_id, report.attempts,
+                session.retention_expires_at
+         FROM presentation_session_reports AS report
+         JOIN presentation_live_sessions AS session
+           ON session.workspace_id = report.workspace_id AND session.id = report.session_id
+         WHERE report.status = 'pending' AND report.available_at <= $1
+         ORDER BY report.available_at, report.created_at, report.id
+         FOR UPDATE OF report SKIP LOCKED
+         LIMIT 1`,
+        [now],
+      );
+      const row = selected.rows[0];
+      if (!row) return null;
+      const updated = await client.query(
+        `UPDATE presentation_session_reports
+         SET attempts = attempts + 1, available_at = $2, lease_token = $3, updated_at = now()
+         WHERE id = $1 AND status = 'pending'
+         RETURNING attempts`,
+        [row.id, leaseUntil, leaseToken],
+      );
+      if (updated.rowCount !== 1) return null;
+      return {
+        reportId: String(row.id),
+        workspaceId: String(row.workspace_id),
+        sessionId: String(row.session_id),
+        attempts: Number(updated.rows[0]!.attempts),
+        leaseToken,
+        expiresAt:
+          row.retention_expires_at instanceof Date
+            ? row.retention_expires_at
+            : new Date(String(row.retention_expires_at)),
+      };
+    });
+  }
+
+  async completeReportJob(
+    job: PresentationSessionReportJob,
+    report: PresentationSessionReportCompletion,
+  ) {
+    if (job.reportId !== report.reportId || job.sessionId !== report.sessionId) {
+      throw new Error("Completed Presentation report does not match the claimed job");
+    }
+    if (!Number.isInteger(report.schemaVersion) || report.schemaVersion < 1) {
+      throw new Error("Presentation report schema version must be a positive integer");
+    }
+    return this.transaction(job.workspaceId, async (client) => {
+      const result = await client.query(
+        `UPDATE presentation_session_reports
+         SET status = 'ready', schema_version = $4, payload = $5, generated_at = $6,
+             lease_token = NULL, last_error = NULL, updated_at = now()
+         WHERE id = $1 AND workspace_id = $2 AND session_id = $3 AND status = 'pending'
+           AND lease_token = $7`,
+        [
+          job.reportId,
+          job.workspaceId,
+          job.sessionId,
+          report.schemaVersion,
+          JSON.stringify(report.payload),
+          report.generatedAt,
+          job.leaseToken,
+        ],
+      );
+      if (result.rowCount !== 1) {
+        throw new Error("The claimed Presentation report job is no longer pending");
+      }
+    });
+  }
+
+  async retryReportJob(
+    job: PresentationSessionReportJob,
+    error: string,
+    availableAt: Date,
+    failed: boolean,
+  ) {
+    return this.transaction(job.workspaceId, async (client) => {
+      await client.query(
+        `UPDATE presentation_session_reports
+         SET status = $4, last_error = $5, available_at = $6, lease_token = NULL,
+             updated_at = now()
+         WHERE id = $1 AND workspace_id = $2 AND session_id = $3 AND status = 'pending'
+           AND lease_token = $7`,
+        [
+          job.reportId,
+          job.workspaceId,
+          job.sessionId,
+          failed ? "failed" : "pending",
+          error.slice(0, 2_000),
+          availableAt,
+          job.leaseToken,
+        ],
+      );
     });
   }
 

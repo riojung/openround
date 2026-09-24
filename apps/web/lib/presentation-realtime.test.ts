@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   PresentationEventEnvelope,
   PresentationHostSnapshot,
@@ -11,6 +11,7 @@ import type {
 import type { Socket } from "socket.io-client";
 import {
   createPresentationRealtimeController,
+  presentationRemainingSeconds,
   presentationSaveStateForBlock,
   shouldApplyPresentationSnapshot,
 } from "./presentation-realtime";
@@ -157,6 +158,106 @@ function sync(socket: FakeSocket, snapshot: PresentationRoleSnapshot) {
     data: { resetRequired: false, events: [], snapshot } satisfies PresentationSyncResponse,
   });
 }
+
+describe("Presentation deadline timing", () => {
+  it("derives the countdown from server time instead of the participant device clock", () => {
+    expect(presentationRemainingSeconds(participantSnapshot(), 1_000_000, 1_010_000)).toBe(20);
+    expect(
+      presentationRemainingSeconds(
+        participantSnapshot({ acceptingResponses: false }),
+        1_000_000,
+        1_010_000,
+      ),
+    ).toBe(0);
+    expect(
+      presentationRemainingSeconds(
+        participantSnapshot({ questionClosesAt: null }),
+        1_000_000,
+        1_010_000,
+      ),
+    ).toBeNull();
+  });
+
+  it("locally expires a continuously connected timed question without another sync", async () => {
+    vi.useFakeTimers();
+    const socket = new FakeSocket();
+    const received: PresentationParticipantSnapshot[] = [];
+    const controller = createPresentationRealtimeController({
+      sessionId: participantSnapshot().sessionId,
+      credential: { projection: "participant", participantToken: "p".repeat(32) },
+      fetchSnapshot: async () => participantSnapshot(),
+      onSnapshot: (snapshot) => received.push(snapshot),
+      onConnectionState: () => undefined,
+      socketFactory: () => socket as unknown as Socket,
+    });
+
+    try {
+      controller.start();
+      sync(socket, participantSnapshot());
+      await Promise.resolve();
+      const syncCount = socket.emitted.filter(
+        ({ event }) => event === "presentation.sync.request",
+      ).length;
+
+      vi.advanceTimersByTime(30_000);
+      expect(controller.latest()?.acceptingResponses).toBe(true);
+      vi.advanceTimersByTime(1);
+
+      expect(controller.latest()?.acceptingResponses).toBe(false);
+      expect(received.at(-1)?.acceptingResponses).toBe(false);
+      expect(
+        controller.applySnapshot(participantSnapshot({ serverTime: "2026-09-23T12:00:29.500Z" })),
+      ).toBe(false);
+      expect(controller.latest()?.acceptingResponses).toBe(false);
+      expect(
+        socket.emitted.filter(({ event }) => event === "presentation.sync.request"),
+      ).toHaveLength(syncCount);
+    } finally {
+      controller.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let an earlier question deadline expire a newer block", async () => {
+    vi.useFakeTimers();
+    const socket = new FakeSocket();
+    const controller = createPresentationRealtimeController({
+      sessionId: participantSnapshot().sessionId,
+      credential: { projection: "participant", participantToken: "p".repeat(32) },
+      fetchSnapshot: async () => participantSnapshot(),
+      onSnapshot: () => undefined,
+      onConnectionState: () => undefined,
+      socketFactory: () => socket as unknown as Socket,
+    });
+
+    try {
+      controller.start();
+      sync(socket, participantSnapshot());
+      await Promise.resolve();
+      vi.advanceTimersByTime(10_000);
+      const nextBlockId = randomUUID();
+      controller.applySnapshot(
+        participantSnapshot({
+          seq: 6,
+          serverTime: "2026-09-23T12:00:10.000Z",
+          questionClosesAt: "2026-09-23T12:01:00.000Z",
+          currentBlock: {
+            ...participantSnapshot().currentBlock!,
+            id: nextBlockId,
+          },
+        }),
+      );
+
+      vi.advanceTimersByTime(20_001);
+
+      expect(controller.latest()?.currentBlock?.id).toBe(nextBlockId);
+      expect(controller.latest()?.acceptingResponses).toBe(true);
+    } finally {
+      controller.stop();
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("Presentation realtime snapshot fencing", () => {
   it("uses sequence before revision and ignores stale snapshots", () => {
@@ -406,6 +507,121 @@ describe("Presentation realtime snapshot fencing", () => {
 });
 
 describe("Presentation participant acknowledgement recovery", () => {
+  it("settles a lost acknowledgement after a bounded closed-question reconciliation", async () => {
+    vi.useFakeTimers();
+    const socket = new FakeSocket();
+    const saveStates: string[] = [];
+    const open = participantSnapshot({
+      questionClosesAt: "2026-09-23T12:00:00.005Z",
+    });
+    const controller = createPresentationRealtimeController({
+      sessionId: open.sessionId,
+      credential: { projection: "participant", participantToken: "p".repeat(32) },
+      fetchSnapshot: async () => open,
+      onSnapshot: () => undefined,
+      onConnectionState: () => undefined,
+      onSaveState: (state) => saveStates.push(state),
+      socketFactory: () => socket as unknown as Socket,
+      acknowledgementTimeoutMs: 10,
+    });
+
+    try {
+      controller.start();
+      sync(socket, open);
+      await Promise.resolve();
+      const submission = controller.submitResponse(
+        {
+          sessionId: open.sessionId,
+          participantToken: "p".repeat(32),
+          blockId: open.currentBlock!.id,
+          expectedRevision: open.revision,
+          idempotencyKey: randomUUID(),
+          response: { choiceIds: ["6846c45c-7c3c-4348-86a5-c6e4e5bff962"] },
+        },
+        async () => {
+          throw new Error("REST should not be used");
+        },
+      );
+      const rejected = expect(submission).rejects.toThrow(
+        "question closed before the response was confirmed",
+      );
+
+      vi.advanceTimersByTime(10);
+      sync(
+        socket,
+        participantSnapshot({
+          serverTime: "2026-09-23T12:00:00.010Z",
+          questionClosesAt: open.questionClosesAt,
+          acceptingResponses: false,
+        }),
+      );
+      await Promise.resolve();
+      vi.advanceTimersByTime(10);
+      sync(
+        socket,
+        participantSnapshot({
+          serverTime: "2026-09-23T12:00:00.020Z",
+          questionClosesAt: open.questionClosesAt,
+          acceptingResponses: false,
+        }),
+      );
+
+      await rejected;
+      expect(saveStates.at(-1)).toBe("idle");
+    } finally {
+      controller.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not reconcile a pending response from a rejected stale sync snapshot", async () => {
+    const socket = new FakeSocket();
+    const current = participantSnapshot({
+      seq: 6,
+      serverTime: "2026-09-23T12:00:31.000Z",
+      phase: "question_reveal",
+      questionClosesAt: null,
+      acceptingResponses: false,
+    });
+    const controller = createPresentationRealtimeController({
+      sessionId: current.sessionId,
+      credential: { projection: "participant", participantToken: "p".repeat(32) },
+      fetchSnapshot: async () => current,
+      onSnapshot: () => undefined,
+      onConnectionState: () => undefined,
+      socketFactory: () => socket as unknown as Socket,
+    });
+    controller.start();
+    sync(socket, current);
+    await Promise.resolve();
+
+    const submission = controller.submitResponse(
+      {
+        sessionId: current.sessionId,
+        participantToken: "p".repeat(32),
+        blockId: current.currentBlock!.id,
+        expectedRevision: current.revision,
+        idempotencyKey: randomUUID(),
+        response: { choiceIds: ["6846c45c-7c3c-4348-86a5-c6e4e5bff962"] },
+      },
+      async () => {
+        throw new Error("REST should not be used");
+      },
+    );
+    const rejected = expect(submission).rejects.toThrow(
+      "question closed before the response was confirmed",
+    );
+    const reconciliation = controller.reconcile();
+    sync(socket, participantSnapshot({ seq: 5 }));
+
+    await expect(reconciliation).resolves.toMatchObject({ seq: 6 });
+    await rejected;
+    expect(
+      socket.emitted.filter(({ event }) => event === "presentation.response.submit"),
+    ).toHaveLength(1);
+    controller.stop();
+  });
+
   it("settles a pending socket response from a disconnected REST reconciliation", async () => {
     const socket = new FakeSocket();
     const saveStates: string[] = [];

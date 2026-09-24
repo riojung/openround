@@ -122,6 +122,43 @@ export interface PresentationSessionTimelineRecord {
   occurredAt: Date;
 }
 
+export type PresentationSessionReportStatus = "pending" | "ready" | "failed";
+
+/**
+ * Durable report metadata. The payload deliberately remains contract-neutral so the DB package
+ * can persist versioned Presentation report documents without owning their API schema.
+ */
+export interface PresentationSessionReportRecord {
+  id: string;
+  workspaceId: string;
+  sessionId: string;
+  status: PresentationSessionReportStatus;
+  schemaVersion: number;
+  payload: unknown | null;
+  generatedAt: Date | null;
+  expiresAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PresentationSessionReportJob {
+  reportId: string;
+  workspaceId: string;
+  sessionId: string;
+  attempts: number;
+  /** Opaque claim identity used to fence workers whose lease was subsequently reclaimed. */
+  leaseToken: string;
+  expiresAt: Date;
+}
+
+export interface PresentationSessionReportCompletion {
+  reportId: string;
+  sessionId: string;
+  schemaVersion: number;
+  payload: unknown;
+  generatedAt: Date;
+}
+
 export type PresentationResponseAcceptance =
   | { status: "accepted"; response: PresentationSessionResponseRecord }
   | { status: "duplicate"; response: PresentationSessionResponseRecord }
@@ -216,6 +253,21 @@ export interface PresentationSessionRepository {
   ): Promise<PresentationParticipantSnapshotProjection | null>;
   listResponses(sessionId: string): Promise<PresentationSessionResponseRecord[]>;
   listTimeline(sessionId: string): Promise<PresentationSessionTimelineRecord[]>;
+  getReport(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<PresentationSessionReportRecord | null>;
+  claimReportJob(now: Date, leaseUntil: Date): Promise<PresentationSessionReportJob | null>;
+  completeReportJob(
+    job: PresentationSessionReportJob,
+    report: PresentationSessionReportCompletion,
+  ): Promise<void>;
+  retryReportJob(
+    job: PresentationSessionReportJob,
+    error: string,
+    availableAt: Date,
+    failed: boolean,
+  ): Promise<void>;
   createCredential(
     input: PresentationSessionCredentialRecord,
   ): Promise<PresentationSessionCredentialRecord>;

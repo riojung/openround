@@ -217,9 +217,29 @@ describe("new artifact data lifecycle", () => {
       expect.arrayContaining([expect.objectContaining({ tokenHash: expect.anything() })]),
     );
 
+    await sessions.transitionSession({
+      workspaceId: owner.workspaceId,
+      sessionId,
+      expectedRevision: 1,
+      phase: "finished",
+      currentBlockIndex: 0,
+      status: "finished",
+      occurredAt: now,
+      retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+      event: { type: "presentation.finished", blockIndex: null, blockId: null },
+    });
+    await expect(sessions.getReport(owner.workspaceId, sessionId)).resolves.toMatchObject({
+      id: sessionId,
+      status: "pending",
+    });
+    await expect(repository.exportAccount(owner.userId)).resolves.toMatchObject({
+      presentationSessionReports: [{ id: sessionId, status: "pending", payload: null }],
+    });
+
     await repository.deleteAccount(owner.userId);
     await expect(presentations.listPresentations(owner.workspaceId, true)).resolves.toEqual([]);
     await expect(sessions.listSessions(owner.workspaceId)).resolves.toEqual([]);
+    await expect(sessions.getReport(owner.workspaceId, sessionId)).resolves.toBeNull();
     await expect(groups.listGroups(owner.workspaceId, owner.userId)).resolves.toEqual([]);
   });
 
@@ -268,6 +288,11 @@ describe("new artifact data lifecycle", () => {
     await expect(repository.purgeExpired(now)).resolves.toContain(expiredId);
     await expect(sessions.getSessionById(expiredId)).resolves.toBeNull();
     await expect(sessions.listParticipants(expiredId)).resolves.toEqual([]);
+    await expect(sessions.getReport(owner.workspaceId, expiredId)).resolves.toBeNull();
     await expect(sessions.getSessionById(retainedId)).resolves.toMatchObject({ id: retainedId });
+    await expect(sessions.getReport(owner.workspaceId, retainedId)).resolves.toMatchObject({
+      id: retainedId,
+      status: "pending",
+    });
   });
 });

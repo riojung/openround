@@ -17,6 +17,7 @@ import { apiFetch, humanError } from "../../../../lib/api";
 import { formatNumber } from "../../../../lib/i18n/format";
 import {
   createPresentationRealtimeController,
+  presentationRemainingSeconds,
   presentationSaveStateForBlock,
   type PresentationConnectionState,
   type PresentationRealtimeController,
@@ -42,10 +43,12 @@ export default function PresentationParticipantPage() {
     state: "idle",
   });
   const blockId = useRef<string | null>(null);
+  const snapshotReceivedAt = useRef(Date.now());
   const controllerRef =
     useRef<PresentationRealtimeController<PresentationParticipantSnapshot> | null>(null);
 
   const applySnapshot = useCallback((incoming: PresentationParticipantSnapshot) => {
+    snapshotReceivedAt.current = Date.now();
     if (incoming.currentBlock?.id !== blockId.current) {
       blockId.current = incoming.currentBlock?.id ?? null;
       setSelectedChoiceIds([]);
@@ -198,9 +201,7 @@ export default function PresentationParticipantPage() {
         ? ratingValue !== null
         : selectedChoiceIds.length > 0) &&
     (block.question.confidence !== "required" || confidence !== null);
-  const remainingSeconds = snapshot?.questionClosesAt
-    ? Math.max(0, Math.ceil((new Date(snapshot.questionClosesAt).getTime() - now) / 1_000))
-    : null;
+  const remainingSeconds = presentationRemainingSeconds(snapshot, snapshotReceivedAt.current, now);
   const deliveryStatus =
     saveState === "saving"
       ? "Saving…"

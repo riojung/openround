@@ -363,6 +363,8 @@ const messages = {
   "live.presentationReport.facilitationTimeline": "ファシリテーションタイムライン",
   "live.presentationReport.hostView": "ホストビュー",
   "live.presentationReport.loading": "プレゼンテーションレポートの読み込み...",
+  "live.presentationReport.failed":
+    "プレゼンテーションレポートを生成できませんでした。後でもう一度試すか、サポートにお問い合わせください。",
   "live.presentationReport.notAssessed": "審査対象外",
   "live.presentationReport.notAssessedDescription":
     "プレゼンテーションの露出は学習証拠として扱われません。",

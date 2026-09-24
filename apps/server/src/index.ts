@@ -18,6 +18,7 @@ const {
   audienceOutboxWorker,
   retention,
   reportWorker,
+  presentationReportWorker,
   authoringWorker,
   metrics,
   cache,
@@ -59,15 +60,32 @@ const retentionTimer = setInterval(() => {
 }, config.RETENTION_INTERVAL_MINUTES * 60_000);
 retentionTimer.unref();
 
-const reportTimer = setInterval(() => {
-  void reportWorker
-    .runUntilIdle()
-    .then((results) => {
-      const completed = results.filter((result) => result === "completed").length;
-      if (completed > 0) app.log.info({ completed }, "report generation completed");
-      if (results.includes("failed")) app.log.error("report generation exhausted its retries");
+let activeReportRun: Promise<void> | null = null;
+const runReportWorkers = () => {
+  if (activeReportRun) return activeReportRun;
+  const run = Promise.all([reportWorker.runUntilIdle(), presentationReportWorker.runUntilIdle()])
+    .then(([roundResults, presentationResults]) => {
+      const roundCompleted = roundResults.filter((result) => result === "completed").length;
+      const presentationCompleted = presentationResults.filter(
+        (result) => result === "completed",
+      ).length;
+      if (roundCompleted + presentationCompleted > 0) {
+        app.log.info({ roundCompleted, presentationCompleted }, "report generation completed");
+      }
+      if (roundResults.includes("failed") || presentationResults.includes("failed")) {
+        app.log.error("report generation exhausted its retries");
+      }
     })
     .catch((error: unknown) => app.log.error({ err: error }, "report worker failed"));
+  const tracked = run.finally(() => {
+    activeReportRun = null;
+  });
+  activeReportRun = tracked;
+  return tracked;
+};
+
+const reportTimer = setInterval(() => {
+  void runReportWorkers();
 }, config.REPORT_WORKER_INTERVAL_MS);
 reportTimer.unref();
 
@@ -90,6 +108,7 @@ const shutdown = async (signal: string) => {
   clearInterval(authoringTimer);
   clearInterval(audienceOutboxTimer);
   await realtime.close();
+  await activeReportRun;
   await app.close();
   await telemetry.shutdown();
   process.exit(0);

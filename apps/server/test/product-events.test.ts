@@ -71,7 +71,11 @@ describe("ProductEventDispatcher", () => {
       expect.objectContaining({ message: "telemetry storage unavailable" }),
     ]);
     expect(repository.productEvents).toEqual([
-      expect.objectContaining({ workspaceId, name: "report_viewed" }),
+      expect.objectContaining({
+        workspaceId,
+        name: "report_viewed",
+        dimensions: { segment: "workplace", betaVersion: "p0-2026" },
+      }),
     ]);
   });
 });
