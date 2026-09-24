@@ -97,7 +97,7 @@ The current constraints matter more than the feature count:
 
 | Boundary               | Current reality                                                                                                                   |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Public readiness       | Fourteen of fifteen release-ledger gates remain pending; local automation is not production evidence                              |
+| Public readiness       | All fifteen release-ledger gates are pending; local or branch automation is not production evidence                               |
 | Rollout                | Major workspace, builder, Presentation, Group, Discover, rehearsal, and practice capabilities default off or require allowlisting |
 | Presentation delivery  | The newer live Presentation host and participant paths poll rather than using the mature Round Socket.IO/reconnect path           |
 | Live accessibility     | Practice/follow-up accommodation passes exist; private live extra time/time-flex remains unresolved                               |
@@ -280,6 +280,11 @@ Higher-education STEM/health teaching and workplace technical training should bo
 but the team should choose one primary acquisition channel after the first research gate rather
 than fund two institutional roadmaps.
 
+After the Phase 0 research gate, select the segment with more repeat pilots and evidence-complete
+recovery loops. If the segment evidence is tied, prefer faster activation and then stronger
+willingness-to-pay evidence. Keep the selection pending when reviewed evidence is incomplete or
+the deciding measures conflict without a defensible winner.
+
 For those instructors and facilitators:
 
 > When a room is wrong, split, or confidently mistaken, help me choose what to do next and show me
@@ -434,21 +439,23 @@ the Recovery Compass, narrow the target segment or revise the workflow before ad
 **Outcome:** OpenRound works beside the user's existing material and supports a calmer, more
 inclusive live session.
 
-Select **one** implementation from observed sessions:
+Select exactly **one** implementation from observed sessions, in this order:
 
-- **Companion path:** ship a thin browser companion with join overlay, prepared-question insertion,
-  phase-aware controls, results overlay, and one-action return to the deck; or
-- **Access path:** ship whole-room live time-flex and the highest-impact room-health/reconnect
-  improvements. Prototype private 1.5×/2× live passes, but choose reveal/fairness behavior only
-  after participant and facilitator testing.
+- **Access path first** if timing or connectivity excludes participants in at least three partner
+  workflows, affects at least 10% of observed attempts, or produces a serious accessibility
+  finding. Ship whole-room live time-flex and the highest-impact room-health/reconnect improvements.
+  Do not ship private 1.5×/2× passes until research establishes reveal, privacy, and fairness
+  behavior.
+- **Companion path otherwise** if at least four repeat facilitators use an external deck and at
+  least two observed sessions suffer a material context-switch interruption. Ship a thin browser
+  companion with join overlay, prepared-question insertion, phase-aware controls, results overlay,
+  and one-action return to the deck.
+- **Measured-failure path otherwise:** spend the phase on the largest measured activation or
+  correctness failure; do not invent a third feature.
 
-Companion is the default only if at least four recurring pilot users work from existing decks and
-observed context switching materially interrupts the session. Time-flex is the default only if at
-least three partners identify timing as a blocker. If neither gate passes, spend this slot on the
-highest measured adoption or correctness failure rather than inventing a third feature.
-
-In parallel, validate Hosted Free 50 on the actual target host. Keep Pro 250 as a later target; do
-not change either public promise until cost, abuse, support, restart, and report gates pass.
+In parallel, validate Hosted Free 50 on the actual target host and release it only after the load,
+restart, cost, abuse, reconciliation, and support gates pass. Keep Pro at 100 until the corresponding
+250-client target-host soak gate passes.
 
 Non-goals:
 

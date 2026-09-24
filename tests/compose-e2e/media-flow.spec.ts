@@ -54,12 +54,12 @@ test("creator uploads scanned media and a guest receives it privately", async ({
     .getByRole("textbox", { name: "Checkpoint prompt", exact: true })
     .fill("Can this guest retrieve the scanned image?");
   const altText = "A one-pixel image used to verify private media delivery";
-  await creator.getByLabel("Optional instructional image").fill(altText);
+  await creator.getByRole("textbox", { name: "Media", exact: true }).fill(altText);
   const png = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
     "base64",
   );
-  await creator.locator('input[type="file"]').setInputFiles({
+  await creator.getByLabel("Choose instructional image").setInputFiles({
     name: "browser-upload.png",
     mimeType: "image/png",
     buffer: png,

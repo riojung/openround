@@ -34,6 +34,7 @@
     "readiness:require:beta": "node scripts/check-release-readiness.mjs --require=single-vm-beta",
     "readiness:require:beta:preflight": "node scripts/check-release-readiness.mjs --require=single-vm-beta-preflight",
     "smoke:compose": "tsx tests/smoke/compose.ts",
+    "smoke:minio-volume-upgrade": "bash scripts/smoke-minio-volume-upgrade.sh",
     "smoke:multi-process": "tsx tests/smoke/multi-process.ts",
     "smoke:observability": "tsx tests/smoke/observability.ts",
     "smoke:restore": "tsx tests/smoke/backup-restore.ts",
