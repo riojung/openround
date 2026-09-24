@@ -37,16 +37,24 @@ type RealtimeAck<T> = { data?: T; error?: { code: string; message: string } };
 export interface PresentationSnapshotFence {
   seq: number;
   revision: number;
+  serverTime: string;
 }
 
-/** Presentation sequence is authoritative; revision breaks ties for REST/sync snapshots. */
+/** Sequence and revision fence durable state; server time breaks exact ties for derived fields. */
 export function shouldApplyPresentationSnapshot(
   current: PresentationSnapshotFence | null,
   incoming: PresentationSnapshotFence,
 ) {
   if (!current) return true;
   if (incoming.seq !== current.seq) return incoming.seq > current.seq;
-  return incoming.revision > current.revision;
+  if (incoming.revision !== current.revision) return incoming.revision > current.revision;
+  const currentServerTime = Date.parse(current.serverTime);
+  const incomingServerTime = Date.parse(incoming.serverTime);
+  return (
+    Number.isFinite(currentServerTime) &&
+    Number.isFinite(incomingServerTime) &&
+    incomingServerTime > currentServerTime
+  );
 }
 
 export function presentationSnapshotFromEnvelope(
@@ -140,12 +148,27 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
     ) {
       return false;
     }
-    const incomingFence = { seq: incoming.seq, revision: incoming.revision };
+    const incomingFence = {
+      seq: incoming.seq,
+      revision: incoming.revision,
+      serverTime: incoming.serverTime,
+    };
     if (!shouldApplyPresentationSnapshot(fence, incomingFence)) return false;
-    const projectedIncoming =
-      incoming.projection === "host" && latestRoomStatus
-        ? ({ ...incoming, roomStatus: latestRoomStatus } as Snapshot)
-        : incoming;
+    let projectedIncoming = incoming;
+    if (incoming.projection === "host") {
+      const incomingRoomStatusSampledAt = Date.parse(incoming.roomStatus.sampledAt);
+      if (
+        latestRoomStatus &&
+        roomStatusSampledAt !== null &&
+        (!Number.isFinite(incomingRoomStatusSampledAt) ||
+          roomStatusSampledAt > incomingRoomStatusSampledAt)
+      ) {
+        projectedIncoming = { ...incoming, roomStatus: latestRoomStatus } as Snapshot;
+      } else if (Number.isFinite(incomingRoomStatusSampledAt)) {
+        roomStatusSampledAt = incomingRoomStatusSampledAt;
+        latestRoomStatus = incoming.roomStatus;
+      }
+    }
     fence = incomingFence;
     snapshot = projectedIncoming;
     options.onSnapshot(projectedIncoming);

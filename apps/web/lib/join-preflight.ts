@@ -66,7 +66,19 @@ export function failJoinPreflight(
 
 export function joinArtifactFor(state: JoinPreflightState, code: string) {
   if (state.code === code && state.status === "ready") return state.artifactType ?? "round";
-  return "round";
+  return null;
+}
+
+export async function resolveJoinPreflightForSubmission(
+  current: JoinPreflightState,
+  code: string,
+  requestId: number,
+  preflight: (code: string) => Promise<JoinPreflightResponse>,
+): Promise<JoinPreflightState> {
+  if (current.code === code && current.status === "ready") return current;
+
+  const checking = beginJoinPreflight(code, requestId);
+  return completeJoinPreflight(checking, requestId, await preflight(code));
 }
 
 export function shouldCollectJoinNickname(state: JoinPreflightState, code: string) {

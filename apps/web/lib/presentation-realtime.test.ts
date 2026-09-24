@@ -160,21 +160,90 @@ function sync(socket: FakeSocket, snapshot: PresentationRoleSnapshot) {
 
 describe("Presentation realtime snapshot fencing", () => {
   it("uses sequence before revision and ignores stale snapshots", () => {
-    expect(shouldApplyPresentationSnapshot({ seq: 8, revision: 3 }, { seq: 7, revision: 99 })).toBe(
-      false,
-    );
-    expect(shouldApplyPresentationSnapshot({ seq: 8, revision: 3 }, { seq: 8, revision: 2 })).toBe(
-      false,
-    );
-    expect(shouldApplyPresentationSnapshot({ seq: 8, revision: 3 }, { seq: 8, revision: 3 })).toBe(
-      false,
-    );
-    expect(shouldApplyPresentationSnapshot({ seq: 8, revision: 3 }, { seq: 8, revision: 4 })).toBe(
-      true,
-    );
-    expect(shouldApplyPresentationSnapshot({ seq: 8, revision: 3 }, { seq: 9, revision: 3 })).toBe(
-      true,
-    );
+    const current = { seq: 8, revision: 3, serverTime: "2026-09-23T12:00:30.000Z" };
+    expect(
+      shouldApplyPresentationSnapshot(current, {
+        seq: 7,
+        revision: 99,
+        serverTime: "2026-09-23T12:00:31.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplyPresentationSnapshot(current, {
+        seq: 8,
+        revision: 2,
+        serverTime: "2026-09-23T12:00:31.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplyPresentationSnapshot(current, {
+        seq: 8,
+        revision: 3,
+        serverTime: "2026-09-23T12:00:29.000Z",
+      }),
+    ).toBe(false);
+    expect(shouldApplyPresentationSnapshot(current, current)).toBe(false);
+    expect(
+      shouldApplyPresentationSnapshot(current, {
+        seq: 8,
+        revision: 3,
+        serverTime: "2026-09-23T12:00:31.000Z",
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplyPresentationSnapshot(current, {
+        seq: 8,
+        revision: 4,
+        serverTime: "2026-09-23T12:00:29.000Z",
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplyPresentationSnapshot(current, {
+        seq: 9,
+        revision: 3,
+        serverTime: "2026-09-23T12:00:29.000Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("refreshes deadline-derived state from a newer snapshot at the same durable fence", () => {
+    const received: PresentationParticipantSnapshot[] = [];
+    const controller = createPresentationRealtimeController({
+      sessionId: participantSnapshot().sessionId,
+      credential: null,
+      fetchSnapshot: async () => participantSnapshot(),
+      onSnapshot: (snapshot) => received.push(snapshot),
+      onConnectionState: () => undefined,
+    });
+
+    expect(
+      controller.applySnapshot(
+        participantSnapshot({
+          serverTime: "2026-09-23T12:00:29.000Z",
+          acceptingResponses: true,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      controller.applySnapshot(
+        participantSnapshot({
+          serverTime: "2026-09-23T12:00:31.000Z",
+          acceptingResponses: false,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      controller.applySnapshot(
+        participantSnapshot({
+          serverTime: "2026-09-23T12:00:30.000Z",
+          acceptingResponses: true,
+        }),
+      ),
+    ).toBe(false);
+
+    expect(received.map(({ acceptingResponses }) => acceptingResponses)).toEqual([true, false]);
+    expect(controller.latest()?.acceptingResponses).toBe(false);
+    controller.stop();
   });
 
   it("does not apply a delayed realtime event after a newer sync", () => {
@@ -273,7 +342,7 @@ describe("Presentation realtime snapshot fencing", () => {
     controller.stop();
   });
 
-  it("preserves the independently fenced host room status across session snapshots", () => {
+  it("uses the newer room-status sample across events and host snapshots", () => {
     const socket = new FakeSocket();
     const controller = createPresentationRealtimeController({
       sessionId: hostSnapshot().sessionId,
@@ -306,7 +375,8 @@ describe("Presentation realtime snapshot fencing", () => {
 
     controller.applySnapshot(
       hostSnapshot({
-        seq: 6,
+        seq: 5,
+        serverTime: "2026-09-23T12:00:02.000Z",
         roomStatus: {
           ...hostSnapshot().roomStatus,
           sampledAt: "2026-09-23T12:00:02.000Z",
@@ -315,7 +385,22 @@ describe("Presentation realtime snapshot fencing", () => {
     );
 
     expect(controller.latest()?.projection).toBe("host");
-    expect((controller.latest() as PresentationHostSnapshot).roomStatus.connectedCount).toBe(2);
+    expect((controller.latest() as PresentationHostSnapshot).roomStatus.connectedCount).toBe(0);
+
+    controller.applySnapshot(
+      hostSnapshot({
+        seq: 6,
+        serverTime: "2026-09-23T12:00:03.000Z",
+        roomStatus: {
+          ...hostSnapshot().roomStatus,
+          connectedCount: 1,
+          notCurrentlyConnectedCount: 1,
+          sampledAt: "2026-09-23T12:00:01.500Z",
+        },
+      }),
+    );
+
+    expect((controller.latest() as PresentationHostSnapshot).roomStatus.connectedCount).toBe(0);
     controller.stop();
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   beginJoinPreflight,
   completeJoinPreflight,
@@ -6,6 +6,7 @@ import {
   idleJoinPreflightState,
   joinArtifactFor,
   nicknameForJoin,
+  resolveJoinPreflightForSubmission,
   shouldCollectJoinNickname,
 } from "./join-preflight";
 
@@ -63,7 +64,46 @@ describe("join preflight state", () => {
     });
 
     expect(joinArtifactFor(ready, "1234567")).toBe("presentation");
-    expect(joinArtifactFor(ready, "7654321")).toBe("round");
+    expect(joinArtifactFor(ready, "7654321")).toBeNull();
     expect(shouldCollectJoinNickname(ready, "1234567")).toBe(true);
+  });
+
+  it("rechecks failed preflight before selecting a join endpoint", async () => {
+    const failed = failJoinPreflight(
+      beginJoinPreflight("1234567", 5),
+      5,
+      "Could not check this code",
+    );
+    const check = vi.fn().mockResolvedValue({
+      nicknamePolicy: "custom",
+      artifactType: "presentation",
+      destination: "/join",
+    });
+
+    expect(joinArtifactFor(failed, "1234567")).toBeNull();
+
+    const resolved = await resolveJoinPreflightForSubmission(failed, "1234567", 6, check);
+
+    expect(check).toHaveBeenCalledOnce();
+    expect(check).toHaveBeenCalledWith("1234567");
+    expect(resolved).toMatchObject({
+      requestId: 6,
+      code: "1234567",
+      status: "ready",
+      artifactType: "presentation",
+    });
+    expect(joinArtifactFor(resolved, "1234567")).toBe("presentation");
+  });
+
+  it("reuses a matching resolved preflight on submit", async () => {
+    const ready = completeJoinPreflight(beginJoinPreflight("1234567", 7), 7, {
+      nicknamePolicy: "friendly_only",
+    });
+    const check = vi.fn();
+
+    await expect(resolveJoinPreflightForSubmission(ready, "1234567", 8, check)).resolves.toBe(
+      ready,
+    );
+    expect(check).not.toHaveBeenCalled();
   });
 });

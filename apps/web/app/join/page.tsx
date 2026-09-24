@@ -15,6 +15,7 @@ import {
   idleJoinPreflightState,
   joinArtifactFor,
   nicknameForJoin,
+  resolveJoinPreflightForSubmission,
   shouldCollectJoinNickname,
 } from "../../lib/join-preflight";
 
@@ -75,30 +76,65 @@ function JoinForm() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    const submittedCode = code;
     setBusy(true);
     setError("");
     try {
-      if (artifactType === "presentation") {
+      let resolvedPreflight = preflight;
+      if (joinArtifactFor(resolvedPreflight, submittedCode) === null) {
+        const requestId = ++preflightRequestId.current;
+        setPreflight(beginJoinPreflight(submittedCode, requestId));
+        try {
+          const resolved = await resolveJoinPreflightForSubmission(
+            resolvedPreflight,
+            submittedCode,
+            requestId,
+            (roomCode) =>
+              apiFetch<JoinPreflightResponse>(
+                `/v1/live-rooms/join/preflight?${new URLSearchParams({ code: roomCode })}`,
+              ),
+          );
+          resolvedPreflight = resolved;
+          setPreflight((current) =>
+            current.requestId === requestId && current.code === submittedCode ? resolved : current,
+          );
+        } catch (caught) {
+          setPreflight((current) =>
+            failJoinPreflight(
+              current,
+              requestId,
+              `${humanError(caught)}. We could not confirm the room type; try again.`,
+            ),
+          );
+          throw caught;
+        }
+      }
+
+      const resolvedArtifactType = joinArtifactFor(resolvedPreflight, submittedCode);
+      if (resolvedArtifactType === "presentation") {
         const joined = await apiFetch<{
           participantToken: string;
           snapshot: { id: string };
         }>("/v1/presentation-sessions/join", {
           method: "POST",
-          body: JSON.stringify({ code, nickname: nickname.trim() }),
+          body: JSON.stringify({ code: submittedCode, nickname: nickname.trim() }),
         });
         sessionStorage.setItem(
           `openround:presentation-participant:${joined.snapshot.id}`,
           joined.participantToken,
         );
-        sessionStorage.setItem("openround:last-code", code);
+        sessionStorage.setItem("openround:last-code", submittedCode);
         router.push(`/presentation-session/${joined.snapshot.id}/play`);
         return;
       }
-      const requestedNickname = nicknameForJoin(preflight, code, nickname);
+      if (resolvedArtifactType !== "round") {
+        throw new Error("The room type could not be confirmed. Please try again.");
+      }
+      const requestedNickname = nicknameForJoin(resolvedPreflight, submittedCode, nickname);
       const joined = await apiFetch<JoinResponse>("/v1/sessions/join", {
         method: "POST",
         body: JSON.stringify({
-          code,
+          code: submittedCode,
           avatarId,
           ...(requestedNickname ? { nickname: requestedNickname } : {}),
         }),
@@ -107,7 +143,7 @@ function JoinForm() {
         `openround:participant:${joined.snapshot.sessionId}`,
         joined.participantToken,
       );
-      sessionStorage.setItem("openround:last-code", code);
+      sessionStorage.setItem("openround:last-code", submittedCode);
       router.push(`/play/${joined.snapshot.sessionId}`);
     } catch (caught) {
       setError(humanError(caught));
@@ -140,6 +176,7 @@ function JoinForm() {
             onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 7))}
             placeholder="0000000"
             required
+            disabled={busy}
             value={code}
           />
         </div>
@@ -153,7 +190,8 @@ function JoinForm() {
               maxLength={32}
               onChange={(event) => setNickname(event.target.value)}
               placeholder={t("delivery.join.nicknamePlaceholder")}
-              required={artifactType === "presentation"}
+              required={artifactType !== "round"}
+              disabled={busy}
               value={nickname}
             />
           </div>
@@ -186,7 +224,7 @@ function JoinForm() {
             busy ||
             code.length !== 7 ||
             preflight.status === "checking" ||
-            (artifactType === "presentation" && !nickname.trim())
+            (artifactType !== "round" && !nickname.trim())
           }
           type="submit"
         >
