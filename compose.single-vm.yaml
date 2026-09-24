@@ -85,8 +85,37 @@ services:
     networks:
       - data
 
+  minio-volume-owner:
+    image: cgr.dev/chainguard/wolfi-base@sha256:fac38d12efdb4bf43ac9e599a31db10a27ad5dd71e5f1618790962eda8d66180
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        find /data -xdev ! -user 65532 -exec chown -h 65532:65532 {} +
+        test -z "$$(find /data -xdev ! -user 65532 -print -quit)"
+    read_only: true
+    restart: "no"
+    cpus: ${OPENROUND_INIT_CPUS:-0.25}
+    mem_limit: ${OPENROUND_INIT_MEMORY_LIMIT:-192m}
+    pids_limit: 64
+    logging: *default-logging
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    volumes:
+      - minio-data:/data
+
   minio:
     image: cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
+    depends_on:
+      minio-volume-owner:
+        condition: service_completed_successfully
     command: server /data --console-address :9001
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER}

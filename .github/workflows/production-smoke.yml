@@ -26,6 +26,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify MinIO volume ownership across upgrade and rollback
+        run: pnpm smoke:minio-volume-upgrade
       - run: pnpm exec playwright install --with-deps chromium
       - name: Start production media profile
         run: docker compose -f compose.yaml -f compose.media.yaml up -d --build --wait

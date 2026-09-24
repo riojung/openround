@@ -336,13 +336,14 @@ This file is not legal advice.
 
 These programs run as separate containers and are not relicensed by OpenRound:
 
-| Service      | Compose image                                                                                      | License and source                                                        |
-| ------------ | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| PostgreSQL   | `postgres:17-alpine`                                                                               | [PostgreSQL License](https://www.postgresql.org/about/licence/)           |
-| Valkey       | `valkey/valkey:8-alpine`                                                                           | [BSD 3-Clause](https://github.com/valkey-io/valkey/blob/unstable/COPYING) |
-| MinIO Server | `cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1` | [GNU AGPL v3](https://github.com/minio/minio/blob/master/LICENSE)         |
-| Mailpit      | `axllent/mailpit:v1.27`                                                                            | [MIT](https://github.com/axllent/mailpit/blob/develop/LICENSE)            |
-| Caddy        | `caddy:2.10-alpine`                                                                                | [Apache 2.0](https://github.com/caddyserver/caddy/blob/master/LICENSE)    |
+| Service                       | Compose image                                                                                           | License and source                                                                                   |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| PostgreSQL                    | `postgres:17-alpine`                                                                                    | [PostgreSQL License](https://www.postgresql.org/about/licence/)                                      |
+| Valkey                        | `valkey/valkey:8-alpine`                                                                                | [BSD 3-Clause](https://github.com/valkey-io/valkey/blob/unstable/COPYING)                            |
+| MinIO volume ownership helper | `cgr.dev/chainguard/wolfi-base@sha256:fac38d12efdb4bf43ac9e599a31db10a27ad5dd71e5f1618790962eda8d66180` | [Package licenses and image SBOM](https://images.chainguard.dev/directory/image/wolfi-base/overview) |
+| MinIO Server                  | `cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1`      | [GNU AGPL v3](https://github.com/minio/minio/blob/master/LICENSE)                                    |
+| Mailpit                       | `axllent/mailpit:v1.27`                                                                                 | [MIT](https://github.com/axllent/mailpit/blob/develop/LICENSE)                                       |
+| Caddy                         | `caddy:2.10-alpine`                                                                                     | [Apache 2.0](https://github.com/caddyserver/caddy/blob/master/LICENSE)                               |
 
 Operators distributing a composed appliance or modified service image are responsible for
 the corresponding license obligations. In particular, MinIO's AGPL terms are separate from
