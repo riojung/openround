@@ -37,6 +37,7 @@ import { originAllowed } from "./origin.js";
 import { QnaService } from "./qna-service.js";
 import { registerRoutes } from "./routes.js";
 import { ReportWorker } from "./report-worker.js";
+import { PresentationReportWorker } from "./presentation-report-worker.js";
 import { RetentionService } from "./retention.js";
 import { SessionService } from "./session-service.js";
 import { StorageService } from "./storage.js";
@@ -128,6 +129,8 @@ export async function buildApp(
   const presentationSessions = createPresentationSessionRepository(repository);
   const groups = createCollaborationGroupRepository(repository);
   const libraryMetadata = createLibraryMetadataRepository(repository);
+  const productEventsEnabled = (workspaceId: string) =>
+    professionalWorkspaceEligible(config, workspaceId);
   const workspaceShellEnabled = (workspaceId: string) =>
     professionalWorkspaceFeatureEnabled(config, workspaceId, "workspaceShell");
   const presentationsEnabled = (workspaceId: string) =>
@@ -278,6 +281,8 @@ export async function buildApp(
     sessions: presentationSessions,
     config,
     storage,
+    productEvents,
+    productEventsEnabled,
   });
   const readiness =
     overrides.readiness ??
@@ -297,8 +302,17 @@ export async function buildApp(
   );
   const reportWorker = new ReportWorker(repository, config.REPORT_WORKER_LEASE_MS, metrics, {
     dispatcher: productEvents,
-    workspaceEnabled: (workspaceId) => professionalWorkspaceEligible(config, workspaceId),
+    workspaceEnabled: productEventsEnabled,
   });
+  const presentationReportWorker = new PresentationReportWorker(
+    presentationSessions,
+    config.REPORT_WORKER_LEASE_MS,
+    metrics,
+    {
+      dispatcher: productEvents,
+      workspaceEnabled: productEventsEnabled,
+    },
+  );
   const requestStarts = new WeakMap<object, number>();
   app.addHook("onRequest", async (request) => {
     requestStarts.set(request, performance.now());
@@ -350,6 +364,8 @@ export async function buildApp(
     presentations,
     auth,
     workspaceEnabled: presentationsEnabled,
+    productEvents,
+    productEventsEnabled,
   });
   await registerPresentationSessionRoutes(app, {
     repository,
@@ -415,6 +431,7 @@ export async function buildApp(
     storage,
     retention,
     reportWorker,
+    presentationReportWorker,
     metrics,
     productEvents,
     presentations,

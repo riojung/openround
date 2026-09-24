@@ -648,7 +648,10 @@ export async function registerPresentationSessionRoutes(
     if (!creator) return;
     const { id } = IdParamsSchema.parse(request.params);
     try {
-      return { report: await service.getReport(creator.workspaceId, id) };
+      const result = await service.getReport(creator.workspaceId, id);
+      return reply
+        .code(result.reportStatus === "pending" && !result.report ? 202 : 200)
+        .send(result);
     } catch (error) {
       return sendServiceError(error, reply, request.id);
     }

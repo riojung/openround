@@ -347,6 +347,7 @@ const messages = {
   "live.presentationReport.facilitationTimeline": "便利化时间表",
   "live.presentationReport.hostView": "主机视图",
   "live.presentationReport.loading": "正在装入演示文稿报告...",
+  "live.presentationReport.failed": "无法生成演示文稿报告。请稍后重试或联系支持团队。",
   "live.presentationReport.notAssessed": "未分摊。",
   "live.presentationReport.notAssessedDescription": "展示暴露不被视为学习证据。",
   "live.presentationReport.questionType": "提问类型",

@@ -3,6 +3,8 @@ import {
   PresentationCompanionSnapshotSchema,
   PresentationHostSnapshotSchema,
   PresentationParticipantSnapshotSchema,
+  PresentationReportEnvelopeSchema,
+  PresentationReportV1Schema,
   type PresentationCommand,
   type PresentationBlock,
   type PresentationHostSnapshot,
@@ -28,6 +30,8 @@ import {
 } from "@openround/db";
 import type { AppConfig } from "./config.js";
 import { entitlementsFor, retentionExpiry } from "./entitlements.js";
+import type { ProductEventDispatcher, ProductEventInput } from "./product-events.js";
+import { generatePresentationReport } from "./presentation-reporting.js";
 import type { StorageService } from "./storage.js";
 
 const PRESENTATION_SESSION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
@@ -42,7 +46,8 @@ export type PresentationSessionServiceErrorCode =
   | "VALIDATION_ERROR"
   | "STALE_SESSION"
   | "IDEMPOTENCY_CONFLICT"
-  | "ALREADY_RESPONDED";
+  | "ALREADY_RESPONDED"
+  | "REPORT_UNAVAILABLE";
 
 export class PresentationSessionServiceError extends Error {
   constructor(
@@ -509,11 +514,55 @@ export class PresentationSessionService {
         | "MAX_PRACTICE_PERSONAL_LINKS"
       >;
       storage: StorageService;
+      productEvents?: ProductEventDispatcher;
+      productEventsEnabled?: (workspaceId: string) => boolean;
     },
   ) {}
 
   private get sessions() {
     return this.dependencies.sessions;
+  }
+
+  private recordProductEvents(workspaceId: string, events: ProductEventInput[]) {
+    if (
+      events.length === 0 ||
+      !this.dependencies.productEvents ||
+      !this.dependencies.productEventsEnabled?.(workspaceId)
+    ) {
+      return;
+    }
+    this.dependencies.productEvents.enqueue({ workspaceId, events });
+  }
+
+  private recordAcceptedTransitionProductEvents(
+    session: PresentationSessionRecord,
+    transition: NonNullable<ReturnType<typeof nextTransition>>,
+  ) {
+    const occurredAt = session.updatedAt.toISOString();
+    if (transition.event.type === "intervention.presented") {
+      this.recordProductEvents(session.workspaceId, [
+        {
+          name: "intervention_started",
+          occurredAt,
+          dimensions: { artifactType: "presentation" },
+        },
+      ]);
+      return;
+    }
+    const block = presentationCurrentBlock(session);
+    if (
+      transition.event.type === "question.launched" &&
+      block?.kind === "question" &&
+      (block.question.delivery ?? "main") === "recheck"
+    ) {
+      this.recordProductEvents(session.workspaceId, [
+        {
+          name: "linked_recheck_opened",
+          occurredAt,
+          dimensions: { artifactType: "presentation" },
+        },
+      ]);
+    }
   }
 
   /**
@@ -806,6 +855,7 @@ export class PresentationSessionService {
           "Presentation session not found",
         );
       }
+      this.recordAcceptedTransitionProductEvents(updated, transition);
       if (updated.status === "finished") {
         await this.dependencies.repository.recordAudit({
           workspaceId: input.workspaceId,
@@ -866,6 +916,13 @@ export class PresentationSessionService {
         "This Presentation is full",
       );
     }
+    this.recordProductEvents(session.workspaceId, [
+      {
+        name: "participant_joined",
+        occurredAt: joined.participant.joinedAt.toISOString(),
+        dimensions: { artifactType: "presentation" },
+      },
+    ]);
     const currentSession = await this.sessions.getSessionById(session.id);
     if (!currentSession) {
       throw new PresentationSessionServiceError(404, "NOT_FOUND", "Active Presentation not found");
@@ -1075,6 +1132,9 @@ export class PresentationSessionService {
           requestId: input.commandId,
         });
       }
+      if (accepted.status === "accepted") {
+        this.recordAcceptedTransitionProductEvents(accepted.session, transition);
+      }
       return this.realtimeHostSnapshot(accepted.session);
     } catch (error) {
       if (error instanceof PresentationSessionConflictError) {
@@ -1206,6 +1266,15 @@ export class PresentationSessionService {
         "This response key was already used for a different request",
       );
     }
+    if (acceptance.status === "accepted") {
+      this.recordProductEvents(session.workspaceId, [
+        {
+          name: "response_saved_acknowledged",
+          occurredAt: acceptance.response.submittedAt.toISOString(),
+          dimensions: { artifactType: "presentation" },
+        },
+      ]);
+    }
     const currentSession = (await this.sessions.getSessionById(input.sessionId)) ?? session;
     return this.responseAcknowledgement(
       currentSession,
@@ -1276,105 +1345,32 @@ export class PresentationSessionService {
         "The Presentation report is available after the session finishes",
       );
     }
-    const [responses, participants, timeline] = await Promise.all([
-      this.sessions.listResponses(sessionId),
-      this.sessions.listParticipants(sessionId),
-      this.sessions.listTimeline(sessionId),
-    ]);
-    const byBlock = new Map<string, PresentationSessionResponseRecord[]>();
-    for (const response of responses) {
-      const group = byBlock.get(response.blockId) ?? [];
-      group.push(response);
-      byBlock.set(response.blockId, group);
+    const stored = await this.sessions.getReport(workspaceId, sessionId);
+    if (!stored) {
+      throw new PresentationSessionServiceError(
+        503,
+        "REPORT_UNAVAILABLE",
+        "The Presentation report has not been queued for reconciliation",
+      );
     }
-    const evidence = session.content.blocks.map((block, blockIndex) => {
-      if (block.kind === "content") {
-        return {
-          blockId: block.id,
-          blockIndex,
-          kind: "content" as const,
-          title: block.title,
-          assessmentStatus: "not_assessed" as const,
-        };
-      }
-      const blockResponses = byBlock.get(block.id) ?? [];
-      const assessed = blockResponses.filter((response) => response.correct !== null);
-      const correct = assessed.filter((response) => response.correct).length;
-      return {
-        blockId: block.id,
-        blockIndex,
-        kind: "question" as const,
-        questionId: block.question.id,
-        prompt: block.question.prompt,
-        questionType: block.question.type,
-        questionTypeLabel: questionTypeDefinition(block.question.type).label,
-        delivery: block.question.delivery ?? "main",
-        respondents: blockResponses.length,
-        correct: assessed.length ? correct : null,
-        accuracyPercent: assessed.length ? Math.round((correct / assessed.length) * 100) : null,
-        totalScore: blockResponses.reduce((total, response) => total + response.score, 0),
-        averageResponseMs: blockResponses.length
-          ? Math.round(
-              blockResponses.reduce((total, response) => total + response.responseMs, 0) /
-                blockResponses.length,
-            )
-          : null,
-      };
+    let report = null;
+    if (stored.status === "ready") {
+      report = PresentationReportV1Schema.parse(stored.payload);
+    } else if (stored.status === "pending") {
+      // Keep the original `/v1` response useful immediately after finish while the durable worker
+      // reconciles the same immutable inputs in the background. Existing clients can continue to
+      // read `report`; newer clients can also observe `reportStatus`.
+      const [participants, responses, timeline] = await Promise.all([
+        this.sessions.listParticipants(sessionId),
+        this.sessions.listResponses(sessionId),
+        this.sessions.listTimeline(sessionId),
+      ]);
+      report = generatePresentationReport({ session, participants, responses, timeline });
+    }
+    return PresentationReportEnvelopeSchema.parse({
+      reportStatus: stored.status,
+      report,
     });
-    const responseByParticipantQuestion = new Map(
-      responses.map((response) => [`${response.participantId}:${response.questionId}`, response]),
-    );
-    const recovery = session.content.blocks.flatMap((block) => {
-      if (block.kind !== "question" || !block.question.linkedRecheckQuestionId) return [];
-      let eligible = 0;
-      let recovered = 0;
-      for (const participant of participants) {
-        const initial = responseByParticipantQuestion.get(`${participant.id}:${block.question.id}`);
-        const recheck = responseByParticipantQuestion.get(
-          `${participant.id}:${block.question.linkedRecheckQuestionId}`,
-        );
-        if (initial?.correct === false && recheck) {
-          eligible += 1;
-          if (recheck.correct === true) recovered += 1;
-        }
-      }
-      return [
-        {
-          sourceQuestionId: block.question.id,
-          recheckQuestionId: block.question.linkedRecheckQuestionId,
-          eligible,
-          recovered,
-          recoveryPercent: eligible ? Math.round((recovered / eligible) * 100) : null,
-        },
-      ];
-    });
-    return {
-      sessionId: session.id,
-      artifactType: "presentation" as const,
-      presentationId: session.presentationId,
-      presentationVersionId: session.presentationVersionId,
-      title: session.title,
-      status: session.status,
-      trustMode: session.trustMode,
-      participantCount: participants.length,
-      responseCount: responses.length,
-      leaderboard: rankedParticipants(participants, responses).map(
-        ({ id, nickname, score, rank }) => ({ id, nickname, score, rank }),
-      ),
-      evidence,
-      recovery,
-      timeline: timeline.map((event) => ({
-        sequence: event.sequence,
-        type: event.type,
-        blockIndex: event.blockIndex,
-        blockId: event.blockId,
-        occurredAt: event.occurredAt,
-      })),
-      evidenceNote:
-        "Content slides are recorded in the facilitation timeline but are not evidence of learning.",
-      createdAt: session.createdAt,
-      finishedAt: session.finishedAt,
-    };
   }
 
   async workspaceForCode(code: string) {

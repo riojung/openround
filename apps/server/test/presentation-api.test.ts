@@ -32,6 +32,7 @@ afterEach(async () => {
 
 describe("presentation authoring API", () => {
   it("creates, revision-saves, restores, and publishes a mixed live deck", async () => {
+    const repository = new MemoryRepository({ initialWorkspaceId: BETA_WORKSPACE_ID });
     const built = await buildApp(
       ConfigSchema.parse({
         NODE_ENV: "test",
@@ -45,7 +46,7 @@ describe("presentation authoring API", () => {
         LOG_LEVEL: "silent",
       }),
       {
-        repository: new MemoryRepository({ initialWorkspaceId: BETA_WORKSPACE_ID }),
+        repository,
         cache: new MemorySessionCache(),
       },
     );
@@ -229,6 +230,32 @@ describe("presentation authoring API", () => {
       version: { version: 1, sourceDraftRevision: 4 },
       presentation: { status: "published", hasUnpublishedChanges: false },
     });
+    const publishRetry = await app.inject({
+      method: "POST",
+      url: `/v1/presentations/${presentation.id}/publish`,
+      headers: { cookie },
+      payload: { expectedDraftRevision: 4 },
+    });
+    expect(publishRetry.statusCode).toBe(200);
+    expect(publishRetry.json()).toMatchObject({
+      version: { id: published.json<{ version: { id: string } }>().version.id },
+    });
+    await built.productEvents.drain();
+    expect(
+      repository.productEvents.filter(
+        (event) =>
+          event.name === "round_published" && event.dimensions.artifactType === "presentation",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        workspaceId: BETA_WORKSPACE_ID,
+        dimensions: {
+          artifactType: "presentation",
+          betaVersion: "p0-2026",
+          segment: "workplace",
+        },
+      }),
+    ]);
 
     const listed = await app.inject({
       method: "GET",

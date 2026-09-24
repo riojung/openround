@@ -71,4 +71,18 @@ describe("database migration discovery", () => {
     expect(writerLock).toBeLessThan(roundBackfill);
     expect(roundBackfill).toBeLessThan(triggerInstallation);
   });
+
+  it("commits Presentation report enqueueing before the idempotent backfill", async () => {
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migrations = await discoverMigrations(migrationsDirectory);
+    const triggerMigration = migrations.find(({ version }) => version === 36);
+    const backfillMigration = migrations.find(({ version }) => version === 37);
+    expect(triggerMigration?.sql).toContain("CREATE TRIGGER presentation_session_enqueue_report");
+    expect(triggerMigration?.sql).toContain("lease_token uuid");
+    expect(triggerMigration?.sql).not.toContain(
+      "LOCK TABLE presentation_live_sessions IN SHARE ROW EXCLUSIVE MODE",
+    );
+    expect(backfillMigration?.sql).toContain("INSERT INTO presentation_session_reports");
+    expect(backfillMigration?.sql).toContain("ON CONFLICT (session_id) DO NOTHING");
+  });
 });

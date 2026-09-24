@@ -362,6 +362,8 @@ const liveDeliveryEnglishMessages = {
   "live.presentationReport.facilitationTimeline": "Facilitation timeline",
   "live.presentationReport.hostView": "Host view",
   "live.presentationReport.loading": "Loading Presentation report…",
+  "live.presentationReport.failed":
+    "The Presentation report could not be generated. Try again later or contact support.",
   "live.presentationReport.notAssessed": "Not assessed.",
   "live.presentationReport.notAssessedDescription":
     "Presentation exposure is not treated as learning evidence.",

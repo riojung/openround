@@ -26,6 +26,7 @@ import {
   type Repository,
 } from "@openround/db";
 import type { AuthService } from "./auth.js";
+import type { ProductEventDispatcher } from "./product-events.js";
 import { professionalFeatureUnavailable } from "./workspace-rollout.js";
 
 const IdParamsSchema = z.object({ id: z.string().uuid() });
@@ -350,9 +351,12 @@ export async function registerPresentationRoutes(
     presentations: PresentationRepository;
     auth: AuthService;
     workspaceEnabled: (workspaceId: string) => boolean;
+    productEvents?: ProductEventDispatcher;
+    productEventsEnabled?: (workspaceId: string) => boolean;
   },
 ) {
-  const { repository, presentations, auth, workspaceEnabled } = dependencies;
+  const { repository, presentations, auth, workspaceEnabled, productEvents, productEventsEnabled } =
+    dependencies;
   const requirePresentationWorkspace = (
     creator: CreatorContext,
     reply: FastifyReply,
@@ -542,19 +546,38 @@ export async function registerPresentationRoutes(
       : null;
     const contentHash = jsonHash(content);
     try {
+      const candidateVersionId = randomUUID();
+      const publishedAt = new Date();
       const version = await presentations.publishPresentation(
         {
-          id: randomUUID(),
+          id: candidateVersionId,
           workspaceId: creator.workspaceId,
           presentationId: id,
           version: (current?.version ?? 0) + 1,
           content,
           contentHash,
           sourceDraftRevision: input.expectedDraftRevision,
-          publishedAt: new Date(),
+          publishedAt,
         },
         input.expectedDraftRevision,
       );
+      if (
+        version.id === candidateVersionId &&
+        productEvents &&
+        productEventsEnabled?.(creator.workspaceId)
+      ) {
+        productEvents.enqueue({
+          workspaceId: creator.workspaceId,
+          segment: creator.segment,
+          events: [
+            {
+              name: "round_published",
+              occurredAt: publishedAt.toISOString(),
+              dimensions: { artifactType: "presentation" },
+            },
+          ],
+        });
+      }
       const updated = await presentations.getPresentation(creator.workspaceId, id);
       await repository.recordAudit({
         workspaceId: creator.workspaceId,

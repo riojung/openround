@@ -29,13 +29,21 @@ export async function recordBetaProductEvents(input: {
   if (input.events.length === 0) return 0;
   const now = input.now ?? new Date();
   const expiresAt = new Date(now.getTime() + PRODUCT_EVENT_RETENTION_MS);
+  let segment = input.segment;
+  if (!segment) {
+    try {
+      segment = await input.repository.getWorkspaceSegment(input.workspaceId);
+    } catch {
+      // Segment enrichment is best effort; telemetry persistence must still proceed.
+    }
+  }
   const records: ProductEventRecord[] = input.events.map((event) => {
     const parsed = ProductEventSchema.parse({
       name: event.name,
       occurredAt: event.occurredAt ?? now.toISOString(),
       dimensions: {
         ...(event.dimensions ?? {}),
-        ...(input.segment ? { segment: input.segment } : {}),
+        ...(segment ? { segment } : {}),
         betaVersion: "p0-2026",
       },
     });

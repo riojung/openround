@@ -197,7 +197,7 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
           verificationClient.query<{ count: string; maximum: number }>(
             "SELECT count(*) AS count, max(version) AS maximum FROM _openround_migrations",
           ),
-        ).resolves.toMatchObject({ rows: [{ count: "35", maximum: 35 }] });
+        ).resolves.toMatchObject({ rows: [{ count: "37", maximum: 37 }] });
 
         await expect(
           verificationClient.query(
@@ -299,6 +299,8 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 33, name: "trust_and_session_event_foundation" },
       { version: 34, name: "live_room_code_registry" },
       { version: 35, name: "recovery_funnel_events" },
+      { version: 36, name: "presentation_session_reports" },
+      { version: 37, name: "backfill_presentation_session_reports" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -308,7 +310,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("35");
+    expect(bootstrapped.rows[0]?.count).toBe("37");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -510,6 +512,153 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     });
     return { session, sessions };
   }
+
+  it("durably queues, leases, completes, fails, and exports Presentation reports", async () => {
+    const owner = await creator("presentation-report-owner");
+    const outsider = await creator("presentation-report-outsider");
+    const published = await createPublishedPresentationFixture(owner, "Durable report");
+    const { session, sessions } = await createPresentationSessionFixture(
+      owner,
+      published,
+      String(randomInt(1_000_000, 10_000_000)),
+    );
+    const finishedAt = new Date("2000-01-01T00:00:00.000Z");
+    await sessions.transitionSession({
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      expectedRevision: 0,
+      phase: "finished",
+      currentBlockIndex: -1,
+      status: "finished",
+      occurredAt: finishedAt,
+      event: { type: "presentation.finished", blockIndex: null, blockId: null },
+    });
+
+    await expect(sessions.getReport(outsider.workspaceId, session.id)).resolves.toBeNull();
+    await expect(sessions.getReport(owner.workspaceId, session.id)).resolves.toMatchObject({
+      id: session.id,
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      status: "pending",
+      schemaVersion: 1,
+      payload: null,
+      generatedAt: null,
+      expiresAt: session.retentionExpiresAt,
+    });
+
+    const leaseUntil = new Date(Date.now() + 60_000);
+    const job = await sessions.claimReportJob(new Date(), leaseUntil);
+    expect(job).toMatchObject({
+      reportId: session.id,
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      attempts: 1,
+      expiresAt: session.retentionExpiresAt,
+    });
+    const payload = { artifactType: "presentation", participantCount: 0 };
+    const generatedAt = new Date();
+    await sessions.completeReportJob(job!, {
+      reportId: session.id,
+      sessionId: session.id,
+      schemaVersion: 1,
+      payload,
+      generatedAt,
+    });
+    await expect(sessions.getReport(owner.workspaceId, session.id)).resolves.toMatchObject({
+      status: "ready",
+      schemaVersion: 1,
+      payload,
+      generatedAt,
+    });
+    await expect(repository.exportAccount(owner.userId)).resolves.toMatchObject({
+      presentationSessionReports: [
+        expect.objectContaining({ id: session.id, status: "ready", payload }),
+      ],
+    });
+
+    const failedFixture = await createPresentationSessionFixture(
+      owner,
+      published,
+      String(randomInt(1_000_000, 10_000_000)),
+    );
+    await failedFixture.sessions.transitionSession({
+      workspaceId: owner.workspaceId,
+      sessionId: failedFixture.session.id,
+      expectedRevision: 0,
+      phase: "finished",
+      currentBlockIndex: -1,
+      status: "finished",
+      occurredAt: new Date(finishedAt.getTime() + 1),
+      event: { type: "presentation.finished", blockIndex: null, blockId: null },
+    });
+    const failedJob = await sessions.claimReportJob(new Date(), leaseUntil);
+    expect(failedJob).toMatchObject({ reportId: failedFixture.session.id, attempts: 1 });
+    await sessions.retryReportJob(failedJob!, "terminal failure", new Date(), true);
+    await expect(
+      sessions.getReport(owner.workspaceId, failedFixture.session.id),
+    ).resolves.toMatchObject({ status: "failed", payload: null, generatedAt: null });
+  });
+
+  it("fences a reclaimed Presentation report job from its expired PostgreSQL worker", async () => {
+    const owner = await creator("presentation-report-fencing-owner");
+    const published = await createPublishedPresentationFixture(owner, "Fenced report");
+    const { session, sessions } = await createPresentationSessionFixture(
+      owner,
+      published,
+      String(randomInt(1_000_000, 10_000_000)),
+    );
+    const finishedAt = new Date("1999-01-01T00:00:00.000Z");
+    await sessions.transitionSession({
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      expectedRevision: 0,
+      phase: "finished",
+      currentBlockIndex: -1,
+      status: "finished",
+      occurredAt: finishedAt,
+      event: { type: "presentation.finished", blockIndex: null, blockId: null },
+    });
+
+    const firstLeaseUntil = new Date(finishedAt.getTime() + 1_000);
+    const firstWorkerJob = await sessions.claimReportJob(finishedAt, firstLeaseUntil);
+    const secondClaimAt = new Date(firstLeaseUntil.getTime() + 1);
+    const secondLeaseUntil = new Date(secondClaimAt.getTime() + 60_000);
+    const secondWorkerJob = await sessions.claimReportJob(secondClaimAt, secondLeaseUntil);
+
+    expect(firstWorkerJob).toMatchObject({ reportId: session.id, attempts: 1 });
+    expect(secondWorkerJob).toMatchObject({ reportId: session.id, attempts: 2 });
+    expect(secondWorkerJob!.leaseToken).not.toBe(firstWorkerJob!.leaseToken);
+
+    await sessions.retryReportJob(firstWorkerJob!, "stale retry", secondClaimAt, false);
+    await sessions.retryReportJob(firstWorkerJob!, "stale terminal failure", secondClaimAt, true);
+    await expect(
+      sessions.completeReportJob(firstWorkerJob!, {
+        reportId: session.id,
+        sessionId: session.id,
+        schemaVersion: 1,
+        payload: { worker: "stale" },
+        generatedAt: secondClaimAt,
+      }),
+    ).rejects.toThrow("no longer pending");
+    await expect(sessions.getReport(owner.workspaceId, session.id)).resolves.toMatchObject({
+      status: "pending",
+      payload: null,
+    });
+    await expect(sessions.claimReportJob(secondClaimAt, secondLeaseUntil)).resolves.toBeNull();
+
+    const payload = { worker: "current" };
+    await sessions.completeReportJob(secondWorkerJob!, {
+      reportId: session.id,
+      sessionId: session.id,
+      schemaVersion: 1,
+      payload,
+      generatedAt: secondClaimAt,
+    });
+    await expect(sessions.getReport(owner.workspaceId, session.id)).resolves.toMatchObject({
+      status: "ready",
+      payload,
+    });
+  });
 
   it("defaults legacy report trust mode in account exports", async () => {
     const owner = await creator("legacy-report-export");
@@ -1994,6 +2143,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         "presentation_versions",
         "presentation_live_sessions",
         "presentation_live_participants",
+        "presentation_session_reports",
         "collaboration_groups",
         "collaboration_group_members",
         "collaboration_group_messages",

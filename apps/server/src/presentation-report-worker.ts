@@ -1,39 +1,38 @@
-import type { Repository } from "@openround/db";
+import type { PresentationSessionRepository } from "@openround/db";
 import type { MetricsService } from "./metrics.js";
-import type { ProductEventDispatcher } from "./product-events.js";
-import { generateReport } from "./reporting.js";
+import type { ReportWorkerProductEvents, ReportWorkerResult } from "./report-worker.js";
+import { generatePresentationReport } from "./presentation-reporting.js";
 
-export type ReportWorkerResult = "idle" | "completed" | "retry_scheduled" | "failed";
-
-export interface ReportWorkerProductEvents {
-  dispatcher: ProductEventDispatcher;
-  workspaceEnabled: (workspaceId: string) => boolean;
-}
-
-export class ReportWorker {
+export class PresentationReportWorker {
   constructor(
-    private readonly repository: Repository,
+    private readonly sessions: PresentationSessionRepository,
     private readonly leaseMs: number,
     private readonly metrics?: MetricsService,
     private readonly productEvents?: ReportWorkerProductEvents,
   ) {}
 
   async runOnce(now = new Date()): Promise<ReportWorkerResult> {
-    const job = await this.repository.claimReportJob(now, new Date(now.getTime() + this.leaseMs));
+    const job = await this.sessions.claimReportJob(now, new Date(now.getTime() + this.leaseMs));
     if (!job) return "idle";
 
     try {
-      const session = await this.repository.getSessionById(job.sessionId);
+      const session = await this.sessions.getSessionById(job.sessionId);
       if (!session || session.workspaceId !== job.workspaceId) {
-        throw new Error("The report session no longer exists");
+        throw new Error("The Presentation report session no longer exists");
       }
-      const evidence = await this.repository.getSessionEvidence(job.workspaceId, job.sessionId);
-      const report = generateReport(session.state, job.expiresAt, {
-        id: job.reportId,
-        evidence,
+      const [participants, responses, timeline] = await Promise.all([
+        this.sessions.listParticipants(job.sessionId),
+        this.sessions.listResponses(job.sessionId),
+        this.sessions.listTimeline(job.sessionId),
+      ]);
+      const report = generatePresentationReport({ session, participants, responses, timeline });
+      await this.sessions.completeReportJob(job, {
+        reportId: job.reportId,
+        sessionId: job.sessionId,
+        schemaVersion: report.schemaVersion,
+        payload: report,
         generatedAt: now,
       });
-      await this.repository.completeReportJob(job, report);
       this.metrics?.reportGenerated();
       try {
         if (this.productEvents?.workspaceEnabled(job.workspaceId)) {
@@ -44,21 +43,21 @@ export class ReportWorker {
               {
                 name: "report_reconciled",
                 occurredAt: now.toISOString(),
-                dimensions: { artifactType: "round" },
+                dimensions: { artifactType: "presentation" },
               },
             ],
           });
         }
       } catch {
-        // Report readiness is authoritative; best-effort telemetry cannot roll it back.
+        // A ready report remains authoritative when best-effort telemetry is unavailable.
       }
       return "completed";
     } catch (error) {
       const failed = job.attempts >= 5;
       const delayMs = Math.min(60_000, 1_000 * 2 ** Math.max(0, job.attempts - 1));
-      await this.repository.retryReportJob(
+      await this.sessions.retryReportJob(
         job,
-        error instanceof Error ? error.message : "Unknown report generation error",
+        error instanceof Error ? error.message : "Unknown Presentation report generation error",
         new Date(now.getTime() + delayMs),
         failed,
       );

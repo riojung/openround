@@ -32,6 +32,23 @@ export function presentationSaveStateForBlock(
   return status.blockId === blockId ? status.state : "idle";
 }
 
+export function presentationRemainingSeconds(
+  snapshot: Pick<
+    PresentationRealtimeSnapshot,
+    "acceptingResponses" | "questionClosesAt" | "serverTime"
+  > | null,
+  receivedAtMs: number,
+  nowMs: number,
+) {
+  if (!snapshot?.questionClosesAt) return null;
+  if (!snapshot.acceptingResponses) return 0;
+  const closesAt = Date.parse(snapshot.questionClosesAt);
+  const serverTime = Date.parse(snapshot.serverTime);
+  if (!Number.isFinite(closesAt) || !Number.isFinite(serverTime)) return 0;
+  const elapsedSinceReceipt = Math.max(0, nowMs - receivedAtMs);
+  return Math.max(0, Math.ceil((closesAt - serverTime - elapsedSinceReceipt) / 1_000));
+}
+
 type RealtimeAck<T> = { data?: T; error?: { code: string; message: string } };
 
 export interface PresentationSnapshotFence {
@@ -134,11 +151,59 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
   let connectionState: PresentationConnectionState = options.credential ? "connecting" : "fallback";
   let pendingSubmission: PendingSubmission | null = null;
   let reconciliation: Promise<Snapshot | null> | null = null;
+  let deadlineTimeout: ReturnType<typeof setTimeout> | null = null;
 
   const setConnectionState = (next: PresentationConnectionState) => {
     if (connectionState === next) return;
     connectionState = next;
     options.onConnectionState(next);
+  };
+
+  const scheduleDeadlineExpiry = (current: Snapshot) => {
+    if (deadlineTimeout) clearTimeout(deadlineTimeout);
+    deadlineTimeout = null;
+    if (!started || !current.acceptingResponses || !current.questionClosesAt) return;
+    const closesAt = Date.parse(current.questionClosesAt);
+    const serverTime = Date.parse(current.serverTime);
+    if (!Number.isFinite(closesAt) || !Number.isFinite(serverTime)) return;
+    const scheduled = {
+      blockId: current.currentBlock?.id ?? null,
+      questionClosesAt: current.questionClosesAt,
+      revision: current.revision,
+      seq: current.seq,
+    };
+    // The service accepts a response received exactly at the deadline, so expire one millisecond
+    // after the server-relative window rather than relying on the participant device clock.
+    deadlineTimeout = setTimeout(
+      () => {
+        deadlineTimeout = null;
+        const latest = snapshot;
+        if (
+          !started ||
+          !latest?.acceptingResponses ||
+          latest.currentBlock?.id !== scheduled.blockId ||
+          latest.questionClosesAt !== scheduled.questionClosesAt ||
+          latest.revision !== scheduled.revision ||
+          latest.seq !== scheduled.seq
+        ) {
+          return;
+        }
+        const expiredFenceTime = closesAt + 1;
+        if (
+          fence &&
+          fence.seq === scheduled.seq &&
+          fence.revision === scheduled.revision &&
+          Date.parse(fence.serverTime) < expiredFenceTime
+        ) {
+          // Prevent a delayed pre-deadline projection at the same durable fence from reopening the
+          // question after this controller has observed the server-relative deadline pass.
+          fence = { ...fence, serverTime: new Date(expiredFenceTime).toISOString() };
+        }
+        snapshot = { ...latest, acceptingResponses: false } as Snapshot;
+        options.onSnapshot(snapshot);
+      },
+      Math.max(0, closesAt - serverTime) + 1,
+    );
   };
 
   const applySnapshot = (incoming: Snapshot) => {
@@ -171,8 +236,14 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
     }
     fence = incomingFence;
     snapshot = projectedIncoming;
+    scheduleDeadlineExpiry(projectedIncoming);
     options.onSnapshot(projectedIncoming);
     return true;
+  };
+
+  const latestAcceptedSnapshot = (incoming: Snapshot) => {
+    applySnapshot(incoming);
+    return snapshot;
   };
 
   const settleSubmission = (ack: PresentationResponseAck) => {
@@ -252,6 +323,30 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
       emitSubmission(pending);
       return;
     }
+    if (sameBlock && authoritative.phase === "question_open" && !authoritative.acceptingResponses) {
+      if (pending.replayed) {
+        failSubmission(new Error("The question closed before the response was confirmed."));
+        return;
+      }
+      // The server may still be finishing a request whose receipt time was inside the window.
+      // Allow one bounded reconciliation for its durable receipt, then stop showing an
+      // indefinitely pending save if the closed-room snapshot still has no acknowledgement.
+      pending.replayed = true;
+      if (pending.timeout) clearTimeout(pending.timeout);
+      options.onSaveState?.("reconnecting_not_saved", pending.payload.blockId);
+      pending.timeout = setTimeout(
+        () => {
+          if (pendingSubmission !== pending) return;
+          void reconcile().then((latest) => {
+            if (pendingSubmission === pending && !latest) {
+              failSubmission(new Error("The server did not confirm that response."));
+            }
+          });
+        },
+        Math.min(1_000, ackTimeoutMs),
+      );
+      return;
+    }
     if (!sameBlock || authoritative.phase !== "question_open") {
       failSubmission(new Error("The question closed before the response was confirmed."));
     }
@@ -302,10 +397,10 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
           setConnectionState("fallback");
           try {
             const incoming = await options.fetchSnapshot();
-            applySnapshot(incoming);
-            reconcileSubmission(incoming);
+            const authoritative = latestAcceptedSnapshot(incoming);
+            if (authoritative) reconcileSubmission(authoritative);
             reconciliation = null;
-            resolve(incoming);
+            resolve(authoritative);
           } catch (caught) {
             options.onError?.(
               caught instanceof Error
@@ -328,14 +423,22 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
               return;
             }
             const incoming = response.data?.snapshot;
-            if (incoming && incoming.projection === options.credential?.projection) {
+            if (
+              incoming &&
+              incoming.sessionId === options.sessionId &&
+              incoming.projection === options.credential?.projection
+            ) {
+              const authoritative = latestAcceptedSnapshot(incoming as Snapshot);
+              if (!authoritative) {
+                void useFallback(new Error("Presentation sync returned an invalid snapshot"));
+                return;
+              }
               settled = true;
-              applySnapshot(incoming as Snapshot);
-              reconcileSubmission(incoming as Snapshot);
+              reconcileSubmission(authoritative);
               reconciled = true;
               setConnectionState("connected");
               reconciliation = null;
-              resolve(incoming as Snapshot);
+              resolve(authoritative);
             } else {
               void useFallback(new Error("Presentation sync returned an invalid snapshot"));
             }
@@ -345,10 +448,10 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
     }
     try {
       const incoming = await options.fetchSnapshot();
-      applySnapshot(incoming);
-      reconcileSubmission(incoming);
+      const authoritative = latestAcceptedSnapshot(incoming);
+      if (authoritative) reconcileSubmission(authoritative);
       if (!options.credential) setConnectionState("fallback");
-      return incoming;
+      return authoritative;
     } catch (caught) {
       const error = caught instanceof Error ? caught : new Error("Unable to restore Presentation");
       options.onError?.(error);
@@ -435,6 +538,8 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
     stop() {
       started = false;
       reconciled = false;
+      if (deadlineTimeout) clearTimeout(deadlineTimeout);
+      deadlineTimeout = null;
       if (pendingSubmission?.timeout) clearTimeout(pendingSubmission.timeout);
       if (pendingSubmission) {
         pendingSubmission.reject(new Error("Presentation connection closed"));

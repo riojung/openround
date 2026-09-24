@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  PresentationReportEnvelopeSchema,
   PresentationRestV1CreateSessionResponseSchema,
   PresentationRestV1HostSnapshotResponseSchema,
   PresentationRestV1JoinSessionResponseSchema,
@@ -50,6 +51,7 @@ afterEach(async () => {
 describe("live Presentation sessions", () => {
   it("hosts mixed blocks, protects answer keys, reconnects, and produces timeline evidence", async () => {
     const cache = new RecordingSessionCache();
+    const repository = new MemoryRepository({ initialWorkspaceId: BETA_WORKSPACE_ID });
     const built = await buildApp(
       ConfigSchema.parse({
         NODE_ENV: "test",
@@ -63,7 +65,7 @@ describe("live Presentation sessions", () => {
         LOG_LEVEL: "silent",
       }),
       {
-        repository: new MemoryRepository({ initialWorkspaceId: BETA_WORKSPACE_ID }),
+        repository,
         cache,
       },
     );
@@ -607,6 +609,27 @@ describe("live Presentation sessions", () => {
       finishedSession!.retentionExpiresAt.getTime() - finishedSession!.finishedAt!.getTime(),
     ).toBeGreaterThanOrEqual(30 * 24 * 60 * 60 * 1_000 - 1_000);
 
+    const pendingReport = await app.inject({
+      method: "GET",
+      url: `/v1/presentation-sessions/${lobby.id}/report`,
+      headers: { cookie },
+    });
+    expect(pendingReport.statusCode).toBe(200);
+    expect(pendingReport.json()).toMatchObject({
+      reportStatus: "pending",
+      report: {
+        schemaVersion: 1,
+        artifactType: "presentation",
+        participantCount: 2,
+        responseCount: 3,
+      },
+    });
+    PresentationReportEnvelopeSchema.parse(pendingReport.json());
+    const pendingProjection = pendingReport.json<{ report: unknown }>().report;
+    await expect(built.presentationReportWorker.runUntilIdle()).resolves.toEqual([
+      "completed",
+      "idle",
+    ]);
     const report = await app.inject({
       method: "GET",
       url: `/v1/presentation-sessions/${lobby.id}/report`,
@@ -614,8 +637,12 @@ describe("live Presentation sessions", () => {
     });
     expect(report.statusCode).toBe(200);
     expect(report.headers["cache-control"]).toContain("no-store");
+    PresentationReportEnvelopeSchema.parse(report.json());
+    expect(report.json<{ report: unknown }>().report).toEqual(pendingProjection);
     expect(report.json()).toMatchObject({
+      reportStatus: "ready",
       report: {
+        schemaVersion: 1,
         artifactType: "presentation",
         participantCount: 2,
         responseCount: 3,
@@ -646,6 +673,45 @@ describe("live Presentation sessions", () => {
         ],
       },
     });
+    await built.productEvents.drain();
+    const presentationEvents = repository.productEvents.filter(
+      (event) => event.dimensions.artifactType === "presentation",
+    );
+    const eventCount = (name: (typeof presentationEvents)[number]["name"]) =>
+      presentationEvents.filter((event) => event.name === name).length;
+    expect(eventCount("round_published")).toBe(1);
+    expect(eventCount("participant_joined")).toBe(2);
+    expect(eventCount("response_saved_acknowledged")).toBe(3);
+    expect(eventCount("intervention_started")).toBe(1);
+    expect(eventCount("linked_recheck_opened")).toBe(1);
+    for (const event of presentationEvents) {
+      expect(event.dimensions).toMatchObject({
+        artifactType: "presentation",
+        betaVersion: "p0-2026",
+      });
+      for (const forbiddenKey of [
+        "presentationId",
+        "sessionId",
+        "participantId",
+        "nickname",
+        "code",
+        "response",
+      ]) {
+        expect(event.dimensions).not.toHaveProperty(forbiddenKey);
+      }
+    }
+    const renderedMetrics = await built.metrics.render();
+    for (const [stage, count] of [
+      ["publish", 1],
+      ["join", 2],
+      ["answer_acknowledged", 3],
+      ["intervention", 1],
+      ["linked_recheck", 1],
+    ] as const) {
+      expect(renderedMetrics).toContain(
+        `openround_recovery_funnel_stages_total{stage="${stage}",artifact_type="presentation",segment="workplace"} ${count}`,
+      );
+    }
   });
 
   it("never applies delayed numeric or rating payloads to the next question", async () => {

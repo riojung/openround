@@ -102,6 +102,180 @@ describe("presentation response acceptance", () => {
     expect(session.questionClosesAt).toEqual(new Date(setup.now.getTime() + 20_000));
   });
 
+  it("persists and leases Presentation report jobs through ready and failed states", async () => {
+    const repository = createPresentationSessionRepository(new MemoryRepository());
+    const setup = fixture();
+    const expiresAt = new Date(setup.now.getTime() + 30 * 86_400_000);
+    await repository.createSession({
+      id: setup.sessionId,
+      workspaceId: setup.workspaceId,
+      presentationId: randomUUID(),
+      presentationVersionId: randomUUID(),
+      title: setup.content.title,
+      content: setup.content,
+      code: "5555553",
+      status: "active",
+      phase: "lobby",
+      currentBlockIndex: -1,
+      revision: 0,
+      createdBy: randomUUID(),
+      createdAt: setup.now,
+      updatedAt: setup.now,
+      finishedAt: null,
+      liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+      retentionExpiresAt: expiresAt,
+    });
+    await repository.transitionSession({
+      workspaceId: setup.workspaceId,
+      sessionId: setup.sessionId,
+      expectedRevision: 0,
+      phase: "finished",
+      currentBlockIndex: -1,
+      status: "finished",
+      occurredAt: setup.now,
+      retentionExpiresAt: expiresAt,
+      event: { type: "presentation.finished", blockIndex: null, blockId: null },
+    });
+
+    await expect(repository.getReport(randomUUID(), setup.sessionId)).resolves.toBeNull();
+    await expect(repository.getReport(setup.workspaceId, setup.sessionId)).resolves.toMatchObject({
+      id: setup.sessionId,
+      status: "pending",
+      schemaVersion: 1,
+      payload: null,
+      generatedAt: null,
+      expiresAt,
+    });
+
+    const firstLeaseEnd = new Date(setup.now.getTime() + 60_000);
+    const firstJob = await repository.claimReportJob(setup.now, firstLeaseEnd);
+    expect(firstJob).toMatchObject({
+      reportId: setup.sessionId,
+      workspaceId: setup.workspaceId,
+      sessionId: setup.sessionId,
+      attempts: 1,
+      expiresAt,
+    });
+    await expect(repository.claimReportJob(setup.now, firstLeaseEnd)).resolves.toBeNull();
+
+    const retryAt = new Date(setup.now.getTime() + 1_000);
+    await repository.retryReportJob(firstJob!, "temporary failure", retryAt, false);
+    await expect(
+      repository.claimReportJob(new Date(retryAt.getTime() - 1), firstLeaseEnd),
+    ).resolves.toBeNull();
+    const retriedJob = await repository.claimReportJob(retryAt, firstLeaseEnd);
+    expect(retriedJob).toMatchObject({ reportId: setup.sessionId, attempts: 2 });
+
+    const payload = { artifactType: "presentation", participantCount: 0 };
+    await repository.completeReportJob(retriedJob!, {
+      reportId: setup.sessionId,
+      sessionId: setup.sessionId,
+      schemaVersion: 2,
+      payload,
+      generatedAt: retryAt,
+    });
+    await expect(repository.getReport(setup.workspaceId, setup.sessionId)).resolves.toMatchObject({
+      status: "ready",
+      schemaVersion: 2,
+      payload,
+      generatedAt: retryAt,
+    });
+
+    const failedSessionId = randomUUID();
+    await repository.createSession({
+      id: failedSessionId,
+      workspaceId: setup.workspaceId,
+      presentationId: randomUUID(),
+      presentationVersionId: randomUUID(),
+      title: setup.content.title,
+      content: setup.content,
+      code: "5555552",
+      status: "finished",
+      phase: "finished",
+      currentBlockIndex: 0,
+      revision: 1,
+      createdBy: randomUUID(),
+      createdAt: setup.now,
+      updatedAt: setup.now,
+      finishedAt: setup.now,
+      liveExpiresAt: setup.now,
+      retentionExpiresAt: expiresAt,
+    });
+    const failedJob = await repository.claimReportJob(setup.now, firstLeaseEnd);
+    expect(failedJob).toMatchObject({ reportId: failedSessionId, attempts: 1 });
+    await repository.retryReportJob(failedJob!, "terminal failure", retryAt, true);
+    await expect(repository.getReport(setup.workspaceId, failedSessionId)).resolves.toMatchObject({
+      status: "failed",
+      payload: null,
+      generatedAt: null,
+    });
+  });
+
+  it("fences an expired Presentation report worker after another worker reclaims its job", async () => {
+    const repository = createPresentationSessionRepository(new MemoryRepository());
+    const setup = fixture();
+    const expiresAt = new Date(setup.now.getTime() + 30 * 86_400_000);
+    await repository.createSession({
+      id: setup.sessionId,
+      workspaceId: setup.workspaceId,
+      presentationId: randomUUID(),
+      presentationVersionId: randomUUID(),
+      title: setup.content.title,
+      content: setup.content,
+      code: "5555551",
+      status: "finished",
+      phase: "finished",
+      currentBlockIndex: 0,
+      revision: 1,
+      createdBy: randomUUID(),
+      createdAt: setup.now,
+      updatedAt: setup.now,
+      finishedAt: setup.now,
+      liveExpiresAt: setup.now,
+      retentionExpiresAt: expiresAt,
+    });
+
+    const firstLeaseUntil = new Date(setup.now.getTime() + 1_000);
+    const firstWorkerJob = await repository.claimReportJob(setup.now, firstLeaseUntil);
+    const secondClaimAt = new Date(firstLeaseUntil.getTime() + 1);
+    const secondLeaseUntil = new Date(secondClaimAt.getTime() + 60_000);
+    const secondWorkerJob = await repository.claimReportJob(secondClaimAt, secondLeaseUntil);
+
+    expect(firstWorkerJob).toMatchObject({ reportId: setup.sessionId, attempts: 1 });
+    expect(secondWorkerJob).toMatchObject({ reportId: setup.sessionId, attempts: 2 });
+    expect(secondWorkerJob!.leaseToken).not.toBe(firstWorkerJob!.leaseToken);
+
+    await repository.retryReportJob(firstWorkerJob!, "stale retry", secondClaimAt, false);
+    await repository.retryReportJob(firstWorkerJob!, "stale terminal failure", secondClaimAt, true);
+    await expect(
+      repository.completeReportJob(firstWorkerJob!, {
+        reportId: setup.sessionId,
+        sessionId: setup.sessionId,
+        schemaVersion: 1,
+        payload: { worker: "stale" },
+        generatedAt: secondClaimAt,
+      }),
+    ).rejects.toThrow("no longer pending");
+    await expect(repository.getReport(setup.workspaceId, setup.sessionId)).resolves.toMatchObject({
+      status: "pending",
+      payload: null,
+    });
+    await expect(repository.claimReportJob(secondClaimAt, secondLeaseUntil)).resolves.toBeNull();
+
+    const payload = { worker: "current" };
+    await repository.completeReportJob(secondWorkerJob!, {
+      reportId: setup.sessionId,
+      sessionId: setup.sessionId,
+      schemaVersion: 1,
+      payload,
+      generatedAt: secondClaimAt,
+    });
+    await expect(repository.getReport(setup.workspaceId, setup.sessionId)).resolves.toMatchObject({
+      status: "ready",
+      payload,
+    });
+  });
+
   it("enforces the participant limit inside the session mutation", async () => {
     const repository = createPresentationSessionRepository(new MemoryRepository());
     const setup = fixture();

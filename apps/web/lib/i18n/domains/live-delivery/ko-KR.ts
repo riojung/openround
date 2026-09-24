@@ -361,6 +361,8 @@ const messages = {
   "live.presentationReport.facilitationTimeline": "진행 타임라인",
   "live.presentationReport.hostView": "호스트 뷰",
   "live.presentationReport.loading": "로딩중...",
+  "live.presentationReport.failed":
+    "프레젠테이션 보고서를 생성하지 못했습니다. 나중에 다시 시도하거나 지원팀에 문의하세요.",
   "live.presentationReport.notAssessed": "평가되지 않음.",
   "live.presentationReport.notAssessedDescription": "발표 노출은 학습 증거로 치료되지 않습니다.",
   "live.presentationReport.questionType": "질문 유형",

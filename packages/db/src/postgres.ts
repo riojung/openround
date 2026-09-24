@@ -5788,6 +5788,13 @@ export class PostgresRepository implements Repository {
            WHERE workspace_id = ANY($1::uuid[])
            ORDER BY session_id, created_at, id`,
         );
+        const presentationSessionReports = await queryWorkspaceData(
+          `SELECT id, workspace_id, session_id, status, schema_version, payload, generated_at,
+                  created_at, updated_at
+           FROM presentation_session_reports
+           WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY created_at, id`,
+        );
         const sessionIds = sessions.rows.map((row) => row.id);
         const participants = sessionIds.length
           ? await client.query(
@@ -6012,6 +6019,7 @@ export class PostgresRepository implements Repository {
           presentationSessionTimeline: presentationSessionTimeline.rows,
           presentationSessionCommandReceipts: presentationSessionCommandReceipts.rows,
           presentationSessionCredentials: presentationSessionCredentials.rows,
+          presentationSessionReports: presentationSessionReports.rows,
           participants: participants.rows,
           answers: answers.rows,
           reports: reports.rows.map(({ source_trust_mode: sourceTrustMode, ...row }) => ({

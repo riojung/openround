@@ -211,8 +211,9 @@ describe("professional workspace rollout flags", () => {
       FEATURE_PRESENTATIONS: "true",
       LOG_LEVEL: "silent",
     });
+    const repository = new MemoryRepository({ initialWorkspaceId: workspaceId });
     const built = await buildApp(config, {
-      repository: new MemoryRepository({ initialWorkspaceId: workspaceId }),
+      repository,
       cache: new MemorySessionCache(),
     });
     app = built.app;
@@ -340,6 +341,7 @@ describe("professional workspace rollout flags", () => {
     });
     expect(finishedDuringRollback.statusCode).toBe(200);
     expect(finishedDuringRollback.json()).toMatchObject({ snapshot: { phase: "finished" } });
+    await built.presentationReportWorker.runUntilIdle();
     expect(
       (
         await app.inject({
@@ -390,5 +392,7 @@ describe("professional workspace rollout flags", () => {
       payload: {},
     });
     expect(blockedDraftMutation.statusCode).toBe(404);
+    await built.productEvents.drain();
+    expect(repository.productEvents).toEqual([]);
   });
 });

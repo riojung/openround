@@ -367,6 +367,8 @@ const messages = {
   "live.presentationReport.facilitationTimeline": "Calendrier de facilitation",
   "live.presentationReport.hostView": "Affichage de l'hôte",
   "live.presentationReport.loading": "Chargement du rapport de présentation...",
+  "live.presentationReport.failed":
+    "Le rapport de présentation n’a pas pu être généré. Réessayez plus tard ou contactez le soutien.",
   "live.presentationReport.notAssessed": "Non évalué.",
   "live.presentationReport.notAssessedDescription":
     "L'exposition à la présentation n'est pas traitée comme une preuve d'apprentissage.",

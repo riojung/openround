@@ -3757,3 +3757,124 @@ export type PresentationRestV1ResponseAck = z.infer<typeof PresentationRestV1Res
 /** Compatibility exports retained for existing imports of the original unversioned name. */
 export const PresentationRestResponseAckSchema = PresentationRestV1ResponseAckSchema;
 export type PresentationRestResponseAck = PresentationRestV1ResponseAck;
+
+export const PresentationReportStatusSchema = z.enum(["pending", "ready", "failed"]);
+export type PresentationReportStatus = z.infer<typeof PresentationReportStatusSchema>;
+
+export const PresentationReportTimelineEventTypeSchema = z.enum([
+  "presentation.started",
+  "content.presented",
+  "question.launched",
+  "question.revealed",
+  "intervention.presented",
+  "presentation.finished",
+]);
+export type PresentationReportTimelineEventType = z.infer<
+  typeof PresentationReportTimelineEventTypeSchema
+>;
+
+const PresentationReportEvidenceSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      blockId: z.string().uuid(),
+      blockIndex: z.number().int().nonnegative(),
+      kind: z.literal("content"),
+      title: z.string().max(160),
+      assessmentStatus: z.literal("not_assessed"),
+    })
+    .strict(),
+  z
+    .object({
+      blockId: z.string().uuid(),
+      blockIndex: z.number().int().nonnegative(),
+      kind: z.literal("question"),
+      questionId: z.string().uuid(),
+      prompt: z.string().max(2_000),
+      questionType: QuestionTypeSchema,
+      questionTypeLabel: z.string().min(1).max(120),
+      delivery: QuestionDeliverySchema,
+      respondents: z.number().int().nonnegative(),
+      correct: z.number().int().nonnegative().nullable(),
+      accuracyPercent: z.number().min(0).max(100).nullable(),
+      totalScore: z.number().int().nonnegative(),
+      averageResponseMs: z.number().int().nonnegative().nullable(),
+    })
+    .strict(),
+]);
+
+/** Immutable, aggregate-only evidence produced from one finished Presentation session. */
+export const PresentationReportV1Schema = z
+  .object({
+    schemaVersion: z.literal(1).default(1),
+    sessionId: z.string().uuid(),
+    artifactType: z.literal("presentation"),
+    presentationId: z.string().uuid(),
+    presentationVersionId: z.string().uuid(),
+    title: z.string().min(1).max(160),
+    status: z.literal("finished"),
+    trustMode: TrustModeSchema.default("learning"),
+    participantCount: z.number().int().nonnegative(),
+    responseCount: z.number().int().nonnegative(),
+    leaderboard: z.array(
+      z
+        .object({
+          id: z.string().uuid(),
+          nickname: z.string().min(1).max(32),
+          score: z.number().int().nonnegative(),
+          rank: z.number().int().positive(),
+        })
+        .strict(),
+    ),
+    evidence: z.array(PresentationReportEvidenceSchema),
+    recovery: z.array(
+      z
+        .object({
+          sourceQuestionId: z.string().uuid(),
+          recheckQuestionId: z.string().uuid(),
+          eligible: z.number().int().nonnegative(),
+          recovered: z.number().int().nonnegative(),
+          recoveryPercent: z.number().min(0).max(100).nullable(),
+        })
+        .strict(),
+    ),
+    timeline: z.array(
+      z
+        .object({
+          sequence: z.number().int().nonnegative(),
+          type: PresentationReportTimelineEventTypeSchema,
+          blockIndex: z.number().int().nonnegative().nullable(),
+          blockId: z.string().uuid().nullable(),
+          occurredAt: z.string().datetime(),
+        })
+        .strict(),
+    ),
+    evidenceNote: z.string().min(1).max(500),
+    createdAt: z.string().datetime(),
+    finishedAt: z.string().datetime(),
+  })
+  .strict();
+export type PresentationReportV1 = z.infer<typeof PresentationReportV1Schema>;
+
+export const PresentationReportEnvelopeSchema = z
+  .object({
+    reportStatus: PresentationReportStatusSchema,
+    report: PresentationReportV1Schema.nullable(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.reportStatus === "ready" && value.report === null) {
+      context.addIssue({
+        code: "custom",
+        path: ["report"],
+        message: "A ready Presentation report must include its immutable evidence",
+      });
+    }
+    if (value.reportStatus === "failed" && value.report !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["report"],
+        message: "A failed Presentation report cannot include evidence",
+      });
+    }
+  });
+export type PresentationReportEnvelope = z.infer<typeof PresentationReportEnvelopeSchema>;
