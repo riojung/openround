@@ -32,6 +32,7 @@ const reportSummaryKeys = [
   "quizId",
   "title",
   "status",
+  "trustMode",
   "participantCount",
   "initialAccuracyPercent",
   "recovery",
@@ -47,6 +48,7 @@ const reportSummaryKeys = [
 const followupSummaryKeys = [
   "id",
   "purpose",
+  "trustMode",
   "sourceQuizVersionId",
   "sourceSessionId",
   "sourceReportId",
@@ -230,6 +232,7 @@ describe("P0 beta API privacy and recovery regressions", () => {
                 quizId: randomUUID(),
                 title: "Exact report cursor",
                 status: "ready",
+                trustMode: "learning",
                 participantCount: 5,
                 initialAccuracyPercent: 40,
                 recovery: { recovered: 2, eligible: 3, percent: 66.67 },

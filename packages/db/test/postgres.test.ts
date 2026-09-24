@@ -25,6 +25,7 @@ import {
   PostgresLibraryMetadataRepository,
   PostgresPresentationRepository,
   PostgresPresentationSessionRepository,
+  type PresentationSessionCredentialRecord,
 } from "../src/index.js";
 import {
   FollowupAccessLimitError,
@@ -196,7 +197,7 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
           verificationClient.query<{ count: string; maximum: number }>(
             "SELECT count(*) AS count, max(version) AS maximum FROM _openround_migrations",
           ),
-        ).resolves.toMatchObject({ rows: [{ count: "31", maximum: 31 }] });
+        ).resolves.toMatchObject({ rows: [{ count: "35", maximum: 35 }] });
 
         await expect(
           verificationClient.query(
@@ -294,6 +295,10 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 29, name: "presentation_live_expiry" },
       { version: 30, name: "presentation_noop_mutations" },
       { version: 31, name: "user_locale_preference" },
+      { version: 32, name: "presentation_realtime_foundation" },
+      { version: 33, name: "trust_and_session_event_foundation" },
+      { version: 34, name: "live_room_code_registry" },
+      { version: 35, name: "recovery_funnel_events" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -303,7 +308,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("31");
+    expect(bootstrapped.rows[0]?.count).toBe("35");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -347,6 +352,479 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     expect(result).not.toBeNull();
     return result!;
   }
+
+  async function createPublishedRoundFixture(
+    owner: Awaited<ReturnType<typeof creator>>,
+    label: string,
+  ) {
+    const now = new Date();
+    const content = publishableRound(label);
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: content.title,
+      description: content.description,
+      status: "draft",
+      draft: content,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const version = await repository.publishQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      quizId: quiz.id,
+      version: 1,
+      content,
+      contentHash: randomUUID(),
+      publishedAt: now,
+    });
+    return { content, version };
+  }
+
+  async function createRoundSessionFixture(
+    owner: Awaited<ReturnType<typeof creator>>,
+    fixture: Awaited<ReturnType<typeof createPublishedRoundFixture>>,
+    code: string,
+    trustMode: "learning" | "verified" = "learning",
+  ) {
+    const now = new Date();
+    const id = randomUUID();
+    const state = createGameState({
+      sessionId: id,
+      code,
+      quiz: fixture.content,
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "friendly_only",
+        trustMode,
+      },
+    });
+    await repository.createSession({
+      id,
+      workspaceId: owner.workspaceId,
+      quizVersionId: fixture.version.id,
+      hostId: owner.userId,
+      hostTokenHash: randomUUID(),
+      trustMode,
+      state,
+      expiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    return { id, state };
+  }
+
+  async function createPublishedPresentationFixture(
+    owner: Awaited<ReturnType<typeof creator>>,
+    label: string,
+  ) {
+    const now = new Date();
+    const content = {
+      title: label,
+      description: "",
+      experiencePreset: { id: "focus", version: 1 },
+      schemaVersion: 1,
+      blocks: [
+        {
+          id: randomUUID(),
+          kind: "question",
+          question: {
+            id: randomUUID(),
+            type: "numeric",
+            prompt: "How many room-code namespaces are authoritative?",
+            correctValue: "1",
+            tolerance: "0",
+            unit: null,
+            timeLimitSeconds: 30,
+            basePoints: 1_000,
+            explanation: "Rounds and Presentations share one namespace.",
+            mediaId: null,
+            mediaAlt: null,
+          },
+        },
+      ],
+    } satisfies PresentationDraft;
+    const presentations = new PostgresPresentationRepository(repository);
+    const presentation = await presentations.createPresentation({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: content.title,
+      description: content.description,
+      status: "draft",
+      draft: content,
+      draftRevision: 0,
+      draftSchemaVersion: 1,
+      currentVersionId: null,
+      folderId: null,
+      publishedDraftRevision: null,
+      lastEditedBy: owner.userId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const version = await presentations.publishPresentation(
+      {
+        id: randomUUID(),
+        workspaceId: owner.workspaceId,
+        presentationId: presentation.id,
+        version: 1,
+        content,
+        contentHash: randomUUID(),
+        sourceDraftRevision: 0,
+        publishedAt: now,
+      },
+      0,
+    );
+    return { content, presentation, version };
+  }
+
+  async function createPresentationSessionFixture(
+    owner: Awaited<ReturnType<typeof creator>>,
+    fixture: Awaited<ReturnType<typeof createPublishedPresentationFixture>>,
+    code: string,
+  ) {
+    const now = new Date();
+    const sessions = new PostgresPresentationSessionRepository(repository);
+    const session = await sessions.createSession({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      presentationId: fixture.presentation.id,
+      presentationVersionId: fixture.version.id,
+      title: fixture.content.title,
+      content: fixture.content,
+      code,
+      status: "active",
+      phase: "lobby",
+      currentBlockIndex: -1,
+      revision: 0,
+      createdBy: owner.userId,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: null,
+      liveExpiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+    });
+    return { session, sessions };
+  }
+
+  it("defaults legacy report trust mode in account exports", async () => {
+    const owner = await creator("legacy-report-export");
+    const fixture = await createPublishedRoundFixture(owner, "Legacy report export");
+    const session = await createRoundSessionFixture(
+      owner,
+      fixture,
+      String(randomInt(1_000_000, 10_000_000)),
+    );
+    const now = new Date();
+    const legacyReport: Report = {
+      id: randomUUID(),
+      sessionId: session.id,
+      status: "ready",
+      generatedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000).toISOString(),
+      metrics: {
+        participantCount: 0,
+        completedCount: 0,
+        answerCount: 0,
+        accuracyPercent: 0,
+      },
+      questions: [],
+      participants: [],
+    };
+    await repository.saveReport(owner.workspaceId, legacyReport);
+
+    const stored = await runtimePool.connect();
+    try {
+      await stored.query("BEGIN");
+      await stored.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+      await expect(
+        stored.query<{ has_trust_mode: boolean }>(
+          `SELECT metrics ? 'trustMode' AS has_trust_mode FROM reports WHERE id = $1`,
+          [legacyReport.id],
+        ),
+      ).resolves.toMatchObject({ rows: [{ has_trust_mode: false }] });
+      await stored.query("ROLLBACK");
+    } finally {
+      stored.release();
+    }
+
+    const exported = await repository.exportAccount(owner.userId);
+    expect(exported.reports).toEqual([
+      expect.objectContaining({
+        id: legacyReport.id,
+        metrics: expect.objectContaining({ trustMode: "learning" }),
+      }),
+    ]);
+  });
+
+  it("derives legacy report trust mode from its source session in account exports", async () => {
+    const owner = await creator("legacy-verified-report-export");
+    const fixture = await createPublishedRoundFixture(owner, "Legacy verified report export");
+    const session = await createRoundSessionFixture(
+      owner,
+      fixture,
+      String(randomInt(1_000_000, 10_000_000)),
+      "verified",
+    );
+    const now = new Date();
+    const legacyReport: Report = {
+      id: randomUUID(),
+      sessionId: session.id,
+      status: "ready",
+      generatedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000).toISOString(),
+      metrics: {
+        participantCount: 0,
+        completedCount: 0,
+        answerCount: 0,
+        accuracyPercent: 0,
+      },
+      questions: [],
+      participants: [],
+    };
+    await repository.saveReport(owner.workspaceId, legacyReport);
+
+    const exported = await repository.exportAccount(owner.userId);
+    expect(exported.reports).toEqual([
+      expect.objectContaining({
+        id: legacyReport.id,
+        metrics: expect.objectContaining({ trustMode: "verified" }),
+      }),
+    ]);
+  });
+
+  it("reclaims released room codes across workspaces and removes claims with their source", async () => {
+    const first = await creator("room-registry-first");
+    const second = await creator("room-registry-second");
+    const [firstRound, secondRound, secondPresentation] = await Promise.all([
+      createPublishedRoundFixture(first, "First room registry source"),
+      createPublishedRoundFixture(second, "Second room registry source"),
+      createPublishedPresentationFixture(second, "Presentation room registry source"),
+    ]);
+    const code = String(randomInt(1_000_000, 10_000_000));
+    const firstSession = await createRoundSessionFixture(first, firstRound, code);
+
+    await expect(
+      createPresentationSessionFixture(second, secondPresentation, code),
+    ).rejects.toMatchObject({ code: "23505", constraint: "live_room_codes_pkey" });
+
+    const firstClient = await runtimePool.connect();
+    try {
+      await firstClient.query("BEGIN");
+      await firstClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        first.workspaceId,
+      ]);
+      await firstClient.query("SAVEPOINT immutable_code");
+      await expect(
+        firstClient.query("UPDATE game_sessions SET code = $2 WHERE id = $1", [
+          firstSession.id,
+          String(randomInt(1_000_000, 10_000_000)),
+        ]),
+      ).rejects.toMatchObject({ code: "23514" });
+      await firstClient.query("ROLLBACK TO SAVEPOINT immutable_code");
+      await firstClient.query(
+        `UPDATE game_sessions
+         SET ended_at = now(), updated_at = now()
+         WHERE id = $1`,
+        [firstSession.id],
+      );
+      await firstClient.query("COMMIT");
+    } catch (error) {
+      await firstClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      firstClient.release();
+    }
+
+    const { session: presentationSession, sessions: presentationSessions } =
+      await createPresentationSessionFixture(second, secondPresentation, code);
+    await expect(createRoundSessionFixture(second, secondRound, code)).rejects.toBeInstanceOf(
+      SessionCodeConflictError,
+    );
+    await expect(repository.getLiveRoomCode(code)).resolves.toMatchObject({
+      workspaceId: second.workspaceId,
+      artifactType: "presentation",
+      artifactId: presentationSession.id,
+    });
+
+    await presentationSessions.transitionSession({
+      workspaceId: second.workspaceId,
+      sessionId: presentationSession.id,
+      expectedRevision: presentationSession.revision,
+      phase: "finished",
+      currentBlockIndex: presentationSession.currentBlockIndex,
+      status: "finished",
+      event: {
+        type: "presentation.finished",
+        blockIndex: null,
+        blockId: null,
+      },
+    });
+    const secondSession = await createRoundSessionFixture(second, secondRound, code);
+    const claimPrivilege = await runtimePool.query<{ can_execute: boolean }>(
+      `SELECT has_function_privilege(current_user, procedure.oid, 'EXECUTE') AS can_execute
+       FROM pg_proc AS procedure
+       JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+       WHERE namespace.nspname = 'public' AND procedure.proname = 'claim_live_room_code'`,
+    );
+    expect(claimPrivilege.rows).toEqual([{ can_execute: false }]);
+    const inspector = await runtimePool.connect();
+    try {
+      await inspector.query("BEGIN");
+      await inspector.query("SELECT set_config('app.system_access', 'on', true)");
+      await expect(
+        inspector.query<{
+          workspace_id: string;
+          artifact_type: string;
+          artifact_id: string;
+        }>(
+          `SELECT workspace_id, artifact_type, artifact_id
+           FROM live_room_codes WHERE code = $1`,
+          [code],
+        ),
+      ).resolves.toMatchObject({
+        rows: [
+          {
+            workspace_id: second.workspaceId,
+            artifact_type: "round",
+            artifact_id: secondSession.id,
+          },
+        ],
+      });
+      await inspector.query("ROLLBACK");
+    } finally {
+      inspector.release();
+    }
+
+    const secondClient = await runtimePool.connect();
+    try {
+      await secondClient.query("BEGIN");
+      await secondClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        second.workspaceId,
+      ]);
+      await secondClient.query("DELETE FROM game_sessions WHERE id = $1", [secondSession.id]);
+      await secondClient.query("COMMIT");
+    } catch (error) {
+      await secondClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      secondClient.release();
+    }
+
+    const afterDelete = await runtimePool.connect();
+    try {
+      await afterDelete.query("BEGIN");
+      await afterDelete.query("SELECT set_config('app.system_access', 'on', true)");
+      await expect(
+        afterDelete.query<{ count: string }>(
+          "SELECT count(*) FROM live_room_codes WHERE code = $1",
+          [code],
+        ),
+      ).resolves.toMatchObject({ rows: [{ count: "0" }] });
+      await afterDelete.query("ROLLBACK");
+    } finally {
+      afterDelete.release();
+    }
+  });
+
+  it("binds session events to the parent workspace and permits ordered command journals", async () => {
+    const first = await creator("session-event-first");
+    const second = await creator("session-event-second");
+    const [firstRound, secondRound] = await Promise.all([
+      createPublishedRoundFixture(first, "First event source"),
+      createPublishedRoundFixture(second, "Second event source"),
+    ]);
+    const firstSession = await createRoundSessionFixture(
+      first,
+      firstRound,
+      String(randomInt(1_000_000, 10_000_000)),
+    );
+    const secondSession = await createRoundSessionFixture(
+      second,
+      secondRound,
+      String(randomInt(1_000_000, 10_000_000)),
+    );
+    const commandId = `command-${randomUUID()}`;
+    const expiresAt = new Date(Date.now() + 60_000);
+    const eventIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+
+    const firstClient = await runtimePool.connect();
+    try {
+      await firstClient.query("BEGIN");
+      await firstClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        first.workspaceId,
+      ]);
+      await firstClient.query("SAVEPOINT cross_tenant_event");
+      await expect(
+        firstClient.query(
+          `INSERT INTO session_events
+             (id, workspace_id, session_id, seq, type, payload, command_id, event_ordinal,
+              expires_at)
+           VALUES ($1,$2,$3,1,'test.event','{}'::jsonb,$4,0,$5)`,
+          [randomUUID(), first.workspaceId, secondSession.id, commandId, expiresAt],
+        ),
+      ).rejects.toMatchObject({ code: "42501" });
+      await firstClient.query("ROLLBACK TO SAVEPOINT cross_tenant_event");
+      await firstClient.query("SAVEPOINT mismatched_parent_fk");
+      await firstClient.query("SELECT set_config('app.system_access', 'on', true)");
+      await expect(
+        firstClient.query(
+          `INSERT INTO session_events
+             (id, workspace_id, session_id, seq, type, payload, command_id, event_ordinal,
+              expires_at)
+           VALUES ($1,$2,$3,1,'test.event','{}'::jsonb,$4,0,$5)`,
+          [randomUUID(), first.workspaceId, secondSession.id, commandId, expiresAt],
+        ),
+      ).rejects.toMatchObject({ code: "23503" });
+      await firstClient.query("ROLLBACK TO SAVEPOINT mismatched_parent_fk");
+
+      for (let index = 0; index < eventIds.length; index += 1) {
+        await firstClient.query(
+          `INSERT INTO session_events
+             (id, workspace_id, session_id, seq, type, payload, command_id, event_ordinal,
+              expires_at)
+           VALUES ($1,$2,$3,$4,'test.event',$5::jsonb,$6,$7,$8)`,
+          [
+            eventIds[index],
+            first.workspaceId,
+            firstSession.id,
+            index + 1,
+            JSON.stringify({ index }),
+            index < 2 ? commandId : null,
+            index < 2 ? index : 0,
+            expiresAt,
+          ],
+        );
+      }
+      await expect(
+        firstClient.query<{ count: string }>("SELECT count(*) FROM session_events"),
+      ).resolves.toMatchObject({ rows: [{ count: "4" }] });
+      await firstClient.query("COMMIT");
+    } catch (error) {
+      await firstClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      firstClient.release();
+    }
+
+    const secondClient = await runtimePool.connect();
+    try {
+      await secondClient.query("BEGIN");
+      await secondClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        second.workspaceId,
+      ]);
+      await expect(
+        secondClient.query<{ count: string }>("SELECT count(*) FROM session_events"),
+      ).resolves.toMatchObject({ rows: [{ count: "0" }] });
+      await secondClient.query("ROLLBACK");
+    } finally {
+      secondClient.release();
+    }
+  });
 
   it("persists an idempotent locale preference for only the selected user", async () => {
     const first = await creator("locale-first");
@@ -815,6 +1293,431 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     });
   });
 
+  it("creates a Presentation room and initial credential atomically", async () => {
+    const owner = await creator("presentation-atomic-credential");
+    const published = await createPublishedPresentationFixture(owner, "Atomic Presentation");
+    const sessions = new PostgresPresentationSessionRepository(repository);
+    const now = new Date();
+    const sessionInput = (id: string, code: string) => ({
+      id,
+      workspaceId: owner.workspaceId,
+      presentationId: published.presentation.id,
+      presentationVersionId: published.version.id,
+      title: published.content.title,
+      content: published.content,
+      code,
+      status: "active" as const,
+      phase: "lobby" as const,
+      currentBlockIndex: -1,
+      revision: 0,
+      createdBy: owner.userId,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: null,
+      liveExpiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+    });
+    const sharedTokenHash = "d".repeat(64);
+    const firstId = randomUUID();
+    await expect(
+      sessions.createSessionWithCredential(
+        sessionInput(firstId, String(randomInt(1_000_000, 10_000_000))),
+        {
+          id: randomUUID(),
+          workspaceId: owner.workspaceId,
+          sessionId: firstId,
+          role: "host",
+          tokenHash: sharedTokenHash,
+          createdAt: now,
+          expiresAt: new Date(now.getTime() + 60_000),
+          revokedAt: null,
+        },
+      ),
+    ).resolves.toMatchObject({
+      session: { id: firstId },
+      credential: { sessionId: firstId, role: "host" },
+    });
+
+    const failedId = randomUUID();
+    const reusableCode = String(randomInt(1_000_000, 10_000_000));
+    await expect(
+      sessions.createSessionWithCredential(sessionInput(failedId, reusableCode), {
+        id: randomUUID(),
+        workspaceId: owner.workspaceId,
+        sessionId: failedId,
+        role: "host",
+        tokenHash: sharedTokenHash,
+        createdAt: now,
+        expiresAt: new Date(now.getTime() + 60_000),
+        revokedAt: null,
+      }),
+    ).rejects.toThrow();
+    await expect(sessions.getSessionById(failedId)).resolves.toBeNull();
+    await expect(repository.getLiveRoomCode(reusableCode)).resolves.toBeNull();
+    await expect(
+      sessions.createSession(sessionInput(failedId, reusableCode)),
+    ).resolves.toMatchObject({ id: failedId });
+  });
+
+  it("serializes concurrent Presentation credential rotations", async () => {
+    const owner = await creator("presentation-concurrent-credential-rotation");
+    const published = await createPublishedPresentationFixture(
+      owner,
+      "Concurrent credential rotation",
+    );
+    const { session, sessions } = await createPresentationSessionFixture(
+      owner,
+      published,
+      String(randomInt(1_000_000, 10_000_000)),
+    );
+    const now = new Date();
+    const original = await sessions.createCredential({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      role: "host",
+      tokenHash: createHash("sha256").update(randomUUID()).digest("hex"),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+      revokedAt: null,
+    });
+    const rotationAt = new Date(now.getTime() + 1);
+    const rotationInputs = ["first", "second"].map(
+      (label): PresentationSessionCredentialRecord => ({
+        id: randomUUID(),
+        workspaceId: owner.workspaceId,
+        sessionId: session.id,
+        role: "host",
+        tokenHash: createHash("sha256").update(`${label}-${randomUUID()}`).digest("hex"),
+        createdAt: rotationAt,
+        expiresAt: new Date(rotationAt.getTime() + 60_000),
+        revokedAt: null,
+      }),
+    );
+
+    const blocker = await runtimePool.connect();
+    let pendingRotations: Promise<PresentationSessionCredentialRecord[]> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+      await blocker.query(
+        `SELECT id FROM presentation_live_sessions
+         WHERE workspace_id = $1 AND id = $2
+         FOR UPDATE`,
+        [owner.workspaceId, session.id],
+      );
+
+      pendingRotations = Promise.all(
+        rotationInputs.map((input) => sessions.rotateCredential(input)),
+      );
+      const waitDeadline = Date.now() + 5_000;
+      let waitingRotations = 0;
+      while (Date.now() < waitDeadline) {
+        const waiting = await runtimePool.query<{ count: string }>(
+          `SELECT count(*)::text AS count
+           FROM pg_stat_activity
+           WHERE datname = current_database()
+             AND state = 'active'
+             AND wait_event_type = 'Lock'
+             AND query LIKE $1`,
+          ["%rotate_presentation_session_credential%"],
+        );
+        waitingRotations = Number(waiting.rows[0]?.count ?? 0);
+        if (waitingRotations >= rotationInputs.length) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(waitingRotations).toBe(rotationInputs.length);
+
+      await blocker.query("COMMIT");
+      const rotated = await pendingRotations;
+      pendingRotations = undefined;
+      const validAt = new Date(rotationAt.getTime() + 1);
+      const activeRotations = await Promise.all(
+        rotated.map((credential) =>
+          sessions.findValidCredential(session.id, credential.tokenHash, "host", validAt),
+        ),
+      );
+      expect(activeRotations.filter((credential) => credential !== null)).toHaveLength(1);
+      await expect(
+        sessions.findValidCredential(session.id, original.tokenHash, "host", validAt),
+      ).resolves.toBeNull();
+    } finally {
+      await blocker.query("ROLLBACK").catch(() => undefined);
+      blocker.release();
+      await pendingRotations?.catch(() => undefined);
+    }
+  });
+
+  it("keeps Presentation fences monotonic for legacy writers and aggregate inserts", async () => {
+    const owner = await creator("presentation-legacy-compat");
+    const presentations = new PostgresPresentationRepository(repository);
+    const sessions = new PostgresPresentationSessionRepository(repository);
+    const now = new Date();
+    const questionBlockId = randomUUID();
+    const questionId = randomUUID();
+    const draft = {
+      title: "Legacy realtime compatibility",
+      description: "Migration compatibility coverage",
+      experiencePreset: { id: "focus", version: 1 },
+      schemaVersion: 1,
+      blocks: [
+        {
+          id: questionBlockId,
+          kind: "question",
+          question: {
+            id: questionId,
+            type: "numeric",
+            prompt: "How many durable mutations occurred?",
+            correctValue: "3",
+            tolerance: "0",
+            unit: null,
+            timeLimitSeconds: 30,
+            basePoints: 1_000,
+            explanation: "The sequence includes join, command, and response.",
+            mediaId: null,
+            mediaAlt: null,
+          },
+        },
+      ],
+    } satisfies PresentationDraft;
+    const presentation = await presentations.createPresentation({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      draftRevision: 0,
+      draftSchemaVersion: 1,
+      currentVersionId: null,
+      folderId: null,
+      publishedDraftRevision: null,
+      lastEditedBy: owner.userId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const version = await presentations.publishPresentation(
+      {
+        id: randomUUID(),
+        workspaceId: owner.workspaceId,
+        presentationId: presentation.id,
+        version: 1,
+        content: draft,
+        contentHash: randomUUID(),
+        sourceDraftRevision: 0,
+        publishedAt: now,
+      },
+      0,
+    );
+    const session = await sessions.createSession({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      presentationId: presentation.id,
+      presentationVersionId: version.id,
+      title: draft.title,
+      content: draft,
+      code: String(randomInt(1_000_000, 10_000_000)),
+      status: "active",
+      phase: "lobby",
+      currentBlockIndex: -1,
+      revision: 0,
+      settings: { timeMode: "timed" },
+      trustMode: "learning",
+      eventSeq: 0,
+      questionOpenedAt: null,
+      questionClosesAt: null,
+      createdBy: owner.userId,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: null,
+      liveExpiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+    });
+
+    for (const invalidSettings of [{}, { timeMode: null }]) {
+      const invalidClient = await runtimePool.connect();
+      try {
+        await invalidClient.query("BEGIN");
+        await invalidClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+          owner.workspaceId,
+        ]);
+        await expect(
+          invalidClient.query(
+            `INSERT INTO presentation_live_sessions
+               (id, workspace_id, presentation_id, presentation_version_id, title,
+                content_snapshot, join_code, status, phase, current_block_index, revision,
+                settings, trust_mode, event_seq, created_by, created_at, updated_at,
+                live_expires_at, retention_expires_at)
+             SELECT $2, workspace_id, presentation_id, presentation_version_id, title,
+                    content_snapshot, $3, 'active', 'lobby', -1, 0, $4::jsonb, 'learning', 0,
+                    created_by, $5, $5, $6, $7
+             FROM presentation_live_sessions
+             WHERE workspace_id = $1 AND id = $8`,
+            [
+              owner.workspaceId,
+              randomUUID(),
+              String(randomInt(1_000_000, 10_000_000)),
+              JSON.stringify(invalidSettings),
+              now,
+              new Date(now.getTime() + 60_000),
+              new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+              session.id,
+            ],
+          ),
+        ).rejects.toMatchObject({ code: "23514" });
+        await invalidClient.query("ROLLBACK");
+      } finally {
+        invalidClient.release();
+      }
+    }
+
+    const participant = await sessions.addParticipant({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      nickname: "Legacy participant",
+      tokenHash: createHash("sha256").update(randomUUID()).digest("hex"),
+      joinedAt: now,
+      lastSeenAt: now,
+    });
+    await expect(
+      sessions.getSessionForWorkspace(owner.workspaceId, session.id),
+    ).resolves.toMatchObject({ eventSeq: 1 });
+
+    const openedAt = new Date(now.getTime() + 1_000);
+    const legacyClient = await runtimePool.connect();
+    try {
+      await legacyClient.query("BEGIN");
+      await legacyClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        owner.workspaceId,
+      ]);
+      await legacyClient.query("SAVEPOINT immutable_presentation_code");
+      await expect(
+        legacyClient.query(
+          "UPDATE presentation_live_sessions SET join_code = $3 WHERE workspace_id = $1 AND id = $2",
+          [owner.workspaceId, session.id, String(randomInt(1_000_000, 10_000_000))],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await legacyClient.query("ROLLBACK TO SAVEPOINT immutable_presentation_code");
+
+      const opened = await legacyClient.query<{
+        event_seq: string;
+        question_opened_at: Date;
+        question_closes_at: Date;
+      }>(
+        `UPDATE presentation_live_sessions
+         SET phase = 'question_open', current_block_index = 0, revision = revision + 1,
+             updated_at = $3
+         WHERE workspace_id = $1 AND id = $2
+         RETURNING event_seq, question_opened_at, question_closes_at`,
+        [owner.workspaceId, session.id, openedAt],
+      );
+      expect(opened.rows[0]).toEqual({
+        event_seq: "2",
+        question_opened_at: openedAt,
+        question_closes_at: new Date(openedAt.getTime() + 30_000),
+      });
+      const launched = await legacyClient.query<{ sequence: string }>(
+        `INSERT INTO presentation_session_timeline
+           (id, workspace_id, session_id, sequence, event_type, block_index, block_id,
+            occurred_at)
+         SELECT $1, $2, $3, COALESCE(MAX(sequence), 0) + 1, 'question.launched', 0, $4, $5
+         FROM presentation_session_timeline
+         WHERE session_id = $3
+         RETURNING sequence`,
+        [randomUUID(), owner.workspaceId, session.id, questionBlockId, openedAt],
+      );
+      expect(launched.rows[0]?.sequence).toBe("2");
+      await legacyClient.query("COMMIT");
+    } catch (error) {
+      await legacyClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      legacyClient.release();
+    }
+
+    const responseIdempotencyKey = randomUUID();
+    const responseHash = "a".repeat(64);
+    const responseInput = {
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      participantId: participant.id,
+      blockId: questionBlockId,
+      questionId,
+      response: { numericValue: "3" },
+      correct: true,
+      score: 1_000,
+      responseMs: 1_000,
+      submittedAt: new Date(openedAt.getTime() + 1_000),
+      idempotencyKey: responseIdempotencyKey,
+      requestHash: responseHash,
+    };
+    await expect(sessions.acceptResponse(responseInput, 1)).resolves.toMatchObject({
+      status: "accepted",
+      response: { requestHash: responseHash },
+    });
+    await expect(
+      sessions.acceptResponse({ ...responseInput, id: randomUUID() }, 1),
+    ).resolves.toMatchObject({ status: "duplicate" });
+    await expect(
+      sessions.acceptResponse(
+        { ...responseInput, id: randomUUID(), requestHash: "b".repeat(64) },
+        1,
+      ),
+    ).resolves.toMatchObject({ status: "idempotency_conflict" });
+    await expect(
+      sessions.getSessionForWorkspace(owner.workspaceId, session.id),
+    ).resolves.toMatchObject({ eventSeq: 3 });
+
+    const revealedAt = new Date(openedAt.getTime() + 2_000);
+    const revealClient = await runtimePool.connect();
+    try {
+      await revealClient.query("BEGIN");
+      await revealClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        owner.workspaceId,
+      ]);
+      const revealed = await revealClient.query<{
+        event_seq: string;
+        question_opened_at: Date | null;
+        question_closes_at: Date | null;
+      }>(
+        `UPDATE presentation_live_sessions
+         SET phase = 'question_reveal', revision = revision + 1, updated_at = $3
+         WHERE workspace_id = $1 AND id = $2
+         RETURNING event_seq, question_opened_at, question_closes_at`,
+        [owner.workspaceId, session.id, revealedAt],
+      );
+      expect(revealed.rows[0]).toEqual({
+        event_seq: "4",
+        question_opened_at: null,
+        question_closes_at: null,
+      });
+      const revealedEvent = await revealClient.query<{ sequence: string }>(
+        `INSERT INTO presentation_session_timeline
+           (id, workspace_id, session_id, sequence, event_type, block_index, block_id,
+            occurred_at)
+         SELECT $1, $2, $3, COALESCE(MAX(sequence), 0) + 1, 'question.revealed', 0, $4, $5
+         FROM presentation_session_timeline
+         WHERE session_id = $3
+         RETURNING sequence`,
+        [randomUUID(), owner.workspaceId, session.id, questionBlockId, revealedAt],
+      );
+      expect(revealedEvent.rows[0]?.sequence).toBe("4");
+      await revealClient.query("COMMIT");
+    } catch (error) {
+      await revealClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      revealClient.release();
+    }
+
+    await expect(sessions.listTimeline(session.id)).resolves.toEqual([
+      expect.objectContaining({ sequence: 2, type: "question.launched" }),
+      expect.objectContaining({ sequence: 4, type: "question.revealed" }),
+    ]);
+  });
+
   it("exports and cascade-deletes Presentation sessions and collaboration groups", async () => {
     const owner = await creator("new-lifecycle-owner");
     const presentations = new PostgresPresentationRepository(repository);
@@ -914,6 +1817,113 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       joinedAt: now,
       lastSeenAt: now,
     });
+    const companionCredential = await presentationSessions.createCredential({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      role: "companion",
+      tokenHash: createHash("sha256").update("postgres-companion-token").digest("hex"),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+      revokedAt: null,
+    });
+    await expect(
+      presentationSessions.findValidCredential(
+        session.id,
+        companionCredential.tokenHash,
+        "companion",
+        now,
+      ),
+    ).resolves.toMatchObject({ id: companionCredential.id });
+    const commandId = randomUUID();
+    await expect(
+      presentationSessions.transitionSessionCommand({
+        workspaceId: owner.workspaceId,
+        sessionId: session.id,
+        commandId,
+        expectedRevision: 0,
+        phase: "content",
+        currentBlockIndex: 0,
+        status: "active",
+        occurredAt: new Date(now.getTime() + 1),
+        event: { type: "content.presented", blockIndex: 0, blockId },
+      }),
+    ).resolves.toMatchObject({ status: "accepted", session: { eventSeq: 2, revision: 1 } });
+    await expect(
+      presentationSessions.transitionSessionCommand({
+        workspaceId: owner.workspaceId,
+        sessionId: session.id,
+        commandId,
+        expectedRevision: 0,
+        phase: "content",
+        currentBlockIndex: 0,
+        status: "active",
+        event: { type: "content.presented", blockIndex: 0, blockId },
+      }),
+    ).resolves.toMatchObject({ status: "duplicate", session: { eventSeq: 2, revision: 1 } });
+    await expect(
+      presentationSessions.transitionSessionCommand({
+        workspaceId: owner.workspaceId,
+        sessionId: session.id,
+        commandId,
+        expectedRevision: 1,
+        phase: "question_open",
+        currentBlockIndex: 1,
+        status: "active",
+        event: { type: "question.launched", blockIndex: 1, blockId: draft.blocks[1]!.id },
+      }),
+    ).resolves.toMatchObject({ status: "idempotency_conflict", session: { revision: 1 } });
+
+    const firstHostCredential = await presentationSessions.createCredential({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      role: "host",
+      tokenHash: createHash("sha256").update("first-host-pass").digest("hex"),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+      revokedAt: null,
+    });
+    const rotatedHostCredential = await presentationSessions.rotateCredential({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      role: "host",
+      tokenHash: createHash("sha256").update("rotated-host-pass").digest("hex"),
+      createdAt: new Date(now.getTime() + 1),
+      expiresAt: new Date(now.getTime() + 60_000),
+      revokedAt: null,
+    });
+    await expect(
+      presentationSessions.findValidCredential(
+        session.id,
+        firstHostCredential.tokenHash,
+        "host",
+        new Date(now.getTime() + 2),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      presentationSessions.findValidCredential(
+        session.id,
+        rotatedHostCredential.tokenHash,
+        "host",
+        new Date(now.getTime() + 2),
+      ),
+    ).resolves.toMatchObject({ id: rotatedHostCredential.id });
+    await presentationSessions.revokeCredential(
+      owner.workspaceId,
+      session.id,
+      companionCredential.id,
+      new Date(now.getTime() + 2),
+    );
+    await expect(
+      presentationSessions.findValidCredential(
+        session.id,
+        companionCredential.tokenHash,
+        "companion",
+        new Date(now.getTime() + 3),
+      ),
+    ).resolves.toBeNull();
     const questionBlock = draft.blocks[1];
     if (!questionBlock || questionBlock.kind !== "question") {
       throw new Error("Expected the account export fixture to include a question block");
@@ -1614,6 +2624,15 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       updatedAt: now,
     };
     await repository.createSession(persistedSession);
+    const mismatchedTrust = structuredClone(persistedSession);
+    mismatchedTrust.state.settings.trustMode = "verified";
+    await expect(
+      repository.saveSession(mismatchedTrust, persistedSession.state.version),
+    ).rejects.toBeInstanceOf(SessionVersionConflictError);
+    await expect(repository.getSessionById(persistedSession.id)).resolves.toMatchObject({
+      trustMode: "learning",
+      state: { settings: { trustMode: "learning" } },
+    });
     expect(await repository.listQuizzes(first.workspaceId)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: firstQuiz.id, lastHostedAt: now }),
@@ -3051,7 +4070,12 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         workspaceId: owner.workspaceId,
         name,
         occurredAt: now.toISOString(),
-        dimensions: { betaVersion: "p0-2026" as const },
+        dimensions: {
+          betaVersion: "p0-2026" as const,
+          ...((name === "linked_recheck_opened" || name === "report_reconciled") && {
+            artifactType: "round" as const,
+          }),
+        },
         expiresAt,
         createdAt: now,
       })),
@@ -3068,6 +4092,32 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       expect(stored.rows.map((row) => row.event_name)).toEqual(
         [...ProductEventNameSchema.options].sort(),
       );
+      await client.query("SAVEPOINT invalid_recovery_event");
+      await expect(
+        client.query(
+          `INSERT INTO product_events
+             (id, workspace_id, event_name, dimensions, occurred_at, expires_at, created_at)
+           VALUES ($1,$2,'report_reconciled',$3,$4,$5,$4)`,
+          [
+            randomUUID(),
+            owner.workspaceId,
+            JSON.stringify({ betaVersion: "p0-2026" }),
+            now,
+            expiresAt,
+          ],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await client.query("ROLLBACK TO SAVEPOINT invalid_recovery_event");
+      await client.query("SAVEPOINT null_recovery_artifact");
+      await expect(
+        client.query(
+          `INSERT INTO product_events
+             (id, workspace_id, event_name, dimensions, occurred_at, expires_at, created_at)
+           VALUES ($1,$2,'report_reconciled',$3,$4,$5,$4)`,
+          [randomUUID(), owner.workspaceId, JSON.stringify({ artifactType: null }), now, expiresAt],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await client.query("ROLLBACK TO SAVEPOINT null_recovery_artifact");
       await expect(
         client.query(
           `INSERT INTO product_events

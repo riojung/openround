@@ -8,7 +8,7 @@ on:
         required: true
         default: "20"
         type: choice
-        options: ["20", "100"]
+        options: ["20", "50", "100", "250"]
       run_stripe_replay:
         description: Run the destructive signed-webhook rehearsal on the dedicated staging account
         required: true

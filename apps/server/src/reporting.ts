@@ -39,6 +39,7 @@ function stateEvidence(state: GameState): SessionEvidence {
 
 function emptyReportFields(state: GameState) {
   return {
+    trustMode: state.settings.trustMode ?? "learning",
     metrics: {
       participantCount: Object.values(state.participants).filter(
         (participant) => !participant.kicked,

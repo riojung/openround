@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { discoverMigrations } from "../src/migrations.js";
 
@@ -47,5 +48,27 @@ describe("database migration discovery", () => {
 
     const emptyDirectory = await temporaryDirectory();
     await expect(discoverMigrations(emptyDirectory)).rejects.toThrow("No database migrations");
+  });
+
+  it("locks legacy room writers before validating and backfilling the shared registry", async () => {
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migrations = await discoverMigrations(migrationsDirectory);
+    const registryMigration = migrations.find(({ version }) => version === 34);
+    expect(registryMigration).toBeDefined();
+
+    const sql = registryMigration!.sql;
+    const writerLock = sql.indexOf(
+      "LOCK TABLE game_sessions, presentation_live_sessions IN SHARE ROW EXCLUSIVE MODE",
+    );
+    const overlapValidation = sql.indexOf(
+      "JOIN presentation_live_sessions AS presentation_session",
+    );
+    const roundBackfill = sql.indexOf("INSERT INTO live_room_codes");
+    const triggerInstallation = sql.indexOf("CREATE TRIGGER game_sessions_register_room_code");
+
+    expect(writerLock).toBeGreaterThan(-1);
+    expect(writerLock).toBeLessThan(overlapValidation);
+    expect(writerLock).toBeLessThan(roundBackfill);
+    expect(roundBackfill).toBeLessThan(triggerInstallation);
   });
 });

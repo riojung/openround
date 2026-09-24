@@ -17,6 +17,7 @@ import type {
   ResponsePayload,
   SupportedLocale,
   TimeMultiplier,
+  TrustMode,
 } from "@openround/contracts";
 import type {
   EngineAnswer,
@@ -255,6 +256,8 @@ export interface StoredSession {
   quizVersionId: string;
   hostId: string;
   hostTokenHash: string;
+  /** Frozen identity/privacy promise for this session. */
+  trustMode?: TrustMode;
   state: GameState;
   /** Last instant at which host and participant credentials may use the live session. */
   expiresAt: Date;
@@ -263,6 +266,21 @@ export interface StoredSession {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export type LiveRoomArtifactType = "round" | "presentation";
+
+/** Authoritative claim in the shared seven-digit live-room namespace. */
+export interface LiveRoomCodeRecord {
+  code: string;
+  workspaceId: string;
+  artifactType: LiveRoomArtifactType;
+  artifactId: string;
+  expiresAt: Date;
+  releasedAt: Date | null;
+  createdAt: Date;
+}
+
+export type LiveRoomCodeClaim = Omit<LiveRoomCodeRecord, "releasedAt">;
 
 export interface SessionEvidence {
   answers: EngineAnswer[];
@@ -298,6 +316,7 @@ export interface ReportJob {
 interface FollowupRecordBase {
   id: string;
   workspaceId: string;
+  trustMode?: TrustMode;
   sourceQuizVersionId: string;
   title: string;
   content: QuizDraft;
@@ -534,6 +553,7 @@ export interface SessionHistoryRecord {
 export interface ReportHistoryRecord {
   id: string;
   sessionId: string;
+  trustMode: TrustMode;
   quizId: string;
   title: string;
   status: Report["status"];
@@ -555,6 +575,7 @@ interface FollowupHistoryRecordBase {
   id: string;
   quizId: string;
   sourceQuizVersionId: string;
+  trustMode: TrustMode;
   title: string;
   status: "scheduled" | "open" | "closed" | "expired";
   conceptKeys: string[];
@@ -989,6 +1010,13 @@ export interface Repository {
     sessionId: string,
     now: Date,
   ): Promise<{ allowedOrigins: string[]; expiresAt: Date } | null>;
+  getLiveRoomCode(code: string, now?: Date): Promise<LiveRoomCodeRecord | null>;
+  claimLiveRoomCode(input: LiveRoomCodeClaim): Promise<LiveRoomCodeRecord>;
+  releaseLiveRoomCode(
+    artifactType: LiveRoomArtifactType,
+    artifactId: string,
+    releasedAt?: Date,
+  ): Promise<boolean>;
   createSession(input: StoredSession): Promise<void>;
   getSessionById(sessionId: string): Promise<StoredSession | null>;
   getSessionByCode(code: string): Promise<StoredSession | null>;

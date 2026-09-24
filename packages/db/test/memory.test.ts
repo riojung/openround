@@ -892,6 +892,92 @@ describe("memory repository", () => {
     expect(await repository.consumeMagicToken(tokenHash, new Date())).toBeNull();
   });
 
+  it("defaults legacy report trust mode in account exports", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date("2026-09-23T12:00:00.000Z");
+    const tokenHash = `legacy-report-export-${randomUUID()}`;
+    await repository.createMagicToken({
+      id: randomUUID(),
+      email: `legacy-report-${randomUUID()}@example.com`,
+      segment: "education",
+      tokenHash,
+      policyVersion: "test-v1",
+      expiresAt: new Date(now.getTime() + 60_000),
+      consumedAt: null,
+    });
+    const owner = await repository.consumeMagicToken(tokenHash, now);
+    expect(owner).not.toBeNull();
+
+    const draft = publishableRound("Legacy report export");
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner!.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const version = await repository.publishQuiz({
+      id: randomUUID(),
+      workspaceId: owner!.workspaceId,
+      quizId: quiz.id,
+      version: 1,
+      content: draft,
+      contentHash: randomUUID(),
+      publishedAt: now,
+    });
+    const sessionId = randomUUID();
+    const retentionExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
+    await repository.createSession({
+      id: sessionId,
+      workspaceId: owner!.workspaceId,
+      quizVersionId: version.id,
+      hostId: owner!.userId,
+      hostTokenHash: randomUUID(),
+      state: createGameState({
+        sessionId,
+        code: "7654321",
+        quiz: draft,
+        settings: {
+          audienceLimit: 20,
+          scoringMode: "accuracy",
+          resultVisibility: "private",
+          allowLateJoin: true,
+          nicknamePolicy: "friendly_only",
+        },
+      }),
+      expiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const legacyReport: Report = {
+      id: randomUUID(),
+      sessionId,
+      status: "ready",
+      generatedAt: now.toISOString(),
+      expiresAt: retentionExpiresAt.toISOString(),
+      metrics: {
+        participantCount: 0,
+        completedCount: 0,
+        answerCount: 0,
+        accuracyPercent: 0,
+      },
+      questions: [],
+      participants: [],
+    };
+    await repository.saveReport(owner!.workspaceId, legacyReport);
+    expect(repository.reports.get(legacyReport.id)).not.toHaveProperty("trustMode");
+
+    const exported = await repository.exportAccount(owner!.userId);
+    expect(exported.reports).toEqual([
+      expect.objectContaining({ id: legacyReport.id, trustMode: "learning" }),
+    ]);
+  });
+
   it("exports shared workspace membership without exporting another owner's data", async () => {
     const repository = new MemoryRepository();
     const now = new Date();

@@ -1937,7 +1937,7 @@ export async function registerRoutes(
       productEvents.enqueue({
         workspaceId: creator.workspaceId,
         segment: creator.segment,
-        events: [{ name: "round_published" }],
+        events: [{ name: "round_published", dimensions: { artifactType: "round" } }],
       });
     }
     reply.header("etag", draftEtag(expectedDraftRevision));
@@ -2604,7 +2604,7 @@ export async function registerRoutes(
       id,
       input,
       entitlements.reportRetentionDays,
-      entitlements.maxParticipants,
+      entitlements.maxPracticePersonalLinks,
     );
     const link = (token: string) =>
       `${config.WEB_ORIGIN}/followup/${created.followup.id}#token=${encodeURIComponent(token)}`;

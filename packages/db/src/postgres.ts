@@ -7,6 +7,7 @@ import {
   ReportSchema,
   ResponsePayloadSchema,
   SupportedLocaleSchema,
+  TrustModeSchema,
   questionDelivery,
   type BrandTheme,
   type QuizDraft,
@@ -65,6 +66,9 @@ import type {
   LtiLaunchRecord,
   LtiLoginTransactionRecord,
   LtiRegistrationRecord,
+  LiveRoomArtifactType,
+  LiveRoomCodeClaim,
+  LiveRoomCodeRecord,
   MagicTokenRecord,
   MediaAssetRecord,
   MediaReferenceOwnerType,
@@ -331,13 +335,15 @@ function mapLtiLaunch(row: QueryResultRow): LtiLaunchRecord {
 }
 
 function mapSession(row: QueryResultRow): StoredSession {
+  const state = upgradeGameState(row.state_snapshot as GameState);
   return {
     id: row.id,
     workspaceId: row.workspace_id,
     quizVersionId: row.quiz_version_id,
     hostId: row.host_id,
     hostTokenHash: row.host_token_hash,
-    state: upgradeGameState(row.state_snapshot as GameState),
+    trustMode: TrustModeSchema.parse(row.trust_mode ?? state.settings.trustMode ?? "learning"),
+    state,
     expiresAt: date(row.expires_at),
     retentionExpiresAt: date(row.retention_expires_at),
     createdAt: date(row.created_at),
@@ -457,6 +463,23 @@ function mapStoredReport(row: QueryResultRow): Report {
   });
 }
 
+function normalizeAccountExportReport(metrics: unknown, sourceTrustMode: unknown): Report {
+  if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) {
+    return ReportSchema.parse(metrics);
+  }
+  const rawReport = metrics as Record<string, unknown>;
+  const sourceTrust = TrustModeSchema.safeParse(sourceTrustMode);
+  const storedTrust = TrustModeSchema.safeParse(rawReport.trustMode);
+  return ReportSchema.parse({
+    ...rawReport,
+    trustMode: sourceTrust.success
+      ? sourceTrust.data
+      : storedTrust.success
+        ? storedTrust.data
+        : "learning",
+  });
+}
+
 function mapReportHistory(row: QueryResultRow): ReportHistoryRecord {
   const report = mapStoredReport(row);
   const recovery = "recovery" in report ? report.recovery : [];
@@ -465,6 +488,7 @@ function mapReportHistory(row: QueryResultRow): ReportHistoryRecord {
   return {
     id: report.id,
     sessionId: report.sessionId,
+    trustMode: report.trustMode ?? "learning",
     quizId: String(row.quiz_id),
     title: String(row.quiz_title),
     status: report.status,
@@ -522,6 +546,7 @@ function mapFollowupHistory(row: QueryResultRow, now: Date): FollowupHistoryReco
     ...source,
     quizId: String(row.quiz_id),
     sourceQuizVersionId: String(row.source_quiz_version_id),
+    trustMode: TrustModeSchema.parse(row.trust_mode ?? "learning"),
     title: String(row.title),
     status,
     conceptKeys: Array.isArray(row.concept_keys) ? row.concept_keys.map(String) : [],
@@ -552,6 +577,7 @@ function mapFollowup(row: QueryResultRow): FollowupRecord {
   return {
     id: String(row.id),
     workspaceId: String(row.workspace_id),
+    trustMode: TrustModeSchema.parse(row.trust_mode ?? "learning"),
     sourceQuizVersionId: String(row.source_quiz_version_id),
     ...source,
     title: String(row.title),
@@ -772,6 +798,18 @@ function mapAudienceOutbox(row: QueryResultRow): AudienceOutboxRecord {
     attempts: Number(row.attempts),
     claimedAt: row.claimed_at ? date(row.claimed_at) : null,
     deliveredAt: row.delivered_at ? date(row.delivered_at) : null,
+    createdAt: date(row.created_at),
+  };
+}
+
+function mapLiveRoomCode(row: QueryResultRow): LiveRoomCodeRecord {
+  return {
+    code: String(row.code),
+    workspaceId: String(row.workspace_id),
+    artifactType: row.artifact_type,
+    artifactId: String(row.artifact_id),
+    expiresAt: date(row.expires_at),
+    releasedAt: row.released_at ? date(row.released_at) : null,
     createdAt: date(row.created_at),
   };
 }
@@ -2504,6 +2542,70 @@ export class PostgresRepository implements Repository {
       : null;
   }
 
+  async getLiveRoomCode(code: string, now = new Date()) {
+    const result = await this.systemQuery(
+      `SELECT * FROM live_room_codes
+       WHERE code = $1 AND released_at IS NULL AND expires_at > $2`,
+      [code, now],
+    );
+    return result.rows[0] ? mapLiveRoomCode(result.rows[0]) : null;
+  }
+
+  async claimLiveRoomCode(input: LiveRoomCodeClaim) {
+    try {
+      return await this.transaction(
+        async (client) => {
+          await client.query(
+            `DELETE FROM live_room_codes
+             WHERE code = $1 AND (released_at IS NOT NULL OR expires_at <= clock_timestamp())`,
+            [input.code],
+          );
+          const result = await client.query(
+            `INSERT INTO live_room_codes
+               (code, workspace_id, artifact_type, artifact_id, expires_at, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6)
+             RETURNING *`,
+            [
+              input.code,
+              input.workspaceId,
+              input.artifactType,
+              input.artifactId,
+              input.expiresAt,
+              input.createdAt,
+            ],
+          );
+          return mapLiveRoomCode(result.rows[0]!);
+        },
+        { system: true },
+      );
+    } catch (error) {
+      const postgresError = error as { code?: string; constraint?: string };
+      if (
+        postgresError.code === "23505" &&
+        (postgresError.constraint === "live_room_codes_pkey" ||
+          postgresError.constraint === "live_room_codes_artifact_type_artifact_id_key")
+      ) {
+        throw new SessionCodeConflictError(input.code);
+      }
+      throw error;
+    }
+  }
+
+  async releaseLiveRoomCode(
+    artifactType: LiveRoomArtifactType,
+    artifactId: string,
+    releasedAt = new Date(),
+  ) {
+    const result = await this.systemQuery(
+      `UPDATE live_room_codes
+       SET released_at = COALESCE(released_at, $3)
+       WHERE artifact_type = $1 AND artifact_id = $2
+       RETURNING code`,
+      [artifactType, artifactId, releasedAt],
+    );
+    return result.rowCount === 1;
+  }
+
   async createSession(input: StoredSession) {
     const state = input.state;
     try {
@@ -2512,9 +2614,9 @@ export class PostgresRepository implements Repository {
         `WITH inserted_session AS (
            INSERT INTO game_sessions
              (id, workspace_id, quiz_version_id, host_id, code, state, version, seq, deadline,
-              settings, state_snapshot, state_schema_version, host_token_hash, expires_at,
-              retention_expires_at, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+              settings, state_snapshot, state_schema_version, host_token_hash, trust_mode,
+              expires_at, retention_expires_at, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
            RETURNING id, workspace_id
          )
          INSERT INTO session_interaction_settings (session_id, workspace_id)
@@ -2533,6 +2635,7 @@ export class PostgresRepository implements Repository {
           JSON.stringify(state),
           state.stateSchemaVersion,
           input.hostTokenHash,
+          input.trustMode ?? state.settings.trustMode ?? "learning",
           input.expiresAt,
           input.retentionExpiresAt,
           input.createdAt,
@@ -2543,7 +2646,8 @@ export class PostgresRepository implements Repository {
       const postgresError = error as { code?: string; constraint?: string };
       if (
         postgresError.code === "23505" &&
-        postgresError.constraint === "game_sessions_active_code_uq"
+        (postgresError.constraint === "game_sessions_active_code_uq" ||
+          postgresError.constraint === "live_room_codes_pkey")
       ) {
         throw new SessionCodeConflictError(state.code);
       }
@@ -2662,6 +2766,10 @@ export class PostgresRepository implements Repository {
 
   async saveSession(input: StoredSession, expectedVersion: number, report?: Report) {
     const state = input.state;
+    const trustMode = input.trustMode ?? state.settings.trustMode ?? "learning";
+    if ((state.settings.trustMode ?? "learning") !== trustMode) {
+      throw new Error("Session state trust mode must match its immutable session trust mode");
+    }
     if (report && report.sessionId !== input.id) throw new Error("Report session does not match");
     await this.transaction(
       async (client) => {
@@ -2669,7 +2777,8 @@ export class PostgresRepository implements Repository {
           `UPDATE game_sessions SET state = $2, version = $3, seq = $4, deadline = $5,
            state_snapshot = $6, state_schema_version = $7,
            ended_at = CASE WHEN $2 = 'finished' THEN COALESCE(ended_at, now()) ELSE ended_at END,
-           retention_expires_at = $8, updated_at = now() WHERE id = $1 AND version = $9`,
+           retention_expires_at = $8, updated_at = now()
+           WHERE id = $1 AND version = $9 AND trust_mode = $10`,
           [
             input.id,
             state.phase,
@@ -2680,6 +2789,7 @@ export class PostgresRepository implements Repository {
             state.stateSchemaVersion,
             input.retentionExpiresAt,
             expectedVersion,
+            trustMode,
           ],
         );
         if (result.rowCount !== 1) {
@@ -4640,9 +4750,9 @@ export class PostgresRepository implements Repository {
     await client.query(
       `INSERT INTO followups
          (id, workspace_id, purpose, source_quiz_version_id, source_session_id,
-          source_report_id, title, content, concept_keys, time_mode, generic_token_hash,
+          source_report_id, trust_mode, title, content, concept_keys, time_mode, generic_token_hash,
           opens_at, closes_at, expires_at, closed_at, created_by, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [
         input.id,
         input.workspaceId,
@@ -4650,6 +4760,7 @@ export class PostgresRepository implements Repository {
         input.sourceQuizVersionId,
         input.sourceSessionId,
         input.sourceReportId,
+        input.trustMode ?? "learning",
         input.title,
         JSON.stringify(input.content),
         input.conceptKeys,
@@ -5630,13 +5741,14 @@ export class PostgresRepository implements Repository {
         );
         const sessions = await queryWorkspaceData(
           `SELECT id, workspace_id, quiz_version_id, host_id, code, state, version, seq,
-                  deadline, settings, state_snapshot, ended_at, deleted_at, expires_at,
+                  deadline, settings, state_snapshot, trust_mode, ended_at, deleted_at, expires_at,
                   retention_expires_at, created_at, updated_at
            FROM game_sessions WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
         );
         const presentationSessions = await queryWorkspaceData(
           `SELECT id, workspace_id, presentation_id, presentation_version_id, title,
                   content_snapshot, join_code, status, phase, current_block_index, revision,
+                  settings, trust_mode, event_seq, question_opened_at, question_closes_at,
                   created_by, created_at, updated_at, finished_at, live_expires_at,
                   retention_expires_at
            FROM presentation_live_sessions WHERE workspace_id = ANY($1::uuid[])
@@ -5653,7 +5765,7 @@ export class PostgresRepository implements Repository {
           : { rows: [] };
         const presentationSessionResponses = await queryWorkspaceData(
           `SELECT id, workspace_id, session_id, participant_id, block_id, question_id,
-                  response, correct, score, response_ms, submitted_at
+                  response, correct, score, response_ms, idempotency_key, submitted_at
            FROM presentation_live_responses WHERE workspace_id = ANY($1::uuid[])
            ORDER BY submitted_at, id`,
         );
@@ -5662,6 +5774,19 @@ export class PostgresRepository implements Repository {
                   occurred_at
            FROM presentation_session_timeline WHERE workspace_id = ANY($1::uuid[])
            ORDER BY session_id, sequence`,
+        );
+        const presentationSessionCommandReceipts = await queryWorkspaceData(
+          `SELECT id, workspace_id, session_id, command_id, expected_revision,
+                  resulting_revision, event_type, received_at
+           FROM presentation_session_command_receipts
+           WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY session_id, received_at, id`,
+        );
+        const presentationSessionCredentials = await queryWorkspaceData(
+          `SELECT id, workspace_id, session_id, role, created_at, expires_at, revoked_at
+           FROM presentation_session_credentials
+           WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY session_id, created_at, id`,
         );
         const sessionIds = sessions.rows.map((row) => row.id);
         const participants = sessionIds.length
@@ -5679,8 +5804,15 @@ export class PostgresRepository implements Repository {
            FROM answers WHERE workspace_id = ANY($1::uuid[]) ORDER BY accepted_at, id`,
         );
         const reports = await queryWorkspaceData(
-          `SELECT id, workspace_id, session_id, status, metrics, generated_at, created_at
-           FROM reports WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
+          `SELECT reports.id, reports.workspace_id, reports.session_id, reports.status,
+                  reports.metrics, reports.generated_at, reports.created_at,
+                  game_sessions.trust_mode AS source_trust_mode
+           FROM reports
+           JOIN game_sessions
+             ON game_sessions.id = reports.session_id
+            AND game_sessions.workspace_id = reports.workspace_id
+           WHERE reports.workspace_id = ANY($1::uuid[])
+           ORDER BY reports.created_at, reports.id`,
         );
         const interactionSettings = await queryWorkspaceData(
           `SELECT session_id, workspace_id, signals_enabled, chat_enabled, chat_identity_mode,
@@ -5724,7 +5856,8 @@ export class PostgresRepository implements Repository {
         );
         const followups = await queryWorkspaceData(
           `SELECT id, workspace_id, purpose, source_quiz_version_id, source_session_id,
-                  source_report_id, title, content, concept_keys, time_mode, opens_at, closes_at,
+                  source_report_id, trust_mode, title, content, concept_keys, time_mode,
+                  opens_at, closes_at,
                   expires_at, closed_at, created_by, created_at
            FROM followups WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
         );
@@ -5877,9 +6010,14 @@ export class PostgresRepository implements Repository {
           presentationSessionParticipants: presentationSessionParticipants.rows,
           presentationSessionResponses: presentationSessionResponses.rows,
           presentationSessionTimeline: presentationSessionTimeline.rows,
+          presentationSessionCommandReceipts: presentationSessionCommandReceipts.rows,
+          presentationSessionCredentials: presentationSessionCredentials.rows,
           participants: participants.rows,
           answers: answers.rows,
-          reports: reports.rows,
+          reports: reports.rows.map(({ source_trust_mode: sourceTrustMode, ...row }) => ({
+            ...row,
+            metrics: normalizeAccountExportReport(row.metrics, sourceTrustMode),
+          })),
           interactionSettings: interactionSettings.rows,
           participantSignals: participantSignals.rows,
           signalEvents: signalEvents.rows,

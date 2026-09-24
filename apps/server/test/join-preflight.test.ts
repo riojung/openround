@@ -126,7 +126,11 @@ describe("guest join preflight", () => {
     const available = await preflight(target, friendly.code);
     expect(available.statusCode).toBe(200);
     expect(available.headers["cache-control"]).toContain("no-store");
-    expect(available.json()).toEqual({ nicknamePolicy: "friendly_only" });
+    expect(available.json()).toEqual({
+      artifactType: "round",
+      destination: "/join",
+      nicknamePolicy: "friendly_only",
+    });
     expect(repository.sessions.get(friendly.sessionId)!.state.version).toBe(friendlyVersion);
     expect(repository.sessions.get(friendly.sessionId)!.updatedAt.toISOString()).toBe(
       friendlyUpdatedAt,
@@ -135,7 +139,11 @@ describe("guest join preflight", () => {
 
     const customPolicy = await preflight(target, custom.code);
     expect(customPolicy.statusCode).toBe(200);
-    expect(customPolicy.json()).toEqual({ nicknamePolicy: "custom" });
+    expect(customPolicy.json()).toEqual({
+      artifactType: "round",
+      destination: "/join",
+      nicknamePolicy: "custom",
+    });
 
     const locked = await target.inject({
       method: "POST",

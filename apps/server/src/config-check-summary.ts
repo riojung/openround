@@ -21,6 +21,7 @@ export function createConfigCheckSummary(config: AppConfig) {
       : "disabled",
     tracing: config.TRACING_ENABLED ? "otlp" : "disabled",
     participantLimit: config.MAX_SESSION_PARTICIPANTS,
+    practicePersonalLinkLimit: config.MAX_PRACTICE_PERSONAL_LINKS,
     featureFlags: {
       signups: config.FEATURE_SIGNUPS,
       sessionCreation: config.FEATURE_SESSION_CREATION,
@@ -36,8 +37,17 @@ export function createConfigCheckSummary(config: AppConfig) {
       presentations: config.FEATURE_PRESENTATIONS,
       groups: config.FEATURE_GROUPS,
       discover: config.FEATURE_DISCOVER,
+      presentationRealtime: config.FEATURE_PRESENTATION_REALTIME,
+      recoveryPacks: config.FEATURE_RECOVERY_PACKS,
+      questionHealth: config.FEATURE_QUESTION_HEALTH,
+      decisionReplay: config.FEATURE_DECISION_REPLAY,
+      recoveryTrails: config.FEATURE_RECOVERY_TRAILS,
+      conceptHealth: config.FEATURE_CONCEPT_HEALTH,
+      extendedQuestionTypes: config.FEATURE_EXTENDED_QUESTION_TYPES,
+      verifiedInstitution: config.FEATURE_VERIFIED_INSTITUTION,
     },
     themedInteractionsWorkspaceAllowlistSize: config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST.length,
     uxBetaWorkspaceAllowlistSize: config.UX_BETA_WORKSPACE_ALLOWLIST.length,
+    evidenceFeaturesWorkspaceAllowlistSize: config.EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST.length,
   };
 }

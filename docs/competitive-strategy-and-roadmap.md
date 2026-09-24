@@ -2,6 +2,10 @@
 
 Research date: 2026-09-17
 
+> **Current priority note (2026-09-23):** This document remains the historical strategy baseline
+> for the Recovery Loop. The broader current market scan and evidence-gated post-beta priorities are
+> in the [2026 market research and development plan](market-research-and-development-plan-2026-09.md).
+
 This document uses public product and pricing material as market evidence. It is a product strategy
 and delivery plan, not a claim that planned capabilities already exist. Prices, limits, provider
 terms, and competitor features must be checked again before a launch or pricing decision.

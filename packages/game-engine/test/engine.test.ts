@@ -90,6 +90,33 @@ function participant(id = randomUUID()) {
 }
 
 describe("game engine", () => {
+  it("persists trust mode in state and role snapshots without coupling it to result visibility", () => {
+    const { state } = fixture();
+    expect(state.settings).toMatchObject({
+      trustMode: "learning",
+      resultVisibility: "leaderboard",
+    });
+    expect(snapshotForRole(state, { role: "host" }).settings).toMatchObject({
+      trustMode: "learning",
+      resultVisibility: "leaderboard",
+    });
+
+    const verified = createGameState({
+      sessionId: randomUUID(),
+      code: "7654321",
+      quiz: state.quiz,
+      settings: {
+        ...state.settings,
+        trustMode: "verified",
+        resultVisibility: "private",
+      },
+    });
+    expect(verified.settings).toMatchObject({
+      trustMode: "verified",
+      resultVisibility: "private",
+    });
+  });
+
   it("normalizes deterministic fallback avatars and preserves explicit selections", () => {
     const { state } = fixture();
     const fallbackParticipant = participant("00000000-0000-4000-8000-000000000001");
@@ -106,7 +133,8 @@ describe("game engine", () => {
       ...state,
       participants: { [fallbackParticipant.id]: fallbackParticipant },
     });
-    expect(upgradedCurrentState.stateSchemaVersion).toBe(4);
+    expect(upgradedCurrentState.stateSchemaVersion).toBe(5);
+    expect(upgradedCurrentState.settings.trustMode).toBe("learning");
     expect(upgradedCurrentState.participants[fallbackParticipant.id]?.avatarId).toBe(
       fallbackAvatar,
     );
@@ -1100,7 +1128,11 @@ describe("game engine", () => {
     };
 
     const upgraded = upgradeGameState(legacy as unknown as typeof state);
-    expect(upgraded.stateSchemaVersion).toBe(4);
+    expect(upgraded.stateSchemaVersion).toBe(5);
+    expect(upgraded.settings).toMatchObject({
+      trustMode: "learning",
+      resultVisibility: "leaderboard",
+    });
     expect(upgraded.experienceTheme).toMatchObject({
       preset: { id: "focus", version: 1 },
       category: "general",

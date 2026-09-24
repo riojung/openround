@@ -523,6 +523,7 @@ describe("P0 beta creator APIs", () => {
               {
                 id: followupId,
                 purpose: "recovery" as const,
+                trustMode: "learning" as const,
                 sourceQuizVersionId: randomUUID(),
                 sourceSessionId: sessionId,
                 sourceReportId: randomUUID(),

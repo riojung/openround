@@ -9,7 +9,6 @@ import {
   useWorkspace,
   WorkspaceProvider,
 } from "../../../../components/workspace/workspace-provider";
-import { WorkspaceFeatureGate } from "../../../../components/workspace/workspace-shell";
 import styles from "../../../../components/presentation-live/presentation-live.module.css";
 import { apiFetch, humanError } from "../../../../lib/api";
 
@@ -235,9 +234,7 @@ function PresentationReportContent() {
 export default function PresentationReportPage() {
   return (
     <WorkspaceProvider>
-      <WorkspaceFeatureGate feature="presentations">
-        <PresentationReportContent />
-      </WorkspaceFeatureGate>
+      <PresentationReportContent />
     </WorkspaceProvider>
   );
 }

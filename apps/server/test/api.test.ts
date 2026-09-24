@@ -610,6 +610,27 @@ describe("creator to report journey", () => {
     });
     expect(published.statusCode).toBe(200);
 
+    const unboundVerifiedSession = await app.inject({
+      method: "POST",
+      url: "/v1/sessions",
+      headers: { cookie },
+      payload: {
+        quizId,
+        settings: {
+          audienceLimit: 20,
+          scoringMode: "accuracy",
+          resultVisibility: "private",
+          allowLateJoin: true,
+          nicknamePolicy: "friendly_only",
+          trustMode: "verified",
+        },
+      },
+    });
+    expect(unboundVerifiedSession.statusCode).toBe(403);
+    expect(unboundVerifiedSession.json()).toMatchObject({
+      error: { code: "INSTITUTION_AUTH_REQUIRED" },
+    });
+
     const hosted = await app.inject({
       method: "POST",
       url: "/v1/sessions",
@@ -633,6 +654,7 @@ describe("creator to report journey", () => {
       snapshot: SessionSnapshot;
     }>();
     expect(session.snapshot.brandTheme).toBeNull();
+    expect(session.snapshot.settings.trustMode).toBe("learning");
 
     const embedOriginsPreflight = await app.inject({
       method: "OPTIONS",

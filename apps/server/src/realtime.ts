@@ -22,6 +22,10 @@ import type {
   InteractionService,
   PreparedAudienceChatEvent,
 } from "./interaction-service.js";
+import {
+  registerPresentationRealtime,
+  type PresentationRealtimeOptions,
+} from "./presentation-realtime.js";
 
 const CLIENT_EVENT_RECEIPT_TIMEOUT_MS = 5_000;
 const AUDIENCE_SUMMARY_MIN_INTERVAL_MS = 250;
@@ -123,6 +127,7 @@ export async function attachRealtime(
   config: AppConfig,
   metrics: MetricsService,
   interactions?: InteractionService,
+  presentationRealtime?: PresentationRealtimeOptions,
 ) {
   let closing = false;
   const adapterRedis = config.REDIS_URL
@@ -133,16 +138,11 @@ export async function attachRealtime(
     adapter: adapterRedis
       ? createAdapter(adapterRedis, {
           streamName: "openround:socket.io",
-          sessionKeyPrefix: "openround:socket.io:session:",
           maxLen: 10_000,
           onlyPlaintext: true,
         })
       : undefined,
     cors: { origin: config.WEB_ORIGIN, credentials: true },
-    connectionStateRecovery: {
-      maxDisconnectionDuration: 2 * 60_000,
-      skipMiddlewares: false,
-    },
     maxHttpBufferSize: 64 * 1024,
     pingInterval: 20_000,
     pingTimeout: 10_000,
@@ -170,6 +170,9 @@ export async function attachRealtime(
   >();
   const lastAudienceSummaryAt = new Map<string, number>();
   const audienceSummaryExpiryTimers = new Map<string, NodeJS.Timeout>();
+  const presentationRealtimeRegistration = presentationRealtime
+    ? registerPresentationRealtime(io, { ...presentationRealtime, metrics })
+    : null;
   const isModeratorSocket = (socket: Awaited<ReturnType<Server["fetchSockets"]>>[number]) =>
     (socket.data.role as RealtimeRole | undefined) === "host" &&
     ((socket.data.staffCredentialRole as string | undefined) === "host" ||
@@ -555,6 +558,7 @@ export async function attachRealtime(
     io,
     async close() {
       closing = true;
+      presentationRealtimeRegistration?.close();
       for (const { timer } of pendingAudienceSummaries.values()) clearTimeout(timer);
       pendingAudienceSummaries.clear();
       for (const timer of audienceSummaryExpiryTimers.values()) clearTimeout(timer);

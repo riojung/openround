@@ -1,14 +1,21 @@
 import type { Repository } from "@openround/db";
 import type { MetricsService } from "./metrics.js";
+import type { ProductEventDispatcher } from "./product-events.js";
 import { generateReport } from "./reporting.js";
 
 export type ReportWorkerResult = "idle" | "completed" | "retry_scheduled" | "failed";
+
+export interface ReportWorkerProductEvents {
+  dispatcher: ProductEventDispatcher;
+  workspaceEnabled: (workspaceId: string) => boolean;
+}
 
 export class ReportWorker {
   constructor(
     private readonly repository: Repository,
     private readonly leaseMs: number,
     private readonly metrics?: MetricsService,
+    private readonly productEvents?: ReportWorkerProductEvents,
   ) {}
 
   async runOnce(now = new Date()): Promise<ReportWorkerResult> {
@@ -28,6 +35,25 @@ export class ReportWorker {
       });
       await this.repository.completeReportJob(job, report);
       this.metrics?.reportGenerated();
+      try {
+        if (this.productEvents?.workspaceEnabled(job.workspaceId)) {
+          const segment = await this.repository.getWorkspaceSegment(job.workspaceId);
+          this.productEvents.dispatcher.enqueue({
+            workspaceId: job.workspaceId,
+            segment,
+            now,
+            events: [
+              {
+                name: "report_reconciled",
+                occurredAt: now.toISOString(),
+                dimensions: { artifactType: "round" },
+              },
+            ],
+          });
+        }
+      } catch {
+        // Report readiness is authoritative; best-effort telemetry cannot roll it back.
+      }
       return "completed";
     } catch (error) {
       const failed = job.attempts >= 5;

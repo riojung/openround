@@ -21,6 +21,7 @@ describe("production configuration", () => {
     expect(config.FEATURE_SIGNUPS).toBe(false);
     expect(config.COOKIE_SECURE).toBe("true");
     expect(config.AUDIT_RETENTION_DAYS).toBe(365);
+    expect(config.MAX_PRACTICE_PERSONAL_LINKS).toBe(100);
     expect(config.FEATURE_ROUND_EXPERIENCES).toBe(true);
     expect(config.FEATURE_AUDIENCE_PULSE).toBe(true);
     expect(config.FEATURE_ROOM_CHAT).toBe(true);
@@ -29,7 +30,16 @@ describe("production configuration", () => {
     expect(config.FEATURE_PRESENTATIONS).toBe(false);
     expect(config.FEATURE_GROUPS).toBe(false);
     expect(config.FEATURE_DISCOVER).toBe(false);
+    expect(config.FEATURE_PRESENTATION_REALTIME).toBe(false);
+    expect(config.FEATURE_RECOVERY_PACKS).toBe(false);
+    expect(config.FEATURE_QUESTION_HEALTH).toBe(false);
+    expect(config.FEATURE_DECISION_REPLAY).toBe(false);
+    expect(config.FEATURE_RECOVERY_TRAILS).toBe(false);
+    expect(config.FEATURE_CONCEPT_HEALTH).toBe(false);
+    expect(config.FEATURE_EXTENDED_QUESTION_TYPES).toBe(false);
+    expect(config.FEATURE_VERIFIED_INSTITUTION).toBe(false);
     expect(config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST).toEqual([]);
+    expect(config.EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST).toEqual([]);
   });
 
   it("accepts only one literal trusted proxy address", () => {
@@ -84,7 +94,16 @@ describe("production configuration", () => {
         FEATURE_PRESENTATIONS: "true",
         FEATURE_GROUPS: "false",
         FEATURE_DISCOVER: "true",
+        FEATURE_PRESENTATION_REALTIME: "true",
+        FEATURE_RECOVERY_PACKS: "true",
+        FEATURE_QUESTION_HEALTH: "true",
+        FEATURE_DECISION_REPLAY: "true",
+        FEATURE_RECOVERY_TRAILS: "true",
+        FEATURE_CONCEPT_HEALTH: "true",
+        FEATURE_EXTENDED_QUESTION_TYPES: "true",
+        FEATURE_VERIFIED_INSTITUTION: "true",
         UX_BETA_WORKSPACE_ALLOWLIST: `${first},${second}`,
+        EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: `${first},${second}`,
       }),
     );
 
@@ -97,8 +116,18 @@ describe("production configuration", () => {
       presentations: true,
       groups: false,
       discover: true,
+      presentationRealtime: true,
+      recoveryPacks: true,
+      questionHealth: true,
+      decisionReplay: true,
+      recoveryTrails: true,
+      conceptHealth: true,
+      extendedQuestionTypes: true,
+      verifiedInstitution: true,
     });
     expect(summary.uxBetaWorkspaceAllowlistSize).toBe(2);
+    expect(summary.evidenceFeaturesWorkspaceAllowlistSize).toBe(2);
+    expect(summary.practicePersonalLinkLimit).toBe(100);
     expect(summary.buildId).toBe(buildId);
     expect(JSON.stringify(summary)).not.toContain(first);
     expect(JSON.stringify(summary)).not.toContain(second);

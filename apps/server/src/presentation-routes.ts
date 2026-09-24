@@ -366,7 +366,6 @@ export async function registerPresentationRoutes(
     reply.header("cache-control", "private, no-store").header("pragma", "no-cache");
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
-    if (requirePresentationWorkspace(creator, reply, request.id) !== true) return;
     const query = PresentationListQuerySchema.parse(request.query);
     const list = await presentations.listPresentations(
       creator.workspaceId,
@@ -431,7 +430,6 @@ export async function registerPresentationRoutes(
     reply.header("cache-control", "private, no-store").header("pragma", "no-cache");
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
-    if (requirePresentationWorkspace(creator, reply, request.id) !== true) return;
     const { id } = IdParamsSchema.parse(request.params);
     const presentation = await presentations.getPresentation(creator.workspaceId, id);
     if (!presentation) {
@@ -828,7 +826,6 @@ export async function registerPresentationRoutes(
     reply.header("cache-control", "private, no-store").header("pragma", "no-cache");
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
-    if (requirePresentationWorkspace(creator, reply, request.id) !== true) return;
     const { id } = IdParamsSchema.parse(request.params);
     const presentation = await presentations.getPresentation(creator.workspaceId, id);
     if (!presentation)

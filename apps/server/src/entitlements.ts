@@ -8,7 +8,10 @@ export function entitlementsFor(
   plan: Plan,
   config: Pick<
     AppConfig,
-    "COMMUNITY_MODE" | "COMMUNITY_REPORT_RETENTION_DAYS" | "MAX_SESSION_PARTICIPANTS"
+    | "COMMUNITY_MODE"
+    | "COMMUNITY_REPORT_RETENTION_DAYS"
+    | "MAX_SESSION_PARTICIPANTS"
+    | "MAX_PRACTICE_PERSONAL_LINKS"
   >,
 ): Entitlements {
   if (config.COMMUNITY_MODE) {
@@ -21,6 +24,11 @@ export function entitlementsFor(
       brandTheme: true,
       followups: true,
       cohosting: true,
+      maxPracticePersonalLinks: config.MAX_PRACTICE_PERSONAL_LINKS,
+      recoveryTrails: true,
+      maxRecoveryStages: 4,
+      conceptHealth: true,
+      decisionReplay: true,
       authoringJobsPerMonth: null,
     };
   }
@@ -35,6 +43,11 @@ export function entitlementsFor(
       brandTheme: false,
       followups: false,
       cohosting: false,
+      maxPracticePersonalLinks: 0,
+      recoveryTrails: false,
+      maxRecoveryStages: 0,
+      conceptHealth: false,
+      decisionReplay: true,
       authoringJobsPerMonth: 3,
     };
   }
@@ -51,6 +64,14 @@ export function entitlementsFor(
     brandTheme: true,
     followups: true,
     cohosting: true,
+    maxPracticePersonalLinks:
+      plan === "pro"
+        ? Math.min(100, config.MAX_PRACTICE_PERSONAL_LINKS)
+        : config.MAX_PRACTICE_PERSONAL_LINKS,
+    recoveryTrails: true,
+    maxRecoveryStages: 4,
+    conceptHealth: true,
+    decisionReplay: true,
     authoringJobsPerMonth: plan === "pro" ? 100 : null,
   };
 }

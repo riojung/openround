@@ -43,6 +43,11 @@ The server exports Node.js runtime metrics plus these OpenRound families:
   `openround_session_version_conflicts_total`
 - `openround_broadcast_duration_seconds` and
   `openround_client_event_receipt_duration_seconds`
+- `openround_presentation_admission_attempts_total`,
+  `openround_presentation_admission_duration_seconds`, and
+  `openround_presentation_response_acknowledgement_duration_seconds`
+- `openround_presentation_broadcast_duration_seconds` and
+  `openround_presentation_client_event_receipt_duration_seconds`
 - `openround_media_finalizations_total`
 - `openround_billing_webhooks_total` and `openround_billing_webhook_lag_seconds`
 - `openround_retention_records_total` and `openround_media_deletion_backlog`
@@ -65,6 +70,13 @@ without relying on the device clock. Query acknowledged participant samples by `
 latency as a conservative arrival measure because it includes the acknowledgement's return trip.
 Track timeout rate separately and require both the p95 and timeout-rate gates before claiming the
 broadcast SLO.
+
+Presentation metrics use only bounded transport, projection, event, and outcome labels. Apply the
+same acceptance thresholds to both delivery engines: join p95 below 500 ms, durable response
+acknowledgement p95 below 250 ms and p99 below 600 ms, and participant receipt p95 below 500 ms.
+The Presentation load harness (`pnpm load:presentation`) emits a machine-readable 50/250-client
+sample; it does not replace a target-region run, restart/reconnect exercise, or reconciliation
+review.
 
 ## Bundled dashboard and rules
 
@@ -99,7 +111,7 @@ rehearse each route end to end with a named responder.
 CI runs `pnpm test:alerts`, `pnpm test:alert-routing`, and `pnpm test:collector-config`. The first
 executes `promtool test rules` against
 `infra/observability/alerts.test.yml`. The fixture feeds synthetic failure series into every rule
-and verifies all 14 alert names, hold periods, severity labels, summaries, and runbook annotations.
+and verifies all 18 alert names, hold periods, severity labels, summaries, and runbook annotations.
 The routing check verifies that each severity reaches exactly its intended receiver, while the
 collector check parses the pinned template. These catch configuration regressions; none proves
 delivery to a human-owned paging destination. Record that separately with the

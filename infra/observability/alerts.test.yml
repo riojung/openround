@@ -15,6 +15,8 @@ tests:
         values: "0+540x140"
       - series: 'openround_broadcast_duration_seconds_count{outcome="error"}'
         values: "0+60x140"
+      - series: 'openround_presentation_broadcast_duration_seconds_count{outcome="error"}'
+        values: "0+60x140"
       - series: 'openround_answer_acknowledgement_duration_seconds_bucket{outcome="accepted",le="0.6"}'
         values: "0+0x140"
       - series: 'openround_answer_acknowledgement_duration_seconds_bucket{outcome="accepted",le="1"}'
@@ -34,6 +36,28 @@ tests:
       - series: 'openround_client_event_receipt_duration_seconds_bucket{event_type="question.open",role="participant",outcome="acknowledged",le="+Inf"}'
         values: "0+60x140"
       - series: 'openround_client_event_receipt_duration_seconds_count{role="participant",outcome="timeout"}'
+        values: "0+60x140"
+      - series: 'openround_presentation_response_acknowledgement_duration_seconds_bucket{transport="socket",outcome="accepted",le="0.6"}'
+        values: "0+0x140"
+      - series: 'openround_presentation_response_acknowledgement_duration_seconds_bucket{transport="socket",outcome="accepted",le="0.25"}'
+        values: "0+0x140"
+      - series: 'openround_presentation_response_acknowledgement_duration_seconds_bucket{transport="socket",outcome="accepted",le="1"}'
+        values: "0+60x140"
+      - series: 'openround_presentation_response_acknowledgement_duration_seconds_bucket{transport="socket",outcome="accepted",le="+Inf"}'
+        values: "0+60x140"
+      - series: 'openround_presentation_admission_duration_seconds_bucket{transport="socket",outcome="accepted",le="0.5"}'
+        values: "0+0x140"
+      - series: 'openround_presentation_admission_duration_seconds_bucket{transport="socket",outcome="accepted",le="1"}'
+        values: "0+60x140"
+      - series: 'openround_presentation_admission_duration_seconds_bucket{transport="socket",outcome="accepted",le="+Inf"}'
+        values: "0+60x140"
+      - series: 'openround_presentation_client_event_receipt_duration_seconds_bucket{event_type="presentation.session.updated",projection="participant",outcome="acknowledged",le="0.5"}'
+        values: "0+0x140"
+      - series: 'openround_presentation_client_event_receipt_duration_seconds_bucket{event_type="presentation.session.updated",projection="participant",outcome="acknowledged",le="1"}'
+        values: "0+60x140"
+      - series: 'openround_presentation_client_event_receipt_duration_seconds_bucket{event_type="presentation.session.updated",projection="participant",outcome="acknowledged",le="+Inf"}'
+        values: "0+60x140"
+      - series: 'openround_presentation_client_event_receipt_duration_seconds_count{event_type="presentation.session.updated",projection="participant",outcome="timeout"}'
         values: "0+60x140"
       - series: 'openround_session_mutation_lease_wait_seconds_count{outcome="timeout"}'
         values: "0+60x140"
@@ -63,6 +87,9 @@ tests:
       - eval_time: 5m
         alertname: OpenRoundBroadcastFailures
         exp_alerts: []
+      - eval_time: 5m
+        alertname: OpenRoundPresentationBroadcastFailures
+        exp_alerts: []
       - eval_time: 10m
         alertname: OpenRoundAnswerAcknowledgementP99High
         exp_alerts: []
@@ -71,6 +98,21 @@ tests:
         exp_alerts: []
       - eval_time: 5m
         alertname: OpenRoundClientReceiptTimeouts
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: OpenRoundPresentationAnswerAcknowledgementP99High
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: OpenRoundPresentationJoinP95High
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: OpenRoundPresentationAnswerAcknowledgementP95High
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: OpenRoundPresentationClientReceiptP95High
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: OpenRoundPresentationClientReceiptTimeouts
         exp_alerts: []
       - eval_time: 5m
         alertname: OpenRoundMutationLeaseTimeouts
@@ -123,6 +165,14 @@ tests:
               runbook: docs/runbooks/observability.md
               summary: Authoritative realtime broadcasts are failing
       - eval_time: 130m
+        alertname: OpenRoundPresentationBroadcastFailures
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Presentation realtime broadcasts are failing
+      - eval_time: 130m
         alertname: OpenRoundAnswerAcknowledgementP99High
         exp_alerts:
           - exp_labels:
@@ -146,6 +196,46 @@ tests:
             exp_annotations:
               runbook: docs/runbooks/observability.md
               summary: Participant clients are not acknowledging live events
+      - eval_time: 130m
+        alertname: OpenRoundPresentationAnswerAcknowledgementP99High
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Presentation answer acknowledgement p99 is above 600 ms
+      - eval_time: 130m
+        alertname: OpenRoundPresentationJoinP95High
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Presentation participant join p95 is above 500 ms
+      - eval_time: 130m
+        alertname: OpenRoundPresentationAnswerAcknowledgementP95High
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Presentation answer acknowledgement p95 is above 250 ms
+      - eval_time: 130m
+        alertname: OpenRoundPresentationClientReceiptP95High
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Presentation participant event receipt p95 is above 500 ms
+      - eval_time: 130m
+        alertname: OpenRoundPresentationClientReceiptTimeouts
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              runbook: docs/runbooks/observability.md
+              summary: Presentation participants are not acknowledging live events
       - eval_time: 130m
         alertname: OpenRoundMutationLeaseTimeouts
         exp_alerts:

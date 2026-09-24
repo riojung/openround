@@ -40,6 +40,9 @@ import type {
   LtiLaunchRecord,
   LtiLoginTransactionRecord,
   LtiRegistrationRecord,
+  LiveRoomArtifactType,
+  LiveRoomCodeClaim,
+  LiveRoomCodeRecord,
   MagicTokenRecord,
   MediaAssetRecord,
   MediaReferenceOwnerType,
@@ -77,6 +80,7 @@ import {
   upcastRoundDraft,
 } from "./artifact-schemas.js";
 import {
+  ReportSchema,
   questionDelivery,
   type BrandTheme,
   type QuizDraft,
@@ -210,6 +214,7 @@ export class MemoryRepository implements Repository {
   readonly folders = new Map<string, FolderRecord>();
   readonly versions = new Map<string, QuizVersionRecord>();
   readonly sessions = new Map<string, StoredSession>();
+  readonly liveRoomCodes = new Map<string, LiveRoomCodeRecord>();
   readonly participants = new Map<string, ParticipantRecord>();
   readonly sessionStaff = new Map<string, SessionStaffCredentialRecord>();
   readonly qnaSettings = new Map<string, QnaSettingsRecord>();
@@ -1367,28 +1372,75 @@ export class MemoryRepository implements Repository {
       : null;
   }
 
-  async createSession(input: StoredSession) {
-    const now = Date.now();
-    const conflict = [...this.sessions.values()].some(
-      (session) =>
-        session.state.code === input.state.code &&
-        session.state.phase !== "finished" &&
-        session.expiresAt.getTime() > now,
+  async getLiveRoomCode(code: string, now = new Date()) {
+    const claim = this.liveRoomCodes.get(code);
+    if (!claim || claim.releasedAt !== null || claim.expiresAt <= now) return null;
+    return structuredClone(claim);
+  }
+
+  async claimLiveRoomCode(input: LiveRoomCodeClaim) {
+    const now = new Date();
+    const current = this.liveRoomCodes.get(input.code);
+    if (current && current.releasedAt === null && current.expiresAt > now) {
+      throw new SessionCodeConflictError(input.code);
+    }
+    const claim: LiveRoomCodeRecord = {
+      ...structuredClone(input),
+      releasedAt: null,
+    };
+    this.liveRoomCodes.set(input.code, claim);
+    return structuredClone(claim);
+  }
+
+  async releaseLiveRoomCode(
+    artifactType: LiveRoomArtifactType,
+    artifactId: string,
+    releasedAt = new Date(),
+  ) {
+    const claim = [...this.liveRoomCodes.values()].find(
+      (candidate) => candidate.artifactType === artifactType && candidate.artifactId === artifactId,
     );
-    if (conflict) throw new SessionCodeConflictError(input.state.code);
-    this.sessions.set(input.id, structuredClone(input));
-    this.interactionSettings.set(input.id, {
+    if (!claim) return false;
+    claim.releasedAt ??= new Date(releasedAt);
+    return true;
+  }
+
+  async createSession(input: StoredSession) {
+    await this.claimLiveRoomCode({
+      code: input.state.code,
       workspaceId: input.workspaceId,
-      sessionId: input.id,
-      signalsEnabled: true,
-      chatEnabled: false,
-      chatIdentityMode: "alias_public",
-      slowModeSeconds: 5,
-      presenterFeedMode: "pinned",
-      audienceSeq: 0,
-      closedAt: null,
-      updatedAt: new Date(input.createdAt),
+      artifactType: "round",
+      artifactId: input.id,
+      expiresAt: input.expiresAt,
+      createdAt: input.createdAt,
     });
+    try {
+      this.sessions.set(
+        input.id,
+        structuredClone({
+          ...input,
+          trustMode: input.trustMode ?? input.state.settings.trustMode ?? "learning",
+        }),
+      );
+      this.interactionSettings.set(input.id, {
+        workspaceId: input.workspaceId,
+        sessionId: input.id,
+        signalsEnabled: true,
+        chatEnabled: false,
+        chatIdentityMode: "alias_public",
+        slowModeSeconds: 5,
+        presenterFeedMode: "pinned",
+        audienceSeq: 0,
+        closedAt: null,
+        updatedAt: new Date(input.createdAt),
+      });
+      if (input.state.phase === "finished" || input.expiresAt <= new Date()) {
+        await this.releaseLiveRoomCode("round", input.id, input.updatedAt);
+      }
+    } catch (error) {
+      await this.releaseLiveRoomCode("round", input.id);
+      throw error;
+    }
   }
 
   async getSessionById(sessionId: string) {
@@ -1506,10 +1558,19 @@ export class MemoryRepository implements Repository {
       throw new SessionVersionConflictError(input.id, expectedVersion);
     }
     if (report && report.sessionId !== input.id) throw new Error("Report session does not match");
+    const currentTrustMode = current.trustMode ?? current.state.settings.trustMode ?? "learning";
+    const nextTrustMode = input.trustMode ?? input.state.settings.trustMode ?? "learning";
+    if (
+      currentTrustMode !== nextTrustMode ||
+      (input.state.settings.trustMode ?? "learning") !== nextTrustMode
+    ) {
+      throw new Error("Session trust mode is immutable");
+    }
     const storedSession = structuredClone({ ...input, updatedAt: new Date() });
     const storedReport = report ? structuredClone(report) : undefined;
     this.sessions.set(input.id, storedSession);
     if (storedSession.state.phase === "finished") {
+      await this.releaseLiveRoomCode("round", storedSession.id, storedSession.updatedAt);
       const settings = this.interactionSettings.get(input.id);
       if (settings) {
         settings.closedAt ??= new Date();
@@ -1549,6 +1610,11 @@ export class MemoryRepository implements Repository {
   }
 
   private deleteSessionTree(sessionId: string) {
+    for (const [code, claim] of this.liveRoomCodes) {
+      if (claim.artifactType === "round" && claim.artifactId === sessionId) {
+        this.liveRoomCodes.delete(code);
+      }
+    }
     for (const [followupId, followup] of this.followups) {
       if (followup.sourceSessionId === sessionId) this.deleteFollowupTree(followupId);
     }
@@ -2874,6 +2940,7 @@ export class MemoryRepository implements Repository {
           {
             id: report.id,
             sessionId: report.sessionId,
+            trustMode: report.trustMode ?? session.trustMode ?? "learning",
             quizId: version.quizId,
             title: session.state.quiz.title,
             status: report.status,
@@ -3102,6 +3169,7 @@ export class MemoryRepository implements Repository {
             ...source,
             quizId: version.quizId,
             sourceQuizVersionId: followup.sourceQuizVersionId,
+            trustMode: followup.trustMode ?? "learning",
             title: followup.title,
             status,
             conceptKeys: [...followup.conceptKeys],
@@ -3571,7 +3639,9 @@ export class MemoryRepository implements Repository {
         answers: [...this.answers.entries()]
           .filter(([key]) => sessionIds.has(key.split(":", 1)[0]!))
           .map(([, answer]) => structuredClone(answer)),
-        reports: [...this.reports.values()].filter((report) => sessionIds.has(report.sessionId)),
+        reports: [...this.reports.values()]
+          .filter((report) => sessionIds.has(report.sessionId))
+          .map((report) => ReportSchema.parse(structuredClone(report))),
         interactionSettings: [...this.interactionSettings.values()].filter((settings) =>
           sessionIds.has(settings.sessionId),
         ),
@@ -3823,6 +3893,7 @@ export class MemoryRepository implements Repository {
         !this.expiredLiveSessions.has(id)
       ) {
         this.expiredLiveSessions.add(id);
+        await this.releaseLiveRoomCode("round", id, now);
         expired.push(id);
       }
     }

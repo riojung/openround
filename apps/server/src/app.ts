@@ -43,10 +43,15 @@ import { StorageService } from "./storage.js";
 import { ProductEventDispatcher } from "./product-events.js";
 import { registerPresentationRoutes } from "./presentation-routes.js";
 import { registerPresentationSessionRoutes } from "./presentation-session-routes.js";
+import { PresentationSessionService } from "./presentation-session-service.js";
 import { registerGroupRoutes } from "./group-routes.js";
 import { registerHomeRoutes } from "./home-routes.js";
 import { registerLibraryRoutes } from "./library-routes.js";
-import { professionalWorkspaceFeatureEnabled } from "./workspace-rollout.js";
+import { registerLiveRoomRoutes } from "./live-room-routes.js";
+import {
+  professionalWorkspaceEligible,
+  professionalWorkspaceFeatureEnabled,
+} from "./workspace-rollout.js";
 
 export async function buildApp(
   config: AppConfig,
@@ -75,6 +80,8 @@ export async function buildApp(
           "request.headers.cookie",
           "*.participantToken",
           "*.hostToken",
+          "*.controlToken",
+          "*.companionToken",
           "*.token",
           "*.attemptToken",
           "*.genericToken",
@@ -227,7 +234,14 @@ export async function buildApp(
       "product event persistence failed",
     );
   });
-  const sessions = new SessionService(repository, cache, config, metrics, productEvents);
+  const sessions = new SessionService(
+    repository,
+    cache,
+    config,
+    metrics,
+    productEvents,
+    async (code) => Boolean(await presentationSessions.getSessionByCode(code)),
+  );
   const interactions = new InteractionService(repository, sessions, config, metrics);
   const qna = new QnaService(repository, sessions, interactions);
   const audienceOutboxWorker = new AudienceOutboxWorker(repository, interactions, metrics);
@@ -258,6 +272,13 @@ export async function buildApp(
     metrics,
   );
   const storage = new StorageService(config, scanner);
+  const presentationService = new PresentationSessionService({
+    repository,
+    presentations,
+    sessions: presentationSessions,
+    config,
+    storage,
+  });
   const readiness =
     overrides.readiness ??
     (async () => {
@@ -274,7 +295,10 @@ export async function buildApp(
     (sessionIds) => sessions.invalidate(sessionIds),
     config.AUDIT_RETENTION_DAYS,
   );
-  const reportWorker = new ReportWorker(repository, config.REPORT_WORKER_LEASE_MS, metrics);
+  const reportWorker = new ReportWorker(repository, config.REPORT_WORKER_LEASE_MS, metrics, {
+    dispatcher: productEvents,
+    workspaceEnabled: (workspaceId) => professionalWorkspaceEligible(config, workspaceId),
+  });
   const requestStarts = new WeakMap<object, number>();
   app.addHook("onRequest", async (request) => {
     requestStarts.set(request, performance.now());
@@ -312,23 +336,33 @@ export async function buildApp(
     readiness,
     stripeClient: overrides.stripe,
   });
-  if (config.FEATURE_PRESENTATIONS) {
-    await registerPresentationRoutes(app, {
-      repository,
-      presentations,
-      auth,
-      workspaceEnabled: presentationsEnabled,
-    });
-    await registerPresentationSessionRoutes(app, {
-      repository,
-      presentations,
-      presentationSessions,
-      auth,
-      config,
-      storage,
-      workspaceEnabled: presentationsEnabled,
-    });
-  }
+  await registerLiveRoomRoutes(app, {
+    repository,
+    sessions,
+    presentationSessions,
+    config,
+    consumeAdmission: cache.consumeRateLimit.bind(cache),
+  });
+  // Presentation read and recovery routes remain registered when a rollout is paused. Route-level
+  // workspace gates still prevent creation and other new authoring mutations.
+  await registerPresentationRoutes(app, {
+    repository,
+    presentations,
+    auth,
+    workspaceEnabled: presentationsEnabled,
+  });
+  await registerPresentationSessionRoutes(app, {
+    repository,
+    presentations,
+    presentationSessions,
+    auth,
+    config,
+    storage,
+    workspaceEnabled: presentationsEnabled,
+    metrics,
+    consumeAdmission: cache.consumeRateLimit.bind(cache),
+    service: presentationService,
+  });
   if (config.FEATURE_GROUPS) {
     await registerGroupRoutes(app, {
       repository,
@@ -385,6 +419,7 @@ export async function buildApp(
     productEvents,
     presentations,
     presentationSessions,
+    presentationService,
     groups,
     libraryMetadata,
   };

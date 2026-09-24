@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 describe("professional workspace rollout flags", () => {
-  it("fails closed by default and does not register Presentation or Group routes", async () => {
+  it("fails closed for new Presentation creation while keeping recovery reads registered", async () => {
     const built = await buildApp(
       ConfigSchema.parse({
         NODE_ENV: "test",
@@ -61,10 +61,30 @@ describe("professional workspace rollout flags", () => {
     expect(
       (await app.inject({ method: "GET", url: "/v1/presentations", headers: { cookie } }))
         .statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/v1/presentations",
+          headers: { cookie },
+          payload: { title: "Blocked during rollout pause", description: "" },
+        })
+      ).statusCode,
     ).toBe(404);
     expect(
       (await app.inject({ method: "GET", url: "/v1/presentation-sessions", headers: { cookie } }))
         .statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/v1/presentation-sessions",
+          headers: { cookie },
+          payload: { presentationId: randomUUID() },
+        })
+      ).statusCode,
     ).toBe(404);
     expect(
       (await app.inject({ method: "GET", url: "/v1/groups", headers: { cookie } })).statusCode,
@@ -109,11 +129,11 @@ describe("professional workspace rollout flags", () => {
     expect(
       (await app.inject({ method: "GET", url: "/v1/presentations", headers: { cookie } }))
         .statusCode,
-    ).toBe(404);
+    ).toBe(200);
     expect(
       (await app.inject({ method: "GET", url: "/v1/presentation-sessions", headers: { cookie } }))
         .statusCode,
-    ).toBe(404);
+    ).toBe(200);
     expect(
       (await app.inject({ method: "GET", url: "/v1/groups", headers: { cookie } })).statusCode,
     ).toBe(404);
@@ -178,7 +198,7 @@ describe("professional workspace rollout flags", () => {
     }
   });
 
-  it("allows public Presentation participation only while the owning workspace is eligible", async () => {
+  it("keeps existing Presentation participation readable when rollout eligibility is removed", async () => {
     const workspaceId = randomUUID();
     const config = ConfigSchema.parse({
       NODE_ENV: "test",
@@ -199,9 +219,19 @@ describe("professional workspace rollout flags", () => {
     const cookie = await signIn(app);
     const account = await app.inject({ method: "GET", url: "/v1/auth/me", headers: { cookie } });
     const creator = account.json<{ creator: { userId: string } }>().creator;
+    const createdPresentation = await app.inject({
+      method: "POST",
+      url: "/v1/presentations",
+      headers: { cookie },
+      payload: { title: "Existing authoring content", description: "Must remain readable" },
+    });
+    expect(createdPresentation.statusCode).toBe(201);
+    const presentationId = createdPresentation.json<{ presentation: { id: string } }>().presentation
+      .id;
     const now = new Date();
+    const sessionId = randomUUID();
     await built.presentationSessions.createSession({
-      id: randomUUID(),
+      id: sessionId,
       workspaceId,
       presentationId: randomUUID(),
       presentationVersionId: randomUUID(),
@@ -238,20 +268,127 @@ describe("professional workspace rollout flags", () => {
     });
 
     config.UX_BETA_WORKSPACE_ALLOWLIST.splice(0);
-    const excluded = await app.inject({
-      method: "POST",
-      url: "/v1/presentation-sessions/join",
-      payload: { code: "7654321", nickname: "Learner" },
-    });
-    expect(excluded.statusCode).toBe(404);
-    expect(excluded.json()).toMatchObject({ error: { code: "NOT_FOUND" } });
 
-    config.UX_BETA_WORKSPACE_ALLOWLIST.push(workspaceId);
-    const eligible = await app.inject({
+    const authoringList = await app.inject({
+      method: "GET",
+      url: "/v1/presentations",
+      headers: { cookie },
+    });
+    expect(authoringList.statusCode).toBe(200);
+    expect(authoringList.json()).toMatchObject({
+      presentations: [expect.objectContaining({ id: presentationId })],
+    });
+    for (const url of [
+      `/v1/presentations/${presentationId}`,
+      `/v1/presentations/${presentationId}/history`,
+    ]) {
+      expect((await app.inject({ method: "GET", url, headers: { cookie } })).statusCode).toBe(200);
+    }
+    const privacyExport = await app.inject({
+      method: "GET",
+      url: "/v1/account/export",
+      headers: { cookie },
+    });
+    expect(privacyExport.statusCode).toBe(200);
+    expect(privacyExport.json()).toMatchObject({
+      presentations: [expect.objectContaining({ id: presentationId })],
+    });
+
+    const joinedDuringRollback = await app.inject({
       method: "POST",
       url: "/v1/presentation-sessions/join",
       payload: { code: "7654321", nickname: "Learner" },
     });
-    expect(eligible.statusCode).toBe(201);
+    expect(joinedDuringRollback.statusCode, JSON.stringify(joinedDuringRollback.json())).toBe(201);
+    const participantToken = joinedDuringRollback.json<{ participantToken: string }>()
+      .participantToken;
+
+    const hostDetailDuringRollback = await app.inject({
+      method: "GET",
+      url: `/v1/presentation-sessions/${sessionId}`,
+      headers: { cookie },
+    });
+    expect(hostDetailDuringRollback.statusCode).toBe(200);
+    const participantDetailDuringRollback = await app.inject({
+      method: "GET",
+      url: `/v1/presentation-sessions/${sessionId}/participant`,
+      headers: { authorization: `Bearer ${participantToken}` },
+    });
+    expect(participantDetailDuringRollback.statusCode).toBe(200);
+
+    const rotatedControlPass = await app.inject({
+      method: "POST",
+      url: `/v1/presentation-sessions/${sessionId}/control-pass`,
+      headers: { cookie },
+    });
+    expect(rotatedControlPass.statusCode).toBe(201);
+    const controlCredentialId = rotatedControlPass.json<{ credentialId: string }>().credentialId;
+
+    const contentDuringRollback = await app.inject({
+      method: "POST",
+      url: `/v1/presentation-sessions/${sessionId}/advance`,
+      headers: { cookie },
+      payload: { expectedRevision: 0 },
+    });
+    expect(contentDuringRollback.statusCode).toBe(200);
+    expect(contentDuringRollback.json()).toMatchObject({ snapshot: { phase: "content" } });
+    const finishedDuringRollback = await app.inject({
+      method: "POST",
+      url: `/v1/presentation-sessions/${sessionId}/advance`,
+      headers: { cookie },
+      payload: { expectedRevision: 1 },
+    });
+    expect(finishedDuringRollback.statusCode).toBe(200);
+    expect(finishedDuringRollback.json()).toMatchObject({ snapshot: { phase: "finished" } });
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: `/v1/presentation-sessions/${sessionId}/report`,
+          headers: { cookie },
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: "DELETE",
+          url: `/v1/presentation-sessions/${sessionId}/control-passes/${controlCredentialId}`,
+          headers: { cookie },
+        })
+      ).statusCode,
+    ).toBe(204);
+
+    const listedDuringRollback = await app.inject({
+      method: "GET",
+      url: "/v1/presentation-sessions",
+      headers: { cookie },
+    });
+    expect(listedDuringRollback.statusCode).toBe(200);
+    expect(listedDuringRollback.json()).toMatchObject({
+      sessions: [expect.objectContaining({ code: "7654321" })],
+    });
+
+    const blockedCreation = await app.inject({
+      method: "POST",
+      url: "/v1/presentation-sessions",
+      headers: { cookie },
+      payload: { presentationId: randomUUID() },
+    });
+    expect(blockedCreation.statusCode).toBe(404);
+    const blockedAuthoringCreation = await app.inject({
+      method: "POST",
+      url: "/v1/presentations",
+      headers: { cookie },
+      payload: { title: "New content", description: "" },
+    });
+    expect(blockedAuthoringCreation.statusCode).toBe(404);
+    const blockedDraftMutation = await app.inject({
+      method: "PUT",
+      url: `/v1/presentations/${presentationId}/draft`,
+      headers: { cookie },
+      payload: {},
+    });
+    expect(blockedDraftMutation.statusCode).toBe(404);
   });
 });

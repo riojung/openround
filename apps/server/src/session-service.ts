@@ -179,6 +179,7 @@ export class SessionService {
     private readonly config: AppConfig,
     private readonly metrics: MetricsService,
     productEvents?: ProductEventDispatcher,
+    private readonly otherLiveRoomCodeInUse?: (code: string) => Promise<boolean>,
   ) {
     this.productEvents = productEvents ?? new ProductEventDispatcher(repository, metrics);
   }
@@ -206,11 +207,29 @@ export class SessionService {
     return events.flatMap((event): ProductEventInput[] => {
       switch (event.type) {
         case "question.locked":
-          return [{ name: "question_locked", occurredAt: occurredAt.toISOString() }];
+          return [
+            {
+              name: "question_locked",
+              occurredAt: occurredAt.toISOString(),
+              dimensions: { artifactType: "round" },
+            },
+          ];
         case "checkpoint.insight":
-          return [{ name: "insight_shown", occurredAt: occurredAt.toISOString() }];
+          return [
+            {
+              name: "insight_shown",
+              occurredAt: occurredAt.toISOString(),
+              dimensions: { artifactType: "round" },
+            },
+          ];
         case "recheck.open":
-          return [{ name: "recheck_opened", occurredAt: occurredAt.toISOString() }];
+          return [
+            {
+              name: "recheck_opened",
+              occurredAt: occurredAt.toISOString(),
+              dimensions: { artifactType: "round" },
+            },
+          ];
         default:
           return [];
       }
@@ -703,6 +722,12 @@ export class SessionService {
     if (creator.role === "viewer") {
       throw new SessionError("UNAUTHORIZED", "Viewers cannot host live rounds");
     }
+    if (settings.trustMode === "verified") {
+      throw new SessionError(
+        "INSTITUTION_AUTH_REQUIRED",
+        "Verified sessions require an institution-bound learner launch, which is not enabled in this release",
+      );
+    }
     const institutionPolicy = await this.repository.getInstitutionPolicy(creator.workspaceId);
     if (institutionPolicy.identityRequirement === "institution") {
       throw new SessionError(
@@ -758,12 +783,14 @@ export class SessionService {
         }
         if (!reserved) continue;
         if (await this.repository.getSessionByCode(code)) continue;
+        if (await this.otherLiveRoomCodeInUse?.(code)) continue;
         const session: StoredSession = {
           id: sessionId,
           workspaceId: creator.workspaceId,
           quizVersionId: version.id,
           hostId: creator.userId,
           hostTokenHash: hashToken(hostToken),
+          trustMode: settings.trustMode ?? "learning",
           state: createGameState({
             sessionId,
             code,
@@ -785,7 +812,13 @@ export class SessionService {
         this.metrics.setActiveSessions(this.active.size);
         this.recordSessionProductEvents(
           session.workspaceId,
-          [{ name: "host_setup_completed", occurredAt: now.toISOString() }],
+          [
+            {
+              name: "host_setup_completed",
+              occurredAt: now.toISOString(),
+              dimensions: { artifactType: "round" },
+            },
+          ],
           creator.segment,
         );
         return {
@@ -822,6 +855,7 @@ export class SessionService {
     ).length;
     if (
       institutionPolicy.identityRequirement === "institution" ||
+      (stored.trustMode ?? state.settings.trustMode ?? "learning") === "verified" ||
       state.phase === "finished" ||
       state.lobbyLocked ||
       (!state.settings.allowLateJoin && state.phase !== "lobby") ||
@@ -900,6 +934,12 @@ export class SessionService {
   private async processJoinBatch(code: string, items: PendingJoin[]) {
     const stored = await this.repository.getSessionByCode(code);
     if (!stored) throw new SessionError("INVALID_CODE", "Check the code and try again");
+    if ((stored.trustMode ?? stored.state.settings.trustMode ?? "learning") === "verified") {
+      throw new SessionError(
+        "INSTITUTION_AUTH_REQUIRED",
+        "Verified sessions require an institution-bound learner launch; anonymous code entry is disabled",
+      );
+    }
     const institutionPolicy = await this.repository.getInstitutionPolicy(stored.workspaceId);
     if (institutionPolicy.identityRequirement === "institution") {
       throw new SessionError(
@@ -1017,6 +1057,7 @@ export class SessionService {
         accepted.map(({ participant }) => ({
           name: "participant_joined",
           occurredAt: participant.joinedAt.toISOString(),
+          dimensions: { artifactType: "round" },
         })),
       );
       for (const { item, participant, participantToken } of accepted) {
@@ -1454,10 +1495,12 @@ export class SessionService {
           ...firstAnswers.map((answer): ProductEventInput => ({
             name: "first_answer_submitted",
             occurredAt: new Date(answer.acceptedAtMs).toISOString(),
+            dimensions: { artifactType: "round" },
           })),
           ...newAnswers.map((answer): ProductEventInput => ({
             name: "response_saved_acknowledged",
             occurredAt: new Date(answer.acceptedAtMs).toISOString(),
+            dimensions: { artifactType: "round" },
           })),
         ]);
         // The answer is durable at this point. Yield to I/O so response receipts
@@ -1557,6 +1600,16 @@ export class SessionService {
                         {
                           name: "intervention_started" as const,
                           occurredAt: commandTime.toISOString(),
+                          dimensions: { artifactType: "round" as const },
+                        },
+                      ]
+                    : []),
+                  ...(input.action === "recheck.open" && input.recheckMode === "linked"
+                    ? [
+                        {
+                          name: "linked_recheck_opened" as const,
+                          occurredAt: commandTime.toISOString(),
+                          dimensions: { artifactType: "round" as const },
                         },
                       ]
                     : []),
