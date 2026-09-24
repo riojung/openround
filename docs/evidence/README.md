@@ -22,4 +22,5 @@ Available templates cover [accessibility](accessibility-review.md),
 [target-region load and soak](target-region-load.md),
 [design-partner interviews](design-partner-interview.md), and
 [observed beta sessions](session-observation.md), plus the aggregate
-[P0 beta usability study](beta-usability.md).
+[P0 beta usability study](beta-usability.md) and
+[Phase 0 segment/Phase 1 branch decision](phase0-stage-decision.md).
