@@ -57,6 +57,26 @@ export interface PresentationSessionParticipantRecord {
   lastSeenAt: Date;
 }
 
+/**
+ * Canonical Presentation leaderboard ordering for in-process projections and reports. Keep the
+ * PostgreSQL acknowledgement ranking windows in presentation-sessions.ts in the same order.
+ */
+export function comparePresentationLeaderboardEntries(
+  left: Pick<PresentationSessionParticipantRecord, "id" | "nickname" | "joinedAt"> & {
+    score: number;
+  },
+  right: Pick<PresentationSessionParticipantRecord, "id" | "nickname" | "joinedAt"> & {
+    score: number;
+  },
+) {
+  return (
+    right.score - left.score ||
+    left.joinedAt.getTime() - right.joinedAt.getTime() ||
+    left.nickname.localeCompare(right.nickname) ||
+    left.id.localeCompare(right.id)
+  );
+}
+
 export interface PresentationSessionResponseRecord {
   id: string;
   workspaceId: string;

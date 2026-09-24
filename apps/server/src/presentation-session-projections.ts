@@ -9,11 +9,12 @@ import {
   type QuestionDraft,
   questionPurpose,
 } from "@openround/contracts";
-import type {
-  PresentationParticipantSnapshotProjection,
-  PresentationSessionParticipantRecord,
-  PresentationSessionRecord,
-  PresentationSessionResponseRecord,
+import {
+  comparePresentationLeaderboardEntries,
+  type PresentationParticipantSnapshotProjection,
+  type PresentationSessionParticipantRecord,
+  type PresentationSessionRecord,
+  type PresentationSessionResponseRecord,
 } from "@openround/db";
 
 const PRESENTATION_PARTICIPANT_PRESENCE_WINDOW_MS = 15_000;
@@ -63,12 +64,7 @@ function rankedParticipants(
       joinedAt: participant.joinedAt,
       score: scores.get(participant.id) ?? 0,
     }))
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        left.joinedAt.getTime() - right.joinedAt.getTime() ||
-        left.nickname.localeCompare(right.nickname),
-    )
+    .sort(comparePresentationLeaderboardEntries)
     .map((participant, index) => ({ ...participant, rank: index + 1 }));
 }
 

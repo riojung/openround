@@ -457,6 +457,73 @@ describe("presentation response acceptance", () => {
     expect(secondAttempt).toEqual({ status: "phase_closed" });
   });
 
+  it("uses participant ID as the final acknowledgement standing tie-breaker", async () => {
+    const repository = createPresentationSessionRepository(new MemoryRepository());
+    const setup = fixture();
+    const firstId = "00000000-0000-4000-8000-000000000001";
+    const secondId = "00000000-0000-4000-8000-000000000002";
+    await repository.createSession({
+      id: setup.sessionId,
+      workspaceId: setup.workspaceId,
+      presentationId: randomUUID(),
+      presentationVersionId: randomUUID(),
+      title: setup.content.title,
+      content: setup.content,
+      code: "1234559",
+      status: "active",
+      phase: "question_open",
+      currentBlockIndex: 0,
+      revision: 0,
+      createdBy: randomUUID(),
+      createdAt: setup.now,
+      updatedAt: setup.now,
+      finishedAt: null,
+      liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+      retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+    });
+    for (const id of [secondId, firstId]) {
+      await repository.addParticipant({
+        id,
+        workspaceId: setup.workspaceId,
+        sessionId: setup.sessionId,
+        nickname: "Same nickname",
+        tokenHash: id.replaceAll("-", "").padEnd(64, "0"),
+        joinedAt: setup.now,
+        lastSeenAt: setup.now,
+      });
+    }
+    const firstResponse = setup.response(firstId, undefined, randomUUID(), "a".repeat(64));
+    const secondResponse = setup.response(secondId, undefined, randomUUID(), "b".repeat(64));
+    await expect(repository.acceptResponse(firstResponse, 0)).resolves.toMatchObject({
+      status: "accepted",
+    });
+    await expect(repository.acceptResponse(secondResponse, 0)).resolves.toMatchObject({
+      status: "accepted",
+    });
+    await repository.transitionSession({
+      workspaceId: setup.workspaceId,
+      sessionId: setup.sessionId,
+      expectedRevision: 0,
+      phase: "question_reveal",
+      currentBlockIndex: 0,
+      status: "active",
+      event: { type: "question.revealed", blockIndex: 0, blockId: setup.blockId },
+    });
+
+    await expect(
+      repository.acceptResponse({ ...firstResponse, id: randomUUID() }, 0),
+    ).resolves.toMatchObject({
+      status: "duplicate",
+      acknowledgement: { projection: { standing: { rank: 1, score: 975 } } },
+    });
+    await expect(
+      repository.acceptResponse({ ...secondResponse, id: randomUUID() }, 0),
+    ).resolves.toMatchObject({
+      status: "duplicate",
+      acknowledgement: { projection: { standing: { rank: 2, score: 975 } } },
+    });
+  });
+
   it("distinguishes a second response key from an idempotent retry", async () => {
     const repository = createPresentationSessionRepository(new MemoryRepository());
     const setup = fixture();

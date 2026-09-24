@@ -310,6 +310,39 @@ describe("Presentation session projections", () => {
     });
   });
 
+  it("uses participant ID as the final deterministic leaderboard tie-breaker", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const { session, participants } = fixture();
+    const firstId = "00000000-0000-4000-8000-000000000001";
+    const secondId = "00000000-0000-4000-8000-000000000002";
+    const tiedParticipants = participants.slice(0, 2).map((participant, index) => ({
+      ...participant,
+      id: index === 0 ? secondId : firstId,
+      nickname: "Same nickname",
+      joinedAt: new Date("2026-09-24T17:59:10.000Z"),
+    }));
+    const revealedSession: PresentationSessionRecord = {
+      ...session,
+      phase: "question_reveal",
+      questionClosesAt: null,
+    };
+    const data = buildPresentationProjectionData(revealedSession, tiedParticipants, []);
+
+    expect(
+      buildPresentationHostSnapshot(revealedSession, data).participants.map(({ id, rank }) => ({
+        id,
+        rank,
+      })),
+    ).toEqual([
+      { id: firstId, rank: 1 },
+      { id: secondId, rank: 2 },
+    ]);
+    expect(buildPresentationParticipantSnapshot(revealedSession, secondId, data)).toMatchObject({
+      standing: { rank: 2, score: 0 },
+    });
+  });
+
   it("uses the inclusive heartbeat window plus socket presence only in staff room status", () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);

@@ -8,6 +8,7 @@ import {
 import { PostgresRepository } from "./postgres.js";
 import type { Repository } from "./types.js";
 import {
+  comparePresentationLeaderboardEntries,
   PresentationSessionConflictError,
   type PresentationSessionCommandInput,
   type PresentationSessionCommandReceiptRecord,
@@ -756,7 +757,8 @@ export class MemoryPresentationSessionRepository
       .sort(
         (left, right) =>
           left.joinedAt.getTime() - right.joinedAt.getTime() ||
-          left.nickname.localeCompare(right.nickname),
+          left.nickname.localeCompare(right.nickname) ||
+          left.id.localeCompare(right.id),
       );
     if (!participants.some((participant) => participant.id === participantId)) return null;
     let standing: PresentationParticipantSnapshotProjection["standing"] = null;
@@ -776,12 +778,7 @@ export class MemoryPresentationSessionRepository
           ...participant,
           score: scores.get(participant.id) ?? 0,
         }))
-        .sort(
-          (left, right) =>
-            right.score - left.score ||
-            left.joinedAt.getTime() - right.joinedAt.getTime() ||
-            left.nickname.localeCompare(right.nickname),
-        );
+        .sort(comparePresentationLeaderboardEntries);
       const rank = ranked.findIndex((participant) => participant.id === participantId);
       standing = rank < 0 ? null : { rank: rank + 1, score: ranked[rank]!.score };
     }
