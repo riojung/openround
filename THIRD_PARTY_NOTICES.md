@@ -336,13 +336,13 @@ This file is not legal advice.
 
 These programs run as separate containers and are not relicensed by OpenRound:
 
-| Service      | Compose image                                      | License and source                                                        |
-| ------------ | -------------------------------------------------- | ------------------------------------------------------------------------- |
-| PostgreSQL   | `postgres:17-alpine`                               | [PostgreSQL License](https://www.postgresql.org/about/licence/)           |
-| Valkey       | `valkey/valkey:8-alpine`                           | [BSD 3-Clause](https://github.com/valkey-io/valkey/blob/unstable/COPYING) |
-| MinIO Server | `quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z` | [GNU AGPL v3](https://github.com/minio/minio/blob/master/LICENSE)         |
-| Mailpit      | `axllent/mailpit:v1.27`                            | [MIT](https://github.com/axllent/mailpit/blob/develop/LICENSE)            |
-| Caddy        | `caddy:2.10-alpine`                                | [Apache 2.0](https://github.com/caddyserver/caddy/blob/master/LICENSE)    |
+| Service      | Compose image                                                                                      | License and source                                                        |
+| ------------ | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| PostgreSQL   | `postgres:17-alpine`                                                                               | [PostgreSQL License](https://www.postgresql.org/about/licence/)           |
+| Valkey       | `valkey/valkey:8-alpine`                                                                           | [BSD 3-Clause](https://github.com/valkey-io/valkey/blob/unstable/COPYING) |
+| MinIO Server | `cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1` | [GNU AGPL v3](https://github.com/minio/minio/blob/master/LICENSE)         |
+| Mailpit      | `axllent/mailpit:v1.27`                                                                            | [MIT](https://github.com/axllent/mailpit/blob/develop/LICENSE)            |
+| Caddy        | `caddy:2.10-alpine`                                                                                | [Apache 2.0](https://github.com/caddyserver/caddy/blob/master/LICENSE)    |
 
 Operators distributing a composed appliance or modified service image are responsible for
 the corresponding license obligations. In particular, MinIO's AGPL terms are separate from
