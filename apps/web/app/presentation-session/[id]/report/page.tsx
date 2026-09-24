@@ -88,7 +88,7 @@ function PresentationReportContent() {
           </p>
         ) : null}
         {reportFailed ? (
-          <p className="error" lang="en-CA" role="alert">
+          <p className="error" lang={locale} role="alert">
             {t("live.presentationReport.failed")}
           </p>
         ) : null}
