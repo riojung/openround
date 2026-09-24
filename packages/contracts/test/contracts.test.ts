@@ -190,6 +190,7 @@ describe("public contracts", () => {
         workspaceShell: true,
         builderV2: true,
         presentations: false,
+        presentationRealtime: false,
         groups: true,
         discover: false,
       }),

@@ -8,6 +8,7 @@ import {
 import { PostgresRepository } from "./postgres.js";
 import type { Repository } from "./types.js";
 import {
+  comparePresentationLeaderboardEntries,
   PresentationSessionConflictError,
   type PresentationSessionCommandInput,
   type PresentationSessionCommandReceiptRecord,
@@ -17,17 +18,34 @@ import {
   type PresentationSessionParticipantRecord,
   type PresentationParticipantSnapshotProjection,
   type PresentationParticipantJoin,
+  type PresentationResponseAcknowledgementState,
   type PresentationSessionReportCompletion,
   type PresentationSessionReportJob,
   type PresentationSessionReportRecord,
   type PresentationSessionRecord,
   type PresentationSessionRepository,
   type PresentationResponseAcceptance,
+  type PresentationResponseContext,
   type PresentationSessionResponseRecord,
   type PresentationSessionTimelineRecord,
   type PresentationSessionTransitionInput,
   type PresentationTransitionAcceptance,
 } from "./presentation-session-types.js";
+
+// Revision and live child rows are monotonic for the lifetime of a Presentation session. Their
+// sum is therefore a commit-visible, per-session fence: every host command, join, or accepted
+// response changes it, while concurrent uncommitted rows cannot consume a value that later leaks
+// into a snapshot. Do not expose the stored compatibility counter here; it may deliberately skip
+// optimized response writes once a deployment has completed its old-binary overlap window.
+const PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL = `(
+  session.revision
+  + (SELECT count(*)
+       FROM presentation_live_participants participant
+      WHERE participant.session_id = session.id)
+  + (SELECT count(*)
+       FROM presentation_live_responses response
+      WHERE response.session_id = session.id)
+)`;
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -556,10 +574,14 @@ export class MemoryPresentationSessionRepository
   }
 
   async addParticipant(input: PresentationSessionParticipantRecord) {
-    this.participants.set(input.id, clone(input));
     const session = this.sessions.get(input.sessionId);
-    if (session?.workspaceId === input.workspaceId) session.eventSeq += 1;
-    return clone(input);
+    if (!session || session.workspaceId !== input.workspaceId) {
+      throw new Error("Presentation session does not exist");
+    }
+    session.eventSeq += 1;
+    const stored = clone(input);
+    this.participants.set(input.id, stored);
+    return clone(stored);
   }
 
   async joinParticipantWithinLimit(
@@ -579,11 +601,12 @@ export class MemoryPresentationSessionRepository
       (participant) => participant.sessionId === input.sessionId,
     ).length;
     if (participantCount >= participantLimit) return { status: "full" };
-    this.participants.set(input.id, clone(input));
     // Sequence fences cover every durable aggregate mutation, not only host transitions. This
     // keeps equal-revision join snapshots from racing one another in reconnecting clients.
     session.eventSeq += 1;
-    return { status: "accepted", participant: clone(input) };
+    const stored = clone(input);
+    this.participants.set(input.id, stored);
+    return { status: "accepted", participant: clone(stored) };
   }
 
   async findParticipant(sessionId: string, tokenHash: string) {
@@ -593,6 +616,30 @@ export class MemoryPresentationSessionRepository
     if (!participant) return null;
     participant.lastSeenAt = new Date();
     return clone(participant);
+  }
+
+  async getResponseContext(
+    sessionId: string,
+    tokenHash: string,
+    idempotencyKey: string,
+  ): Promise<PresentationResponseContext | null> {
+    const session = this.sessions.get(sessionId);
+    const participant = [...this.participants.values()].find(
+      (candidate) => candidate.sessionId === sessionId && candidate.tokenHash === tokenHash,
+    );
+    if (!session || !participant) return null;
+    participant.lastSeenAt = new Date();
+    const priorResponse = [...this.responses.values()].find(
+      (candidate) =>
+        candidate.sessionId === sessionId &&
+        candidate.participantId === participant.id &&
+        candidate.idempotencyKey === idempotencyKey,
+    );
+    return {
+      session: clone(session),
+      participant: clone(participant),
+      priorResponse: priorResponse ? clone(priorResponse) : null,
+    };
   }
 
   async listParticipants(sessionId: string) {
@@ -630,13 +677,26 @@ export class MemoryPresentationSessionRepository
           input.requestHash &&
           idempotent.requestHash !== input.requestHash
           ? { status: "idempotency_conflict", response: clone(idempotent) }
-          : { status: "duplicate", response: clone(idempotent) };
+          : {
+              status: "duplicate",
+              response: clone(idempotent),
+              acknowledgement: this.responseAcknowledgementState(
+                this.sessions.get(input.sessionId)!,
+                input.participantId,
+              ),
+            };
       }
     }
     const session = this.sessions.get(input.sessionId);
     if (
       !session ||
       session.workspaceId !== input.workspaceId ||
+      ![...this.participants.values()].some(
+        (participant) =>
+          participant.workspaceId === input.workspaceId &&
+          participant.sessionId === input.sessionId &&
+          participant.id === input.participantId,
+      ) ||
       !responseWindowOpen(session, input, expectedSessionRevision)
     ) {
       return { status: "phase_closed" };
@@ -644,17 +704,25 @@ export class MemoryPresentationSessionRepository
     const key = `${input.sessionId}:${input.participantId}:${input.blockId}`;
     const existing = this.responses.get(key);
     if (existing) {
+      if (input.idempotencyKey) {
+        return { status: "already_responded", response: clone(existing) };
+      }
       return {
-        status: input.idempotencyKey ? "already_responded" : "duplicate",
+        status: "duplicate",
         response: clone(existing),
+        acknowledgement: this.responseAcknowledgementState(session, input.participantId),
       };
     }
-    const stored = clone(input);
-    this.responses.set(key, stored);
     // A response changes participant/answer aggregates while the host revision stays fixed.
     // Advance the independent sequence so delayed snapshots cannot roll those aggregates back.
     session.eventSeq += 1;
-    return { status: "accepted", response: clone(stored) };
+    const stored = clone(input);
+    this.responses.set(key, stored);
+    return {
+      status: "accepted",
+      response: clone(stored),
+      acknowledgement: this.responseAcknowledgementState(session, input.participantId),
+    };
   }
 
   async listResponses(sessionId: string) {
@@ -678,18 +746,19 @@ export class MemoryPresentationSessionRepository
     return response ? clone(response) : null;
   }
 
-  async getParticipantSnapshotProjection(
+  private participantSnapshotProjection(
     sessionId: string,
     participantId: string,
     currentBlockId: string | null,
     includeStanding: boolean,
-  ): Promise<PresentationParticipantSnapshotProjection | null> {
+  ): PresentationParticipantSnapshotProjection | null {
     const participants = [...this.participants.values()]
       .filter((participant) => participant.sessionId === sessionId)
       .sort(
         (left, right) =>
           left.joinedAt.getTime() - right.joinedAt.getTime() ||
-          left.nickname.localeCompare(right.nickname),
+          left.nickname.localeCompare(right.nickname) ||
+          left.id.localeCompare(right.id),
       );
     if (!participants.some((participant) => participant.id === participantId)) return null;
     let standing: PresentationParticipantSnapshotProjection["standing"] = null;
@@ -709,12 +778,7 @@ export class MemoryPresentationSessionRepository
           ...participant,
           score: scores.get(participant.id) ?? 0,
         }))
-        .sort(
-          (left, right) =>
-            right.score - left.score ||
-            left.joinedAt.getTime() - right.joinedAt.getTime() ||
-            left.nickname.localeCompare(right.nickname),
-        );
+        .sort(comparePresentationLeaderboardEntries);
       const rank = ranked.findIndex((participant) => participant.id === participantId);
       standing = rank < 0 ? null : { rank: rank + 1, score: ranked[rank]!.score };
     }
@@ -726,6 +790,38 @@ export class MemoryPresentationSessionRepository
       standing,
       currentResponse: currentResponse ? clone(currentResponse) : null,
     };
+  }
+
+  private responseAcknowledgementState(
+    session: PresentationSessionRecord,
+    participantId: string,
+  ): PresentationResponseAcknowledgementState {
+    const currentBlock =
+      session.currentBlockIndex >= 0
+        ? (session.content.blocks[session.currentBlockIndex] ?? null)
+        : null;
+    const projection = this.participantSnapshotProjection(
+      session.id,
+      participantId,
+      currentBlock?.id ?? null,
+      session.phase !== "question_open",
+    );
+    if (!projection) throw new Error("Presentation response participant no longer exists");
+    return { session: clone(session), projection };
+  }
+
+  async getParticipantSnapshotProjection(
+    sessionId: string,
+    participantId: string,
+    currentBlockId: string | null,
+    includeStanding: boolean,
+  ): Promise<PresentationParticipantSnapshotProjection | null> {
+    return this.participantSnapshotProjection(
+      sessionId,
+      participantId,
+      currentBlockId,
+      includeStanding,
+    );
   }
 
   async listTimeline(sessionId: string) {
@@ -891,7 +987,10 @@ export class MemoryPresentationSessionRepository
 }
 
 export class PostgresPresentationSessionRepository implements PresentationSessionRepository {
-  constructor(private readonly repository: PostgresRepository) {}
+  constructor(
+    private readonly repository: PostgresRepository,
+    private readonly options: { concurrentResponseWrites?: boolean } = {},
+  ) {}
 
   private async transaction<T>(
     workspaceId: string | null,
@@ -914,6 +1013,121 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     } finally {
       client.release();
     }
+  }
+
+  private async responseAcknowledgementState(
+    client: PoolClient,
+    workspaceId: string,
+    sessionId: string,
+    participantId: string,
+  ): Promise<PresentationResponseAcknowledgementState> {
+    const parameters = [workspaceId, sessionId, participantId];
+    const openQuestionResult = await client.query(
+      `SELECT to_jsonb(session) || jsonb_build_object(
+                'event_seq', session.revision
+                  + participant_totals.participant_count
+                  + response_totals.response_count
+              ) AS response_session,
+              participant_totals.participant_count::integer AS participant_count,
+              (SELECT row_to_json(current_response)
+                 FROM presentation_live_responses current_response
+                WHERE current_response.session_id = session.id
+                  AND current_response.participant_id = $3
+                  AND session.current_block_index >= 0
+                  AND current_response.block_id::text =
+                    session.content_snapshot -> 'blocks' -> session.current_block_index ->> 'id'
+                LIMIT 1) AS current_response
+         FROM presentation_live_sessions session
+         CROSS JOIN LATERAL (
+           SELECT count(*) AS participant_count
+             FROM presentation_live_participants participant
+            WHERE participant.session_id = session.id
+         ) participant_totals
+         CROSS JOIN LATERAL (
+           SELECT count(*) AS response_count
+             FROM presentation_live_responses response
+            WHERE response.session_id = session.id
+         ) response_totals
+        WHERE session.workspace_id = $1 AND session.id = $2`,
+      parameters,
+    );
+    let row = openQuestionResult.rows[0];
+    if (!row) throw new Error("Presentation response session no longer exists");
+    let session = mapSession(row.response_session);
+    if (session.phase !== "question_open") {
+      // Ranking is deliberately absent from the high-volume open-question acknowledgement path.
+      // If results are visible, repeat every projection field with the standing in one statement
+      // so a transition to the next question cannot pair a future score with an older fence.
+      const visibleResult = await client.query(
+        `SELECT to_jsonb(session) || jsonb_build_object(
+                  'event_seq', session.revision
+                    + participant_totals.participant_count
+                    + response_totals.response_count
+                ) AS response_session,
+                participant_totals.participant_count::integer AS participant_count,
+                (SELECT row_to_json(current_response)
+                   FROM presentation_live_responses current_response
+                  WHERE current_response.session_id = session.id
+                    AND current_response.participant_id = $3
+                    AND session.current_block_index >= 0
+                    AND current_response.block_id::text =
+                      session.content_snapshot -> 'blocks' -> session.current_block_index ->> 'id'
+                  LIMIT 1) AS current_response,
+              standing.score AS standing_score,
+              standing.rank AS standing_rank
+           FROM presentation_live_sessions session
+           CROSS JOIN LATERAL (
+             SELECT count(*) AS participant_count
+               FROM presentation_live_participants participant
+              WHERE participant.session_id = session.id
+           ) participant_totals
+           CROSS JOIN LATERAL (
+             SELECT count(*) AS response_count
+               FROM presentation_live_responses response
+              WHERE response.session_id = session.id
+           ) response_totals
+           LEFT JOIN LATERAL (
+             WITH participant_scores AS (
+               SELECT participant.id, participant.joined_at, participant.nickname,
+                      COALESCE(SUM(response.score), 0)::bigint AS score
+                 FROM presentation_live_participants participant
+                 LEFT JOIN presentation_live_responses response
+                   ON response.session_id = participant.session_id
+                  AND response.participant_id = participant.id
+                WHERE session.phase <> 'question_open'
+                  AND participant.session_id = session.id
+                GROUP BY participant.id, participant.joined_at, participant.nickname
+             ), standings AS (
+               SELECT id, score,
+                      ROW_NUMBER() OVER (
+                        ORDER BY score DESC, joined_at ASC, nickname ASC, id ASC
+                      )::integer AS rank
+                 FROM participant_scores
+             )
+             SELECT score, rank FROM standings WHERE id = $3
+           ) standing ON true
+          WHERE session.workspace_id = $1 AND session.id = $2`,
+        parameters,
+      );
+      row = visibleResult.rows[0];
+      if (!row) throw new Error("Presentation response session no longer exists");
+      session = mapSession(row.response_session);
+    }
+    if (session.phase !== "question_open" && row.standing_rank == null) {
+      throw new Error("Presentation response participant no longer exists");
+    }
+    const standing: PresentationParticipantSnapshotProjection["standing"] =
+      row.standing_rank == null
+        ? null
+        : { rank: Number(row.standing_rank), score: Number(row.standing_score) };
+    return {
+      session,
+      projection: {
+        participantCount: Number(row.participant_count),
+        standing,
+        currentResponse: row.current_response ? mapResponse(row.current_response) : null,
+      },
+    };
   }
 
   private async insertSession(client: PoolClient, input: PresentationSessionCreateInput) {
@@ -976,9 +1190,11 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
   async listSessions(workspaceId: string, now = new Date()) {
     return this.transaction(workspaceId, async (client) => {
       const result = await client.query(
-        `SELECT * FROM presentation_live_sessions
-         WHERE workspace_id = $1 AND (status <> 'active' OR live_expires_at > $2)
-         ORDER BY created_at DESC`,
+        `SELECT session.*, ${PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL} AS event_seq
+           FROM presentation_live_sessions session
+          WHERE session.workspace_id = $1
+            AND (session.status <> 'active' OR session.live_expires_at > $2)
+          ORDER BY session.created_at DESC`,
         [workspaceId, now],
       );
       return result.rows.map(mapSession);
@@ -1011,7 +1227,9 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
   async getSessionForWorkspace(workspaceId: string, sessionId: string) {
     return this.transaction(workspaceId, async (client) => {
       const result = await client.query(
-        "SELECT * FROM presentation_live_sessions WHERE workspace_id = $1 AND id = $2",
+        `SELECT session.*, ${PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL} AS event_seq
+           FROM presentation_live_sessions session
+          WHERE session.workspace_id = $1 AND session.id = $2`,
         [workspaceId, sessionId],
       );
       return result.rows[0] ? mapSession(result.rows[0]) : null;
@@ -1020,9 +1238,12 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
 
   async getSessionById(sessionId: string) {
     return this.transaction(null, async (client) => {
-      const result = await client.query("SELECT * FROM presentation_live_sessions WHERE id = $1", [
-        sessionId,
-      ]);
+      const result = await client.query(
+        `SELECT session.*, ${PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL} AS event_seq
+           FROM presentation_live_sessions session
+          WHERE session.id = $1`,
+        [sessionId],
+      );
       return result.rows[0] ? mapSession(result.rows[0]) : null;
     });
   }
@@ -1030,9 +1251,12 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
   async getSessionByCode(code: string) {
     return this.transaction(null, async (client) => {
       const result = await client.query(
-        `SELECT * FROM presentation_live_sessions
-         WHERE join_code = $1 AND status = 'active' AND live_expires_at > now()
-         ORDER BY created_at DESC LIMIT 1`,
+        `SELECT session.*, ${PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL} AS event_seq
+           FROM presentation_live_sessions session
+          WHERE session.join_code = $1
+            AND session.status = 'active'
+            AND session.live_expires_at > now()
+          ORDER BY session.created_at DESC LIMIT 1`,
         [code],
       );
       return result.rows[0] ? mapSession(result.rows[0]) : null;
@@ -1055,7 +1279,9 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
       );
       if (prior.rows[0]) {
         const current = await client.query(
-          "SELECT * FROM presentation_live_sessions WHERE workspace_id = $1 AND id = $2",
+          `SELECT session.*, ${PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL} AS event_seq
+             FROM presentation_live_sessions session
+            WHERE session.workspace_id = $1 AND session.id = $2`,
           [input.workspaceId, input.sessionId],
         );
         if (!current.rows[0]) return null;
@@ -1080,12 +1306,19 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
         [input.sessionId, commandId],
       );
       if (prior.rows[0]) {
+        const current = await client.query(
+          `SELECT session.*, ${PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL} AS event_seq
+             FROM presentation_live_sessions session
+            WHERE session.workspace_id = $1 AND session.id = $2`,
+          [input.workspaceId, input.sessionId],
+        );
+        if (!current.rows[0]) return null;
         return {
           status:
             Number(prior.rows[0].expected_revision) === input.expectedRevision
               ? "duplicate"
               : "idempotency_conflict",
-          session: mapSession(locked.rows[0]),
+          session: mapSession(current.rows[0]),
         };
       }
     }
@@ -1095,7 +1328,7 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     }
     const occurredAt = input.occurredAt ?? new Date();
     const window = transitionWindow(session, input, occurredAt);
-    const updated = await client.query(
+    await client.query(
       `UPDATE presentation_live_sessions
        SET phase = $3, current_block_index = $4, status = $5, revision = revision + 1,
            event_seq = event_seq + 1, updated_at = $6,
@@ -1108,7 +1341,7 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
              WHEN status <> 'finished' AND $5 = 'finished' AND $9::timestamptz IS NOT NULL THEN $9
              ELSE retention_expires_at
            END
-       WHERE workspace_id = $1 AND id = $2 RETURNING *`,
+       WHERE workspace_id = $1 AND id = $2`,
       [
         input.workspaceId,
         input.sessionId,
@@ -1121,7 +1354,13 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
         input.retentionExpiresAt ?? null,
       ],
     );
-    const stored = mapSession(updated.rows[0]!);
+    const current = await client.query(
+      `SELECT session.*, ${PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL} AS event_seq
+         FROM presentation_live_sessions session
+        WHERE session.workspace_id = $1 AND session.id = $2`,
+      [input.workspaceId, input.sessionId],
+    );
+    const stored = mapSession(current.rows[0]!);
     await client.query(
       `INSERT INTO presentation_session_timeline
         (id, workspace_id, session_id, sequence, event_type, block_index, block_id, occurred_at)
@@ -1243,6 +1482,42 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     });
   }
 
+  async getResponseContext(
+    sessionId: string,
+    tokenHash: string,
+    idempotencyKey: string,
+  ): Promise<PresentationResponseContext | null> {
+    return this.transaction(null, async (client) => {
+      const result = await client.query(
+        `UPDATE presentation_live_participants AS participant
+            SET last_seen_at = now()
+           FROM presentation_live_sessions AS session
+          WHERE participant.session_id = $1
+            AND participant.token_hash = $2
+            AND session.id = participant.session_id
+        RETURNING participant.*,
+                  -- This session is validation context, never a client snapshot. Avoid aggregate
+                  -- fence scans here; the post-commit acknowledgement performs the authoritative
+                  -- sequence read that is returned to the participant.
+                  to_jsonb(session) AS response_session,
+                  (SELECT row_to_json(prior_response)
+                     FROM presentation_live_responses AS prior_response
+                    WHERE prior_response.session_id = participant.session_id
+                      AND prior_response.participant_id = participant.id
+                      AND prior_response.idempotency_key = $3
+                    LIMIT 1) AS prior_response`,
+        [sessionId, tokenHash, idempotencyKey],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      return {
+        session: mapSession(row.response_session),
+        participant: mapParticipant(row),
+        priorResponse: row.prior_response ? mapResponse(row.prior_response) : null,
+      };
+    });
+  }
+
   async listParticipants(sessionId: string) {
     return this.transaction(null, async (client) => {
       const result = await client.query(
@@ -1293,7 +1568,25 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     input: PresentationSessionResponseRecord,
     expectedSessionRevision: number,
   ): Promise<PresentationResponseAcceptance> {
-    return this.transaction(input.workspaceId, async (client) => {
+    type WriteResult =
+      | { status: "accepted"; response: PresentationSessionResponseRecord }
+      | { status: "duplicate"; response: PresentationSessionResponseRecord }
+      | { status: "idempotency_conflict"; response: PresentationSessionResponseRecord }
+      | { status: "already_responded"; response: PresentationSessionResponseRecord }
+      | { status: "phase_closed" };
+
+    const write = await this.transaction<WriteResult>(input.workspaceId, async (client) => {
+      if (input.idempotencyKey) {
+        // The uniqueness index cannot expose an uncommitted receipt to a request whose stale-state
+        // predicate would otherwise fail before INSERT. Serialize only this participant/key before
+        // the first lookup; unrelated answers remain concurrent.
+        await client.query(
+          `SELECT pg_advisory_xact_lock(
+             hashtextextended($1::text || ':' || $2::text || ':' || $3::text, 0)
+           )`,
+          [input.sessionId, input.participantId, input.idempotencyKey],
+        );
+      }
       const findIdempotentResponse = async () => {
         if (!input.idempotencyKey) return null;
         const result = await client.query(
@@ -1309,45 +1602,44 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
           ? { status: "idempotency_conflict", response: prior }
           : { status: "duplicate", response: prior };
       }
-      const locked = await client.query(
-        `SELECT * FROM presentation_live_sessions
-         WHERE workspace_id = $1 AND id = $2
-         FOR UPDATE`,
-        [input.workspaceId, input.sessionId],
-      );
-      if (!locked.rows[0]) return { status: "phase_closed" };
-      // A concurrent first attempt may have committed while this transaction waited for the
-      // session lock. Resolve that receipt before inspecting a now-stale phase or revision.
-      const concurrentPrior = await findIdempotentResponse();
-      if (concurrentPrior) {
-        return concurrentPrior.requestHash &&
-          input.requestHash &&
-          concurrentPrior.requestHash !== input.requestHash
-          ? { status: "idempotency_conflict", response: concurrentPrior }
-          : { status: "duplicate", response: concurrentPrior };
+
+      if (this.options.concurrentResponseWrites) {
+        // Enable only after every serving binary reads the commit-visible aggregate fence. The
+        // trigger stays installed for prior-image rollback and transactions that omit this local
+        // setting.
+        await client.query(
+          "SELECT set_config('app.presentation_concurrent_response_writes', 'on', true)",
+        );
       }
-      const session = mapSession(locked.rows[0]);
-      if (!responseWindowOpen(session, input, expectedSessionRevision)) {
-        return { status: "phase_closed" };
-      }
-      const alreadyResponded = await client.query(
-        `SELECT * FROM presentation_live_responses
-         WHERE session_id = $1 AND participant_id = $2 AND block_id = $3`,
-        [input.sessionId, input.participantId, input.blockId],
-      );
-      if (alreadyResponded.rows[0]) {
-        return {
-          status: input.idempotencyKey ? "already_responded" : "duplicate",
-          response: mapResponse(alreadyResponded.rows[0]),
-        };
-      }
-      const result = await client.query(
-        `INSERT INTO presentation_live_responses
+      const sessionLock = this.options.concurrentResponseWrites ? "FOR SHARE" : "FOR UPDATE";
+      const inserted = await client.query(
+        `WITH locked_session AS MATERIALIZED (
+           SELECT *
+             FROM presentation_live_sessions
+            WHERE workspace_id = $2 AND id = $3
+            ${sessionLock}
+         ), eligible_session AS (
+           SELECT 1
+             FROM locked_session
+            WHERE status = 'active'
+              AND phase = 'question_open'
+              AND revision = $14
+              AND $11 < live_expires_at
+              AND question_opened_at IS NOT NULL
+              AND $11 >= question_opened_at
+              AND (question_closes_at IS NULL OR $11 <= question_closes_at)
+              AND current_block_index >= 0
+              AND content_snapshot -> 'blocks' -> current_block_index ->> 'kind' = 'question'
+              AND (content_snapshot -> 'blocks' -> current_block_index ->> 'id')::uuid = $5
+              AND (content_snapshot -> 'blocks' -> current_block_index -> 'question' ->> 'id')::uuid
+                = $6
+         )
+         INSERT INTO presentation_live_responses
           (id, workspace_id, session_id, participant_id, block_id, question_id,
            response, correct, score, response_ms, submitted_at, idempotency_key, request_hash)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-         ON CONFLICT (session_id, participant_id, block_id)
-         DO NOTHING
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
+           FROM eligible_session
+         ON CONFLICT DO NOTHING
          RETURNING *`,
         [
           input.id,
@@ -1363,19 +1655,57 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
           input.submittedAt,
           input.idempotencyKey ?? null,
           input.requestHash ?? null,
+          expectedSessionRevision,
         ],
       );
-      if (result.rows[0]) return { status: "accepted", response: mapResponse(result.rows[0]) };
+      if (inserted.rows[0]) {
+        return { status: "accepted", response: mapResponse(inserted.rows[0]) };
+      }
+
+      // An insert may have waited for another key at the block uniqueness fence. Re-resolve the
+      // exact receipt before interpreting a concurrent host transition as stale state.
+      const concurrentPrior = await findIdempotentResponse();
+      if (concurrentPrior) {
+        return concurrentPrior.requestHash &&
+          input.requestHash &&
+          concurrentPrior.requestHash !== input.requestHash
+          ? { status: "idempotency_conflict", response: concurrentPrior }
+          : { status: "duplicate", response: concurrentPrior };
+      }
+      const current = await client.query(
+        `SELECT * FROM presentation_live_sessions
+          WHERE workspace_id = $1 AND id = $2`,
+        [input.workspaceId, input.sessionId],
+      );
+      if (
+        !current.rows[0] ||
+        !responseWindowOpen(mapSession(current.rows[0]), input, expectedSessionRevision)
+      ) {
+        return { status: "phase_closed" };
+      }
       const existing = await client.query(
         `SELECT * FROM presentation_live_responses
-         WHERE session_id = $1 AND participant_id = $2 AND block_id = $3`,
+          WHERE session_id = $1 AND participant_id = $2 AND block_id = $3`,
         [input.sessionId, input.participantId, input.blockId],
       );
-      return {
-        status: input.idempotencyKey ? "already_responded" : "duplicate",
-        response: mapResponse(existing.rows[0]!),
-      };
+      if (!existing.rows[0]) return { status: "phase_closed" };
+      return input.idempotencyKey
+        ? { status: "already_responded", response: mapResponse(existing.rows[0]) }
+        : { status: "duplicate", response: mapResponse(existing.rows[0]) };
     });
+
+    if (write.status !== "accepted" && write.status !== "duplicate") return write;
+    // Commit the durable receipt and release its phase fence before calculating standings and
+    // participant projection. A lost acknowledgement remains recoverable by idempotency key.
+    const acknowledgement = await this.transaction(input.workspaceId, (client) =>
+      this.responseAcknowledgementState(
+        client,
+        input.workspaceId,
+        input.sessionId,
+        input.participantId,
+      ),
+    );
+    return { ...write, acknowledgement };
   }
 
   async listResponses(sessionId: string) {
@@ -1394,6 +1724,12 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     idempotencyKey: string,
   ) {
     return this.transaction(null, async (client) => {
+      await client.query(
+        `SELECT pg_advisory_xact_lock(
+           hashtextextended($1::text || ':' || $2::text || ':' || $3::text, 0)
+         )`,
+        [sessionId, participantId, idempotencyKey],
+      );
       const result = await client.query(
         `SELECT * FROM presentation_live_responses
          WHERE session_id = $1 AND participant_id = $2 AND idempotency_key = $3`,
@@ -1671,9 +2007,10 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
 
 export function createPresentationSessionRepository(
   repository: Repository,
+  options: { concurrentResponseWrites?: boolean } = {},
 ): PresentationSessionRepository {
   if (repository instanceof PostgresRepository) {
-    return new PostgresPresentationSessionRepository(repository);
+    return new PostgresPresentationSessionRepository(repository, options);
   }
   if (repository instanceof MemoryRepository) {
     return repository.getOrCreateLifecycleExtension(

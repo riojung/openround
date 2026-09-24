@@ -32,6 +32,7 @@ const fixtures = vi.hoisted(() => ({
       workspaceShell: true,
       builderV2: true,
       presentations: true,
+      presentationRealtime: true,
       groups: true,
       discover: true,
     },
@@ -63,6 +64,7 @@ describe("professional workspace shell", () => {
     fixtures.workspace.productFeatures.workspaceShell = true;
     fixtures.workspace.productFeatures.builderV2 = true;
     fixtures.workspace.productFeatures.presentations = true;
+    fixtures.workspace.productFeatures.presentationRealtime = true;
     fixtures.workspace.productFeatures.groups = true;
     fixtures.workspace.productFeatures.discover = true;
     fixtures.push.mockClear();

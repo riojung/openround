@@ -10,6 +10,7 @@ const definitelyLocalizedKeys = [
   "live.audience.noMessages",
   "live.audience.signal.got_it",
   "live.joinAccess.updateQr",
+  "live.presentationHost.creationPaused",
   "live.presentationHost.description",
   "live.presenter.thankYou",
   "live.qna.status.pending",

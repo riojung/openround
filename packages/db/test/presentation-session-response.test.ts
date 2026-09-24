@@ -4,6 +4,7 @@ import type { PresentationContent } from "@openround/contracts";
 import {
   MemoryRepository,
   createPresentationSessionRepository,
+  type PresentationSessionRepository,
   type PresentationSessionResponseRecord,
 } from "../src/index.js";
 
@@ -68,6 +69,21 @@ function fixture() {
       ...(requestHash ? { requestHash } : {}),
     }) satisfies PresentationSessionResponseRecord;
   return { workspaceId, sessionId, participantId, blockId, now, content, response };
+}
+
+async function addFixtureParticipant(
+  repository: PresentationSessionRepository,
+  setup: ReturnType<typeof fixture>,
+) {
+  await repository.addParticipant({
+    id: setup.participantId,
+    workspaceId: setup.workspaceId,
+    sessionId: setup.sessionId,
+    nickname: "Learner",
+    tokenHash: "a".repeat(64),
+    joinedAt: setup.now,
+    lastSeenAt: setup.now,
+  });
 }
 
 describe("presentation response acceptance", () => {
@@ -357,6 +373,7 @@ describe("presentation response acceptance", () => {
       liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
       retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
     });
+    await addFixtureParticipant(repository, setup);
 
     const first = await repository.acceptResponse(setup.response(setup.participantId), 3);
     expect(first.status).toBe("accepted");
@@ -364,7 +381,7 @@ describe("presentation response acceptance", () => {
     expect(duplicate.status).toBe("duplicate");
     await expect(repository.getSessionById(setup.sessionId)).resolves.toMatchObject({
       revision: 3,
-      eventSeq: 1,
+      eventSeq: 2,
     });
 
     await repository.transitionSession({
@@ -380,7 +397,7 @@ describe("presentation response acceptance", () => {
     expect(afterReveal).toEqual({ status: "phase_closed" });
     await expect(repository.getSessionById(setup.sessionId)).resolves.toMatchObject({
       revision: 4,
-      eventSeq: 2,
+      eventSeq: 3,
     });
   });
 
@@ -406,6 +423,7 @@ describe("presentation response acceptance", () => {
       liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
       retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
     });
+    await addFixtureParticipant(repository, setup);
     const idempotencyKey = randomUUID();
     const requestHash = "a".repeat(64);
     const accepted = await repository.acceptResponse(
@@ -439,6 +457,73 @@ describe("presentation response acceptance", () => {
     expect(secondAttempt).toEqual({ status: "phase_closed" });
   });
 
+  it("uses participant ID as the final acknowledgement standing tie-breaker", async () => {
+    const repository = createPresentationSessionRepository(new MemoryRepository());
+    const setup = fixture();
+    const firstId = "00000000-0000-4000-8000-000000000001";
+    const secondId = "00000000-0000-4000-8000-000000000002";
+    await repository.createSession({
+      id: setup.sessionId,
+      workspaceId: setup.workspaceId,
+      presentationId: randomUUID(),
+      presentationVersionId: randomUUID(),
+      title: setup.content.title,
+      content: setup.content,
+      code: "1234559",
+      status: "active",
+      phase: "question_open",
+      currentBlockIndex: 0,
+      revision: 0,
+      createdBy: randomUUID(),
+      createdAt: setup.now,
+      updatedAt: setup.now,
+      finishedAt: null,
+      liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+      retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
+    });
+    for (const id of [secondId, firstId]) {
+      await repository.addParticipant({
+        id,
+        workspaceId: setup.workspaceId,
+        sessionId: setup.sessionId,
+        nickname: "Same nickname",
+        tokenHash: id.replaceAll("-", "").padEnd(64, "0"),
+        joinedAt: setup.now,
+        lastSeenAt: setup.now,
+      });
+    }
+    const firstResponse = setup.response(firstId, undefined, randomUUID(), "a".repeat(64));
+    const secondResponse = setup.response(secondId, undefined, randomUUID(), "b".repeat(64));
+    await expect(repository.acceptResponse(firstResponse, 0)).resolves.toMatchObject({
+      status: "accepted",
+    });
+    await expect(repository.acceptResponse(secondResponse, 0)).resolves.toMatchObject({
+      status: "accepted",
+    });
+    await repository.transitionSession({
+      workspaceId: setup.workspaceId,
+      sessionId: setup.sessionId,
+      expectedRevision: 0,
+      phase: "question_reveal",
+      currentBlockIndex: 0,
+      status: "active",
+      event: { type: "question.revealed", blockIndex: 0, blockId: setup.blockId },
+    });
+
+    await expect(
+      repository.acceptResponse({ ...firstResponse, id: randomUUID() }, 0),
+    ).resolves.toMatchObject({
+      status: "duplicate",
+      acknowledgement: { projection: { standing: { rank: 1, score: 975 } } },
+    });
+    await expect(
+      repository.acceptResponse({ ...secondResponse, id: randomUUID() }, 0),
+    ).resolves.toMatchObject({
+      status: "duplicate",
+      acknowledgement: { projection: { standing: { rank: 2, score: 975 } } },
+    });
+  });
+
   it("distinguishes a second response key from an idempotent retry", async () => {
     const repository = createPresentationSessionRepository(new MemoryRepository());
     const setup = fixture();
@@ -461,6 +546,7 @@ describe("presentation response acceptance", () => {
       liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
       retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
     });
+    await addFixtureParticipant(repository, setup);
     await expect(
       repository.acceptResponse(
         { ...setup.response(randomUUID(), undefined, randomUUID()), blockId: randomUUID() },
@@ -510,6 +596,7 @@ describe("presentation response acceptance", () => {
       liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
       retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
     });
+    await addFixtureParticipant(repository, setup);
     const commandId = randomUUID();
     const opened = await repository.transitionSessionCommand({
       workspaceId: setup.workspaceId,
@@ -524,7 +611,7 @@ describe("presentation response acceptance", () => {
     });
     expect(opened.status).toBe("accepted");
     if (opened.status !== "accepted") throw new Error("Expected accepted transition");
-    expect(opened.session).toMatchObject({ eventSeq: 1, questionClosesAt: null });
+    expect(opened.session).toMatchObject({ eventSeq: 2, questionClosesAt: null });
 
     const retry = await repository.transitionSessionCommand({
       workspaceId: setup.workspaceId,

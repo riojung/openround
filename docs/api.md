@@ -25,7 +25,8 @@ embed, and follow-up routes use their own scoped credentials as documented by th
   `creation_abandoned`, `presentation_host_started`, `presentation_reconnected`,
   `setup_recipe_selected`, `host_setup_completed`, `participant_joined`,
   `first_answer_submitted`, `response_saved_acknowledged`, `question_locked`, `insight_shown`,
-  `intervention_started`, `recheck_opened`, `report_viewed`, `followup_shared`,
+  `intervention_started`, `recheck_opened`, `linked_recheck_opened`, `report_reconciled`,
+  `report_viewed`, `followup_shared`,
   `practice_assignment_created`, `practice_assignment_shared`, `rehearsal_started`, and
   `rehearsal_completed`. Feature-on plus explicit workspace allowlist
   membership is required; excluded workspaces receive `{ "accepted": 0 }`. `accepted` means the
@@ -33,16 +34,21 @@ embed, and follow-up routes use their own scoped credentials as documented by th
 - `GET /metrics` — private Prometheus output when enabled and authorized.
 
 `FEATURE_UX_BETA`, `FEATURE_RECOVERY_REHEARSAL`, `FEATURE_PRACTICE_ASSIGNMENTS`,
-`FEATURE_WORKSPACE_SHELL`, `FEATURE_BUILDER_V2`, `FEATURE_PRESENTATIONS`, `FEATURE_GROUPS`, and
-`FEATURE_DISCOVER` default off. The five professional-workspace switches are independent rollback
-ceilings: disabling Presentations also removes Presentation authoring and live-session routes, and
-disabling Groups removes its collaboration routes. The authenticated
+`FEATURE_WORKSPACE_SHELL`, `FEATURE_BUILDER_V2`, `FEATURE_PRESENTATIONS`,
+`FEATURE_PRESENTATION_REALTIME`, `FEATURE_GROUPS`, and `FEATURE_DISCOVER` default off. These
+professional-workspace switches are independent rollback ceilings. Disabling Presentations blocks
+new Presentation authoring; disabling Presentation realtime, or removing its workspace allowlist,
+blocks new live-session creation. Existing live sessions, scoped credentials, reports, joins,
+commands, responses, and recovery reads remain registered and usable so a rollback cannot strand
+an active room or make its evidence unreadable. Disabling Groups removes its collaboration routes.
+The authenticated
 `productFeatures` view requires explicit membership in `UX_BETA_WORKSPACE_ALLOWLIST`; an empty
-allowlist fails closed and enables no workspace. Presentation, Presentation-session, Groups, Home,
-and Library-metadata APIs enforce the same workspace eligibility on every request; a deployment
-flag alone cannot make them available to an unlisted workspace. Public Presentation join and
-participant routes resolve eligibility from the session's owning workspace. Rehearsal requires both
-flags and allowlist membership. Standalone practice creation similarly requires the UX beta, its
+allowlist fails closed and enables no workspace. Presentation authoring, new Presentation-session
+creation, Groups, Home, and Library-metadata APIs enforce their applicable workspace eligibility;
+a deployment flag alone cannot make new gated content available to an unlisted workspace. Public
+Presentation join and participant routes authenticate against the existing session rather than
+re-evaluating creation eligibility. Rehearsal requires both flags and allowlist membership.
+Standalone practice creation similarly requires the UX beta, its
 independent practice flag, and allowlist membership; already-issued participant links and creator
 close/revoke controls remain available when creation is disabled.
 Because guests do not call `/v1/auth/me`, every role-filtered session snapshot carries the
@@ -57,6 +63,8 @@ and authoring events require the bounded `artifactType` value (`round` or `prese
 selection requires `recipe`; both rehearsal events require `scenario`; and rehearsal completion
 also requires `durationBucket`. Raw rows expire after 30 days and the same bounded labels feed the
 Prometheus counter.
+Browser-submitted events remain useful product telemetry but are excluded from the
+`openround_recovery_funnel_stages_total` server-recorded gate metric.
 Authoritative server transitions emit publish, room-created, join, first-answer, durable-save,
 lock/insight, intervention, recheck, ready-report-view, and committed practice-assignment creation
 milestones. `followup_shared` and `practice_assignment_shared` are emitted only from an explicit

@@ -3,11 +3,12 @@ import {
   questionTypeDefinition,
   type PresentationReportV1,
 } from "@openround/contracts";
-import type {
-  PresentationSessionParticipantRecord,
-  PresentationSessionRecord,
-  PresentationSessionResponseRecord,
-  PresentationSessionTimelineRecord,
+import {
+  comparePresentationLeaderboardEntries,
+  type PresentationSessionParticipantRecord,
+  type PresentationSessionRecord,
+  type PresentationSessionResponseRecord,
+  type PresentationSessionTimelineRecord,
 } from "@openround/db";
 
 const PRESENTATION_EVIDENCE_NOTE =
@@ -28,13 +29,7 @@ function reportLeaderboard(
       joinedAt: participant.joinedAt,
       score: scores.get(participant.id) ?? 0,
     }))
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        left.joinedAt.getTime() - right.joinedAt.getTime() ||
-        left.nickname.localeCompare(right.nickname) ||
-        left.id.localeCompare(right.id),
-    )
+    .sort(comparePresentationLeaderboardEntries)
     .map(({ joinedAt: _joinedAt, ...participant }, index) => ({
       ...participant,
       rank: index + 1,

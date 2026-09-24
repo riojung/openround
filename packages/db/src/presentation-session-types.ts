@@ -57,6 +57,26 @@ export interface PresentationSessionParticipantRecord {
   lastSeenAt: Date;
 }
 
+/**
+ * Canonical Presentation leaderboard ordering for in-process projections and reports. Keep the
+ * PostgreSQL acknowledgement ranking windows in presentation-sessions.ts in the same order.
+ */
+export function comparePresentationLeaderboardEntries(
+  left: Pick<PresentationSessionParticipantRecord, "id" | "nickname" | "joinedAt"> & {
+    score: number;
+  },
+  right: Pick<PresentationSessionParticipantRecord, "id" | "nickname" | "joinedAt"> & {
+    score: number;
+  },
+) {
+  return (
+    right.score - left.score ||
+    left.joinedAt.getTime() - right.joinedAt.getTime() ||
+    left.nickname.localeCompare(right.nickname) ||
+    left.id.localeCompare(right.id)
+  );
+}
+
 export interface PresentationSessionResponseRecord {
   id: string;
   workspaceId: string;
@@ -79,6 +99,17 @@ export interface PresentationParticipantSnapshotProjection {
   participantCount: number;
   standing: { rank: number; score: number } | null;
   currentResponse: PresentationSessionResponseRecord | null;
+}
+
+export interface PresentationResponseContext {
+  session: PresentationSessionRecord;
+  participant: PresentationSessionParticipantRecord;
+  priorResponse: PresentationSessionResponseRecord | null;
+}
+
+export interface PresentationResponseAcknowledgementState {
+  session: PresentationSessionRecord;
+  projection: PresentationParticipantSnapshotProjection;
 }
 
 export type PresentationSessionCredentialRole = "host" | "companion";
@@ -160,8 +191,16 @@ export interface PresentationSessionReportCompletion {
 }
 
 export type PresentationResponseAcceptance =
-  | { status: "accepted"; response: PresentationSessionResponseRecord }
-  | { status: "duplicate"; response: PresentationSessionResponseRecord }
+  | {
+      status: "accepted";
+      response: PresentationSessionResponseRecord;
+      acknowledgement: PresentationResponseAcknowledgementState;
+    }
+  | {
+      status: "duplicate";
+      response: PresentationSessionResponseRecord;
+      acknowledgement: PresentationResponseAcknowledgementState;
+    }
   | { status: "idempotency_conflict"; response: PresentationSessionResponseRecord }
   | { status: "already_responded"; response: PresentationSessionResponseRecord }
   | { status: "phase_closed" };
@@ -232,6 +271,12 @@ export interface PresentationSessionRepository {
     sessionId: string,
     tokenHash: string,
   ): Promise<PresentationSessionParticipantRecord | null>;
+  /** Loads the authenticated response context and an existing receipt in one hot-path read. */
+  getResponseContext(
+    sessionId: string,
+    tokenHash: string,
+    idempotencyKey: string,
+  ): Promise<PresentationResponseContext | null>;
   listParticipants(sessionId: string): Promise<PresentationSessionParticipantRecord[]>;
   saveResponse(
     input: PresentationSessionResponseRecord,

@@ -112,6 +112,7 @@ import { InteractionError, type InteractionService } from "./interaction-service
 import { instantiateStarter, starterSummaries } from "./starters.js";
 import type { ProductEventDispatcher } from "./product-events.js";
 import {
+  evidenceWorkspaceFeatureEnabled,
   professionalWorkspaceEligible,
   professionalWorkspaceFeatureEnabled,
 } from "./workspace-rollout.js";
@@ -487,6 +488,9 @@ export async function registerRoutes(
       workspaceShell: professionalWorkspaceFeatureEnabled(config, workspaceId, "workspaceShell"),
       builderV2: professionalWorkspaceFeatureEnabled(config, workspaceId, "builderV2"),
       presentations: professionalWorkspaceFeatureEnabled(config, workspaceId, "presentations"),
+      presentationRealtime:
+        professionalWorkspaceFeatureEnabled(config, workspaceId, "presentations") &&
+        evidenceWorkspaceFeatureEnabled(config, workspaceId, "presentationRealtime"),
       groups: professionalWorkspaceFeatureEnabled(config, workspaceId, "groups"),
       discover: professionalWorkspaceFeatureEnabled(config, workspaceId, "discover"),
     };
@@ -797,6 +801,7 @@ export async function registerRoutes(
       const accepted = productEvents.enqueue({
         workspaceId: creator.workspaceId,
         segment: creator.segment,
+        authoritative: false,
         events: input.events,
       });
       return reply.code(202).send({ accepted });

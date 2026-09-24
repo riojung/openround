@@ -22,6 +22,9 @@ export function createConfigCheckSummary(config: AppConfig) {
     tracing: config.TRACING_ENABLED ? "otlp" : "disabled",
     participantLimit: config.MAX_SESSION_PARTICIPANTS,
     practicePersonalLinkLimit: config.MAX_PRACTICE_PERSONAL_LINKS,
+    presentationResponseWrites: config.PRESENTATION_CONCURRENT_RESPONSE_WRITES
+      ? "concurrent"
+      : "rollback-compatible",
     featureFlags: {
       signups: config.FEATURE_SIGNUPS,
       sessionCreation: config.FEATURE_SESSION_CREATION,

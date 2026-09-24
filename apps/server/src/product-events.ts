@@ -15,6 +15,8 @@ export interface ProductEventDispatch {
   workspaceId: string;
   events: ProductEventInput[];
   segment?: Segment;
+  /** False for browser-submitted telemetry; only trusted server events feed recovery-stage gates. */
+  authoritative?: boolean;
   now?: Date;
 }
 
@@ -24,6 +26,7 @@ export async function recordBetaProductEvents(input: {
   workspaceId: string;
   events: ProductEventInput[];
   segment?: Segment;
+  authoritative?: boolean;
   now?: Date;
 }) {
   if (input.events.length === 0) return 0;
@@ -56,7 +59,12 @@ export async function recordBetaProductEvents(input: {
     };
   });
   await input.repository.recordProductEvents(records);
-  for (const event of records) input.metrics.recordProductEvent(event);
+  for (const event of records) {
+    input.metrics.recordProductEvent({
+      ...event,
+      authoritative: input.authoritative !== false,
+    });
+  }
   return records.length;
 }
 

@@ -392,7 +392,7 @@ describe("PresentationSessionService realtime integration", () => {
   });
 
   it("resolves command and response idempotency before stale-state rejection", async () => {
-    const { service, hosted, joined, ids } = await fixture();
+    const { service, sessions, hosted, joined, ids } = await fixture();
     const contentCommandId = randomUUID();
     await service.command({
       sessionId: hosted.snapshot.sessionId,
@@ -453,9 +453,10 @@ describe("PresentationSessionService realtime integration", () => {
     expect(openHost.snapshot).toMatchObject({
       projection: "host",
       phase: "question_open",
-      seq: submitted.snapshot.seq,
+      seq: 4,
       participants: [{ nickname: "River", score: 0 }],
     });
+    expect(openHost.snapshot.seq).toBe(submitted.snapshot.seq);
 
     const revealed = await service.command({
       sessionId: hosted.snapshot.sessionId,
@@ -497,12 +498,17 @@ describe("PresentationSessionService realtime integration", () => {
         blockId: ids.questionBlockId,
         expectedRevision: 2,
         idempotencyKey,
-        response: { choiceIds: [ids.correctChoiceId], confidence: 3 },
+        response: { choiceIds: [], confidence: 3 },
       }),
     ).rejects.toMatchObject({
       code: "IDEMPOTENCY_CONFLICT",
       status: 409,
     } satisfies Partial<PresentationSessionServiceError>);
+    const getResponseContext = sessions.getResponseContext.bind(sessions);
+    vi.spyOn(sessions, "getResponseContext").mockImplementationOnce(async (...args) => {
+      const context = await getResponseContext(...args);
+      return context ? { ...context, priorResponse: null } : null;
+    });
     await expect(
       service.submitResponse({
         sessionId: hosted.snapshot.sessionId,
@@ -510,7 +516,7 @@ describe("PresentationSessionService realtime integration", () => {
         blockId: randomUUID(),
         expectedRevision: 2,
         idempotencyKey,
-        response: { choiceIds: [ids.correctChoiceId], confidence: 2 },
+        response: { choiceIds: [ids.correctChoiceId], confidence: 2 as const },
       }),
     ).rejects.toMatchObject({
       code: "IDEMPOTENCY_CONFLICT",
@@ -627,7 +633,65 @@ describe("PresentationSessionService realtime integration", () => {
     });
     expect(participantReads).not.toHaveBeenCalled();
     expect(responseReads).not.toHaveBeenCalled();
-    expect(targetedReads).toHaveBeenCalledTimes(2);
+    expect(targetedReads).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges a durable response while concurrent participant events advance the sequence", async () => {
+    const { service, sessions, hosted, joined, ids } = await fixture();
+    await service.command({
+      sessionId: hosted.snapshot.sessionId,
+      controlToken: hosted.controlToken,
+      commandId: randomUUID(),
+      expectedRevision: 0,
+      action: "advance",
+    });
+    await service.command({
+      sessionId: hosted.snapshot.sessionId,
+      controlToken: hosted.controlToken,
+      commandId: randomUUID(),
+      expectedRevision: 1,
+      action: "advance",
+    });
+    const originalAcceptance = sessions.acceptResponse.bind(sessions);
+    let acceptedSequence: number | null = null;
+    const acceptanceWrites = vi
+      .spyOn(sessions, "acceptResponse")
+      .mockImplementation(async (...args) => {
+        const acceptance = await originalAcceptance(...args);
+        if (acceptance.status === "accepted") {
+          acceptedSequence = acceptance.acknowledgement.session.eventSeq;
+        }
+        const joinedAt = new Date();
+        await sessions.addParticipant({
+          id: randomUUID(),
+          workspaceId: ids.workspaceId,
+          sessionId: hosted.snapshot.sessionId,
+          nickname: "Concurrent learner",
+          tokenHash: presentationParticipantTokenHash(randomUUID()),
+          joinedAt,
+          lastSeenAt: joinedAt,
+        });
+        return acceptance;
+      });
+
+    const acknowledgement = await service.submitResponse({
+      sessionId: hosted.snapshot.sessionId,
+      participantToken: joined.participantToken,
+      blockId: ids.questionBlockId,
+      expectedRevision: 2,
+      idempotencyKey: randomUUID(),
+      response: { choiceIds: [ids.correctChoiceId], confidence: 2 },
+    });
+    expect(acknowledgement).toMatchObject({
+      accepted: true,
+      duplicate: false,
+      snapshot: { participantCount: 1, responseSubmitted: true, revision: 2 },
+    });
+    const current = await sessions.getSessionById(hosted.snapshot.sessionId);
+    expect(current).not.toBeNull();
+    expect(acknowledgement.snapshot.seq).toBe(acceptedSequence);
+    expect(acknowledgement.snapshot.seq).toBeLessThan(current?.eventSeq ?? 0);
+    expect(acceptanceWrites).toHaveBeenCalledTimes(1);
   });
 
   it("builds a room broadcast from one participant and response aggregate read", async () => {
@@ -655,6 +719,41 @@ describe("PresentationSessionService realtime integration", () => {
     expect(synchronized.every(Boolean)).toBe(true);
     expect(participantReads).toHaveBeenCalledTimes(1);
     expect(responseReads).toHaveBeenCalledTimes(1);
+  });
+
+  it("rebuilds explicit sync projections when aggregate data crosses the sequence fence", async () => {
+    const { service, sessions, hosted, ids } = await fixture();
+    const originalListResponses = sessions.listResponses.bind(sessions);
+    const responseReads = vi
+      .spyOn(sessions, "listResponses")
+      .mockImplementationOnce(async (sessionId) => {
+        const responses = await originalListResponses(sessionId);
+        const joinedAt = new Date();
+        await sessions.addParticipant({
+          id: randomUUID(),
+          workspaceId: ids.workspaceId,
+          sessionId,
+          nickname: "Reconnect race",
+          tokenHash: presentationParticipantTokenHash(randomUUID()),
+          joinedAt,
+          lastSeenAt: joinedAt,
+        });
+        return responses;
+      });
+
+    const synchronized = await service.sync({
+      sessionId: hosted.snapshot.sessionId,
+      projection: "host",
+      controlToken: hosted.controlToken,
+      afterSeq: 0,
+    });
+
+    expect(responseReads).toHaveBeenCalledTimes(2);
+    expect(synchronized.snapshot).toMatchObject({
+      projection: "host",
+      participantCount: 2,
+      seq: 2,
+    });
   });
 
   it("rebuilds broadcast projections when aggregate data crosses an event-sequence fence", async () => {

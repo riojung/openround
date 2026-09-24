@@ -273,6 +273,8 @@ const messages = {
   "live.presentationHost.backEditor": "返回编辑器",
   "live.presentationHost.description":
     "内容幻灯片和交互式问题将按其作者顺序运行。 参与者加入时没有工作空间账户,只有提问答复成为学习证据。",
+  "live.presentationHost.creationPaused":
+    "此工作区已暂停开始新的现场演示会话。已发布的内容和现有会话仍可使用。",
   "live.presentationHost.history": "会话历史",
   "live.presentationHost.interactiveQuestions": "交互式问题",
   "live.presentationHost.live": "现场演示",

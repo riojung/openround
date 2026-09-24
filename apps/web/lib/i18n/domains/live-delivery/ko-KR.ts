@@ -284,6 +284,8 @@ const messages = {
   "live.presentationHost.backEditor": "편집기로 돌아가기",
   "live.presentationHost.description":
     "콘텐츠 슬라이드 및 대화식 질문은 저자의 순서로 실행됩니다. Participants는 workspace 계정 없이 가입하고, 유일한 질문 응답은 학습 증거가 됩니다.",
+  "live.presentationHost.creationPaused":
+    "이 워크스페이스에서는 새 실시간 프레젠테이션 세션 시작이 일시 중지되었습니다. 게시된 콘텐츠와 기존 세션은 계속 사용할 수 있습니다.",
   "live.presentationHost.history": "세션 역사",
   "live.presentationHost.interactiveQuestions": "대화형 질문",
   "live.presentationHost.live": "실시간 발표",

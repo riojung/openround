@@ -127,6 +127,11 @@ describe("MetricsService", () => {
       name: "report_viewed",
       dimensions: { artifactType: "round", segment: "education" },
     });
+    metrics.recordProductEvent({
+      name: "report_reconciled",
+      authoritative: false,
+      dimensions: { artifactType: "round", segment: "education" },
+    });
 
     const rendered = await metrics.render();
     for (const stage of [

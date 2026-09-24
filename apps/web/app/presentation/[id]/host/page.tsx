@@ -24,6 +24,52 @@ interface PresentationRecord {
   draft: { blocks: Array<{ kind: "content" | "question" }> };
 }
 
+interface PresentationSessionCreationControlsProps {
+  busy: boolean;
+  currentVersionId: string | null | undefined;
+  error: string;
+  liveCreationAvailable: boolean;
+  onStart: () => void;
+}
+
+export function PresentationSessionCreationControls({
+  busy,
+  currentVersionId,
+  error,
+  liveCreationAvailable,
+  onStart,
+}: PresentationSessionCreationControlsProps) {
+  const { t } = useLocale();
+
+  return (
+    <>
+      {!liveCreationAvailable ? (
+        <p className="notice" role="status">
+          {t("live.presentationHost.creationPaused")}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="error" lang="en-CA" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="button-row">
+        <button
+          className="button"
+          disabled={busy || !currentVersionId || !liveCreationAvailable}
+          onClick={onStart}
+          type="button"
+        >
+          {busy ? t("live.presentationHost.starting") : t("live.presentationHost.start")}
+        </button>
+        <Link className="button-quiet" href="/sessions">
+          {t("live.presentationHost.history")}
+        </Link>
+      </div>
+    </>
+  );
+}
+
 function PresentationHostSetupContent() {
   const { locale, t } = useLocale();
   const { productFeatures } = useWorkspace();
@@ -32,6 +78,7 @@ function PresentationHostSetupContent() {
   const [presentation, setPresentation] = useState<PresentationRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const liveCreationAvailable = productFeatures?.presentationRealtime === true;
 
   useEffect(() => {
     void apiFetch<{ presentation: PresentationRecord }>(`/v1/presentations/${id}`)
@@ -101,24 +148,13 @@ function PresentationHostSetupContent() {
             {t("live.presentationHost.publishFirst")}
           </p>
         ) : null}
-        {error ? (
-          <p className="error" lang="en-CA" role="alert">
-            {error}
-          </p>
-        ) : null}
-        <div className="button-row">
-          <button
-            className="button"
-            disabled={busy || !presentation?.currentVersionId}
-            onClick={() => void startSession()}
-            type="button"
-          >
-            {busy ? t("live.presentationHost.starting") : t("live.presentationHost.start")}
-          </button>
-          <Link className="button-quiet" href="/sessions">
-            {t("live.presentationHost.history")}
-          </Link>
-        </div>
+        <PresentationSessionCreationControls
+          busy={busy}
+          currentVersionId={presentation?.currentVersionId}
+          error={error}
+          liveCreationAvailable={liveCreationAvailable}
+          onStart={() => void startSession()}
+        />
       </section>
     </main>
   );

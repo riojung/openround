@@ -289,6 +289,8 @@ const messages = {
   "live.presentationHost.backEditor": "Retour à l'éditeur",
   "live.presentationHost.description":
     "Les diapositives de contenu et les questions interactives seront exécutées dans leur ordre d'auteur. Les participants se joignent sans comptes d'espace de travail, et seules les réponses aux questions deviennent des preuves d'apprentissage.",
+  "live.presentationHost.creationPaused":
+    "Le démarrage de nouvelles sessions de présentation en direct est suspendu pour cet espace de travail. Le contenu publié et les sessions existantes restent disponibles.",
   "live.presentationHost.history": "Historique de la session",
   "live.presentationHost.interactiveQuestions": "Questions interactives",
   "live.presentationHost.live": "Présentation en direct",

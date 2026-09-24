@@ -45,6 +45,8 @@ describe("Home workspace summary", () => {
         UX_BETA_WORKSPACE_ALLOWLIST: BETA_WORKSPACE_ID,
         FEATURE_WORKSPACE_SHELL: "true",
         FEATURE_PRESENTATIONS: "true",
+        FEATURE_PRESENTATION_REALTIME: "true",
+        EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: BETA_WORKSPACE_ID,
         FEATURE_GROUPS: "true",
         LOG_LEVEL: "silent",
       }),

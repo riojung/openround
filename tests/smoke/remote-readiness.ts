@@ -41,6 +41,7 @@ async function main() {
     workspaceShell: requiredBoolean(process.env, "READINESS_EXPECT_WORKSPACE_SHELL"),
     builderV2: requiredBoolean(process.env, "READINESS_EXPECT_BUILDER_V2"),
     presentations: expectedFeatures.presentations,
+    presentationRealtime: requiredBoolean(process.env, "READINESS_EXPECT_PRESENTATION_REALTIME"),
     groups: requiredBoolean(process.env, "READINESS_EXPECT_GROUPS"),
     discover: requiredBoolean(process.env, "READINESS_EXPECT_DISCOVER"),
   };

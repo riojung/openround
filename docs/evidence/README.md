@@ -19,6 +19,7 @@ For each completed gate:
 Available templates cover [accessibility](accessibility-review.md),
 [security](security-review.md), [physical devices](device-matrix.md),
 [provider restoration](provider-restore.md), [alert delivery](operations-rehearsal.md),
+[target-region load and soak](target-region-load.md),
 [design-partner interviews](design-partner-interview.md), and
 [observed beta sessions](session-observation.md), plus the aggregate
 [P0 beta usability study](beta-usability.md).

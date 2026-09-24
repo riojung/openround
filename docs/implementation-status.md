@@ -217,6 +217,13 @@ access-scoped attempt token now makes replayed starts converge on one durable at
   restart, with complete replay and no duplicate score or answer-key leak. The passing local run
   measured join p95 155 ms, answer acknowledgement p95/p99 61/61 ms, question broadcast p95
   64 ms, restart recovery 835 ms, reconnect 16 ms, and report availability 20 ms.
+- Compose Presentation profiles: the final local 50-client run reconciled 100/100 answers with
+  acknowledgement p95/p99 107/107 ms and client-receipt p95 33 ms. The 250-client run cleared and
+  restarted Valkey, restarted the server, recovered all 250 participants, reconciled 500/500
+  answers with no duplicate score effect or pre-reveal correctness/standing leak, and measured join
+  p95 156 ms, acknowledgement p95/p99 243/250 ms, client-receipt p95 66 ms, restart recovery
+  1.04 s, coordination recovery 1.12 s, and report availability 642 ms. These are disposable local
+  correctness/performance checks, not target-region capacity evidence.
 - Compose 1,000-client aggregate game: ten 100-client lobbies were admitted with a 750 ms
   inter-session stagger, all sockets waited at one start barrier, and all ten games then ran
   concurrently. All 1,000 answers and ten reports reconciled with complete replay and no duplicate

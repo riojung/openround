@@ -284,6 +284,8 @@ const liveDeliveryEnglishMessages = {
   "live.presentationHost.backEditor": "Back to editor",
   "live.presentationHost.description":
     "Content slides and interactive questions will run in their authored order. Participants join without workspace accounts, and only question responses become learning evidence.",
+  "live.presentationHost.creationPaused":
+    "Starting new live Presentation sessions is paused for this workspace. Published content and existing sessions remain available.",
   "live.presentationHost.history": "Session history",
   "live.presentationHost.interactiveQuestions": "Interactive questions",
   "live.presentationHost.live": "Live Presentation",
