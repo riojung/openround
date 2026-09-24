@@ -22,6 +22,7 @@ describe("production configuration", () => {
     expect(config.COOKIE_SECURE).toBe("true");
     expect(config.AUDIT_RETENTION_DAYS).toBe(365);
     expect(config.MAX_PRACTICE_PERSONAL_LINKS).toBe(100);
+    expect(config.PRESENTATION_CONCURRENT_RESPONSE_WRITES).toBe(false);
     expect(config.FEATURE_ROUND_EXPERIENCES).toBe(true);
     expect(config.FEATURE_AUDIENCE_PULSE).toBe(true);
     expect(config.FEATURE_ROOM_CHAT).toBe(true);

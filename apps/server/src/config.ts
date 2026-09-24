@@ -113,6 +113,7 @@ export const ConfigSchema = z
     RETENTION_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1_440).default(60),
     REPORT_WORKER_INTERVAL_MS: z.coerce.number().int().min(250).max(60_000).default(2_000),
     REPORT_WORKER_LEASE_MS: z.coerce.number().int().min(10_000).max(600_000).default(120_000),
+    PRESENTATION_CONCURRENT_RESPONSE_WRITES: booleanString,
     AUTHORING_AI_MODE: z.enum(["disabled", "openai_compatible"]).default("disabled"),
     AUTHORING_AI_ENDPOINT: optionalUrl,
     AUTHORING_AI_API_KEY: optionalSecret,

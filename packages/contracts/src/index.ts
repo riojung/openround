@@ -108,6 +108,7 @@ export const WorkspaceProductFeaturesSchema = z.object({
   workspaceShell: z.boolean(),
   builderV2: z.boolean(),
   presentations: z.boolean(),
+  presentationRealtime: z.boolean(),
   groups: z.boolean(),
   discover: z.boolean(),
 });

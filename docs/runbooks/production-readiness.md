@@ -148,6 +148,11 @@ For the local Phase 6 stress profiles, add `compose.test.yaml`, run the single-s
 burst. Do not translate either local result into a production capacity claim without a rerun on
 the provisioned target VM and its real network path.
 
+The Presentation profile additionally sets `PRESENTATION_CONCURRENT_RESPONSE_WRITES=true` on its
+disposable, single-version stack. Production must follow the staged enable/rollback procedure in
+the [upgrade runbook](upgrade.md#presentation-concurrent-response-rollout); a result gathered while
+the compatibility mode is enabled does not represent the optimized 250-client path.
+
 See [observability and operational controls](observability.md) for metric, trace, alert, and
 kill-switch guidance. Use the [single-VM staging workflow](staging-readiness.md) for the remote
 probe and target-host game, [evidence templates](../evidence/README.md) for non-code gates, and

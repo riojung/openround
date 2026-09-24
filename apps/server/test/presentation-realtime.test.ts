@@ -351,7 +351,7 @@ describe("Presentation realtime transport", () => {
     });
   });
 
-  it("keeps an already-bound active session usable when rollout is paused", async () => {
+  it("keeps an active session usable and reconnectable when rollout is paused", async () => {
     const participant = await connect();
     await emitAck(participant, "presentation.join", {
       code: "1234567",
@@ -374,12 +374,30 @@ describe("Presentation realtime transport", () => {
     expect(accepted.data).toMatchObject({ accepted: true, duplicate: false });
 
     const reconnect = await connect();
-    const rejected = await emitAck<{ error: { code: string } }>(
+    const synchronized = await emitAck<{ data: PresentationSyncResponse }>(
       reconnect,
       "presentation.sync.request",
       { sessionId, projection: "participant", participantToken, afterSeq: 0 },
     );
-    expect(rejected.error.code).toBe("FEATURE_UNAVAILABLE");
+    expect(synchronized.data.snapshot).toMatchObject({
+      sessionId,
+      projection: "participant",
+      responseSubmitted: true,
+    });
+
+    const host = await connect();
+    const advanced = await emitAck<{ data: { snapshot: PresentationHostSnapshot } }>(
+      host,
+      "presentation.command",
+      {
+        sessionId,
+        controlToken,
+        commandId: crypto.randomUUID(),
+        expectedRevision: 0,
+        action: "advance",
+      },
+    );
+    expect(advanced.data.snapshot.revision).toBe(1);
   });
 
   it("rate-limits reconnecting join abuse by room and alias instead of campus IP", async () => {

@@ -3,12 +3,6 @@ name: Staging readiness
 on:
   workflow_dispatch:
     inputs:
-      clients:
-        description: Concurrent clients for the target-region game
-        required: true
-        default: "20"
-        type: choice
-        options: ["20", "50", "100", "250"]
       run_stripe_replay:
         description: Run the destructive signed-webhook rehearsal on the dedicated staging account
         required: true
@@ -49,6 +43,7 @@ jobs:
       READINESS_EXPECT_WORKSPACE_SHELL: ${{ vars.OPENROUND_EXPECTED_WORKSPACE_SHELL }}
       READINESS_EXPECT_BUILDER_V2: ${{ vars.OPENROUND_EXPECTED_BUILDER_V2 }}
       READINESS_EXPECT_PRESENTATIONS: ${{ vars.OPENROUND_EXPECTED_PRESENTATIONS }}
+      READINESS_EXPECT_PRESENTATION_REALTIME: ${{ vars.OPENROUND_EXPECTED_PRESENTATION_REALTIME }}
       READINESS_EXPECT_GROUPS: ${{ vars.OPENROUND_EXPECTED_GROUPS }}
       READINESS_EXPECT_DISCOVER: ${{ vars.OPENROUND_EXPECTED_DISCOVER }}
       READINESS_EXPECTED_BUILD_ID: ${{ github.sha }}
@@ -85,6 +80,7 @@ jobs:
           test -n "$READINESS_EXPECT_WORKSPACE_SHELL"
           test -n "$READINESS_EXPECT_BUILDER_V2"
           test -n "$READINESS_EXPECT_PRESENTATIONS"
+          test -n "$READINESS_EXPECT_PRESENTATION_REALTIME"
           test -n "$READINESS_EXPECT_GROUPS"
           test -n "$READINESS_EXPECT_DISCOVER"
           test -n "$READINESS_EXPECTED_BUILD_ID"
@@ -114,9 +110,7 @@ jobs:
       LOAD_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
       LOAD_RUNNER_REGION: ${{ vars.OPENROUND_LOAD_RUNNER_REGION }}
       LOAD_EXPECTED_BUILD_ID: ${{ github.sha }}
-      LOAD_OUTPUT: artifacts/readiness/target-region-load.json
       LOAD_RUN_ID: staging-${{ github.run_id }}-${{ github.run_attempt }}
-      CLIENTS: ${{ inputs.clients }}
       JOIN_BATCH_SIZE: "20"
       ASSERT_PERFORMANCE: "true"
       RESTART_SERVER: "false"
@@ -161,14 +155,41 @@ jobs:
               { mode: 0o600 },
             );
           '
-      - name: Run target-region correctness and latency game
+      - name: Run 50-client target-region Round gate
         env:
           LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
+          CLIENTS: "50"
+          LOAD_RUN_ID: staging-${{ github.run_id }}-${{ github.run_attempt }}-round-50
+          LOAD_OUTPUT: artifacts/readiness/target-region-round-50.json
         run: pnpm load:compose
+      - name: Run 50-client target-region Presentation gate
+        env:
+          LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
+          CLIENTS: "50"
+          LOAD_RUN_ID: staging-${{ github.run_id }}-${{ github.run_attempt }}-presentation-50
+          LOAD_OUTPUT: artifacts/readiness/target-region-presentation-50.json
+        run: pnpm load:presentation:compose
+      - name: Run 250-client target-region Round gate
+        env:
+          LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
+          CLIENTS: "250"
+          JOIN_BATCH_SIZE: "25"
+          LOAD_RUN_ID: staging-${{ github.run_id }}-${{ github.run_attempt }}-round-250
+          LOAD_OUTPUT: artifacts/readiness/target-region-round-250.json
+        run: pnpm load:compose
+      - name: Run 250-client target-region Presentation gate
+        env:
+          LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
+          CLIENTS: "250"
+          JOIN_BATCH_SIZE: "25"
+          LOAD_RUN_ID: staging-${{ github.run_id }}-${{ github.run_attempt }}-presentation-250
+          LOAD_OUTPUT: artifacts/readiness/target-region-presentation-250.json
+        run: pnpm load:presentation:compose
       - name: Run repeated target-region soak
         if: inputs.soak_minutes != '0'
         env:
           LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
+          CLIENTS: "50"
           SOAK_MINUTES: ${{ inputs.soak_minutes }}
         run: |
           mkdir -p artifacts/readiness/soak
@@ -207,7 +228,10 @@ jobs:
           name: single-vm-staging-load-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             artifacts/readiness/load-runner-provenance.json
-            artifacts/readiness/target-region-load.json
+            artifacts/readiness/target-region-round-50.json
+            artifacts/readiness/target-region-presentation-50.json
+            artifacts/readiness/target-region-round-250.json
+            artifacts/readiness/target-region-presentation-250.json
             artifacts/readiness/soak/
             artifacts/readiness/soak-summary.json
           if-no-files-found: warn

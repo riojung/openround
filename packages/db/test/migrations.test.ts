@@ -85,4 +85,16 @@ describe("database migration discovery", () => {
     expect(backfillMigration?.sql).toContain("INSERT INTO presentation_session_reports");
     expect(backfillMigration?.sql).toContain("ON CONFLICT (session_id) DO NOTHING");
   });
+
+  it("adds a commit-visible Presentation fence without breaking prior-image writes", async () => {
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migrations = await discoverMigrations(migrationsDirectory);
+    const migration = migrations.find(({ version }) => version === 38);
+
+    expect(migration?.sql).toContain("presentation_live_participants_session_fence_idx");
+    expect(migration?.sql).toContain("app.presentation_concurrent_response_writes");
+    expect(migration?.sql).toContain("CREATE TRIGGER presentation_participant_bump_event_seq");
+    expect(migration?.sql).toContain("CREATE TRIGGER presentation_response_bump_event_seq");
+    expect(migration?.sql).not.toContain("CREATE SEQUENCE");
+  });
 });

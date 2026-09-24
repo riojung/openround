@@ -24,6 +24,7 @@
     "load:compose:aggregate": "tsx tests/load/compose-aggregate-load.ts",
     "load:compose": "tsx tests/load/compose-game-load.ts",
     "load:presentation": "tsx tests/load/presentation-load.ts",
+    "load:presentation:compose": "tsx tests/load/compose-presentation-load.ts",
     "load:socket": "tsx tests/load/socket-load.ts",
     "network:urls": "node scripts/show-network-urls.mjs",
     "product:build": "bash scripts/product-build.sh",

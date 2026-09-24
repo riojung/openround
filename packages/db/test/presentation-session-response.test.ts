@@ -4,6 +4,7 @@ import type { PresentationContent } from "@openround/contracts";
 import {
   MemoryRepository,
   createPresentationSessionRepository,
+  type PresentationSessionRepository,
   type PresentationSessionResponseRecord,
 } from "../src/index.js";
 
@@ -68,6 +69,21 @@ function fixture() {
       ...(requestHash ? { requestHash } : {}),
     }) satisfies PresentationSessionResponseRecord;
   return { workspaceId, sessionId, participantId, blockId, now, content, response };
+}
+
+async function addFixtureParticipant(
+  repository: PresentationSessionRepository,
+  setup: ReturnType<typeof fixture>,
+) {
+  await repository.addParticipant({
+    id: setup.participantId,
+    workspaceId: setup.workspaceId,
+    sessionId: setup.sessionId,
+    nickname: "Learner",
+    tokenHash: "a".repeat(64),
+    joinedAt: setup.now,
+    lastSeenAt: setup.now,
+  });
 }
 
 describe("presentation response acceptance", () => {
@@ -357,6 +373,7 @@ describe("presentation response acceptance", () => {
       liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
       retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
     });
+    await addFixtureParticipant(repository, setup);
 
     const first = await repository.acceptResponse(setup.response(setup.participantId), 3);
     expect(first.status).toBe("accepted");
@@ -364,7 +381,7 @@ describe("presentation response acceptance", () => {
     expect(duplicate.status).toBe("duplicate");
     await expect(repository.getSessionById(setup.sessionId)).resolves.toMatchObject({
       revision: 3,
-      eventSeq: 1,
+      eventSeq: 2,
     });
 
     await repository.transitionSession({
@@ -380,7 +397,7 @@ describe("presentation response acceptance", () => {
     expect(afterReveal).toEqual({ status: "phase_closed" });
     await expect(repository.getSessionById(setup.sessionId)).resolves.toMatchObject({
       revision: 4,
-      eventSeq: 2,
+      eventSeq: 3,
     });
   });
 
@@ -406,6 +423,7 @@ describe("presentation response acceptance", () => {
       liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
       retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
     });
+    await addFixtureParticipant(repository, setup);
     const idempotencyKey = randomUUID();
     const requestHash = "a".repeat(64);
     const accepted = await repository.acceptResponse(
@@ -461,6 +479,7 @@ describe("presentation response acceptance", () => {
       liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
       retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
     });
+    await addFixtureParticipant(repository, setup);
     await expect(
       repository.acceptResponse(
         { ...setup.response(randomUUID(), undefined, randomUUID()), blockId: randomUUID() },
@@ -510,6 +529,7 @@ describe("presentation response acceptance", () => {
       liveExpiresAt: new Date(setup.now.getTime() + 86_400_000),
       retentionExpiresAt: new Date(setup.now.getTime() + 86_400_000),
     });
+    await addFixtureParticipant(repository, setup);
     const commandId = randomUUID();
     const opened = await repository.transitionSessionCommand({
       workspaceId: setup.workspaceId,
@@ -524,7 +544,7 @@ describe("presentation response acceptance", () => {
     });
     expect(opened.status).toBe("accepted");
     if (opened.status !== "accepted") throw new Error("Expected accepted transition");
-    expect(opened.session).toMatchObject({ eventSeq: 1, questionClosesAt: null });
+    expect(opened.session).toMatchObject({ eventSeq: 2, questionClosesAt: null });
 
     const retry = await repository.transitionSessionCommand({
       workspaceId: setup.workspaceId,

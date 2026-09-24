@@ -13,11 +13,14 @@ concurrency:
 jobs:
   local-compose:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       # Keep AOF writes and restart recovery in scope while deferring background
       # compaction outside this short, disposable latency measurement window.
       VALKEY_AUTO_AOF_REWRITE_PERCENTAGE: "0"
+      # The disposable stack has no old-image overlap. Production follows the staged enablement
+      # and rollback procedure in docs/runbooks/upgrade.md.
+      PRESENTATION_CONCURRENT_RESPONSE_WRITES: "true"
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -38,6 +41,25 @@ jobs:
           JOIN_BATCH_SIZE: "25"
           LOAD_OUTPUT: capacity-single-session.json
           RESTART_SERVER: "true"
+      - name: 50-client Presentation correctness and latency gate
+        run: pnpm load:presentation:compose
+        env:
+          ASSERT_PERFORMANCE: "true"
+          CLIENTS: "50"
+          JOIN_BATCH_SIZE: "20"
+          LOAD_ENABLE_LOCAL_PRESENTATION_ROLLOUT: "true"
+          LOAD_OUTPUT: capacity-presentation-50.json
+          RESTART_SERVER: "false"
+      - name: 250-client Presentation coordination-loss, restart, and reconciliation gate
+        run: pnpm load:presentation:compose
+        env:
+          ASSERT_PERFORMANCE: "true"
+          CLIENTS: "250"
+          JOIN_BATCH_SIZE: "25"
+          LOAD_ENABLE_LOCAL_PRESENTATION_ROLLOUT: "true"
+          LOAD_OUTPUT: capacity-presentation-250.json
+          RESTART_SERVER: "true"
+          RESET_VALKEY: "true"
       - name: 1,000-client multi-session gate
         run: |
           docker compose --profile load -f compose.yaml -f compose.media.yaml -f compose.test.yaml build load
@@ -66,6 +88,8 @@ jobs:
             capacity-failure.log
             capacity-aggregate.json
             capacity-metrics.prom
+            capacity-presentation-50.json
+            capacity-presentation-250.json
             capacity-single-session.json
           if-no-files-found: ignore
           retention-days: 30

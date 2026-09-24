@@ -197,7 +197,7 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
           verificationClient.query<{ count: string; maximum: number }>(
             "SELECT count(*) AS count, max(version) AS maximum FROM _openround_migrations",
           ),
-        ).resolves.toMatchObject({ rows: [{ count: "37", maximum: 37 }] });
+        ).resolves.toMatchObject({ rows: [{ count: "38", maximum: 38 }] });
 
         await expect(
           verificationClient.query(
@@ -301,6 +301,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 35, name: "recovery_funnel_events" },
       { version: 36, name: "presentation_session_reports" },
       { version: 37, name: "backfill_presentation_session_reports" },
+      { version: 38, name: "presentation_concurrent_event_sequence" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -310,7 +311,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("37");
+    expect(bootstrapped.rows[0]?.count).toBe("38");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -1802,9 +1803,14 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       idempotencyKey: responseIdempotencyKey,
       requestHash: responseHash,
     };
-    await expect(sessions.acceptResponse(responseInput, 1)).resolves.toMatchObject({
+    const accepted = await sessions.acceptResponse(responseInput, 1);
+    expect(accepted).toMatchObject({
       status: "accepted",
       response: { requestHash: responseHash },
+      acknowledgement: {
+        session: { phase: "question_open", eventSeq: 3 },
+        projection: { participantCount: 1, standing: null },
+      },
     });
     await expect(
       sessions.acceptResponse({ ...responseInput, id: randomUUID() }, 1),
@@ -1818,6 +1824,84 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     await expect(
       sessions.getSessionForWorkspace(owner.workspaceId, session.id),
     ).resolves.toMatchObject({ eventSeq: 3 });
+
+    const concurrentParticipant = await sessions.addParticipant({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      nickname: "Concurrent retry",
+      tokenHash: createHash("sha256").update(randomUUID()).digest("hex"),
+      joinedAt: openedAt,
+      lastSeenAt: openedAt,
+    });
+    const concurrentKey = randomUUID();
+    const concurrentHash = "c".repeat(64);
+    const firstWriter = await runtimePool.connect();
+    try {
+      await firstWriter.query("BEGIN");
+      await firstWriter.query("SELECT set_config('app.workspace_id', $1, true)", [
+        owner.workspaceId,
+      ]);
+      await firstWriter.query(
+        `INSERT INTO presentation_live_responses
+          (id, workspace_id, session_id, participant_id, block_id, question_id, response,
+           correct, score, response_ms, submitted_at, idempotency_key, request_hash)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,true,1000,1000,$8,$9,$10)`,
+        [
+          randomUUID(),
+          owner.workspaceId,
+          session.id,
+          concurrentParticipant.id,
+          questionBlockId,
+          questionId,
+          JSON.stringify({ numericValue: "3" }),
+          new Date(openedAt.getTime() + 1_000),
+          concurrentKey,
+          concurrentHash,
+        ],
+      );
+
+      let retrySettled = false;
+      const retry = sessions
+        .acceptResponse(
+          {
+            ...responseInput,
+            id: randomUUID(),
+            participantId: concurrentParticipant.id,
+            idempotencyKey: concurrentKey,
+            requestHash: concurrentHash,
+          },
+          999,
+        )
+        .finally(() => {
+          retrySettled = true;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(retrySettled).toBe(false);
+
+      await firstWriter.query("COMMIT");
+      await expect(retry).resolves.toMatchObject({ status: "duplicate" });
+      await expect(
+        sessions.acceptResponse(
+          {
+            ...responseInput,
+            id: randomUUID(),
+            participantId: concurrentParticipant.id,
+            idempotencyKey: concurrentKey,
+            requestHash: "d".repeat(64),
+          },
+          999,
+        ),
+      ).resolves.toMatchObject({ status: "idempotency_conflict" });
+    } catch (error) {
+      await firstWriter.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      firstWriter.release();
+    }
+    await expect(
+      sessions.getSessionForWorkspace(owner.workspaceId, session.id),
+    ).resolves.toMatchObject({ eventSeq: 5 });
 
     const revealedAt = new Date(openedAt.getTime() + 2_000);
     const revealClient = await runtimePool.connect();
@@ -1838,7 +1922,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         [owner.workspaceId, session.id, revealedAt],
       );
       expect(revealed.rows[0]).toEqual({
-        event_seq: "4",
+        event_seq: "6",
         question_opened_at: null,
         question_closes_at: null,
       });
@@ -1852,7 +1936,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
          RETURNING sequence`,
         [randomUUID(), owner.workspaceId, session.id, questionBlockId, revealedAt],
       );
-      expect(revealedEvent.rows[0]?.sequence).toBe("4");
+      expect(revealedEvent.rows[0]?.sequence).toBe("6");
       await revealClient.query("COMMIT");
     } catch (error) {
       await revealClient.query("ROLLBACK").catch(() => undefined);
@@ -1861,9 +1945,19 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       revealClient.release();
     }
 
+    await expect(
+      sessions.acceptResponse({ ...responseInput, id: randomUUID() }, 1),
+    ).resolves.toMatchObject({
+      status: "duplicate",
+      acknowledgement: {
+        session: { phase: "question_reveal", eventSeq: 6 },
+        projection: { participantCount: 2, standing: { rank: 1, score: 1_000 } },
+      },
+    });
+
     await expect(sessions.listTimeline(session.id)).resolves.toEqual([
       expect.objectContaining({ sequence: 2, type: "question.launched" }),
-      expect.objectContaining({ sequence: 4, type: "question.revealed" }),
+      expect.objectContaining({ sequence: 6, type: "question.revealed" }),
     ]);
   });
 

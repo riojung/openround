@@ -15,6 +15,7 @@ const enabledFeatures: WorkspaceProductFeatures = {
   workspaceShell: true,
   builderV2: true,
   presentations: true,
+  presentationRealtime: true,
   groups: true,
   discover: true,
 };

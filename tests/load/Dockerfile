@@ -15,6 +15,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY tests/load tests/load
 COPY tests/support/report-readiness.ts tests/support/report-readiness.ts
+COPY tests/support/readiness-contract.ts tests/support/readiness-contract.ts
 
 USER node
 CMD ["pnpm", "load:compose:aggregate"]

@@ -3,10 +3,10 @@
 The manual `Staging readiness` GitHub workflow separates three kinds of evidence. A GitHub-hosted
 Ubuntu runner probes public TLS, dependency health, feature flags, security headers, and the
 effective beta switches for one dedicated synthetic workspace. A self-hosted runner located near
-the target VM runs the multi-client latency game and bounded soak. A separate GitHub-hosted job can
-rehearse signed Stripe webhook ordering. The jobs emit separate redacted JSON artifacts; the public
-probe is not target-host capacity evidence, and the workflow neither provisions a VM nor proves an
-actual provider-originated Stripe delivery.
+the target VM runs fixed 50- and 250-client Round and Presentation profiles plus a bounded soak. A
+separate GitHub-hosted job can rehearse signed Stripe webhook ordering. The jobs emit separate
+redacted JSON artifacts; the public probe is not target-host capacity evidence, and the workflow
+neither provisions a VM nor proves an actual provider-originated Stripe delivery.
 
 The active staging target is one remote VM running `compose.single-vm.yaml`. Caddy, web,
 API/realtime, PostgreSQL, Valkey, MinIO, and ClamAV share that host. The profile has no automatic
@@ -19,42 +19,44 @@ strict SSH host-key verification, or public-production approval.
 Create a protected `single-vm-staging` environment with required reviewers. Configure these
 non-secret variables:
 
-| Variable                                  | Example/purpose                                              |
-| ----------------------------------------- | ------------------------------------------------------------ |
-| `OPENROUND_API_URL`                       | Public HTTPS API/Socket.IO origin; same origin as web        |
-| `OPENROUND_WEB_URL`                       | Public HTTPS application origin                              |
-| `OPENROUND_MEDIA_URL`                     | Public HTTPS MinIO/S3 media origin                           |
-| `OPENROUND_EXPECTED_BILLING`              | `disabled` for the active staging profile                    |
-| `OPENROUND_EXPECTED_COMMUNITY_MODE`       | Reviewed staging value                                       |
-| `OPENROUND_EXPECTED_SIGNUPS`              | Expected public signup switch                                |
-| `OPENROUND_EXPECTED_SESSION_CREATION`     | `true` when running the game                                 |
-| `OPENROUND_EXPECTED_MEDIA_UPLOADS`        | Expected scanner-backed media switch                         |
-| `OPENROUND_EXPECTED_UX_BETA`              | Expected deployment-level UX beta switch                     |
-| `OPENROUND_EXPECTED_RECOVERY_REHEARSAL`   | Expected Rehearsal kill switch                               |
-| `OPENROUND_EXPECTED_PRACTICE_ASSIGNMENTS` | Expected practice-assignment kill switch                     |
-| `OPENROUND_EXPECTED_WORKSPACE_SHELL`      | Expected professional workspace shell switch                 |
-| `OPENROUND_EXPECTED_BUILDER_V2`           | Expected interactive Round Builder v2 switch                 |
-| `OPENROUND_EXPECTED_PRESENTATIONS`        | Expected Presentation artifact switch                        |
-| `OPENROUND_EXPECTED_GROUPS`               | Expected facilitator Groups switch                           |
-| `OPENROUND_EXPECTED_DISCOVER`             | Expected approved-content Discover switch                    |
-| `OPENROUND_EXPECTED_HOME_REGION`          | Workspace home-region value approved for this staging target |
-| `OPENROUND_LOAD_RUNNER_REGION`            | Location of the VM and nearby isolated load generator        |
+| Variable                                   | Example/purpose                                              |
+| ------------------------------------------ | ------------------------------------------------------------ |
+| `OPENROUND_API_URL`                        | Public HTTPS API/Socket.IO origin; same origin as web        |
+| `OPENROUND_WEB_URL`                        | Public HTTPS application origin                              |
+| `OPENROUND_MEDIA_URL`                      | Public HTTPS MinIO/S3 media origin                           |
+| `OPENROUND_EXPECTED_BILLING`               | `disabled` for the active staging profile                    |
+| `OPENROUND_EXPECTED_COMMUNITY_MODE`        | Reviewed staging value                                       |
+| `OPENROUND_EXPECTED_SIGNUPS`               | Expected public signup switch                                |
+| `OPENROUND_EXPECTED_SESSION_CREATION`      | `true` when running the game                                 |
+| `OPENROUND_EXPECTED_MEDIA_UPLOADS`         | Expected scanner-backed media switch                         |
+| `OPENROUND_EXPECTED_UX_BETA`               | Expected deployment-level UX beta switch                     |
+| `OPENROUND_EXPECTED_RECOVERY_REHEARSAL`    | Expected Rehearsal kill switch                               |
+| `OPENROUND_EXPECTED_PRACTICE_ASSIGNMENTS`  | Expected practice-assignment kill switch                     |
+| `OPENROUND_EXPECTED_WORKSPACE_SHELL`       | Expected professional workspace shell switch                 |
+| `OPENROUND_EXPECTED_BUILDER_V2`            | Expected interactive Round Builder v2 switch                 |
+| `OPENROUND_EXPECTED_PRESENTATIONS`         | Expected Presentation artifact switch                        |
+| `OPENROUND_EXPECTED_PRESENTATION_REALTIME` | Expected Presentation realtime workspace allowlist           |
+| `OPENROUND_EXPECTED_GROUPS`                | Expected facilitator Groups switch                           |
+| `OPENROUND_EXPECTED_DISCOVER`              | Expected approved-content Discover switch                    |
+| `OPENROUND_EXPECTED_HOME_REGION`           | Workspace home-region value approved for this staging target |
+| `OPENROUND_LOAD_RUNNER_REGION`             | Location of the VM and nearby isolated load generator        |
 
 Configure these encrypted environment secrets:
 
-| Secret                              | Scope                                                                   |
-| ----------------------------------- | ----------------------------------------------------------------------- |
-| `OPENROUND_CREATOR_COOKIE`          | Dedicated synthetic creator with capacity for the selected client count |
-| `OPENROUND_STRIPE_REHEARSAL_COOKIE` | Separate synthetic creator used only for an approved billing rehearsal  |
-| `OPENROUND_STRIPE_WEBHOOK_SECRET`   | Test endpoint secret; only present for the optional replay              |
+| Secret                              | Scope                                                                  |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| `OPENROUND_CREATOR_COOKIE`          | Dedicated synthetic creator with capacity for 250 participants         |
+| `OPENROUND_STRIPE_REHEARSAL_COOKIE` | Separate synthetic creator used only for an approved billing rehearsal |
+| `OPENROUND_STRIPE_WEBHOOK_SECRET`   | Test endpoint secret; only present for the optional replay             |
 
 Store only the cookie name/value pair, not copied browser headers. Create accounts through the
 normal magic-link path, never use a human or customer account, rotate/revoke sessions after an
 exercise, and restrict environment access. Select only an approved synthetic workspace before
 capturing `OPENROUND_CREATOR_COOKIE`. The public probe uses that cookie to assert the synthetic
-workspace's effective workspace-shell, Builder, Presentations, Groups, Discover, and other
+workspace's effective workspace-shell, Builder, Presentations, Presentation realtime, Groups, Discover, and other
 workspace-resolved switches; it never writes account or workspace IDs to artifacts. The load
-workflow deletes its session and archives its temporary Round.
+workflow deletes disposable Round sessions and archives temporary Round and Presentation content;
+finished Presentation sessions remain subject to the configured retention policy.
 
 The checked-in staging deployment keeps billing disabled. Do not set the expected value to
 `stripe` merely to make the optional replay run. Billing evidence requires a separately reviewed
@@ -100,23 +102,44 @@ in the private exercise record.
 7. Configure encrypted database and object backups to storage outside the VM. Verify checksums and
    alerting, then complete the current [clean replacement-VM restore drill](backup-restore.md) before
    treating staging as disaster-recovery evidence.
-8. Confirm the synthetic creator has room for a temporary published Round, belongs to the intended
-   allowlisted workspace, and that `/v1/workspaces` reports the configured expected home region.
+8. Confirm the synthetic creator has room for temporary published content, has an entitlement and
+   deployment ceiling of at least 250 participants, belongs to both required Presentation
+   allowlists, and that `/v1/workspaces` reports the configured expected home region. Raising this
+   synthetic ceiling does not change the public Free 20 or Pro 100 promises.
 
-Run the workflow first with 20 clients and no soak. Confirm both the
-`single-vm-staging-remote-probe-*` artifact from the hosted runner and the
-`single-vm-staging-load-*` artifact from the target-VM runner. After that passes, run 100 clients
-with the 15-minute soak and inspect every per-game artifact. Use the 60-minute option for a release
-candidate only after confirming VM resources, disk headroom, backup timing, and synthetic-account
-isolation. The workflow asserts correctness and latency thresholds, archives its temporary Round,
-deletes its session, and writes a redacted soak summary.
+Run the workflow with no soak first. Confirm the `single-vm-staging-remote-probe-*` artifact from
+the hosted runner and all four build-matched target-region artifacts from the target-VM runner:
+
+- `target-region-round-50.json`
+- `target-region-presentation-50.json`
+- `target-region-round-250.json`
+- `target-region-presentation-250.json`
+
+After the fixed matrix passes, rerun with the 15-minute soak and inspect every per-game artifact.
+Use the 60-minute option for a release candidate only after confirming VM resources, disk
+headroom, backup timing, and synthetic-account isolation. The workflow asserts correctness,
+latency, reconnect, client-receipt, and report-reconciliation thresholds, cleans up disposable
+content according to each harness's lifecycle, and writes a redacted soak summary. Complete the
+[target-region evidence record](../evidence/target-region-load.md); one passing profile or a local
+Compose run cannot substitute for the four-row target-region matrix.
+
+The disposable local capacity workflow separately clears and restarts Valkey before the
+250-participant Presentation process restart. Retain that coordination-loss artifact as a
+correctness check; it does not substitute for any target-region latency row.
+
+The local workflow enables `PRESENTATION_CONCURRENT_RESPONSE_WRITES` because its disposable stack
+has no mixed-version window. On a target deployment, keep that switch off through the canary and
+old-image overlap, then enable it only after every serving image reads the commit-visible aggregate
+fence. Disable it before any prior-image rollback; follow the
+[upgrade runbook](upgrade.md#presentation-concurrent-response-rollout).
 
 Retain the workflow, VM inventory, runner inventory, and artifact URLs. The remote probe compares
 both the API's `/health/live` marker and the web root's `X-OpenRound-Build-Id` header with the
 candidate, and verifies the separate media origin over public TLS; the load probe independently
 checks the API marker. Artifacts record the verified build ID, and `GITHUB_SHA` is not accepted as
-unverified metadata. Run sustained load against the actual VM size and networking path: local
-desktop results and a GitHub-hosted public probe are not capacity evidence for this target.
+unverified metadata. Retain the four load artifacts, runner provenance, soak summary, and VM
+saturation evidence together. Run sustained load against the actual VM size and networking path:
+local desktop results and a GitHub-hosted public probe are not capacity evidence for this target.
 
 Enable the Stripe replay only when an approved test configuration is active and no provider test
 is manipulating the rehearsal workspace. The replay proves signature, duplicate, stale-event, and

@@ -52,6 +52,7 @@ The server exports Node.js runtime metrics plus these OpenRound families:
 - `openround_billing_webhooks_total` and `openround_billing_webhook_lag_seconds`
 - `openround_retention_records_total` and `openround_media_deletion_backlog`
 - `openround_reports_generated_total`
+- `openround_recovery_funnel_stages_total`
 - `openround_authoring_jobs_total` and `openround_authoring_job_duration_seconds`
 - `openround_database_connections`
 
@@ -74,9 +75,18 @@ broadcast SLO.
 Presentation metrics use only bounded transport, projection, event, and outcome labels. Apply the
 same acceptance thresholds to both delivery engines: join p95 below 500 ms, durable response
 acknowledgement p95 below 250 ms and p99 below 600 ms, and participant receipt p95 below 500 ms.
-The Presentation load harness (`pnpm load:presentation`) emits a machine-readable 50/250-client
-sample; it does not replace a target-region run, restart/reconnect exercise, or reconciliation
-review.
+The manual Presentation room probe (`pnpm load:presentation`) emits a machine-readable sample but
+does not replace the self-contained target-region profile, restart/reconnect exercise, or
+reconciliation review.
+
+`openround_recovery_funnel_stages_total` projects only server-recorded create, publish, join,
+acknowledged-answer, intervention, linked-recheck, and reconciled-report events; telemetry posted
+through the browser-facing product-event endpoint is excluded. Its bounded
+`artifact_type` and `segment` labels support aggregate rollout comparisons. Each stage has a
+different counting unit, however, so stage totals and adjacent-stage ratios are operational and
+directional volume—not a session-level cohort funnel. They cannot prove that one facilitator
+completed a valid recovery loop or that a partner returned. Use the reviewed, pseudonymous
+[session observation record](../evidence/session-observation.md) for those product decisions.
 
 ## Bundled dashboard and rules
 

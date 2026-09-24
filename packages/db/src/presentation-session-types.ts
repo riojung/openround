@@ -81,6 +81,17 @@ export interface PresentationParticipantSnapshotProjection {
   currentResponse: PresentationSessionResponseRecord | null;
 }
 
+export interface PresentationResponseContext {
+  session: PresentationSessionRecord;
+  participant: PresentationSessionParticipantRecord;
+  priorResponse: PresentationSessionResponseRecord | null;
+}
+
+export interface PresentationResponseAcknowledgementState {
+  session: PresentationSessionRecord;
+  projection: PresentationParticipantSnapshotProjection;
+}
+
 export type PresentationSessionCredentialRole = "host" | "companion";
 
 export interface PresentationSessionCredentialRecord {
@@ -160,8 +171,16 @@ export interface PresentationSessionReportCompletion {
 }
 
 export type PresentationResponseAcceptance =
-  | { status: "accepted"; response: PresentationSessionResponseRecord }
-  | { status: "duplicate"; response: PresentationSessionResponseRecord }
+  | {
+      status: "accepted";
+      response: PresentationSessionResponseRecord;
+      acknowledgement: PresentationResponseAcknowledgementState;
+    }
+  | {
+      status: "duplicate";
+      response: PresentationSessionResponseRecord;
+      acknowledgement: PresentationResponseAcknowledgementState;
+    }
   | { status: "idempotency_conflict"; response: PresentationSessionResponseRecord }
   | { status: "already_responded"; response: PresentationSessionResponseRecord }
   | { status: "phase_closed" };
@@ -232,6 +251,12 @@ export interface PresentationSessionRepository {
     sessionId: string,
     tokenHash: string,
   ): Promise<PresentationSessionParticipantRecord | null>;
+  /** Loads the authenticated response context and an existing receipt in one hot-path read. */
+  getResponseContext(
+    sessionId: string,
+    tokenHash: string,
+    idempotencyKey: string,
+  ): Promise<PresentationResponseContext | null>;
   listParticipants(sessionId: string): Promise<PresentationSessionParticipantRecord[]>;
   saveResponse(
     input: PresentationSessionResponseRecord,

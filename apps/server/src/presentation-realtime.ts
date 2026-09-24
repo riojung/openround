@@ -79,6 +79,10 @@ export interface PresentationRealtimeService {
 
 export interface PresentationRealtimeOptions {
   service: PresentationRealtimeService;
+  /**
+   * @deprecated Rollout eligibility gates creation of a live session. The transport deliberately
+   * ignores later flag changes so an active room remains usable through a rollback.
+   */
   isEnabled?: (workspaceId: string) => boolean | Promise<boolean>;
   metrics?: Pick<
     MetricsService,
@@ -388,28 +392,6 @@ function withRoomStatus(
   return snapshot;
 }
 
-async function featureEnabled(options: PresentationRealtimeOptions, workspaceId: string | null) {
-  return Boolean(workspaceId) && (options.isEnabled ? options.isEnabled(workspaceId!) : true);
-}
-
-async function requireEnabledForCode(options: PresentationRealtimeOptions, code: string) {
-  const workspaceId = await options.service.workspaceForCode(code);
-  if (!(await featureEnabled(options, workspaceId))) {
-    throw Object.assign(new Error("Presentation realtime is unavailable"), {
-      code: "FEATURE_UNAVAILABLE",
-    });
-  }
-}
-
-async function requireEnabledForSession(options: PresentationRealtimeOptions, sessionId: string) {
-  const workspaceId = await options.service.workspaceForSession(sessionId);
-  if (!(await featureEnabled(options, workspaceId))) {
-    throw Object.assign(new Error("Presentation realtime is unavailable"), {
-      code: "FEATURE_UNAVAILABLE",
-    });
-  }
-}
-
 /**
  * Registers Presentation-specific Socket.IO events without sharing any identity keys with Round.
  * The service remains the authority for credentials, revisions, idempotency and projections.
@@ -685,7 +667,6 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
           acknowledge({ error: { code: "RATE_LIMITED", message: "Too many join attempts" } });
           return;
         }
-        await requireEnabledForCode(options, input.code);
         const joined = await options.service.join(input.code, input.nickname);
         const snapshot = PresentationParticipantSnapshotSchema.parse(joined.snapshot);
         await bindPresentationIdentity(
@@ -722,10 +703,6 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
       }
       try {
         const input = PresentationSyncRequestSchema.parse(raw);
-        const bound = identityForSocket(socket);
-        if (bound?.sessionId !== input.sessionId || bound.projection !== input.projection) {
-          await requireEnabledForSession(options, input.sessionId);
-        }
         const synchronized = PresentationSyncResponseSchema.parse(
           await options.service.sync(input),
         );
@@ -770,9 +747,6 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
       }
       try {
         const input = PresentationCommandSchema.parse(raw);
-        if (identityForSocket(socket)?.sessionId !== input.sessionId) {
-          await requireEnabledForSession(options, input.sessionId);
-        }
         const snapshot = PresentationHostSnapshotSchema.parse(await options.service.command(input));
         await bindPresentationIdentity(socket, {
           sessionId: input.sessionId,
@@ -810,9 +784,6 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
       }
       try {
         const input = PresentationResponseSubmitSchema.parse(raw);
-        if (identityForSocket(socket)?.sessionId !== input.sessionId) {
-          await requireEnabledForSession(options, input.sessionId);
-        }
         const response = PresentationResponseAckSchema.parse(
           await options.service.submitResponse({ ...input, receivedAt }),
         );

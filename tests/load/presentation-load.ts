@@ -11,7 +11,7 @@ const clientCount = Number(process.env.CLIENTS ?? "50");
 const batchSize = Number(process.env.JOIN_BATCH_SIZE ?? "20");
 const holdSeconds = Number(process.env.HOLD_SECONDS ?? "5");
 const assertPerformance = process.env.ASSERT_PERFORMANCE === "true";
-const requireAnswer = process.env.REQUIRE_ANSWER === "true";
+const requireAnswer = process.env.REQUIRE_ANSWER === "true" || assertPerformance;
 const outputPath = process.env.LOAD_OUTPUT?.trim();
 
 if (!code || !/^\d{7}$/.test(code)) {
@@ -205,7 +205,7 @@ async function main() {
     process.stdout.write(serialized);
     if (outputPath) {
       await mkdir(dirname(outputPath), { recursive: true });
-      await writeFile(outputPath, serialized, "utf8");
+      await writeFile(outputPath, serialized, { encoding: "utf8", mode: 0o600 });
     }
 
     assert.equal(participants.length, clientCount, "every requested participant must join");

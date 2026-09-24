@@ -50,6 +50,7 @@ import { registerHomeRoutes } from "./home-routes.js";
 import { registerLibraryRoutes } from "./library-routes.js";
 import { registerLiveRoomRoutes } from "./live-room-routes.js";
 import {
+  evidenceWorkspaceFeatureEnabled,
   professionalWorkspaceEligible,
   professionalWorkspaceFeatureEnabled,
 } from "./workspace-rollout.js";
@@ -126,7 +127,9 @@ export async function buildApp(
           })());
   const metrics = new MetricsService();
   const presentations = createPresentationRepository(repository);
-  const presentationSessions = createPresentationSessionRepository(repository);
+  const presentationSessions = createPresentationSessionRepository(repository, {
+    concurrentResponseWrites: config.PRESENTATION_CONCURRENT_RESPONSE_WRITES,
+  });
   const groups = createCollaborationGroupRepository(repository);
   const libraryMetadata = createLibraryMetadataRepository(repository);
   const productEventsEnabled = (workspaceId: string) =>
@@ -135,6 +138,9 @@ export async function buildApp(
     professionalWorkspaceFeatureEnabled(config, workspaceId, "workspaceShell");
   const presentationsEnabled = (workspaceId: string) =>
     professionalWorkspaceFeatureEnabled(config, workspaceId, "presentations");
+  const presentationRealtimeCreationEnabled = (workspaceId: string) =>
+    presentationsEnabled(workspaceId) &&
+    evidenceWorkspaceFeatureEnabled(config, workspaceId, "presentationRealtime");
   const groupsEnabled = (workspaceId: string) =>
     professionalWorkspaceFeatureEnabled(config, workspaceId, "groups");
   if (repository instanceof PostgresRepository) metrics.bindPostgres(repository.pool);
@@ -374,7 +380,7 @@ export async function buildApp(
     auth,
     config,
     storage,
-    workspaceEnabled: presentationsEnabled,
+    workspaceEnabled: presentationRealtimeCreationEnabled,
     metrics,
     consumeAdmission: cache.consumeRateLimit.bind(cache),
     service: presentationService,

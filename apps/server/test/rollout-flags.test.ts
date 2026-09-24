@@ -51,6 +51,7 @@ describe("professional workspace rollout flags", () => {
         workspaceShell: false,
         builderV2: false,
         presentations: false,
+        presentationRealtime: false,
         groups: false,
         discover: false,
       },
@@ -119,6 +120,7 @@ describe("professional workspace rollout flags", () => {
         workspaceShell: false,
         builderV2: false,
         presentations: false,
+        presentationRealtime: false,
         groups: false,
         discover: false,
       },
@@ -183,6 +185,7 @@ describe("professional workspace rollout flags", () => {
         workspaceShell: true,
         builderV2: true,
         presentations: true,
+        presentationRealtime: false,
         groups: true,
         discover: true,
       },
@@ -209,6 +212,8 @@ describe("professional workspace rollout flags", () => {
       FEATURE_UX_BETA: "true",
       UX_BETA_WORKSPACE_ALLOWLIST: workspaceId,
       FEATURE_PRESENTATIONS: "true",
+      FEATURE_PRESENTATION_REALTIME: "true",
+      EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: workspaceId,
       LOG_LEVEL: "silent",
     });
     const repository = new MemoryRepository({ initialWorkspaceId: workspaceId });
@@ -219,6 +224,12 @@ describe("professional workspace rollout flags", () => {
     app = built.app;
     const cookie = await signIn(app);
     const account = await app.inject({ method: "GET", url: "/v1/auth/me", headers: { cookie } });
+    expect(account.json()).toMatchObject({
+      productFeatures: {
+        presentations: true,
+        presentationRealtime: true,
+      },
+    });
     const creator = account.json<{ creator: { userId: string } }>().creator;
     const createdPresentation = await app.inject({
       method: "POST",
@@ -268,7 +279,20 @@ describe("professional workspace rollout flags", () => {
       retentionExpiresAt: new Date(now.getTime() + 86_400_000),
     });
 
-    config.UX_BETA_WORKSPACE_ALLOWLIST.splice(0);
+    config.FEATURE_PRESENTATION_REALTIME = false;
+    config.EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST.splice(0);
+
+    const accountDuringRealtimePause = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: { cookie },
+    });
+    expect(accountDuringRealtimePause.json()).toMatchObject({
+      productFeatures: {
+        presentations: true,
+        presentationRealtime: false,
+      },
+    });
 
     const authoringList = await app.inject({
       method: "GET",
@@ -378,6 +402,17 @@ describe("professional workspace rollout flags", () => {
       payload: { presentationId: randomUUID() },
     });
     expect(blockedCreation.statusCode).toBe(404);
+
+    // Pausing only new realtime rooms must not also pause Presentation authoring.
+    const authoringDuringRealtimePause = await app.inject({
+      method: "POST",
+      url: "/v1/presentations",
+      headers: { cookie },
+      payload: { title: "Authoring remains available", description: "" },
+    });
+    expect(authoringDuringRealtimePause.statusCode).toBe(201);
+
+    config.UX_BETA_WORKSPACE_ALLOWLIST.splice(0);
     const blockedAuthoringCreation = await app.inject({
       method: "POST",
       url: "/v1/presentations",
@@ -393,6 +428,9 @@ describe("professional workspace rollout flags", () => {
     });
     expect(blockedDraftMutation.statusCode).toBe(404);
     await built.productEvents.drain();
-    expect(repository.productEvents).toEqual([]);
+    expect(repository.productEvents.map(({ name }) => name)).toEqual([
+      "participant_joined",
+      "report_reconciled",
+    ]);
   });
 });

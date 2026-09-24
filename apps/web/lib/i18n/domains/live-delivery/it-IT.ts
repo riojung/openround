@@ -289,6 +289,8 @@ const messages = {
   "live.presentationHost.backEditor": "Torna all'editor",
   "live.presentationHost.description":
     "Le slide dei contenuti e le domande interattive verranno eseguite nel loro ordine autorizzato. I partecipanti si uniscono senza account workspace, e solo le risposte alle domande diventano prove di apprendimento.",
+  "live.presentationHost.creationPaused":
+    "L'avvio di nuove sessioni di presentazione dal vivo è sospeso per questo spazio di lavoro. I contenuti pubblicati e le sessioni esistenti restano disponibili.",
   "live.presentationHost.history": "Storia della sessione",
   "live.presentationHost.interactiveQuestions": "Domande interattive",
   "live.presentationHost.live": "Presentazione dal vivo",

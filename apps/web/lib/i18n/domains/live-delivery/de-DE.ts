@@ -288,6 +288,8 @@ const messages = {
   "live.presentationHost.backEditor": "Zurück zum Editor",
   "live.presentationHost.description":
     "Inhaltsfolien und interaktive Fragen werden in ihrer ursprünglichen Reihenfolge ausgeführt. Teilnehmer treten ohne Workspace-Konten bei, und nur Fragenantworten werden zu Lernbeweisen.",
+  "live.presentationHost.creationPaused":
+    "Das Starten neuer Live-Präsentationen ist für diesen Arbeitsbereich pausiert. Veröffentlichte Inhalte und bestehende Sitzungen bleiben verfügbar.",
   "live.presentationHost.history": "Sitzungsgeschichte",
   "live.presentationHost.interactiveQuestions": "Interaktive Fragen",
   "live.presentationHost.live": "Live Präsentation",

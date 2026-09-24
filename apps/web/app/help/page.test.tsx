@@ -16,6 +16,7 @@ const fixtures = vi.hoisted(() => ({
       workspaceShell: true,
       builderV2: true,
       presentations: true,
+      presentationRealtime: true,
       groups: true,
       discover: true,
     },
@@ -59,6 +60,7 @@ describe("Help centre video guides", () => {
       "workspaceShell",
       "builderV2",
       "presentations",
+      "presentationRealtime",
       "groups",
       "discover",
     ] as const) {

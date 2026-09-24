@@ -285,6 +285,8 @@ const messages = {
   "live.presentationHost.backEditor": "エディタに戻る",
   "live.presentationHost.description":
     "コンテンツのスライドとインタラクティブな質問は、作者の順序で実行されます。 参加者はワークスペースアカウントなしで参加し、質問応答のみが学習証拠となります。",
+  "live.presentationHost.creationPaused":
+    "このワークスペースでは、新しいライブプレゼンテーションセッションの開始が一時停止されています。公開済みのコンテンツと既存のセッションは引き続き利用できます。",
   "live.presentationHost.history": "セッション履歴",
   "live.presentationHost.interactiveQuestions": "インタラクティブな質問",
   "live.presentationHost.live": "ライブプレゼンテーション",

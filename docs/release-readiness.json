@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-22",
+  "updatedAt": "2026-09-24",
   "releaseTarget": "single-vm-beta",
   "gates": [
     {
@@ -52,9 +52,9 @@
       "owner": "engineering",
       "requiredFor": ["single-vm-beta-preflight", "single-vm-beta", "single-vm-ga"],
       "status": "pending",
-      "criterion": "Single-VM staging passes the 100-client latency gate and a representative soak from a target-region runner without correctness or reconciliation loss.",
+      "criterion": "Single-VM staging passes build-matched 50- and 250-client Round and Presentation target-region profiles plus a representative soak, meeting acknowledgement and client-receipt latency gates with no correctness, duplication, leakage, reconnect, or report-reconciliation loss.",
       "evidence": [],
-      "nextAction": "Bring an isolated runner online near the selected VM region with the single-vm-staging label, run Staging readiness at 100 clients, and attach the load and soak record."
+      "nextAction": "Bring an isolated runner online near the selected VM region, run the fixed four-profile Staging readiness matrix and representative soak, complete the target-region evidence template, and attach runner provenance, all four load artifacts, the soak summary, and VM saturation evidence."
     },
     {
       "id": "off-host-restore",
@@ -132,9 +132,9 @@
       "owner": "product",
       "requiredFor": ["single-vm-beta-preflight", "single-vm-beta", "single-vm-ga"],
       "status": "pending",
-      "criterion": "At least three education and three workplace partners are recruited and at least ten beta sessions are observed with reconciled reports.",
+      "criterion": "At least six higher-education and six workplace facilitators are interviewed; at least eight demonstrate the recurring post-result decision problem; at least three partners per segment run twice; at least ten real sessions are observed; and at least half of eligible checkpoints complete a reviewed diagnostic, intervention, valid linked recheck, and reconciled report loop.",
       "evidence": [],
-      "nextAction": "Recruit named partners and store redacted interview and session records."
+      "nextAction": "Recruit the two segment cohorts, record reviewer-coded facilitator eligibility and recurring-problem evidence, store redacted session records with repeat-run references and eligible/completed checkpoint denominators, and obtain independent review before selecting the primary acquisition segment."
     },
     {
       "id": "beta-usability",

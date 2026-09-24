@@ -1,12 +1,9 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import {
-  PresentationCompanionSnapshotSchema,
-  PresentationHostSnapshotSchema,
   PresentationParticipantSnapshotSchema,
   PresentationReportEnvelopeSchema,
   PresentationReportV1Schema,
   type PresentationCommand,
-  type PresentationBlock,
   type PresentationHostSnapshot,
   type PresentationParticipantSnapshot,
   type PresentationResponseAck,
@@ -16,13 +13,13 @@ import {
   type PresentationSyncRequest,
   type PresentationSyncResponse,
   type QuestionDraft,
-  questionPurpose,
   questionTypeDefinition,
 } from "@openround/contracts";
 import {
   PresentationSessionConflictError,
   SessionCodeConflictError,
   type PresentationRepository,
+  type PresentationResponseAcknowledgementState,
   type PresentationSessionRecord,
   type PresentationSessionRepository,
   type PresentationSessionResponseRecord,
@@ -32,10 +29,24 @@ import type { AppConfig } from "./config.js";
 import { entitlementsFor, retentionExpiry } from "./entitlements.js";
 import type { ProductEventDispatcher, ProductEventInput } from "./product-events.js";
 import { generatePresentationReport } from "./presentation-reporting.js";
+import {
+  buildPresentationCompanionSnapshot,
+  buildPresentationHostSnapshot,
+  buildPresentationListSnapshot,
+  buildPresentationParticipantSnapshot,
+  buildPresentationProjectionData,
+  buildTargetedPresentationParticipantSnapshot,
+  presentationCurrentBlock,
+  type PresentationProjectionData,
+} from "./presentation-session-projections.js";
 import type { StorageService } from "./storage.js";
 
 const PRESENTATION_SESSION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
-const PRESENTATION_PARTICIPANT_PRESENCE_WINDOW_MS = 15_000;
+
+export {
+  presentationCurrentBlock,
+  presentationParticipantBlock,
+} from "./presentation-session-projections.js";
 
 export type PresentationSessionServiceErrorCode =
   | "NOT_FOUND"
@@ -63,7 +74,7 @@ export class PresentationSessionServiceError extends Error {
 
 /**
  * Aggregate reads raced durable room mutations too many times to construct one coherent
- * broadcast. This is deliberately distinct from a missing credential: transports should retry
+ * projection. This is deliberately distinct from a missing credential: transports should retry
  * the room projection without disconnecting otherwise-authorized sockets.
  */
 export class PresentationBroadcastConsistencyError extends Error {
@@ -132,18 +143,6 @@ export function presentationLiveSessionExpired(
   return session.liveExpiresAt.getTime() <= now.getTime();
 }
 
-export function presentationCurrentBlock(session: PresentationSessionRecord) {
-  return session.currentBlockIndex >= 0
-    ? (session.content.blocks[session.currentBlockIndex] ?? null)
-    : null;
-}
-
-function questionDeadline(session: PresentationSessionRecord) {
-  const block = presentationCurrentBlock(session);
-  if (session.phase !== "question_open" || block?.kind !== "question") return null;
-  return session.questionClosesAt;
-}
-
 function responseTiming(session: PresentationSessionRecord, receivedAt: Date) {
   const block = presentationCurrentBlock(session);
   if (block?.kind !== "question") return { responseMs: 0, remainingRatio: 0 };
@@ -165,201 +164,9 @@ function responseTiming(session: PresentationSessionRecord, receivedAt: Date) {
   };
 }
 
-function acceptingResponses(session: PresentationSessionRecord, now = new Date()) {
-  const block = presentationCurrentBlock(session);
-  if (session.phase !== "question_open" || block?.kind !== "question") return false;
-  return session.questionClosesAt === null || session.questionClosesAt.getTime() >= now.getTime();
-}
-
 function responseScore(question: QuestionDraft, correct: boolean | null, remainingRatio: number) {
   if (!correct || !questionTypeDefinition(question.type).scored) return 0;
   return Math.round(question.basePoints * (0.5 + remainingRatio * 0.5));
-}
-
-function rankedParticipants(
-  participants: Awaited<ReturnType<PresentationSessionRepository["listParticipants"]>>,
-  responses: PresentationSessionResponseRecord[],
-) {
-  const scores = new Map<string, number>();
-  for (const response of responses) {
-    scores.set(response.participantId, (scores.get(response.participantId) ?? 0) + response.score);
-  }
-  return participants
-    .map((participant) => ({
-      id: participant.id,
-      nickname: participant.nickname,
-      joinedAt: participant.joinedAt,
-      score: scores.get(participant.id) ?? 0,
-    }))
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        left.joinedAt.getTime() - right.joinedAt.getTime() ||
-        left.nickname.localeCompare(right.nickname),
-    )
-    .map((participant, index) => ({ ...participant, rank: index + 1 }));
-}
-
-function facilitatorVisibleResponses(
-  session: PresentationSessionRecord,
-  responses: PresentationSessionResponseRecord[],
-) {
-  const block = presentationCurrentBlock(session);
-  if (session.phase !== "question_open" || block?.kind !== "question") return responses;
-  // A correct response immediately earns points. Including the open question in the live
-  // leaderboard would therefore disclose correctness (and timing through the exact score) before
-  // the facilitator reveals the answer.
-  return responses.filter((response) => response.blockId !== block.id);
-}
-
-type PresentationParticipants = Awaited<
-  ReturnType<PresentationSessionRepository["listParticipants"]>
->;
-
-interface PresentationProjectionData {
-  participants: PresentationParticipants;
-  responses: PresentationSessionResponseRecord[];
-  leaderboard: ReturnType<typeof rankedParticipants>;
-  facilitatorLeaderboard: ReturnType<typeof rankedParticipants>;
-  responseByParticipantAndBlock: Map<string, PresentationSessionResponseRecord>;
-  latestReceiptByParticipant: Map<string, PresentationSessionResponseRecord>;
-}
-
-/**
- * Participant projection is deliberately an allowlist. New authoring fields remain private until
- * explicitly reviewed for participant delivery.
- */
-export function presentationParticipantBlock(block: PresentationBlock | null) {
-  if (!block) return null;
-  if (block.kind === "content") {
-    return {
-      id: block.id,
-      kind: block.kind,
-      layout: block.layout,
-      title: block.title,
-      body: block.body,
-      mediaId: block.mediaId,
-      mediaAlt: block.mediaAlt,
-    };
-  }
-  const question = block.question;
-  const base = {
-    id: question.id,
-    type: question.type,
-    prompt: question.prompt,
-    confidence: question.confidence,
-    timeLimitSeconds: question.timeLimitSeconds,
-    mediaId: question.mediaId,
-    mediaAlt: question.mediaAlt,
-  };
-  if (question.type === "numeric") return { id: block.id, kind: block.kind, question: base };
-  if (question.type === "rating") {
-    return {
-      id: block.id,
-      kind: block.kind,
-      question: {
-        ...base,
-        min: question.min,
-        max: question.max,
-        minLabel: question.minLabel,
-        maxLabel: question.maxLabel,
-      },
-    };
-  }
-  return {
-    id: block.id,
-    kind: block.kind,
-    question: {
-      ...base,
-      choices: question.choices.map(({ id, label }) => ({ id, label })),
-    },
-  };
-}
-
-function presentationLiveQuestion(question: QuestionDraft, facilitator: boolean) {
-  const projected = {
-    id: question.id,
-    type: question.type,
-    prompt: question.prompt,
-    confidence: question.confidence ?? "off",
-    choices:
-      "choices" in question
-        ? question.choices.map((choice) => ({ id: choice.id, label: choice.label }))
-        : [],
-    ...(question.type === "numeric" ? { unit: question.unit } : {}),
-    ...(question.type === "rating"
-      ? {
-          rating: {
-            min: question.min,
-            max: question.max,
-            minLabel: question.minLabel,
-            maxLabel: question.maxLabel,
-          },
-        }
-      : {}),
-    timeLimitSeconds: question.timeLimitSeconds,
-    basePoints: question.basePoints,
-    mediaId: question.mediaId,
-    mediaAlt: question.mediaAlt,
-  };
-  return facilitator
-    ? {
-        ...projected,
-        purpose: questionPurpose(question),
-        linkedRecheckAvailable: Boolean(question.linkedRecheckQuestionId),
-      }
-    : projected;
-}
-
-function presentationRevealedAnswer(question: QuestionDraft) {
-  if (question.type === "numeric") {
-    return {
-      kind: "numeric" as const,
-      correctValue: question.correctValue,
-      tolerance: question.tolerance,
-      unit: question.unit,
-      explanation: question.explanation,
-    };
-  }
-  if (question.type === "rating" || question.type === "poll") {
-    return { kind: "unscored" as const, explanation: question.explanation };
-  }
-  return {
-    kind: "choice" as const,
-    correctChoiceIds: question.choices
-      .filter((choice) => choice.isCorrect)
-      .map((choice) => choice.id),
-    explanation: question.explanation,
-  };
-}
-
-function presentationRealtimeBlock(
-  block: PresentationBlock | null,
-  facilitator: boolean,
-  revealAnswer = false,
-) {
-  if (!block) return null;
-  if (block.kind === "content") {
-    return {
-      id: block.id,
-      kind: block.kind,
-      layout: block.layout,
-      title: block.title,
-      body: block.body,
-      mediaId: block.mediaId,
-      mediaAlt: block.mediaAlt,
-    };
-  }
-  return {
-    id: block.id,
-    kind: block.kind,
-    question: presentationLiveQuestion(block.question, facilitator),
-    ...(facilitator
-      ? {
-          revealedAnswer: revealAnswer ? presentationRevealedAnswer(block.question) : null,
-        }
-      : {}),
-  };
 }
 
 function validateResponse(question: QuestionDraft, response: PresentationSessionResponse) {
@@ -978,23 +785,46 @@ export class PresentationSessionService {
   }
 
   async sync(input: PresentationSyncRequest): Promise<PresentationSyncResponse> {
+    let authorizedSession: PresentationSessionRecord;
+    let participantId: string | null = null;
     let snapshot: PresentationRoleSnapshot;
     if (input.projection === "participant") {
       const authorized = await this.authorizeParticipant(input.sessionId, input.participantToken);
-      snapshot = await this.realtimeParticipantSnapshot(
-        authorized.session,
-        authorized.participantId,
-      );
+      authorizedSession = authorized.session;
+      participantId = authorized.participantId;
     } else if (input.projection === "host") {
-      const session = await this.authorizeCredential(input.sessionId, input.controlToken, "host");
-      snapshot = await this.realtimeHostSnapshot(session);
+      authorizedSession = await this.authorizeCredential(
+        input.sessionId,
+        input.controlToken,
+        "host",
+      );
     } else {
-      const session = await this.authorizeCredential(
+      authorizedSession = await this.authorizeCredential(
         input.sessionId,
         input.companionToken,
         "companion",
       );
-      snapshot = await this.realtimeCompanionSnapshot(session);
+    }
+    const projection = await this.consistentProjection(authorizedSession);
+    if (!projection) {
+      throw new PresentationSessionServiceError(
+        401,
+        "UNAUTHORIZED",
+        input.projection === "participant"
+          ? "Participant credential is invalid"
+          : "Presentation control credential is invalid",
+      );
+    }
+    if (input.projection === "participant") {
+      snapshot = await this.realtimeParticipantSnapshot(
+        projection.session,
+        participantId!,
+        projection.data,
+      );
+    } else if (input.projection === "host") {
+      snapshot = await this.realtimeHostSnapshot(projection.session, projection.data);
+    } else {
+      snapshot = await this.realtimeCompanionSnapshot(projection.session, projection.data);
     }
     return {
       resetRequired: (input.afterSeq ?? 0) !== snapshot.seq,
@@ -1020,22 +850,10 @@ export class PresentationSessionService {
     const sessionId = inputs[0]!.sessionId;
     let session = await this.sessions.getSessionById(sessionId);
     if (!session || presentationLiveSessionExpired(session)) return inputs.map(() => null);
-    let data: PresentationProjectionData | null = null;
-    // Participant/response queries are independent repository reads. Confirm the event-sequence
-    // fence after collecting them; if a join, answer, or transition committed between reads,
-    // rebuild from the newer session instead of labelling mixed data with an older sequence.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const candidate = await this.projectionData(session);
-      const confirmed = await this.sessions.getSessionById(sessionId);
-      if (!confirmed || presentationLiveSessionExpired(confirmed)) return inputs.map(() => null);
-      if (confirmed.eventSeq === session.eventSeq) {
-        data = candidate;
-        session = confirmed;
-        break;
-      }
-      session = confirmed;
-    }
-    if (!data) throw new PresentationBroadcastConsistencyError(sessionId);
+    const projection = await this.consistentProjection(session);
+    if (!projection) return inputs.map(() => null);
+    session = projection.session;
+    const data = projection.data;
     const participantByTokenHash = new Map(
       data.participants.map((participant) => [participant.tokenHash, participant]),
     );
@@ -1150,53 +968,60 @@ export class PresentationSessionService {
     // Capture receipt before reads/validation so network or database latency cannot improve a score
     // or admit an answer after the server-side close instant.
     const receivedAt = input.receivedAt ?? new Date();
-    const session = await this.sessions.getSessionById(input.sessionId);
-    if (!session || presentationLiveSessionExpired(session, receivedAt)) {
-      throw new PresentationSessionServiceError(
-        401,
-        "UNAUTHORIZED",
-        "Participant credential is invalid",
-      );
-    }
-    const participant = await this.sessions.findParticipant(
+    const requestHash = presentationResponseRequestHash(input);
+    const context = await this.sessions.getResponseContext(
       input.sessionId,
       presentationParticipantTokenHash(input.participantToken),
+      input.idempotencyKey,
     );
-    if (!participant) {
+    if (!context || presentationLiveSessionExpired(context.session, receivedAt)) {
       throw new PresentationSessionServiceError(
         401,
         "UNAUTHORIZED",
         "Participant credential is invalid",
       );
     }
-    const requestHash = presentationResponseRequestHash(input);
-    const priorResponse = await this.sessions.findResponseByIdempotencyKey(
-      input.sessionId,
-      participant.id,
-      input.idempotencyKey,
-    );
-    if (priorResponse) {
-      if (priorResponse.requestHash && priorResponse.requestHash !== requestHash) {
+    const { session, participant, priorResponse } = context;
+    const acknowledgePriorReceipt = async (
+      knownReceipt?: PresentationSessionResponseRecord | null,
+    ): Promise<PresentationResponseAck | null> => {
+      const receipt =
+        knownReceipt ??
+        (await this.sessions.findResponseByIdempotencyKey(
+          input.sessionId,
+          participant.id,
+          input.idempotencyKey,
+        ));
+      if (!receipt) return null;
+      if (receipt.requestHash && receipt.requestHash !== requestHash) {
         throw new PresentationSessionServiceError(
           409,
           "IDEMPOTENCY_CONFLICT",
           "This response key was already used for a different request",
         );
       }
-      const currentSession = (await this.sessions.getSessionById(input.sessionId)) ?? session;
+      const duplicate = await this.sessions.acceptResponse(receipt, input.expectedRevision);
+      if (duplicate.status !== "duplicate") {
+        throw new Error("Durable Presentation response receipt could not be acknowledged");
+      }
       return this.responseAcknowledgement(
-        currentSession,
+        duplicate.acknowledgement,
         participant.id,
-        priorResponse,
+        duplicate.response,
         input.idempotencyKey,
         true,
       );
+    };
+    if (priorResponse) {
+      return (await acknowledgePriorReceipt(priorResponse))!;
     }
     // Resolve the submitted block independently from the current pointer. The repository checks a
     // matching idempotency receipt before its live phase/revision fence, allowing a lost ack to be
     // recovered after the host advances without ever applying the payload to the next question.
     const submittedBlock = session.content.blocks.find((block) => block.id === input.blockId);
     if (submittedBlock?.kind !== "question") {
+      const replayed = await acknowledgePriorReceipt();
+      if (replayed) return replayed;
       throw new PresentationSessionServiceError(
         409,
         "STALE_SESSION",
@@ -1209,7 +1034,13 @@ export class PresentationSessionService {
         },
       );
     }
-    validateResponse(submittedBlock.question, input.response);
+    try {
+      validateResponse(submittedBlock.question, input.response);
+    } catch (error) {
+      const replayed = await acknowledgePriorReceipt();
+      if (replayed) return replayed;
+      throw error;
+    }
     const correct = responseCorrect(submittedBlock.question, input.response);
     const timing = responseTiming(session, receivedAt);
     const acceptance = await this.sessions.acceptResponse(
@@ -1275,9 +1106,8 @@ export class PresentationSessionService {
         },
       ]);
     }
-    const currentSession = (await this.sessions.getSessionById(input.sessionId)) ?? session;
     return this.responseAcknowledgement(
-      currentSession,
+      acceptance.acknowledgement,
       participant.id,
       acceptance.response,
       input.idempotencyKey,
@@ -1452,65 +1282,7 @@ export class PresentationSessionService {
     connectedParticipantIds: ReadonlySet<string> = new Set(),
   ): Promise<PresentationHostSnapshot> {
     const data = projectionData ?? (await this.projectionData(session));
-    const { participants, responses } = data;
-    const block = presentationCurrentBlock(session);
-    const leaderboard = data.facilitatorLeaderboard;
-    const responseCount =
-      block?.kind === "question"
-        ? responses.filter((response) => response.blockId === block.id).length
-        : 0;
-    const sampledAt = new Date();
-    const connectedCount = participants.filter(
-      (participant) =>
-        connectedParticipantIds.has(participant.id) ||
-        sampledAt.getTime() - participant.lastSeenAt.getTime() <=
-          PRESENTATION_PARTICIPANT_PRESENCE_WINDOW_MS,
-    ).length;
-    return PresentationHostSnapshotSchema.parse({
-      sessionId: session.id,
-      artifactType: "presentation",
-      presentationId: session.presentationId,
-      presentationVersionId: session.presentationVersionId,
-      title: session.title,
-      code: session.code,
-      status: session.status,
-      phase: session.phase,
-      currentBlockIndex: session.currentBlockIndex,
-      blockCount: session.content.blocks.length,
-      revision: session.revision,
-      seq: session.eventSeq,
-      serverTime: sampledAt.toISOString(),
-      questionOpenedAt: session.questionOpenedAt?.toISOString() ?? null,
-      questionClosesAt: questionDeadline(session)?.toISOString() ?? null,
-      acceptingResponses: acceptingResponses(session),
-      settings: { ...session.settings, trustMode: session.trustMode },
-      projection: "host",
-      currentBlock: presentationRealtimeBlock(
-        block,
-        true,
-        session.phase === "question_reveal" ||
-          session.phase === "intervention" ||
-          session.phase === "finished",
-      ),
-      participantCount: participants.length,
-      responseCount,
-      participants: leaderboard.map(({ id, nickname, joinedAt, score, rank }) => ({
-        id,
-        nickname,
-        joinedAt: joinedAt.toISOString(),
-        score,
-        rank,
-      })),
-      roomStatus: {
-        sessionId: session.id,
-        joinedCount: participants.length,
-        connectedCount,
-        notCurrentlyConnectedCount: participants.length - connectedCount,
-        responseCount,
-        sampledAt: sampledAt.toISOString(),
-      },
-      finishedAt: session.finishedAt?.toISOString() ?? null,
-    });
+    return buildPresentationHostSnapshot(session, data, connectedParticipantIds);
   }
 
   private async restHostSnapshot(session: PresentationSessionRecord) {
@@ -1529,152 +1301,28 @@ export class PresentationSessionService {
     };
   }
 
-  private async targetedResponseAcknowledgementSnapshot(
-    initialSession: PresentationSessionRecord,
-    participantId: string,
-    acknowledgedResponse: PresentationSessionResponseRecord,
-  ): Promise<PresentationParticipantSnapshot> {
-    let session = initialSession;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const block = presentationCurrentBlock(session);
-      const projection = await this.sessions.getParticipantSnapshotProjection(
-        session.id,
-        participantId,
-        block?.id ?? null,
-        session.phase !== "question_open",
-      );
-      if (!projection) {
-        throw new PresentationSessionServiceError(
-          401,
-          "UNAUTHORIZED",
-          "Participant credential is invalid",
-        );
-      }
-      const confirmed = await this.sessions.getSessionById(session.id);
-      if (!confirmed || presentationLiveSessionExpired(confirmed)) {
-        throw new PresentationSessionServiceError(
-          401,
-          "UNAUTHORIZED",
-          "Participant credential is invalid",
-        );
-      }
-      if (confirmed.eventSeq !== session.eventSeq) {
-        session = confirmed;
-        continue;
-      }
-      const currentResponse =
-        block?.id === acknowledgedResponse.blockId
-          ? acknowledgedResponse
-          : projection.currentResponse;
-      const resultVisible =
-        session.phase === "question_reveal" ||
-        session.phase === "intervention" ||
-        session.phase === "finished";
-      return PresentationParticipantSnapshotSchema.parse({
-        sessionId: session.id,
-        artifactType: "presentation",
-        presentationId: session.presentationId,
-        presentationVersionId: session.presentationVersionId,
-        title: session.title,
-        code: session.code,
-        status: session.status,
-        phase: session.phase,
-        currentBlockIndex: session.currentBlockIndex,
-        blockCount: session.content.blocks.length,
-        revision: session.revision,
-        seq: session.eventSeq,
-        serverTime: new Date().toISOString(),
-        questionOpenedAt: session.questionOpenedAt?.toISOString() ?? null,
-        questionClosesAt: questionDeadline(session)?.toISOString() ?? null,
-        acceptingResponses: acceptingResponses(session),
-        settings: { ...session.settings, trustMode: session.trustMode },
-        projection: "participant",
-        participantId,
-        currentBlock: presentationRealtimeBlock(block, false),
-        participantCount: projection.participantCount,
-        responseSubmitted: Boolean(currentResponse),
-        standing: session.phase === "question_open" ? null : projection.standing,
-        responseResult:
-          resultVisible && currentResponse
-            ? { correct: currentResponse.correct, score: currentResponse.score }
-            : null,
-        finishedAt: session.finishedAt?.toISOString() ?? null,
-      });
-    }
-    throw new PresentationBroadcastConsistencyError(initialSession.id);
-  }
-
   private async realtimeParticipantSnapshot(
     session: PresentationSessionRecord,
     participantId: string,
     projectionData?: PresentationProjectionData,
   ): Promise<PresentationParticipantSnapshot> {
     const data = projectionData ?? (await this.projectionData(session));
-    const { participants } = data;
-    const block = presentationCurrentBlock(session);
-    const currentResponse = block
-      ? data.responseByParticipantAndBlock.get(`${participantId}:${block.id}`)
-      : undefined;
-    const latestResponse = data.latestReceiptByParticipant.get(participantId);
-    const standing = data.leaderboard.find((entry) => entry.id === participantId);
-    const resultVisible =
-      session.phase === "question_reveal" ||
-      session.phase === "intervention" ||
-      session.phase === "finished";
-    return PresentationParticipantSnapshotSchema.parse({
-      sessionId: session.id,
-      artifactType: "presentation",
-      presentationId: session.presentationId,
-      presentationVersionId: session.presentationVersionId,
-      title: session.title,
-      code: session.code,
-      status: session.status,
-      phase: session.phase,
-      currentBlockIndex: session.currentBlockIndex,
-      blockCount: session.content.blocks.length,
-      revision: session.revision,
-      seq: session.eventSeq,
-      serverTime: new Date().toISOString(),
-      questionOpenedAt: session.questionOpenedAt?.toISOString() ?? null,
-      questionClosesAt: questionDeadline(session)?.toISOString() ?? null,
-      acceptingResponses: acceptingResponses(session),
-      settings: { ...session.settings, trustMode: session.trustMode },
-      projection: "participant",
-      participantId,
-      currentBlock: presentationRealtimeBlock(block, false),
-      participantCount: participants.length,
-      responseSubmitted: Boolean(currentResponse),
-      responseReceipt: latestResponse?.idempotencyKey
-        ? {
-            responseId: latestResponse.id,
-            blockId: latestResponse.blockId,
-            idempotencyKey: latestResponse.idempotencyKey,
-            acceptedAt: latestResponse.submittedAt.toISOString(),
-          }
-        : null,
-      standing:
-        session.phase !== "question_open" && standing
-          ? { rank: standing.rank, score: standing.score }
-          : null,
-      responseResult:
-        resultVisible && currentResponse
-          ? { correct: currentResponse.correct, score: currentResponse.score }
-          : null,
-      finishedAt: session.finishedAt?.toISOString() ?? null,
-    });
+    return buildPresentationParticipantSnapshot(session, participantId, data);
   }
 
   private async responseAcknowledgement(
-    session: PresentationSessionRecord,
+    acknowledgement: PresentationResponseAcknowledgementState,
     participantId: string,
     response: PresentationSessionResponseRecord,
     idempotencyKey: string,
     duplicate: boolean,
   ): Promise<PresentationResponseAck> {
+    const { session, projection } = acknowledgement;
     const acceptedAt = response.submittedAt.toISOString();
-    const snapshot = await this.targetedResponseAcknowledgementSnapshot(
+    const snapshot = buildTargetedPresentationParticipantSnapshot(
       session,
       participantId,
+      projection,
       response,
     );
     const acknowledgedSnapshot = PresentationParticipantSnapshotSchema.parse({
@@ -1703,31 +1351,8 @@ export class PresentationSessionService {
     projectionData?: PresentationProjectionData,
     connectedParticipantIds: ReadonlySet<string> = new Set(),
   ) {
-    const host = await this.realtimeHostSnapshot(session, projectionData, connectedParticipantIds);
-    return PresentationCompanionSnapshotSchema.parse({
-      sessionId: host.sessionId,
-      artifactType: host.artifactType,
-      presentationId: host.presentationId,
-      presentationVersionId: host.presentationVersionId,
-      title: host.title,
-      code: host.code,
-      status: host.status,
-      phase: host.phase,
-      currentBlockIndex: host.currentBlockIndex,
-      blockCount: host.blockCount,
-      revision: host.revision,
-      seq: host.seq,
-      serverTime: host.serverTime,
-      questionOpenedAt: host.questionOpenedAt,
-      questionClosesAt: host.questionClosesAt,
-      acceptingResponses: host.acceptingResponses,
-      settings: host.settings,
-      projection: "companion",
-      currentBlock: presentationRealtimeBlock(presentationCurrentBlock(session), false),
-      roomStatus: host.roomStatus,
-      primaryAction: session.status === "active" ? "advance" : "none",
-      finishedAt: host.finishedAt,
-    });
+    const data = projectionData ?? (await this.projectionData(session));
+    return buildPresentationCompanionSnapshot(session, data, connectedParticipantIds);
   }
 
   private async projectionData(
@@ -1737,28 +1362,27 @@ export class PresentationSessionService {
       this.sessions.listParticipants(session.id),
       this.sessions.listResponses(session.id),
     ]);
-    const responseByParticipantAndBlock = new Map<string, PresentationSessionResponseRecord>();
-    const latestReceiptByParticipant = new Map<string, PresentationSessionResponseRecord>();
-    for (const response of responses) {
-      responseByParticipantAndBlock.set(`${response.participantId}:${response.blockId}`, response);
-      if (response.idempotencyKey) {
-        const current = latestReceiptByParticipant.get(response.participantId);
-        if (!current || current.submittedAt <= response.submittedAt) {
-          latestReceiptByParticipant.set(response.participantId, response);
-        }
+    return buildPresentationProjectionData(session, participants, responses);
+  }
+
+  private async consistentProjection(
+    initialSession: PresentationSessionRecord,
+  ): Promise<{ session: PresentationSessionRecord; data: PresentationProjectionData } | null> {
+    let session = initialSession;
+    if (presentationLiveSessionExpired(session)) return null;
+    // Participant and response lists are separate repository reads. Confirm the aggregate fence
+    // after collecting them so explicit reconnects and room broadcasts cannot label a mixed
+    // projection with an older sequence or expose results from a newly opened question.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const data = await this.projectionData(session);
+      const confirmed = await this.sessions.getSessionById(session.id);
+      if (!confirmed || presentationLiveSessionExpired(confirmed)) return null;
+      if (confirmed.eventSeq === session.eventSeq) {
+        return { session: confirmed, data };
       }
+      session = confirmed;
     }
-    return {
-      participants,
-      responses,
-      leaderboard: rankedParticipants(participants, responses),
-      facilitatorLeaderboard: rankedParticipants(
-        participants,
-        facilitatorVisibleResponses(session, responses),
-      ),
-      responseByParticipantAndBlock,
-      latestReceiptByParticipant,
-    };
+    throw new PresentationBroadcastConsistencyError(session.id);
   }
 
   private async hostSnapshot(session: PresentationSessionRecord) {
@@ -1766,51 +1390,6 @@ export class PresentationSessionService {
       this.sessions.listParticipants(session.id),
       this.sessions.listResponses(session.id),
     ]);
-    const block = presentationCurrentBlock(session);
-    const deadline = questionDeadline(session);
-    const leaderboard = rankedParticipants(
-      participants,
-      facilitatorVisibleResponses(session, responses),
-    );
-    const restLeaderboard = leaderboard.map(({ joinedAt, ...participant }) => ({
-      ...participant,
-      joinedAt: joinedAt.toISOString(),
-    }));
-    return {
-      id: session.id,
-      artifactType: "presentation" as const,
-      presentationId: session.presentationId,
-      presentationVersionId: session.presentationVersionId,
-      title: session.title,
-      code: session.code,
-      status: session.status,
-      phase: session.phase,
-      currentBlockIndex: session.currentBlockIndex,
-      blockCount: session.content.blocks.length,
-      revision: session.revision,
-      settings: { ...session.settings, trustMode: session.trustMode },
-      trustMode: session.trustMode,
-      eventSeq: session.eventSeq,
-      currentBlock: presentationRealtimeBlock(
-        block,
-        true,
-        session.phase === "question_reveal" ||
-          session.phase === "intervention" ||
-          session.phase === "finished",
-      ),
-      questionOpenedAt: session.questionOpenedAt?.toISOString() ?? null,
-      questionClosesAt: deadline?.toISOString() ?? null,
-      acceptingResponses: acceptingResponses(session),
-      participantCount: participants.length,
-      responseCount:
-        block?.kind === "question"
-          ? responses.filter((response) => response.blockId === block.id).length
-          : 0,
-      participants: restLeaderboard,
-      leaderboard: restLeaderboard,
-      createdAt: session.createdAt.toISOString(),
-      updatedAt: session.updatedAt.toISOString(),
-      finishedAt: session.finishedAt?.toISOString() ?? null,
-    };
+    return buildPresentationListSnapshot(session, participants, responses);
   }
 }

@@ -368,6 +368,7 @@ export class MetricsService {
 
   recordProductEvent(event: {
     name: string;
+    authoritative?: boolean;
     dimensions: {
       creationPath?: string;
       recipe?: string;
@@ -389,7 +390,7 @@ export class MetricsService {
       artifact_type: event.dimensions.artifactType ?? "none",
     });
     const stage = recoveryFunnelStageByProductEvent.get(event.name);
-    if (stage) {
+    if (stage && event.authoritative !== false) {
       this.recoveryFunnelStages.inc({
         stage,
         artifact_type:

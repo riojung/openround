@@ -23,6 +23,7 @@ vi.mock("../../components/workspace/workspace-provider", () => ({
     productFeatures: {
       builderV2: true,
       presentations: true,
+      presentationRealtime: true,
     },
   }),
 }));
