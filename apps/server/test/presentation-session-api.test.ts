@@ -27,6 +27,15 @@ class RecordingSessionCache extends MemorySessionCache {
   }
 }
 
+async function waitForLaterWallClockMillisecond(earlierTimestamp: string) {
+  const earlierTime = Date.parse(earlierTimestamp);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    if (Date.now() > earlierTime) return;
+  }
+  throw new Error(`Wall clock did not advance beyond ${earlierTimestamp}`);
+}
+
 async function signIn(target: FastifyInstance) {
   const magic = await target.inject({
     method: "POST",
@@ -251,6 +260,9 @@ describe("live Presentation sessions", () => {
         leaderboard: [{ nickname: "River", joinedAt: expect.any(String), score: 0, rank: 1 }],
       },
     });
+    // joinedAt is stored at millisecond precision. Keep this end-to-end expectation focused on
+    // join order; equal timestamps exercise the separate nickname tie-break contract instead.
+    await waitForLaterWallClockMillisecond(compatibleHostBody.snapshot.leaderboard[0]!.joinedAt);
     const legacyJoin = await app.inject({
       method: "POST",
       url: "/v1/presentation-sessions/join",

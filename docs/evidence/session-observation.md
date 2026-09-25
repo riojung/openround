@@ -8,7 +8,9 @@ in the approved private research system.
 - Observation ID:
 - Date/time (UTC):
 - Partner ID and acquisition segment (higher education/workplace):
+- Stable pseudonymous facilitator ID:
 - Partner session ordinal and previous observation reference:
+- Stable partner workflow ID and definition version:
 - Artifact type (Round/Presentation):
 - Trust mode (Learning/Verified):
 - Build commit and image digest:
@@ -47,10 +49,13 @@ telemetry alone cannot establish it.
 
 ## Phase 1 gate signals
 
+- Partner workflow excluded a participant because of timing/connectivity (yes/no/excluded), reason,
+  and evidence reference:
 - Timing/connectivity-affected attempts (numerator/denominator and percentage):
-- Serious accessibility finding related to timing/connectivity:
+- Serious accessibility finding ID, severity, review status, and relationship to timing/connectivity:
+- Repeat facilitator (yes/no/excluded) and prior accepted observation reference:
 - Facilitator used an external deck (yes/no):
-- Material context-switch interruptions observed:
+- Material context-switch interruption count and evidence IDs:
 - Companion or access workaround used:
 
 ## Decision
@@ -58,5 +63,6 @@ telemetry alone cannot establish it.
 - Facilitator feedback:
 - Follow-up session committed/completed:
 - Evidence deviations or exclusions:
+- Final in-scope disposition (accepted/rejected/excluded/pending), reason, and reviewer:
 - Observer decision: Pending
 - Independent reviewer decision: Pending

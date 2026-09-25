@@ -343,6 +343,35 @@ describe("Presentation session projections", () => {
     });
   });
 
+  it("uses nickname before participant ID when scores and join timestamps tie", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const { session, participants } = fixture();
+    const idThatSortsFirst = "00000000-0000-4000-8000-000000000001";
+    const idThatSortsLast = "00000000-0000-4000-8000-000000000002";
+    const tiedParticipants = participants.slice(0, 2).map((participant, index) => ({
+      ...participant,
+      id: index === 0 ? idThatSortsFirst : idThatSortsLast,
+      nickname: index === 0 ? "Zulu" : "Alpha",
+      joinedAt: new Date("2026-09-24T17:59:10.000Z"),
+    }));
+    const revealedSession: PresentationSessionRecord = {
+      ...session,
+      phase: "question_reveal",
+      questionClosesAt: null,
+    };
+    const data = buildPresentationProjectionData(revealedSession, tiedParticipants, []);
+
+    expect(
+      buildPresentationHostSnapshot(revealedSession, data).participants.map(
+        ({ id, nickname, rank }) => ({ id, nickname, rank }),
+      ),
+    ).toEqual([
+      { id: idThatSortsLast, nickname: "Alpha", rank: 1 },
+      { id: idThatSortsFirst, nickname: "Zulu", rank: 2 },
+    ]);
+  });
+
   it("uses the inclusive heartbeat window plus socket presence only in staff room status", () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);

@@ -8,23 +8,23 @@
       "name": "Source, database, browser, and security CI",
       "owner": "engineering",
       "requiredFor": ["single-vm-beta-preflight", "single-vm-beta", "single-vm-ga"],
-      "status": "pending",
+      "status": "complete",
       "criterion": "Main passes checks, PostgreSQL isolation, browser coverage, dependency review, secret scanning, SBOM generation, and CodeQL.",
       "evidence": [
-        "https://github.com/riojung/openround/actions/runs/36038074138",
-        "https://github.com/riojung/openround/actions/runs/36038074052"
-      ],
-      "nextAction": "Obtain human approval and merge PR #40, then require CI, Security, and Production-path smoke to pass on the resulting main commit before replacing this evidence and marking the gate complete."
+        "https://github.com/riojung/openround/actions/runs/36073326995",
+        "https://github.com/riojung/openround/actions/runs/36073327061",
+        "https://github.com/riojung/openround/actions/runs/36052921874",
+        "https://github.com/riojung/openround/actions/runs/35868559946"
+      ]
     },
     {
       "id": "local-production-smoke",
       "name": "Local production-path smoke",
       "owner": "engineering",
       "requiredFor": ["single-vm-beta-preflight", "single-vm-beta", "single-vm-ga"],
-      "status": "pending",
+      "status": "complete",
       "criterion": "The containerized production profile passes media, observability, multi-writer, backup/restore, restart, and 100-client correctness checks.",
-      "evidence": ["https://github.com/riojung/openround/actions/runs/36038074099"],
-      "nextAction": "After PR #40 is reviewed and merged, require a complete Production-path smoke pass on the resulting main commit and replace the failed-run evidence."
+      "evidence": ["https://github.com/riojung/openround/actions/runs/36073327273"]
     },
     {
       "id": "single-vm-staging",
