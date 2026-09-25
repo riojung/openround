@@ -8,17 +8,50 @@ trademark review.
 
 ## Staged implementation plan checkpoint
 
-At the 2026-09-24 transition checkpoint, Phase 0 repository implementation was merged through
-`7532397`. CI, Security, and Production-path smoke passed on that main commit after
+At the 2026-09-25 transition checkpoint, Phase 0 repository implementation was merged through
+`32136a2`. CI, Security, and Production-path smoke passed after
 [PR #40](https://github.com/riojung/openround/pull/40) repaired the MinIO image path, upgrade and
-rollback ownership, and browser media smoke. The release ledger therefore records the source-CI
-and local-production-smoke gates complete; the Phase 0 exit remains open with thirteen gates
-pending, most of which require external or human evidence.
+rollback ownership, and browser media smoke. [PR #42](https://github.com/riojung/openround/pull/42)
+then completed Presentation rolling-upgrade sequence compatibility with passing CI, PostgreSQL,
+browser-smoke, dependency, secret, SBOM, and CodeQL checks. The release ledger therefore records
+the source-CI and local-production-smoke gates complete.
+The Phase 0 exit remains open with thirteen gates pending. Most require external or human evidence.
+
+The current worktree also completes the next behavior-preserving Presentation refactor slice.
+Live mutation orchestration and deterministic response policy now sit behind the existing service
+façade, while memory and PostgreSQL session repositories are separated behind the unchanged
+repository factory. Public `/v1` and Socket.IO contracts, error identities, transaction boundaries,
+and lifecycle-extension behavior remain unchanged. New characterization tests cover durable receipt
+recovery, response-fence stability, and one shared memory/PostgreSQL conformance scenario. The full
+workspace check passes, and the isolated PostgreSQL 17 suite passes all 26 tests.
 
 Phase 1 is not selected because the required design-partner observations have not been collected.
 Phase 2 and the post-24-week capabilities are unstarted beyond shared feature-control and platform
 foundations. This is an evidence boundary, not permission to substitute local automation for
 facilitator research, independent review, or production-environment drills.
+
+## Phase 0 research Prototype Lab
+
+The repository now includes an allowlisted, browser-memory-only research lab for the three Phase 0
+concept tests: Companion, deterministic Question Health, and a delayed concept-matched probe. It
+reuses the existing Recovery Rehearsal deployment flag plus workspace allowlist, is unavailable for
+archived Rounds, reads an authenticated draft or immutable published snapshot, and performs no
+prototype mutation or persistence request.
+
+The Companion model constructs a participant-safe projection from an explicit field list and keeps
+its join/result overlays synthetic. Question Health produces versioned advisory findings with
+content-sensitive stable IDs and independently records usefulness and intended outcome. The
+delayed-probe screen requires a meaningfully different prompt plus an overlapping normalized
+concept key, while still requiring independent human equivalence review. Its download reconstructs
+a versioned aggregate-only record containing bounded enums, counts, rule/version identifiers, and
+duration buckets; it excludes source content, identifiers, aliases, URLs, credentials, and free
+text. A dedicated evaluation template defines the corresponding consent, coding, review, and
+redaction protocol.
+
+Automated projection, determinism, invalidation, concept-separator, partial-denominator,
+redaction, route-access, keyboard, participation, and responsive-build checks verify the software
+boundary. These checks do not make a real question flag useful, demonstrate a context-switch
+problem, validate a delayed probe, select a roadmap branch, or close any release-readiness gate.
 
 ## Professional workspace and interactive Presentation beta
 

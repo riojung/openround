@@ -16,7 +16,9 @@ Before recruitment begins:
 1. Name the research owner and an independent reviewer who did not facilitate the observed session.
 2. Freeze the protocol version, consent language, represented Git commit, and image digests.
 3. Select the private research system and verify its access and retention controls.
-4. Copy the interview, session-observation, and usability templates into that system.
+4. Copy the interview, session-observation, usability, and
+   [research prototype evaluation](../evidence/research-prototype-evaluation.md) templates into that
+   system.
 5. Define facilitator eligibility, exclusion, assistance, failed-instrumentation, and serious
    accessibility-finding rules before viewing outcomes.
 6. Assign stable pseudonymous partner, facilitator, and workflow IDs and freeze the in-scope cohort
@@ -98,6 +100,13 @@ For each real session:
 Run the moderated usability protocol with the
 [P0 beta usability record](../evidence/beta-usability.md). Preserve segment-level results; an
 overall result cannot conceal a failed segment.
+
+Run Companion, Question Health, and delayed-probe prototype tasks with a private copy of the
+[research prototype evaluation record](../evidence/research-prototype-evaluation.md). Treat the
+lab's redacted export as corroborating instrumentation only. Independently review the paired real
+workflow, every in-scope finding disposition, and delayed-probe validity before including any
+aggregate in a roadmap decision. Prototype activity never substitutes for a real observed session,
+an evidence-complete recovery checkpoint, or an independently reviewed gate result.
 
 ## Aggregate and decide
 

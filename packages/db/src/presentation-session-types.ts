@@ -59,7 +59,8 @@ export interface PresentationSessionParticipantRecord {
 
 /**
  * Canonical Presentation leaderboard ordering for in-process projections and reports. Keep the
- * PostgreSQL acknowledgement ranking windows in presentation-sessions.ts in the same order.
+ * PostgreSQL acknowledgement ranking windows in presentation-session-postgres.ts in the same
+ * order.
  */
 export function comparePresentationLeaderboardEntries(
   left: Pick<PresentationSessionParticipantRecord, "id" | "nickname" | "joinedAt"> & {

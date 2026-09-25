@@ -23,6 +23,9 @@ Available templates cover [accessibility](accessibility-review.md),
 [design-partner interviews](design-partner-interview.md), and
 [observed beta sessions](session-observation.md), plus the aggregate
 [P0 beta usability study](beta-usability.md) and
-[Phase 0 segment/Phase 1 branch decision](phase0-stage-decision.md).
+[Phase 0 segment/Phase 1 branch decision](phase0-stage-decision.md). Use the
+[research prototype evaluation](research-prototype-evaluation.md) for the allowlisted Companion,
+Question Health, and delayed-probe studies; a completed prototype record is research input and does
+not pass a release or roadmap gate by itself.
 Use the [Phase 0 evidence campaign runbook](../runbooks/phase0-evidence-campaign.md) to sequence
 recruitment, observation, independent review, aggregation, and the ordered branch decision.

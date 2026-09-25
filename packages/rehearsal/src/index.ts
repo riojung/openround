@@ -37,6 +37,46 @@ export {
   type HostPhaseCommand,
   type HostPhaseView,
 } from "./host-phase";
+export {
+  buildCompanionPrototypeProjection,
+  COMPANION_PROTOTYPE_VERSION,
+  type CompanionPrototypeAction,
+  type CompanionPrototypeConnectionState,
+  type CompanionPrototypeInput,
+  type CompanionPrototypePhase,
+  type CompanionPrototypeProjection,
+} from "./companion-prototype";
+export {
+  DELAYED_PROBE_REJECTION_REASONS,
+  DELAYED_PROBE_PROTOTYPE_VERSION,
+  evaluateDelayedProbeCandidate,
+  type DelayedProbeEvaluation,
+  type DelayedProbeRejectionReason,
+} from "./delayed-probe-prototype";
+export {
+  buildPrototypeEvidenceExport,
+  PROTOTYPE_EVIDENCE_PROTOCOL_VERSION,
+  PROTOTYPE_EVIDENCE_SCHEMA_VERSION,
+  prototypeDurationBucket,
+  type PrototypeDurationBucket,
+  type PrototypeEvidenceExportV1,
+  type PrototypeEvidenceInput,
+  type PrototypeEvidenceSegment,
+} from "./prototype-evidence";
+export {
+  createQuestionHealthFindingEvaluation,
+  evaluateQuestionHealth,
+  QUESTION_HEALTH_RULE_IDS,
+  QUESTION_HEALTH_RULESET_VERSION,
+  type QuestionHealthFinding,
+  type QuestionHealthFindingEvaluation,
+  type QuestionHealthOutcome,
+  type QuestionHealthOutcomeDisposition,
+  type QuestionHealthResult,
+  type QuestionHealthRuleId,
+  type QuestionHealthUsefulness,
+  type QuestionHealthUsefulnessDisposition,
+} from "./question-health-prototype";
 
 type ChoiceQuestion = Extract<
   QuestionDraft,

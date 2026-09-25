@@ -1,10 +1,34 @@
 import { describe, expect, it } from "vitest";
 import {
+  canAccessResearchPrototypeLab,
   canAccessRecoveryRehearsal,
   defaultRehearsalContentSource,
   rehearsalReturnLink,
   type RehearsalWorkspaceRole,
 } from "./rehearsal-access.js";
+
+describe("research prototype lab access", () => {
+  it.each<RehearsalWorkspaceRole>(["owner", "editor", "viewer"])(
+    "allows the %s role only inside the existing Recovery Rehearsal rollout boundary",
+    (role) => {
+      expect(
+        canAccessResearchPrototypeLab({ role, recoveryRehearsal: true, status: "published" }),
+      ).toBe(true);
+      expect(
+        canAccessResearchPrototypeLab({ role, recoveryRehearsal: false, status: "published" }),
+      ).toBe(false);
+    },
+  );
+
+  it.each<RehearsalWorkspaceRole>(["owner", "editor", "viewer"])(
+    "keeps archived Rounds unavailable to the %s role",
+    (role) => {
+      expect(
+        canAccessResearchPrototypeLab({ role, recoveryRehearsal: true, status: "archived" }),
+      ).toBe(false);
+    },
+  );
+});
 
 describe("recovery rehearsal access", () => {
   it.each<RehearsalWorkspaceRole>(["owner", "editor", "viewer"])(

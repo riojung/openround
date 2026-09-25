@@ -35,6 +35,7 @@ import {
   SessionVersionConflictError,
 } from "../src/types.js";
 import { discoverMigrations, runMigrations } from "../src/migrations.js";
+import { expectPresentationSessionRepositoryConformance } from "./support/presentation-session-conformance.js";
 
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
 const runtimeUrl = process.env.TEST_DATABASE_URL;
@@ -852,6 +853,23 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     });
     return { session, sessions };
   }
+
+  it("keeps PostgreSQL on the shared Presentation repository conformance contract", async () => {
+    const owner = await creator("presentation-repository-conformance");
+    const published = await createPublishedPresentationFixture(
+      owner,
+      "Presentation repository conformance",
+    );
+
+    await expectPresentationSessionRepositoryConformance({
+      repository: new PostgresPresentationSessionRepository(repository),
+      workspaceId: owner.workspaceId,
+      presentationId: published.presentation.id,
+      presentationVersionId: published.version.id,
+      createdBy: owner.userId,
+      content: published.content,
+    });
+  });
 
   it("durably queues, leases, completes, fails, and exports Presentation reports", async () => {
     const owner = await creator("presentation-report-owner");

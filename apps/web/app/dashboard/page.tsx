@@ -1169,6 +1169,9 @@ function BetaDashboard() {
                     {canAssign && productFeatures?.recoveryRehearsal ? (
                       <Link href={`/quiz/${quiz.id}/rehearse`}>Rehearse</Link>
                     ) : null}
+                    {!archived && productFeatures?.recoveryRehearsal ? (
+                      <Link href={`/quiz/${quiz.id}/research`}>Research prototype lab</Link>
+                    ) : null}
                     {canEdit ? (
                       <button
                         disabled={busyId === quiz.id}
