@@ -33,12 +33,14 @@ import {
 } from "./presentation-session-types.js";
 
 // Revision and live child rows are monotonic for the lifetime of a Presentation session. Their
-// sum is therefore a commit-visible, per-session fence: every host command, join, or accepted
-// response changes it, while concurrent uncommitted rows cannot consume a value that later leaks
-// into a snapshot. Do not expose the stored compatibility counter here; it may deliberately skip
-// optimized response writes once a deployment has completed its old-binary overlap window.
+// sum plus the immutable compatibility offset is therefore a commit-visible, per-session fence:
+// every host command, join, or accepted response changes it, while concurrent uncommitted rows
+// cannot consume a value that later leaks into a snapshot. Do not expose the stored compatibility
+// counter here; it may deliberately skip optimized response writes once a deployment has completed
+// its old-binary overlap window.
 const PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL = `(
-  session.revision
+  session.event_seq_offset
+  + session.revision
   + (SELECT count(*)
        FROM presentation_live_participants participant
       WHERE participant.session_id = session.id)
@@ -1024,7 +1026,8 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     const parameters = [workspaceId, sessionId, participantId];
     const openQuestionResult = await client.query(
       `SELECT to_jsonb(session) || jsonb_build_object(
-                'event_seq', session.revision
+                'event_seq', session.event_seq_offset
+                  + session.revision
                   + participant_totals.participant_count
                   + response_totals.response_count
               ) AS response_session,
@@ -1060,7 +1063,8 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
       // so a transition to the next question cannot pair a future score with an older fence.
       const visibleResult = await client.query(
         `SELECT to_jsonb(session) || jsonb_build_object(
-                  'event_seq', session.revision
+                  'event_seq', session.event_seq_offset
+                    + session.revision
                     + participant_totals.participant_count
                     + response_totals.response_count
                 ) AS response_session,

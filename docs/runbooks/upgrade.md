@@ -22,18 +22,25 @@ that image reads. After the expand release is the only serving version, verify r
 reconciliation, then enable the switch to use the commit-visible per-session aggregate fence and
 remove response-row contention.
 
+Migration 040 stops rather than creating a second sequence domain when an unexpired legacy session
+has an imported timeline sequence above its aggregate fence. Finished sessions remain reconnectable
+until live expiry, so they are included in the guard. If it fires, leave the old image serving,
+expire the identified sessions through the normal lifecycle, and rerun the migration. Do not bypass
+the guard or enable concurrent response writes to force rollout.
+
 Before starting a prior-image rollback, disable the switch on every current instance and wait for
 them to restart. Then, from the owner-only migration connection, reconcile the stored compatibility
 counter while briefly fencing joins and responses:
 
 ```sql
 BEGIN;
-LOCK TABLE presentation_live_participants, presentation_live_responses
-  IN SHARE ROW EXCLUSIVE MODE;
+LOCK TABLE presentation_live_sessions IN EXCLUSIVE MODE;
+SELECT set_config('app.system_access', 'on', true);
 UPDATE presentation_live_sessions AS session
 SET event_seq = GREATEST(
   session.event_seq,
-  session.revision
+  session.event_seq_offset
+    + session.revision
     + (SELECT count(*) FROM presentation_live_participants AS participant
        WHERE participant.session_id = session.id)
     + (SELECT count(*) FROM presentation_live_responses AS response

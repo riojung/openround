@@ -197,7 +197,7 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
           verificationClient.query<{ count: string; maximum: number }>(
             "SELECT count(*) AS count, max(version) AS maximum FROM _openround_migrations",
           ),
-        ).resolves.toMatchObject({ rows: [{ count: "38", maximum: 38 }] });
+        ).resolves.toMatchObject({ rows: [{ count: "40", maximum: 40 }] });
 
         await expect(
           verificationClient.query(
@@ -231,6 +231,343 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
       await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
       await adminPool.end();
       await rm(preRevisionDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("aligns old and new Presentation fences for sessions populated before realtime migration", async () => {
+    const schema = `openround_sequence_upgrade_${randomUUID().replaceAll("-", "")}`;
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const preRealtimeDirectory = await mkdtemp(join(tmpdir(), "openround-pre-realtime-"));
+    const adminPool = new Pool({ connectionString: adminUrl });
+    let isolatedPool: Pool | undefined;
+
+    try {
+      const migrations = await discoverMigrations(migrationsDirectory);
+      for (const migration of migrations.filter(({ version }) => version <= 31)) {
+        await writeFile(join(preRealtimeDirectory, migration.fileName), migration.sql);
+      }
+
+      await adminPool.query(`CREATE SCHEMA "${schema}"`);
+      const isolatedUrl = new URL(adminUrl!);
+      isolatedUrl.searchParams.set("options", `-csearch_path=${schema},public`);
+      isolatedPool = new Pool({ connectionString: isolatedUrl.toString(), max: 1 });
+      await runMigrations(isolatedPool, preRealtimeDirectory);
+
+      const ownerId = randomUUID();
+      const workspaceId = randomUUID();
+      const presentationId = randomUUID();
+      const versionId = randomUUID();
+      const blockId = randomUUID();
+      const questionId = randomUUID();
+      const now = new Date();
+      const content = {
+        title: "Legacy sequence fixture",
+        description: "Populated before the realtime migration",
+        experiencePreset: { id: "focus", version: 1 },
+        schemaVersion: 1,
+        blocks: [
+          {
+            id: blockId,
+            kind: "question",
+            question: {
+              id: questionId,
+              type: "numeric",
+              prompt: "How many?",
+              correctValue: "2",
+              tolerance: "0",
+              unit: null,
+              timeLimitSeconds: 30,
+              basePoints: 1_000,
+              explanation: "Two.",
+              mediaId: null,
+              mediaAlt: null,
+            },
+          },
+        ],
+      } satisfies PresentationDraft;
+      const fixtures = [
+        {
+          sessionId: randomUUID(),
+          code: "8100001",
+          terminalSequence: 2,
+          status: "active" as const,
+          phase: "question_reveal" as const,
+          finishedAt: null,
+          liveExpiresAt: new Date(now.getTime() + 60 * 60_000),
+        },
+        {
+          sessionId: randomUUID(),
+          code: "8100002",
+          terminalSequence: 9,
+          status: "finished" as const,
+          phase: "finished" as const,
+          finishedAt: now,
+          liveExpiresAt: new Date(now.getTime() + 2 * 60 * 60_000),
+        },
+      ];
+      const participantIds = new Map<string, string[]>();
+
+      const fixtureClient = await isolatedPool.connect();
+      try {
+        await fixtureClient.query("SELECT set_config('app.system_access', 'on', false)");
+        await fixtureClient.query("BEGIN");
+        await fixtureClient.query("INSERT INTO users (id, email) VALUES ($1, $2)", [
+          ownerId,
+          `sequence-upgrade-${ownerId}@example.com`,
+        ]);
+        await fixtureClient.query(
+          `INSERT INTO workspaces (id, name, segment, owner_id)
+           VALUES ($1, 'Sequence upgrade', 'workplace', $2)`,
+          [workspaceId, ownerId],
+        );
+        await fixtureClient.query(
+          `INSERT INTO workspace_members (workspace_id, user_id, role)
+           VALUES ($1, $2, 'owner')`,
+          [workspaceId, ownerId],
+        );
+        await fixtureClient.query(
+          `INSERT INTO presentations
+             (id, workspace_id, title, description, status, draft, current_version_id,
+              last_edited_by, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, 'draft', $5::jsonb, NULL, $6, $7, $7)`,
+          [
+            presentationId,
+            workspaceId,
+            content.title,
+            content.description,
+            JSON.stringify(content),
+            ownerId,
+            now,
+          ],
+        );
+        await fixtureClient.query(
+          `INSERT INTO presentation_versions
+             (id, workspace_id, presentation_id, version, content, content_hash,
+              source_draft_revision, published_at)
+           VALUES ($1, $2, $3, 1, $4::jsonb, 'sequence-upgrade', 0, $5)`,
+          [versionId, workspaceId, presentationId, JSON.stringify(content), now],
+        );
+        await fixtureClient.query(
+          `UPDATE presentations
+              SET current_version_id = $1, status = 'published', published_draft_revision = 0
+            WHERE id = $2`,
+          [versionId, presentationId],
+        );
+
+        for (const fixture of fixtures) {
+          await fixtureClient.query(
+            `INSERT INTO presentation_live_sessions
+               (id, workspace_id, presentation_id, presentation_version_id, title,
+                content_snapshot, join_code, status, phase, current_block_index, revision,
+                created_by, created_at, updated_at, finished_at, live_expires_at,
+                retention_expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, 0, 2,
+                     $10, $11, $11, $12, $13, $14)`,
+            [
+              fixture.sessionId,
+              workspaceId,
+              presentationId,
+              versionId,
+              content.title,
+              JSON.stringify(content),
+              fixture.code,
+              fixture.status,
+              fixture.phase,
+              ownerId,
+              now,
+              fixture.finishedAt,
+              fixture.liveExpiresAt,
+              new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+            ],
+          );
+          const participants = [randomUUID(), randomUUID(), randomUUID()];
+          participantIds.set(fixture.sessionId, participants);
+          for (const [index, participantId] of participants.entries()) {
+            await fixtureClient.query(
+              `INSERT INTO presentation_live_participants
+                 (id, workspace_id, session_id, nickname, token_hash, joined_at, last_seen_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $6)`,
+              [
+                participantId,
+                workspaceId,
+                fixture.sessionId,
+                `Participant ${index + 1}`,
+                createHash("sha256").update(`${fixture.sessionId}:${participantId}`).digest("hex"),
+                now,
+              ],
+            );
+          }
+          for (const participantId of participants.slice(0, 2)) {
+            await fixtureClient.query(
+              `INSERT INTO presentation_live_responses
+                 (id, workspace_id, session_id, participant_id, block_id, question_id,
+                  response, correct, score, response_ms, submitted_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, true, 1000, 500, $8)`,
+              [
+                randomUUID(),
+                workspaceId,
+                fixture.sessionId,
+                participantId,
+                blockId,
+                questionId,
+                JSON.stringify({ value: "2" }),
+                now,
+              ],
+            );
+          }
+          await fixtureClient.query(
+            `INSERT INTO presentation_session_timeline
+               (id, workspace_id, session_id, sequence, event_type, block_index, block_id,
+                occurred_at)
+             VALUES ($1, $2, $3, 1, 'presentation.started', NULL, NULL, $5),
+                    ($6, $2, $3, $4, 'question.revealed', 0, $7, $5)`,
+            [
+              randomUUID(),
+              workspaceId,
+              fixture.sessionId,
+              fixture.terminalSequence,
+              now,
+              randomUUID(),
+              blockId,
+            ],
+          );
+        }
+        await fixtureClient.query("COMMIT");
+      } catch (error) {
+        await fixtureClient.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        fixtureClient.release();
+      }
+
+      await expect(runMigrations(isolatedPool, migrationsDirectory)).rejects.toThrow(
+        "unexpired Presentation session has a stored event sequence above its aggregate fence",
+      );
+      const gateResolutionClient = await isolatedPool.connect();
+      try {
+        await gateResolutionClient.query("SELECT set_config('app.system_access', 'on', false)");
+        await gateResolutionClient.query(
+          `UPDATE presentation_live_sessions
+              SET live_expires_at = $2
+            WHERE id = $1`,
+          [fixtures[1]!.sessionId, new Date(now.getTime() - 60_000)],
+        );
+      } finally {
+        gateResolutionClient.release();
+      }
+      await runMigrations(isolatedPool, migrationsDirectory);
+
+      const verificationClient = await isolatedPool.connect();
+      try {
+        await verificationClient.query("SELECT set_config('app.system_access', 'on', false)");
+        const readFence = async (sessionId: string) => {
+          const result = await verificationClient.query<{
+            event_seq: string;
+            event_seq_offset: string;
+            aggregate_event_seq: string;
+            effective_event_seq: string;
+          }>(
+            `SELECT session.event_seq,
+                    session.event_seq_offset,
+                    session.revision
+                      + (SELECT count(*) FROM presentation_live_participants AS participant
+                         WHERE participant.session_id = session.id)
+                      + (SELECT count(*) FROM presentation_live_responses AS response
+                         WHERE response.session_id = session.id) AS aggregate_event_seq,
+                    session.event_seq_offset
+                      + session.revision
+                      + (SELECT count(*) FROM presentation_live_participants AS participant
+                         WHERE participant.session_id = session.id)
+                      + (SELECT count(*) FROM presentation_live_responses AS response
+                         WHERE response.session_id = session.id) AS effective_event_seq
+               FROM presentation_live_sessions AS session
+              WHERE session.id = $1`,
+            [sessionId],
+          );
+          return result.rows[0]!;
+        };
+
+        await expect(readFence(fixtures[0]!.sessionId)).resolves.toEqual({
+          event_seq: "7",
+          event_seq_offset: "0",
+          aggregate_event_seq: "7",
+          effective_event_seq: "7",
+        });
+        await expect(readFence(fixtures[1]!.sessionId)).resolves.toEqual({
+          event_seq: "9",
+          event_seq_offset: "2",
+          aggregate_event_seq: "7",
+          effective_event_seq: "9",
+        });
+
+        await verificationClient.query(
+          `INSERT INTO presentation_session_timeline
+             (id, workspace_id, session_id, sequence, event_type, block_index, block_id,
+              occurred_at)
+           VALUES ($1, $2, $3, 20, 'question.revealed', 0, $4, $5)`,
+          [randomUUID(), workspaceId, fixtures[1]!.sessionId, blockId, now],
+        );
+        await expect(readFence(fixtures[1]!.sessionId)).resolves.toEqual({
+          event_seq: "20",
+          event_seq_offset: "13",
+          aggregate_event_seq: "7",
+          effective_event_seq: "20",
+        });
+
+        await verificationClient.query(
+          "SELECT set_config('app.presentation_concurrent_response_writes', 'on', false)",
+        );
+        await verificationClient.query(
+          `INSERT INTO presentation_live_responses
+             (id, workspace_id, session_id, participant_id, block_id, question_id,
+              response, correct, score, response_ms, submitted_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, true, 1000, 500, $8)`,
+          [
+            randomUUID(),
+            workspaceId,
+            fixtures[1]!.sessionId,
+            participantIds.get(fixtures[1]!.sessionId)![2],
+            blockId,
+            questionId,
+            JSON.stringify({ value: "2" }),
+            now,
+          ],
+        );
+        await expect(readFence(fixtures[1]!.sessionId)).resolves.toEqual({
+          event_seq: "20",
+          event_seq_offset: "13",
+          aggregate_event_seq: "8",
+          effective_event_seq: "21",
+        });
+
+        await verificationClient.query(
+          `UPDATE presentation_live_sessions
+              SET revision = revision + 1,
+                  event_seq = event_seq + 1
+            WHERE id = $1`,
+          [fixtures[1]!.sessionId],
+        );
+        await verificationClient.query(
+          `INSERT INTO presentation_session_timeline
+             (id, workspace_id, session_id, sequence, event_type, block_index, block_id,
+              occurred_at)
+           VALUES ($1, $2, $3, 22, 'question.revealed', 0, $4, $5)`,
+          [randomUUID(), workspaceId, fixtures[1]!.sessionId, blockId, now],
+        );
+        await expect(readFence(fixtures[1]!.sessionId)).resolves.toEqual({
+          event_seq: "22",
+          event_seq_offset: "13",
+          aggregate_event_seq: "9",
+          effective_event_seq: "22",
+        });
+      } finally {
+        verificationClient.release();
+      }
+    } finally {
+      await isolatedPool?.end();
+      await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      await adminPool.end();
+      await rm(preRealtimeDirectory, { recursive: true, force: true });
     }
   });
 });
@@ -302,6 +639,8 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 36, name: "presentation_session_reports" },
       { version: 37, name: "backfill_presentation_session_reports" },
       { version: 38, name: "presentation_concurrent_event_sequence" },
+      { version: 39, name: "presentation_event_sequence_compatibility" },
+      { version: 40, name: "presentation_event_sequence_compatibility_backfill" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -311,7 +650,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("38");
+    expect(bootstrapped.rows[0]?.count).toBe("40");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -2184,6 +2523,27 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       responseMs: 2_500,
       submittedAt: now,
     });
+    const exportedEventSequenceOffset = 5;
+    const sequenceClient = await runtimePool.connect();
+    try {
+      await sequenceClient.query("BEGIN");
+      await sequenceClient.query("SELECT set_config('app.workspace_id', $1, true)", [
+        owner.workspaceId,
+      ]);
+      await sequenceClient.query(
+        `UPDATE presentation_live_sessions
+            SET event_seq_offset = $3,
+                event_seq = event_seq + $3
+          WHERE workspace_id = $1 AND id = $2`,
+        [owner.workspaceId, session.id, exportedEventSequenceOffset],
+      );
+      await sequenceClient.query("COMMIT");
+    } catch (error) {
+      await sequenceClient.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      sequenceClient.release();
+    }
     const groupId = randomUUID();
     const group = await groups.createGroup(
       {
@@ -2216,7 +2576,9 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     expect(exported).toMatchObject({
       presentations: [{ id: presentation.id }],
       presentationVersions: [{ id: version.id }],
-      presentationSessions: [{ id: session.id }],
+      presentationSessions: [
+        { id: session.id, event_seq_offset: String(exportedEventSequenceOffset) },
+      ],
       presentationSessionParticipants: [{ id: participant.id, nickname: "River" }],
       presentationSessionResponses: [expect.objectContaining({ score: 875, response_ms: 2_500 })],
       collaborationGroups: [{ id: group.id }],

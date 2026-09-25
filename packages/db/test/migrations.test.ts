@@ -97,4 +97,20 @@ describe("database migration discovery", () => {
     expect(migration?.sql).toContain("CREATE TRIGGER presentation_response_bump_event_seq");
     expect(migration?.sql).not.toContain("CREATE SEQUENCE");
   });
+
+  it("aligns the stored Presentation fence while preserving imported sequence offsets", async () => {
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migrations = await discoverMigrations(migrationsDirectory);
+    const expansion = migrations.find(({ version }) => version === 39);
+    const backfill = migrations.find(({ version }) => version === 40);
+
+    expect(expansion?.sql).toContain("ADD COLUMN IF NOT EXISTS event_seq_offset");
+    expect(expansion?.sql).toContain("CHECK (event_seq_offset >= 0) NOT VALID");
+    expect(backfill?.sql).toContain("LOCK TABLE presentation_live_sessions IN EXCLUSIVE MODE");
+    expect(backfill?.sql).toContain("fence.stored_event_seq - fence.aggregate_event_seq");
+    expect(backfill?.sql).toContain(
+      "VALIDATE CONSTRAINT presentation_live_sessions_event_seq_offset_check",
+    );
+    expect(backfill?.sql).toContain("event_seq_offset + (target_sequence - effective_sequence)");
+  });
 });
