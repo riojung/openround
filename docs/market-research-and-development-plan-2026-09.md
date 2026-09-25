@@ -97,7 +97,7 @@ The current constraints matter more than the feature count:
 
 | Boundary               | Current reality                                                                                                                   |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Public readiness       | All fifteen release-ledger gates are pending; local or branch automation is not production evidence                               |
+| Public readiness       | Source CI and local production smoke are complete; thirteen gates remain, primarily awaiting external or human evidence           |
 | Rollout                | Major workspace, builder, Presentation, Group, Discover, rehearsal, and practice capabilities default off or require allowlisting |
 | Presentation delivery  | The newer live Presentation host and participant paths poll rather than using the mature Round Socket.IO/reconnect path           |
 | Live accessibility     | Practice/follow-up accommodation passes exist; private live extra time/time-flex remains unresolved                               |

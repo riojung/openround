@@ -5,6 +5,8 @@ partner ID here.
 
 - Date/time (UTC):
 - Partner ID and acquisition segment (higher education/workplace):
+- Stable pseudonymous facilitator ID:
+- Stable partner workflow ID and definition version:
 - Facilitator and observer:
 - Consent recorded at:
 - Workflow or prototype tested:
@@ -35,6 +37,7 @@ facilitator encounters the post-result “what next?” decision in their real w
 is not evidence of the problem.
 
 - Eligible for facilitator denominator (yes/no/excluded) and reason:
+- Segment enrollment order and frozen primary/reserve status:
 - Recurring post-result decision problem demonstrated (yes/no) and evidence reference:
 - Repeat pilot completed (yes/no) and two observation references:
 - Independent reviewer and decision (accepted/rejected/pending):

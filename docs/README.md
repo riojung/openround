@@ -24,6 +24,8 @@ education and workplace learning. Use this index to choose the shortest path for
 - [Release readiness ledger](release-readiness.json) is the machine-validated source of truth for
   single-VM beta and GA promotion gates; [evidence templates](evidence/README.md) cover human and
   provider verification.
+- [Phase 0 evidence campaign](runbooks/phase0-evidence-campaign.md) sequences the interviews,
+  observed sessions, usability study, independent review, and Phase 1 branch decision.
 - [Production readiness](runbooks/production-readiness.md) is the promotion checklist for a public environment.
 - [Build, service, and deployment](runbooks/deployment.md) is the command reference for product
   images, local service lifecycle, and digest-pinned remote single-VM promotion.

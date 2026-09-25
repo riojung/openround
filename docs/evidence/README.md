@@ -24,3 +24,5 @@ Available templates cover [accessibility](accessibility-review.md),
 [observed beta sessions](session-observation.md), plus the aggregate
 [P0 beta usability study](beta-usability.md) and
 [Phase 0 segment/Phase 1 branch decision](phase0-stage-decision.md).
+Use the [Phase 0 evidence campaign runbook](../runbooks/phase0-evidence-campaign.md) to sequence
+recruitment, observation, independent review, aggregation, and the ordered branch decision.

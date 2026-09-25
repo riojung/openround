@@ -8,12 +8,12 @@ trademark review.
 
 ## Staged implementation plan checkpoint
 
-At the 2026-09-24 audit checkpoint, Phase 0 repository implementation was merged through
-`f641918`, while the Phase 0 exit remained open. CI and Security passed on that main commit, but
-Production-path smoke failed before application verification because its pinned MinIO image could
-no longer be pulled. [PR #40](https://github.com/riojung/openround/pull/40) repairs the image path,
-upgrade ownership, and browser media smoke; branch evidence remains diagnostic until the same
-checks pass on the resulting merged main commit.
+At the 2026-09-24 transition checkpoint, Phase 0 repository implementation was merged through
+`7532397`. CI, Security, and Production-path smoke passed on that main commit after
+[PR #40](https://github.com/riojung/openround/pull/40) repaired the MinIO image path, upgrade and
+rollback ownership, and browser media smoke. The release ledger therefore records the source-CI
+and local-production-smoke gates complete; the Phase 0 exit remains open with thirteen gates
+pending, most of which require external or human evidence.
 
 Phase 1 is not selected because the required design-partner observations have not been collected.
 Phase 2 and the post-24-week capabilities are unstarted beyond shared feature-control and platform
@@ -97,12 +97,12 @@ Playwright/test results for 30 days. Failure logs remain failure-only. This make
 evidence retrievable but does not itself satisfy the hosted capacity or production-readiness
 gates.
 
-The release ledger keeps source CI and the current production-path smoke pending until CI, Security,
-and Production-path smoke all pass on the same merged main commit. Branch and historical runs are
-diagnostic evidence only. Single-VM staging, privacy/legal approval, design-partner observation,
-manual VoiceOver/NVDA and physical-device coverage, target-host load/soak, encrypted off-host backup
-and clean replacement-VM restore, real-provider source-corpus evaluation, and provider-originated
-Stripe rehearsal also remain pending. Local automation does not satisfy those gates.
+The release ledger records source CI and local production-path smoke complete from CI, Security,
+dependency review, and Production-path smoke evidence incorporated by main commit `7532397`.
+Single-VM staging, privacy/legal approval, design-partner observation, manual VoiceOver/NVDA and
+physical-device coverage, target-host load/soak, encrypted off-host backup and clean replacement-VM
+restore, real-provider source-corpus evaluation, and provider-originated Stripe rehearsal remain
+pending. Local automation does not satisfy those thirteen gates.
 
 ## Themed Experiences and Audience Interaction
 
