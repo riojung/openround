@@ -5748,9 +5748,9 @@ export class PostgresRepository implements Repository {
         const presentationSessions = await queryWorkspaceData(
           `SELECT id, workspace_id, presentation_id, presentation_version_id, title,
                   content_snapshot, join_code, status, phase, current_block_index, revision,
-                  settings, trust_mode, event_seq, question_opened_at, question_closes_at,
-                  created_by, created_at, updated_at, finished_at, live_expires_at,
-                  retention_expires_at
+                  settings, trust_mode, event_seq, event_seq_offset, question_opened_at,
+                  question_closes_at, created_by, created_at, updated_at, finished_at,
+                  live_expires_at, retention_expires_at
            FROM presentation_live_sessions WHERE workspace_id = ANY($1::uuid[])
            ORDER BY created_at, id`,
         );
