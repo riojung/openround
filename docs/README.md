@@ -20,6 +20,8 @@ education and workplace learning. Use this index to choose the shortest path for
 
 ## Build and operate
 
+- [Local operations quick guide](quick-start.md#day-to-day-commands) covers routine profile-aware
+  restarts, logs, data-preserving stops, and the boundary between cleanup and an intentional reset.
 - [Implementation status](implementation-status.md) describes what is implemented and what remains a release gate.
 - [Release readiness ledger](release-readiness.json) is the machine-validated source of truth for
   single-VM beta and GA promotion gates; [evidence templates](evidence/README.md) cover human and
@@ -28,7 +30,8 @@ education and workplace learning. Use this index to choose the shortest path for
   observed sessions, usability study, independent review, and Phase 1 branch decision.
 - [Production readiness](runbooks/production-readiness.md) is the promotion checklist for a public environment.
 - [Build, service, and deployment](runbooks/deployment.md) is the command reference for product
-  images, local service lifecycle, and digest-pinned remote single-VM promotion.
+  images, local service lifecycle, safe Docker cleanup and rebuilds, and digest-pinned remote
+  single-VM promotion.
 - [Single-VM staging readiness](runbooks/staging-readiness.md),
   [repository governance](runbooks/repository-governance.md),
   [backup and restore](runbooks/backup-restore.md), [upgrade](runbooks/upgrade.md),

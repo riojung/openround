@@ -9,21 +9,20 @@ trademark review.
 ## Staged implementation plan checkpoint
 
 At the 2026-09-25 transition checkpoint, Phase 0 repository implementation was merged through
-`32136a2`. CI, Security, and Production-path smoke passed after
+`3aee4d9`. CI, Security, and Production-path smoke pass on `main` after
 [PR #40](https://github.com/riojung/openround/pull/40) repaired the MinIO image path, upgrade and
 rollback ownership, and browser media smoke. [PR #42](https://github.com/riojung/openround/pull/42)
-then completed Presentation rolling-upgrade sequence compatibility with passing CI, PostgreSQL,
-browser-smoke, dependency, secret, SBOM, and CodeQL checks. The release ledger therefore records
-the source-CI and local-production-smoke gates complete.
+completed Presentation rolling-upgrade sequence compatibility, and
+[PR #43](https://github.com/riojung/openround/pull/43) added the research Prototype Lab and the next
+behavior-preserving Presentation refactor slice. The release ledger therefore records the source-CI
+and local-production-smoke gates complete.
 The Phase 0 exit remains open with thirteen gates pending. Most require external or human evidence.
 
-The current worktree also completes the next behavior-preserving Presentation refactor slice.
 Live mutation orchestration and deterministic response policy now sit behind the existing service
 façade, while memory and PostgreSQL session repositories are separated behind the unchanged
 repository factory. Public `/v1` and Socket.IO contracts, error identities, transaction boundaries,
-and lifecycle-extension behavior remain unchanged. New characterization tests cover durable receipt
-recovery, response-fence stability, and one shared memory/PostgreSQL conformance scenario. The full
-workspace check passes, and the isolated PostgreSQL 17 suite passes all 26 tests.
+and lifecycle-extension behavior remain unchanged. Characterization tests cover durable receipt
+recovery, response-fence stability, and shared memory/PostgreSQL conformance.
 
 Phase 1 is not selected because the required design-partner observations have not been collected.
 Phase 2 and the post-24-week capabilities are unstarted beyond shared feature-control and platform

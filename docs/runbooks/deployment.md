@@ -70,6 +70,12 @@ Local development supports fixed profiles:
   [--profile core|media|observability] [--no-build] [--follow]
 ```
 
+| Profile         | Services                                                                  |
+| --------------- | ------------------------------------------------------------------------- |
+| `core`          | PostgreSQL, Valkey, MinIO, Mailpit, server, web, and Caddy                |
+| `media`         | Core plus ClamAV                                                          |
+| `observability` | Media plus Prometheus and Grafana; this is the complete development stack |
+
 Examples:
 
 ```bash
@@ -79,6 +85,70 @@ Examples:
 ./scripts/service.sh development logs --profile core --follow
 ./scripts/service.sh development stop --profile core
 ```
+
+#### Reclaim local Docker disk space and rebuild
+
+`pnpm service development restart --profile core` rebuilds and force-recreates only the core
+profile. It does not start the optional media or observability services, remove old images, or
+reclaim unrelated Docker storage. Inspect usage before cleanup:
+
+```bash
+docker system df
+docker system df --verbose
+```
+
+To remove the complete local OpenRound Compose project and every image referenced by its core,
+media, and observability services while preserving named data volumes, run from the repository
+root:
+
+```bash
+docker compose \
+  --project-name openround \
+  --file compose.yaml \
+  --file compose.media.yaml \
+  --file compose.observability.yaml \
+  --profile observability \
+  down --remove-orphans --rmi all
+```
+
+This targets the `openround` project's containers, networks, and service images. It deliberately
+omits `--volumes`, so the PostgreSQL, MinIO, Valkey, ClamAV, and Prometheus named volumes remain.
+Grafana's checked-in provisioned dashboards and data-source configuration are recreated on start,
+but its runtime database, runtime-created dashboards, users, and settings are ephemeral because
+`/var/lib/grafana` has no data volume. Mailpit messages are also ephemeral. Export any runtime state
+that matters before teardown. Images shared with another project may need to be pulled again the
+next time that project starts.
+
+If host-wide cleanup is also required, review `docker system df --verbose` first, then run:
+
+```bash
+docker system prune --all --force
+```
+
+This second command is global: it removes stopped containers, unused networks, unused images, and
+build cache from every Docker project on the host, not only OpenRound. It does not remove volumes
+without an explicit volume option.
+
+**Data-preservation boundary:** do not add `--volumes`, and do not run `docker volume prune` or
+`docker volume prune --all`, unless an intentional data reset has been approved and PostgreSQL and
+MinIO backups have been created and verified. Those operations can permanently remove databases,
+uploaded media, queued state, malware signatures, and monitoring history.
+
+Rebuild the OpenRound application images once, start the complete stack without rebuilding them a
+second time, and verify application and observability health:
+
+```bash
+pnpm product:build development
+pnpm service development start --profile observability --no-build
+pnpm service development status --profile observability
+pnpm smoke:compose
+pnpm smoke:observability
+docker system df
+```
+
+Replace `observability` with `media` or `core` only when the corresponding smaller profile is the
+intended target. For a routine rebuild and restart that does not need disk cleanup, use
+`pnpm service development restart --profile observability`.
 
 For staging and production the same interface operates the already-deployed remote release through
 strict host-key-checked SSH:
