@@ -524,6 +524,168 @@ describe("PresentationSessionService realtime integration", () => {
     } satisfies Partial<PresentationSessionServiceError>);
   });
 
+  it("recovers the original durable receipt when acknowledgement delivery fails after acceptance", async () => {
+    const { service, sessions, hosted, joined, ids } = await fixture();
+    await service.command({
+      sessionId: hosted.snapshot.sessionId,
+      controlToken: hosted.controlToken,
+      commandId: randomUUID(),
+      expectedRevision: 0,
+      action: "advance",
+    });
+    await service.command({
+      sessionId: hosted.snapshot.sessionId,
+      controlToken: hosted.controlToken,
+      commandId: randomUUID(),
+      expectedRevision: 1,
+      action: "advance",
+    });
+    const beforeResponse = await sessions.getSessionById(hosted.snapshot.sessionId);
+    expect(beforeResponse).toMatchObject({ revision: 2, eventSeq: 3 });
+
+    const acceptResponse = sessions.acceptResponse.bind(sessions);
+    let failFirstAcceptedAcknowledgement = true;
+    vi.spyOn(sessions, "acceptResponse").mockImplementation(async (...args) => {
+      const acceptance = await acceptResponse(...args);
+      if (failFirstAcceptedAcknowledgement && acceptance.status === "accepted") {
+        failFirstAcceptedAcknowledgement = false;
+        throw new Error("acknowledgement projection unavailable");
+      }
+      return acceptance;
+    });
+    const receivedAt = new Date();
+    const input = {
+      sessionId: hosted.snapshot.sessionId,
+      participantToken: joined.participantToken,
+      blockId: ids.questionBlockId,
+      expectedRevision: 2,
+      idempotencyKey: randomUUID(),
+      response: { choiceIds: [ids.correctChoiceId], confidence: 2 as const },
+      receivedAt,
+    };
+
+    await expect(service.submitResponse(input)).rejects.toThrow(
+      "acknowledgement projection unavailable",
+    );
+    const durableResponses = await sessions.listResponses(hosted.snapshot.sessionId);
+    expect(durableResponses).toEqual([
+      expect.objectContaining({
+        blockId: ids.questionBlockId,
+        idempotencyKey: input.idempotencyKey,
+        score: 1_000,
+        submittedAt: receivedAt,
+      }),
+    ]);
+    const durableReceipt = durableResponses[0]!;
+    await expect(sessions.getSessionById(hosted.snapshot.sessionId)).resolves.toMatchObject({
+      revision: beforeResponse!.revision,
+      eventSeq: beforeResponse!.eventSeq + 1,
+    });
+
+    const recovered = await service.submitResponse(input);
+
+    expect(recovered).toMatchObject({
+      accepted: true,
+      duplicate: true,
+      responseId: durableReceipt.id,
+      acceptedAt: receivedAt.toISOString(),
+      snapshot: {
+        revision: beforeResponse!.revision,
+        seq: beforeResponse!.eventSeq + 1,
+        responseSubmitted: true,
+      },
+    });
+    const responsesAfterRetry = await sessions.listResponses(hosted.snapshot.sessionId);
+    expect(responsesAfterRetry).toHaveLength(1);
+    expect(responsesAfterRetry.reduce((total, response) => total + response.score, 0)).toBe(1_000);
+    await expect(sessions.getSessionById(hosted.snapshot.sessionId)).resolves.toMatchObject({
+      revision: beforeResponse!.revision,
+      eventSeq: beforeResponse!.eventSeq + 1,
+    });
+  });
+
+  it("does not move response fences for duplicate, conflict, already-responded, or stale attempts", async () => {
+    const { service, sessions, hosted, joined, ids } = await fixture();
+    await service.command({
+      sessionId: hosted.snapshot.sessionId,
+      controlToken: hosted.controlToken,
+      commandId: randomUUID(),
+      expectedRevision: 0,
+      action: "advance",
+    });
+    await service.command({
+      sessionId: hosted.snapshot.sessionId,
+      controlToken: hosted.controlToken,
+      commandId: randomUUID(),
+      expectedRevision: 1,
+      action: "advance",
+    });
+    const idempotencyKey = randomUUID();
+    const acceptedInput = {
+      sessionId: hosted.snapshot.sessionId,
+      participantToken: joined.participantToken,
+      blockId: ids.questionBlockId,
+      expectedRevision: 2,
+      idempotencyKey,
+      response: { choiceIds: [ids.correctChoiceId], confidence: 2 as const },
+    };
+    await expect(service.submitResponse(acceptedInput)).resolves.toMatchObject({
+      accepted: true,
+      duplicate: false,
+      snapshot: { revision: 2, seq: 4 },
+    });
+    const acceptedSession = await sessions.getSessionById(hosted.snapshot.sessionId);
+    expect(acceptedSession).toMatchObject({ revision: 2, eventSeq: 4 });
+
+    const attempts = [
+      {
+        name: "duplicate",
+        run: () => service.submitResponse(acceptedInput),
+        expected: { duplicate: true },
+      },
+      {
+        name: "idempotency conflict",
+        run: () =>
+          service.submitResponse({
+            ...acceptedInput,
+            response: { choiceIds: [ids.distractorChoiceId], confidence: 3 as const },
+          }),
+        errorCode: "IDEMPOTENCY_CONFLICT",
+      },
+      {
+        name: "different key for the same block",
+        run: () => service.submitResponse({ ...acceptedInput, idempotencyKey: randomUUID() }),
+        errorCode: "ALREADY_RESPONDED",
+      },
+      {
+        name: "stale revision",
+        run: () =>
+          service.submitResponse({
+            ...acceptedInput,
+            expectedRevision: 1,
+            idempotencyKey: randomUUID(),
+          }),
+        errorCode: "STALE_SESSION",
+      },
+    ];
+
+    for (const attempt of attempts) {
+      if ("errorCode" in attempt) {
+        await expect(attempt.run(), attempt.name).rejects.toMatchObject({
+          code: attempt.errorCode,
+          status: 409,
+        });
+      } else {
+        await expect(attempt.run(), attempt.name).resolves.toMatchObject(attempt.expected);
+      }
+      await expect(sessions.getSessionById(hosted.snapshot.sessionId)).resolves.toMatchObject({
+        revision: acceptedSession!.revision,
+        eventSeq: acceptedSession!.eventSeq,
+      });
+      await expect(sessions.listResponses(hosted.snapshot.sessionId)).resolves.toHaveLength(1);
+    }
+  });
+
   it("audits an accepted realtime finish once with the command identity", async () => {
     const { repository, service, hosted, ids } = await fixture();
     await service.command({

@@ -13,6 +13,19 @@ export function canAccessRecoveryRehearsal(input: {
   );
 }
 
+/**
+ * The research lab deliberately reuses the Recovery Rehearsal rollout boundary. It is not a
+ * production capability: both the deployment flag and workspace allowlist are resolved by the
+ * server into `recoveryRehearsal`, and archived content remains unavailable.
+ */
+export function canAccessResearchPrototypeLab(input: {
+  role: RehearsalWorkspaceRole;
+  recoveryRehearsal: boolean;
+  status: "draft" | "published" | "archived";
+}) {
+  return canAccessRecoveryRehearsal(input);
+}
+
 export function rehearsalReturnLink(input: {
   quizId: string;
   role: RehearsalWorkspaceRole;

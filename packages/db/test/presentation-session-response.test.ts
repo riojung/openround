@@ -2,11 +2,16 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { PresentationContent } from "@openround/contracts";
 import {
+  MemoryPresentationSessionRepository,
   MemoryRepository,
   createPresentationSessionRepository,
   type PresentationSessionRepository,
   type PresentationSessionResponseRecord,
 } from "../src/index.js";
+import {
+  expectPresentationSessionRepositoryConformance,
+  presentationSessionConformanceContent,
+} from "./support/presentation-session-conformance.js";
 
 function fixture() {
   const workspaceId = randomUUID();
@@ -87,6 +92,18 @@ async function addFixtureParticipant(
 }
 
 describe("presentation response acceptance", () => {
+  it("keeps the memory repository on the shared Presentation conformance contract", async () => {
+    const memory = new MemoryRepository();
+    await expectPresentationSessionRepositoryConformance({
+      repository: new MemoryPresentationSessionRepository(memory),
+      workspaceId: randomUUID(),
+      presentationId: randomUUID(),
+      presentationVersionId: randomUUID(),
+      createdBy: randomUUID(),
+      content: presentationSessionConformanceContent(),
+    });
+  });
+
   it("defaults legacy sessions to timed learning semantics and explicit timestamps", async () => {
     const repository = createPresentationSessionRepository(new MemoryRepository());
     const setup = fixture();
