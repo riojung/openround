@@ -216,8 +216,18 @@ pnpm service development restart --profile observability
 ```
 
 The available profiles are `core`, `media`, and `observability`. The last is the complete local
-stack and includes the other two. Docker-only users can operate the core profile directly with the
-commands below.
+stack and includes the other two. Docker-only users must keep the same Compose file and profile
+selection for every lifecycle command:
+
+| Profile         | Docker Compose command prefix                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `core`          | `docker compose`                                                                                                         |
+| `media`         | `docker compose --file compose.yaml --file compose.media.yaml`                                                           |
+| `observability` | `docker compose --file compose.yaml --file compose.media.yaml --file compose.observability.yaml --profile observability` |
+
+The examples below use `core`. For `media` or `observability`, replace the leading
+`docker compose` with that profile's complete prefix; omitting an overlay can leave its services
+running as orphans or exclude them from recreation.
 
 Follow service logs:
 
