@@ -350,6 +350,28 @@ describe("delayed probe prototype", () => {
     });
   });
 
+  it("rejects nonempty prompts that contain no meaningful tokens", () => {
+    const sourceWithoutMeaningfulTokens = evaluateDelayedProbeCandidate({
+      source: question(1, { prompt: "the" }),
+      candidate: question(2, {
+        prompt: "Apply habitat change in a new flooding scenario.",
+        delivery: "recheck",
+      }),
+    });
+    const candidateWithoutMeaningfulTokens = evaluateDelayedProbeCandidate({
+      source: question(1),
+      candidate: question(2, { prompt: "the", delivery: "recheck" }),
+    });
+
+    for (const result of [sourceWithoutMeaningfulTokens, candidateWithoutMeaningfulTokens]) {
+      expect(result).toMatchObject({
+        accepted: false,
+        promptDifference: "same_or_near_duplicate",
+        rejectionReasons: ["prompt_not_meaningfully_different"],
+      });
+    }
+  });
+
   it("accepts a meaningfully different prompt with normalized concept overlap", () => {
     const result = evaluateDelayedProbeCandidate({
       source: question(1, { conceptKeys: [" Habitat.Change ", "water.flow"] }),

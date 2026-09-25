@@ -93,7 +93,7 @@ function promptsAreMeaningfullyDifferent(source: string, candidate: string) {
 
   const sourceTokens = promptTokens(source);
   const candidateTokens = promptTokens(candidate);
-  if (sourceTokens.size === 0 || candidateTokens.size === 0) return true;
+  if (sourceTokens.size === 0 || candidateTokens.size === 0) return false;
   const shared = [...sourceTokens].filter((token) => candidateTokens.has(token)).length;
   const smallerSize = Math.min(sourceTokens.size, candidateTokens.size);
   const symmetricDifference = sourceTokens.size + candidateTokens.size - shared * 2;
