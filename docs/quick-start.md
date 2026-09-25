@@ -203,7 +203,21 @@ record the external pilot evidence. Do not use the example Compose secrets for a
 
 ## Day-to-day commands
 
-The examples below use the core profile. If you enabled images, repeat the same `-f compose.yaml -f compose.media.yaml` arguments for lifecycle commands so Compose also manages the ClamAV service and volume.
+If Node.js 22 and pnpm 10 are available, use the repository's lifecycle wrapper so every command
+selects a consistent service profile. A restart rebuilds and force-recreates that profile unless
+`--no-build` is supplied:
+
+```bash
+# Default product stack
+pnpm service development restart --profile core
+
+# Product, image scanning, metrics, and dashboards
+pnpm service development restart --profile observability
+```
+
+The available profiles are `core`, `media`, and `observability`. The last is the complete local
+stack and includes the other two. Docker-only users can operate the core profile directly with the
+commands below.
 
 Follow service logs:
 
@@ -211,25 +225,33 @@ Follow service logs:
 docker compose logs -f server web caddy
 ```
 
-Stop the stack while preserving data:
+Stop the stack while preserving the PostgreSQL, Valkey, and MinIO named volumes. Mailpit messages
+and unused development sign-in links are ephemeral and will be discarded:
 
 ```bash
 docker compose down
 ```
 
-Start it again with the same data:
+Start it again with the same data and existing images:
 
 ```bash
 docker compose up -d
 ```
 
-Delete all local OpenRound database, cache, and object-storage volumes:
+For Docker disk pressure or a clean rebuild of core, media, and observability services, follow the
+canonical [cleanup and rebuild procedure](runbooks/deployment.md#reclaim-local-docker-disk-space-and-rebuild).
+It distinguishes OpenRound-only cleanup from host-wide pruning and preserves named data volumes.
+
+Only for an intentional local data reset after creating and verifying any required PostgreSQL and
+MinIO backups, delete the core profile's local OpenRound database, cache, and object-storage
+volumes:
 
 ```bash
 docker compose down --volumes
 ```
 
-The last command is destructive and cannot be undone unless you have a backup.
+This command is destructive and cannot be undone without a backup. Do not use `--volumes`,
+`docker volume prune`, or `docker volume prune --all` as routine disk cleanup.
 
 ## Optional native developer mode
 
