@@ -5,7 +5,8 @@
 - Final name, domain, interface, scoring explanation, comparison claims, and asset register reviewed independently.
 - Terms, privacy notice, cookie notice, acceptable use, content policy, DPA, subprocessors,
   retention, deletion, access, incident, residency, and law-enforcement procedures are approved by
-  qualified counsel for every selected launch market.
+  qualified counsel for every selected launch market and captured in the
+  [privacy/legal approval record](../evidence/privacy-legal-approval.md).
 - Education onboarding uses anonymous guest mode, private results, friendly aliases, and accuracy scoring by default.
 - US school self-service remains disabled until US counsel approves COPPA, FERPA, contracts, and notices.
 
@@ -155,10 +156,13 @@ the compatibility mode is enabled does not represent the optimized 250-client pa
 
 See [observability and operational controls](observability.md) for metric, trace, alert, and
 kill-switch guidance. Use the [single-VM staging workflow](staging-readiness.md) for the remote
-probe and target-host game, [evidence templates](../evidence/README.md) for non-code gates, and
+probe and target-host game, and complete its
+[deployment record](../evidence/single-vm-staging.md). Use the
+[evidence templates](../evidence/README.md) for the other non-code gates and
 `pnpm readiness:require:beta:preflight` before creating a beta tag. After the workflow publishes
-and verifies the signed artifacts, accept that evidence for `signed-release` and run
-`pnpm readiness:require:beta` for the final beta decision.
+and verifies the signed artifacts, complete and independently review the
+[signed release candidate record](../evidence/signed-release-candidate.md), accept that evidence
+for `signed-release`, and run `pnpm readiness:require:beta` for the final beta decision.
 
 None of these instructions establishes that a staging or production VM exists. Provisioning,
 operational ownership, and every external evidence item must be verified separately before public

@@ -16,7 +16,9 @@ independent-review policy would be nominal rather than effective.
 After the reviewer is present and candidate CI is green, activate the existing ruleset, open a
 documentation-only canary PR, obtain that reviewer’s approval, pass every required check, resolve
 every conversation, update the branch, and merge normally without bypass. Record the resulting
-ruleset insight before marking the release gate complete.
+ruleset insight in the
+[repository governance canary record](../evidence/repository-governance-canary.md) before marking
+the release gate complete.
 
 ## Main branch ruleset
 
@@ -56,7 +58,7 @@ ruleset insight before marking the release gate complete.
 4. Let the release workflow build images, provenance, SBOMs, and scan results. Do not
    retag or use `latest` in production.
 5. Verify signatures and digests before promotion; retain the workflow URL and digest in the
-   release record.
+   [signed release candidate record](../evidence/signed-release-candidate.md).
 6. Mark `signed-release` complete only after its digest, SBOM, SARIF, provenance, and successful
    Cosign verification are retained, then run `pnpm readiness:require:beta` for the final decision.
 7. Follow the upgrade canary and rollback runbook. A failed gate requires a new reviewed commit
@@ -66,4 +68,5 @@ ruleset insight before marking the release gate complete.
 
 Record the ruleset URL, activation date, maintainer group, required checks, secret-scanning state,
 last bypass review, and next quarterly review in the private operations system. Link that record
-from the `repository-governance` gate in `docs/release-readiness.json`.
+from the [repository governance canary record](../evidence/repository-governance-canary.md) and the
+`repository-governance` gate in `docs/release-readiness.json`.

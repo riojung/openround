@@ -1057,6 +1057,10 @@ const PLAIN_DNS_HOSTNAME_PATTERN =
   /^(?=.{1,253}$)(?!-)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
 
 export function validateSingleVmRuntimeValues(content, config) {
+  const deploymentEnvironment = environmentFileValue(content, "OPENROUND_DEPLOYMENT_ENVIRONMENT");
+  if (deploymentEnvironment !== config.environment) {
+    throw new Error("OPENROUND_DEPLOYMENT_ENVIRONMENT must match the reviewed deployment target");
+  }
   const configuredDomain = environmentFileValue(content, "OPENROUND_APP_DOMAIN");
   if (configuredDomain !== new URL(config.publicWebUrl).hostname) {
     throw new Error("OPENROUND_APP_DOMAIN must match the reviewed single-VM public origin");

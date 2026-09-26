@@ -1,12 +1,71 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { finalizeImages, scanImagesForVulnerabilities } from "../../scripts/ops/product-build.mjs";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+const workflowDirectory = join(repositoryRoot, ".github/workflows");
 const serverRef = `ghcr.io/example/openround-server@sha256:${"a".repeat(64)}`;
 const webRef = `ghcr.io/example/openround-web@sha256:${"b".repeat(64)}`;
+
+function workflowActionPinningViolations(filename: string, workflow: string) {
+  const violations: string[] = [];
+
+  for (const [index, line] of workflow.split("\n").entries()) {
+    const reference = line.match(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/)?.[1];
+    if (!reference || reference.startsWith("./")) continue;
+
+    const immutable = reference.startsWith("docker://")
+      ? /^docker:\/\/[^@\s]+@sha256:[0-9a-f]{64}$/.test(reference)
+      : /^[^@\s]+@[0-9a-f]{40}$/.test(reference);
+    if (!immutable) violations.push(`${filename}:${index + 1}: ${reference}`);
+  }
+
+  return violations;
+}
+
+describe("workflow action supply chain", () => {
+  it("pins every external action to an immutable revision", async () => {
+    const workflowFiles = (await readdir(workflowDirectory)).filter((name) =>
+      /\.ya?ml$/.test(name),
+    );
+    const violations: string[] = [];
+
+    for (const filename of workflowFiles) {
+      const workflow = await readFile(join(workflowDirectory, filename), "utf8");
+      violations.push(...workflowActionPinningViolations(filename, workflow));
+    }
+
+    expect(violations, `Mutable external action references:\n${violations.join("\n")}`).toEqual([]);
+  });
+
+  it("accepts commit-pinned actions, digest-pinned containers, and local actions", () => {
+    const workflow = [
+      `- uses: owner/action@${"a".repeat(40)} # v1`,
+      `- uses: docker://ghcr.io/example/action@sha256:${"b".repeat(64)}`,
+      "- uses: ./.github/actions/local",
+    ].join("\n");
+
+    expect(workflowActionPinningViolations("fixture.yml", workflow)).toEqual([]);
+  });
+
+  it("rejects mutable and malformed container action references", () => {
+    const workflow = [
+      "- uses: docker://ghcr.io/example/action:latest",
+      "- uses: docker://ghcr.io/example/action:v1.2.3",
+      "- uses: docker://ghcr.io/example/action@sha256:abc123",
+      "- uses: owner/action@v4",
+    ].join("\n");
+
+    expect(workflowActionPinningViolations("fixture.yml", workflow)).toEqual([
+      "fixture.yml:1: docker://ghcr.io/example/action:latest",
+      "fixture.yml:2: docker://ghcr.io/example/action:v1.2.3",
+      "fixture.yml:3: docker://ghcr.io/example/action@sha256:abc123",
+      "fixture.yml:4: owner/action@v4",
+    ]);
+  });
+});
 
 describe("release image vulnerability evidence", () => {
   it("scans both immutable references before reporting vulnerability failures", async () => {
@@ -37,7 +96,7 @@ describe("release image vulnerability evidence", () => {
   it("keeps both SARIF scans on the explicitly installed Trivy CLI", async () => {
     const workflow = await readFile(join(repositoryRoot, ".github/workflows/release.yml"), "utf8");
     const actionScans = workflow
-      .split("      - uses: aquasecurity/trivy-action@v0.36.0")
+      .split(/^[ \t]+- uses: aquasecurity\/trivy-action@[0-9a-f]{40}[^\n]*$/gm)
       .slice(1)
       .map((section) => section.split("\n      - ", 1)[0]);
 

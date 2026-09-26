@@ -247,6 +247,7 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
+      OPENROUND_DEPLOYMENT_ENVIRONMENT: ${OPENROUND_DEPLOYMENT_ENVIRONMENT:?Set OPENROUND_DEPLOYMENT_ENVIRONMENT}
       HOST: 0.0.0.0
       PORT: 4000
       TRUSTED_PROXY_IP: ${OPENROUND_CADDY_PROXY_IP:-172.30.255.2}

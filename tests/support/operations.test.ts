@@ -156,6 +156,7 @@ function singleVmRuntimeEnvironment(environment: "staging" | "production" = "sta
   const domain =
     environment === "production" ? "app.openround.example" : "staging.openround.example";
   return [
+    `OPENROUND_DEPLOYMENT_ENVIRONMENT=${environment}`,
     `OPENROUND_APP_DOMAIN=${domain}`,
     `OPENROUND_MEDIA_DOMAIN=${environment === "production" ? "media.openround.example" : "media-staging.openround.example"}`,
     "OPENROUND_ACME_EMAIL=ops@openround.example",
@@ -608,6 +609,15 @@ describe("deployment configuration and manifest validation", () => {
       ]),
     );
     expect(validateSingleVmRuntimeValues(singleVmRuntimeEnvironment(), config)).toBe(true);
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace(
+          "OPENROUND_DEPLOYMENT_ENVIRONMENT=staging",
+          "OPENROUND_DEPLOYMENT_ENVIRONMENT=production",
+        ),
+        config,
+      ),
+    ).toThrow("OPENROUND_DEPLOYMENT_ENVIRONMENT must match");
     for (const unsafeCommunityMode of ["", "COMMUNITY_MODE=true\n"]) {
       expect(() =>
         validateSingleVmRuntimeValues(

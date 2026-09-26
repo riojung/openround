@@ -18,6 +18,16 @@ behavior-preserving Presentation refactor slice. The release ledger therefore re
 and local-production-smoke gates complete.
 The Phase 0 exit remains open with thirteen gates pending. Most require external or human evidence.
 
+The completion-hardening slice now also closes the last repository-side target-load setup gap. A
+staging-only, non-HTTP one-shot command can provision one reviewed synthetic Free workspace for the
+250-participant matrix while proving the connected PostgreSQL principal is the restricted runtime
+role; the plan change and audit marker commit atomically, and unrelated paid or Team workspaces fail
+closed. Every external GitHub Action reference is pinned to an immutable commit, with a regression
+test that also requires digest-pinned container actions. Five redaction-safe records now cover the
+staging deployment, privacy/legal decision, live billing rehearsal, protected-branch canary, and
+signed release. These controls make the remaining exercises executable and reviewable; they do not
+claim that a staging host, independent review, user study, or signed release exists.
+
 Live mutation orchestration and deterministic response policy now sit behind the existing service
 façade, while memory and PostgreSQL session repositories are separated behind the unchanged
 repository factory. Public `/v1` and Socket.IO contracts, error identities, transaction boundaries,

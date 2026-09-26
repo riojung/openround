@@ -20,6 +20,7 @@ import type {
   AnswerLookup,
   AuthoringJobRecord,
   BillingEventInput,
+  CapacityTestWorkspaceProvisionResult,
   ChatMessageListOptions,
   ChatMessageRecord,
   ChatReactionRecord,
@@ -3488,6 +3489,82 @@ export class MemoryRepository implements Repository {
       customerId: provider.customerId ?? previous?.customerId ?? null,
       subscriptionId: provider.subscriptionId ?? previous?.subscriptionId ?? null,
     });
+  }
+
+  async provisionCapacityTestWorkspace(
+    workspaceId: string,
+    requestId: string,
+  ): Promise<CapacityTestWorkspaceProvisionResult> {
+    if (!this.workspaces.has(workspaceId)) {
+      throw new Error("Capacity-test workspace does not exist");
+    }
+    const previousPlan = this.plans.get(workspaceId) ?? "free";
+    const previousProfile = this.billingProfiles.get(workspaceId);
+    const previousStatus = previousProfile?.status ?? "free";
+    if (previousProfile?.customerId || previousProfile?.subscriptionId) {
+      throw new Error("Capacity-test provisioning refuses a provider-linked workspace");
+    }
+    const priorProvision = this.audits.some(
+      (event) =>
+        event.workspaceId === workspaceId &&
+        event.action === "operations.staging_capacity.provision" &&
+        event.targetType === "workspace" &&
+        event.targetId === workspaceId,
+    );
+    if (previousPlan === "team" && previousStatus === "active") {
+      if (!priorProvision) {
+        throw new Error(
+          "Capacity-test provisioning refuses a Team workspace without its prior audit marker",
+        );
+      }
+      return {
+        workspaceId,
+        previousPlan,
+        previousStatus,
+        plan: "team",
+        status: "active",
+        changed: false,
+      };
+    }
+    if (previousPlan !== "free" || previousStatus !== "free") {
+      throw new Error("Capacity-test provisioning requires an untouched free workspace");
+    }
+    if (priorProvision) {
+      throw new Error("Capacity-test provisioning requires an untouched free workspace");
+    }
+
+    this.plans.set(workspaceId, "team");
+    this.billingProfiles.set(workspaceId, {
+      status: "active",
+      customerId: null,
+      subscriptionId: null,
+    });
+    this.audits.push({
+      id: crypto.randomUUID(),
+      workspaceId,
+      actorId: null,
+      action: "operations.staging_capacity.provision",
+      targetType: "workspace",
+      targetId: workspaceId,
+      requestId,
+      metadata: {
+        purpose: "target-region-load",
+        previousPlan,
+        previousStatus,
+        plan: "team",
+        status: "active",
+        maxParticipants: 250,
+      },
+      createdAt: new Date(),
+    });
+    return {
+      workspaceId,
+      previousPlan,
+      previousStatus,
+      plan: "team",
+      status: "active",
+      changed: true,
+    };
   }
 
   async recordBillingEvent(providerEventId: string, _eventType: string) {

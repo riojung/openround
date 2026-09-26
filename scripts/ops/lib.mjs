@@ -81,6 +81,7 @@ const COMPOSE_PROJECT_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 const HOSTED_IMAGE_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
 const SINGLE_VM_RUNTIME_ENV_KEYS = new Set([
   "NODE_ENV",
+  "OPENROUND_DEPLOYMENT_ENVIRONMENT",
   "HOST",
   "PORT",
   "WEB_ORIGIN",
@@ -795,6 +796,7 @@ export function validateEnvFileKeys(keysOrContent, kind) {
     }
     for (const required of [
       "COMMUNITY_MODE",
+      "OPENROUND_DEPLOYMENT_ENVIRONMENT",
       "OPENROUND_APP_DOMAIN",
       "OPENROUND_MEDIA_DOMAIN",
       "OPENROUND_ACME_EMAIL",

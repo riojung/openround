@@ -22,19 +22,26 @@ describe("Phase 0 evidence contract", () => {
     };
     const gates = new Map(ledger.gates.map((gate) => [gate.id, gate]));
 
-    expect(gates.get("source-ci")).toMatchObject({
-      status: "complete",
-      evidence: [
-        "https://github.com/riojung/openround/actions/runs/36073326995",
-        "https://github.com/riojung/openround/actions/runs/36073327061",
-        "https://github.com/riojung/openround/actions/runs/36052921874",
-        "https://github.com/riojung/openround/actions/runs/35868559946",
-      ],
-    });
-    expect(gates.get("local-production-smoke")).toMatchObject({
-      status: "complete",
-      evidence: ["https://github.com/riojung/openround/actions/runs/36073327273"],
-    });
+    const sourceCi = gates.get("source-ci");
+    expect(sourceCi).toMatchObject({ status: "complete" });
+    expect(sourceCi?.evidence).toEqual(
+      expect.arrayContaining([
+        "https://github.com/riojung/openround/actions/runs/36173766173",
+        "https://github.com/riojung/openround/actions/runs/36173765973",
+        "https://github.com/riojung/openround/actions/runs/36172849143",
+      ]),
+    );
+    expect(
+      sourceCi?.evidence.every((url) =>
+        /^https:\/\/github\.com\/riojung\/openround\/actions\/runs\/\d+$/.test(url),
+      ),
+    ).toBe(true);
+
+    const localProductionSmoke = gates.get("local-production-smoke");
+    expect(localProductionSmoke).toMatchObject({ status: "complete" });
+    expect(localProductionSmoke?.evidence).toContain(
+      "https://github.com/riojung/openround/actions/runs/36173765942",
+    );
     expect(ledger.gates.filter(({ status: gateStatus }) => gateStatus === "complete")).toHaveLength(
       2,
     );
