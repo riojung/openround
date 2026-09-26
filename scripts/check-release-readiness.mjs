@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { validateAcceptedReleaseLedger } from "./ops/release-acceptance.mjs";
 
 const fileUrl = new URL("../docs/release-readiness.json", import.meta.url);
 const ledger = JSON.parse(await readFile(fileUrl, "utf8"));
@@ -41,7 +42,19 @@ for (const gate of ledger.gates) {
       `${gate.id}: incomplete gates require a nextAction`,
     );
   }
+  if (gate.id === "signed-release") {
+    if (gate.status !== "complete") {
+      assert.equal(
+        gate.releaseBinding,
+        undefined,
+        "signed-release: releaseBinding is valid only after acceptance",
+      );
+    }
+  }
 }
+
+const signedRelease = ledger.gates.find((gate) => gate.id === "signed-release");
+if (signedRelease?.status === "complete") validateAcceptedReleaseLedger(ledger);
 
 const statusCounts = Object.fromEntries(
   [...allowedStatuses].map((status) => [

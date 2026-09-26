@@ -7,8 +7,8 @@ details. Reference public workflow artifacts or access-controlled, redacted evid
 ## Release identity
 
 - Release tag (`v0.9.0` for the initial beta gate; signed and protected):
-- Tag object/verification reference:
-- Exact `main` commit:
+- Exact annotated tag object ID and verification reference:
+- Exact tagged `main` commit/build ID:
 - Release workflow run and attempt:
 - Release URL:
 - Candidate creation time (UTC):
@@ -21,7 +21,8 @@ details. Reference public workflow artifacts or access-controlled, redacted evid
 
 Every subject digest must be immutable and trace to the exact tagged commit. Do not accept `latest`,
 a mutable tag, a workstation build, or a signature with an identity outside the documented
-allowlist.
+allowlist. HIGH/CRITICAL scans include findings without an upstream fix; do not treat the absence
+of a fix as acceptance.
 
 | Artifact                          | Immutable reference/digest | Evidence | Result  |
 | --------------------------------- | -------------------------- | -------- | ------- |
@@ -35,6 +36,40 @@ allowlist.
 | Server vulnerability/SARIF result |                            |          | Pending |
 | Web vulnerability/SARIF result    |                            |          | Pending |
 | Source archive/checksum           |                            |          | Pending |
+
+## Ledger acceptance binding
+
+After both reviewers accept the evidence, merge an evidence-only change to
+`docs/release-readiness.json`. Change only its `updatedAt` and the `signed-release` gate: set the
+gate to `complete`, replace `nextAction` with stable HTTPS evidence references, and add this
+machine-validated binding using values copied from the protected release workflow artifacts:
+
+```json
+"releaseBinding": {
+  "schemaVersion": 1,
+  "tag": "v0.9.0",
+  "tagObject": "<full annotated Git tag object ID>",
+  "buildId": "<full tagged commit ID>",
+  "manifestDigest": "sha256:<SHA-256 of the exact downloaded build-manifest.json bytes>",
+  "imageDigests": {
+    "server": "sha256:<server image digest>",
+    "web": "sha256:<web image digest>"
+  }
+}
+```
+
+Do not reformat the downloaded manifest before calculating `manifestDigest`. The deployer permits
+the resulting descendant commit only when its complete tree delta from `buildId` is the readiness
+ledger, every other gate is byte-equivalent in parsed JSON, the annotated tag object resolves to
+`buildId`, all three artifact digests match the selected manifest, and an immediate fetch from the
+trusted OpenRound `origin` confirms that the acceptance commit is the current `main` tip and the tag
+object is published. The deployer also asks GitHub for that exact tag object and requires its
+cryptographic verification status to be `valid`, its tag name to match, and its target to be the
+bound build commit. A local-only, unsigned, recreated, or substituted tag is never acceptable
+evidence.
+
+Cosign verification during deployment derives the exact release-workflow certificate identity from
+this bound tag; a signature issued for a different allowed release tag is rejected.
 
 ## Independent verification
 
