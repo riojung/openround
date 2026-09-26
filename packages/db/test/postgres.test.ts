@@ -18,7 +18,7 @@ import {
   applyHostCommand,
   createGameState,
 } from "@openround/game-engine";
-import { PostgresRepository } from "../src/postgres.js";
+import { assertRestrictedRuntimeDatabasePrincipal, PostgresRepository } from "../src/postgres.js";
 import {
   PresentationMutationConflictError,
   PostgresCollaborationGroupRepository,
@@ -4585,6 +4585,172 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       }),
     ).toBe(true);
     expect(await repository.getPlan(first.workspaceId)).toBe("pro");
+  });
+
+  it("atomically provisions and audits one synthetic capacity workspace", async () => {
+    const owner = await creator("staging-capacity");
+    const requestIds = [
+      `capacity-exercise-${randomUUID()}`,
+      `capacity-concurrent-retry-${randomUUID()}`,
+    ];
+
+    const concurrentResults = await Promise.all(
+      requestIds.map((requestId) =>
+        repository.provisionCapacityTestWorkspace(owner.workspaceId, requestId),
+      ),
+    );
+    expect(concurrentResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceId: owner.workspaceId,
+          previousPlan: "free",
+          plan: "team",
+          status: "active",
+          changed: true,
+        }),
+        expect.objectContaining({
+          workspaceId: owner.workspaceId,
+          previousPlan: "team",
+          plan: "team",
+          status: "active",
+          changed: false,
+        }),
+      ]),
+    );
+    await expect(
+      repository.provisionCapacityTestWorkspace(
+        owner.workspaceId,
+        `capacity-retry-${randomUUID()}`,
+      ),
+    ).resolves.toMatchObject({
+      workspaceId: owner.workspaceId,
+      previousPlan: "team",
+      plan: "team",
+      changed: false,
+    });
+
+    expect(await repository.getBillingProfile(owner.workspaceId)).toEqual({
+      plan: "team",
+      status: "active",
+      customerId: null,
+      subscriptionId: null,
+    });
+    expect(await repository.listAuditEvents(owner.workspaceId, null, 100)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceId: owner.workspaceId,
+          action: "operations.staging_capacity.provision",
+          targetType: "workspace",
+          targetId: owner.workspaceId,
+          requestId: expect.stringMatching(/^capacity-(exercise|concurrent-retry)-/),
+          metadata: expect.objectContaining({
+            purpose: "target-region-load",
+            previousPlan: "free",
+            plan: "team",
+            maxParticipants: 250,
+          }),
+        }),
+      ]),
+    );
+    expect(
+      (await repository.listAuditEvents(owner.workspaceId, null, 100)).filter(
+        (event) => event.action === "operations.staging_capacity.provision",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("reports the runtime database principal's effective privilege boundary", async () => {
+    await expect(repository.inspectRuntimeDatabasePrincipal()).resolves.toMatchObject({
+      principal: expect.any(String),
+      sessionPrincipal: expect.any(String),
+      sessionMatchesCurrent: true,
+      runtimeRoleMember: true,
+      superuser: false,
+      bypassRls: false,
+      createRole: false,
+      createDatabase: false,
+      replication: false,
+      privilegedRoleMember: false,
+      unexpectedRoleMember: false,
+      ownerRoleMember: false,
+    });
+  });
+
+  it("rejects an otherwise restricted runtime principal with an unexpected role grant", async () => {
+    const roleName = `openround_test_extra_${randomUUID().replaceAll("-", "")}`;
+    const adminPool = new Pool({ connectionString: adminUrl });
+    let roleCreated = false;
+    try {
+      await adminPool.query(`CREATE ROLE "${roleName}" NOLOGIN`);
+      roleCreated = true;
+      await adminPool.query(`GRANT "${roleName}" TO openround_test_app`);
+
+      const principal = await repository.inspectRuntimeDatabasePrincipal();
+      expect(principal).toMatchObject({
+        privilegedRoleMember: false,
+        unexpectedRoleMember: true,
+      });
+      expect(() => assertRestrictedRuntimeDatabasePrincipal(principal)).toThrow(
+        "restricted, non-owner openround_runtime database principal",
+      );
+      await expect(
+        repository.provisionCapacityTestWorkspace(
+          randomUUID(),
+          `capacity-unexpected-role-${randomUUID()}`,
+        ),
+      ).rejects.toThrow("restricted, non-owner openround_runtime database principal");
+    } finally {
+      if (roleCreated) {
+        await adminPool.query(`REVOKE "${roleName}" FROM openround_test_app`);
+        await adminPool.query(`DROP ROLE "${roleName}"`);
+      }
+      await adminPool.end();
+    }
+
+    await expect(repository.inspectRuntimeDatabasePrincipal()).resolves.toMatchObject({
+      privilegedRoleMember: false,
+      unexpectedRoleMember: false,
+    });
+  });
+
+  it("refuses capacity provisioning for a non-free workspace without provider identifiers", async () => {
+    const owner = await creator("staging-capacity-non-free");
+    await repository.setPlan(owner.workspaceId, "pro", { status: "active" });
+
+    await expect(
+      repository.provisionCapacityTestWorkspace(
+        owner.workspaceId,
+        `capacity-non-free-${randomUUID()}`,
+      ),
+    ).rejects.toThrow("requires an untouched free workspace");
+    expect(await repository.getBillingProfile(owner.workspaceId)).toEqual({
+      plan: "pro",
+      status: "active",
+      customerId: null,
+      subscriptionId: null,
+    });
+    expect(
+      (await repository.listAuditEvents(owner.workspaceId, null, 100)).filter(
+        (event) => event.action === "operations.staging_capacity.provision",
+      ),
+    ).toEqual([]);
+  });
+
+  it("refuses a pre-existing Team workspace without a capacity-provisioning audit marker", async () => {
+    const owner = await creator("staging-capacity-unmarked-team");
+    await repository.setPlan(owner.workspaceId, "team", { status: "active" });
+
+    await expect(
+      repository.provisionCapacityTestWorkspace(
+        owner.workspaceId,
+        `capacity-unmarked-team-${randomUUID()}`,
+      ),
+    ).rejects.toThrow("without its prior audit marker");
+    expect(
+      (await repository.listAuditEvents(owner.workspaceId, null, 100)).filter(
+        (event) => event.action === "operations.staging_capacity.provision",
+      ),
+    ).toEqual([]);
   });
 
   it("rejects assignment creation when an in-flight archive wins the source Round lock", async () => {

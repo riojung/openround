@@ -14,6 +14,11 @@ failover, high availability, or SLA. A passing workflow does not remove the requ
 encrypted off-host backups, a clean replacement-VM restore drill, host patching, monitoring,
 strict SSH host-key verification, or public-production approval.
 
+Open a [single-VM staging evidence record](../evidence/single-vm-staging.md) before provisioning so
+the candidate identity, host baseline, independent reviewer, service checks, and redacted artifact
+references are captured consistently. A completed workflow without an accepted record does not
+close the staging gate.
+
 ## GitHub environment
 
 Create a protected `single-vm-staging` environment with required reviewers. Configure these
@@ -107,6 +112,39 @@ in the private exercise record.
    allowlists, and that `/v1/workspaces` reports the configured expected home region. Raising this
    synthetic ceiling does not change the public Free 20 or Pro 100 promises.
 
+### Provision the synthetic capacity workspace
+
+The hosted runtime must set `OPENROUND_DEPLOYMENT_ENVIRONMENT=staging`, keep
+`COMMUNITY_MODE=false` and `BILLING_MODE=disabled`, and set `MAX_SESSION_PARTICIPANTS=250` before
+the capacity exercise. After the dedicated synthetic creator has signed in, copy its exact
+workspace UUID from `/v1/workspaces` and run this one-shot command from the active staging release:
+
+```bash
+export OPENROUND_CAPACITY_WORKSPACE_ID="the-reviewed-synthetic-workspace-uuid"
+export OPENROUND_CAPACITY_REQUEST_ID="the-approved-change-or-exercise-reference"
+COMPOSE_PROJECT_NAME=openround-staging docker compose \
+  --env-file .env \
+  -f compose.single-vm.yaml \
+  run --rm --no-deps \
+  -e OPENROUND_STAGING_CAPACITY_PROVISIONING=enabled \
+  server node dist/staging-capacity-provision.js \
+  --workspace-id "$OPENROUND_CAPACITY_WORKSPACE_ID" \
+  --request-id "$OPENROUND_CAPACITY_REQUEST_ID" \
+  --confirm "provision-staging-capacity:${OPENROUND_CAPACITY_WORKSPACE_ID}:team-250"
+```
+
+The command has no HTTP route and inspects PostgreSQL before mutation. It requires membership in
+the restricted `openround_runtime` role and rejects database principals that are superusers, bypass
+RLS, can create roles or databases, can replicate, entered through `SET ROLE`, inherit any role
+other than `openround_runtime`, or own (or can assume the owner of) the database or public-schema
+objects. It never receives the migration-owner credential. It also refuses non-staging, Community,
+billing-enabled, non-durable, unversioned, below-250, missing, or provider-linked targets, and any
+initial state other than untouched Free. The plan change commits in one transaction with its matching
+`operations.staging_capacity.provision` audit event. A successful retry is a no-op only when that
+durable audit marker already exists for the same workspace; an unrelated pre-existing Team
+workspace is rejected. Retain the redacted JSON result and approved request reference with the
+staging evidence record; do not retain the creator cookie there.
+
 Run the workflow with no soak first. Confirm the `single-vm-staging-remote-probe-*` artifact from
 the hosted runner and all four build-matched target-region artifacts from the target-VM runner:
 
@@ -145,7 +183,8 @@ Enable the Stripe replay only when an approved test configuration is active and 
 is manipulating the rehearsal workspace. The replay proves signature, duplicate, stale-event, and
 cancellation handling using locally signed payloads and is stored separately as
 `single-vm-staging-stripe-replay-*`; complete a real Stripe test-mode checkout, portal, delivery
-retry, and cancellation before marking the billing gate complete.
+retry, and cancellation in the [live billing rehearsal record](../evidence/live-billing-rehearsal.md)
+before marking the billing gate complete.
 
 If a run fails, preserve workflow logs and partial artifacts, open an issue linked to the candidate
 commit, and do not update `docs/release-readiness.json` to complete. Even after a passing staging

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-24",
+  "updatedAt": "2026-09-25",
   "releaseTarget": "single-vm-beta",
   "gates": [
     {
@@ -11,6 +11,9 @@
       "status": "complete",
       "criterion": "Main passes checks, PostgreSQL isolation, browser coverage, dependency review, secret scanning, SBOM generation, and CodeQL.",
       "evidence": [
+        "https://github.com/riojung/openround/actions/runs/36173766173",
+        "https://github.com/riojung/openround/actions/runs/36173765973",
+        "https://github.com/riojung/openround/actions/runs/36172849143",
         "https://github.com/riojung/openround/actions/runs/36073326995",
         "https://github.com/riojung/openround/actions/runs/36073327061",
         "https://github.com/riojung/openround/actions/runs/36052921874",
@@ -24,7 +27,10 @@
       "requiredFor": ["single-vm-beta-preflight", "single-vm-beta", "single-vm-ga"],
       "status": "complete",
       "criterion": "The containerized production profile passes media, observability, multi-writer, backup/restore, restart, and 100-client correctness checks.",
-      "evidence": ["https://github.com/riojung/openround/actions/runs/36073327273"]
+      "evidence": [
+        "https://github.com/riojung/openround/actions/runs/36173765942",
+        "https://github.com/riojung/openround/actions/runs/36073327273"
+      ]
     },
     {
       "id": "single-vm-staging",

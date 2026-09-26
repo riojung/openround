@@ -5,6 +5,7 @@ export default defineConfig({
     "src/index.ts",
     "src/migrate.ts",
     "src/config-check.ts",
+    "src/staging-capacity-provision.ts",
     "src/source-extraction.ts",
     "src/source-extraction-worker.ts",
   ],

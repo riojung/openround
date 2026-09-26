@@ -46,6 +46,7 @@ import type {
   AnswerLookup,
   AuthoringJobRecord,
   BillingEventInput,
+  CapacityTestWorkspaceProvisionResult,
   ChatMessageListOptions,
   ChatMessageRecord,
   ChatReactionRecord,
@@ -88,6 +89,7 @@ import type {
   QuizDraftUpdate,
   QuizRecord,
   QuizVersionRecord,
+  RuntimeDatabasePrincipalSecurity,
   ReportJob,
   ReportHistoryRecord,
   Repository,
@@ -100,6 +102,117 @@ import type {
   WorkspaceMemberRecord,
   WorkspaceSummaryRecord,
 } from "./types.js";
+
+interface RuntimeDatabasePrincipalRow {
+  principal: string;
+  session_principal: string;
+  session_matches_current: boolean;
+  runtime_role_member: boolean;
+  superuser: boolean;
+  bypass_rls: boolean;
+  create_role: boolean;
+  create_database: boolean;
+  replication: boolean;
+  privileged_role_member: boolean;
+  unexpected_role_member: boolean;
+  owner_role_member: boolean;
+}
+
+const runtimeDatabasePrincipalSql = `SELECT current_user::text AS principal,
+       session_user::text AS session_principal,
+       session_user = current_user AS session_matches_current,
+       pg_has_role(current_user, 'openround_runtime', 'MEMBER') AS runtime_role_member,
+       role.rolsuper AS superuser,
+       role.rolbypassrls AS bypass_rls,
+       role.rolcreaterole AS create_role,
+       role.rolcreatedb AS create_database,
+       role.rolreplication AS replication,
+       EXISTS (
+         SELECT 1
+           FROM pg_roles AS privileged_role
+          WHERE (
+                  privileged_role.rolsuper
+                  OR privileged_role.rolbypassrls
+                  OR privileged_role.rolcreaterole
+                  OR privileged_role.rolcreatedb
+                  OR privileged_role.rolreplication
+                )
+            AND pg_has_role(current_user, privileged_role.oid, 'MEMBER')
+       ) AS privileged_role_member,
+       EXISTS (
+         SELECT 1
+           FROM pg_roles AS member_role
+          WHERE member_role.oid <> role.oid
+            AND member_role.rolname <> 'openround_runtime'
+            AND pg_has_role(current_user, member_role.oid, 'MEMBER')
+       ) AS unexpected_role_member,
+       EXISTS (
+         SELECT 1
+           FROM (
+             SELECT database.datdba AS role_oid
+               FROM pg_database AS database
+              WHERE database.datname = current_database()
+             UNION
+             SELECT namespace.nspowner AS role_oid
+               FROM pg_namespace AS namespace
+              WHERE namespace.nspname = 'public'
+             UNION
+             SELECT object.relowner AS role_oid
+               FROM pg_class AS object
+               JOIN pg_namespace AS namespace ON namespace.oid = object.relnamespace
+              WHERE namespace.nspname = 'public'
+             UNION
+             SELECT procedure.proowner AS role_oid
+               FROM pg_proc AS procedure
+               JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+              WHERE namespace.nspname = 'public'
+           ) AS owner_role
+          WHERE pg_has_role(current_user, owner_role.role_oid, 'MEMBER')
+       ) AS owner_role_member
+  FROM pg_roles AS role
+ WHERE role.rolname = current_user`;
+
+function mapRuntimeDatabasePrincipal(
+  principal: RuntimeDatabasePrincipalRow | undefined,
+): RuntimeDatabasePrincipalSecurity {
+  if (!principal) throw new Error("Unable to inspect the current database principal");
+  return {
+    principal: principal.principal,
+    sessionPrincipal: principal.session_principal,
+    sessionMatchesCurrent: principal.session_matches_current,
+    runtimeRoleMember: principal.runtime_role_member,
+    superuser: principal.superuser,
+    bypassRls: principal.bypass_rls,
+    createRole: principal.create_role,
+    createDatabase: principal.create_database,
+    replication: principal.replication,
+    privilegedRoleMember: principal.privileged_role_member,
+    unexpectedRoleMember: principal.unexpected_role_member,
+    ownerRoleMember: principal.owner_role_member,
+  };
+}
+
+export function assertRestrictedRuntimeDatabasePrincipal(
+  principal: RuntimeDatabasePrincipalSecurity,
+) {
+  if (
+    !principal.sessionMatchesCurrent ||
+    !principal.runtimeRoleMember ||
+    principal.superuser ||
+    principal.bypassRls ||
+    principal.createRole ||
+    principal.createDatabase ||
+    principal.replication ||
+    principal.privilegedRoleMember ||
+    principal.unexpectedRoleMember ||
+    principal.ownerRoleMember
+  ) {
+    throw new Error(
+      "Capacity provisioning requires a restricted, non-owner openround_runtime database principal",
+    );
+  }
+  return principal;
+}
 
 function date(value: unknown): Date {
   return value instanceof Date ? value : new Date(String(value));
@@ -830,6 +943,11 @@ export class PostgresRepository implements Repository {
 
   async initialize() {
     await this.pool.query("SELECT 1");
+  }
+
+  async inspectRuntimeDatabasePrincipal(): Promise<RuntimeDatabasePrincipalSecurity> {
+    const result = await this.pool.query<RuntimeDatabasePrincipalRow>(runtimeDatabasePrincipalSql);
+    return mapRuntimeDatabasePrincipal(result.rows[0]);
   }
 
   async migrate() {
@@ -5503,6 +5621,113 @@ export class PostgresRepository implements Repository {
         provider.customerId,
         provider.subscriptionId,
       ],
+    );
+  }
+
+  async provisionCapacityTestWorkspace(
+    workspaceId: string,
+    requestId: string,
+  ): Promise<CapacityTestWorkspaceProvisionResult> {
+    return this.transaction(
+      async (client) => {
+        const principal = mapRuntimeDatabasePrincipal(
+          (await client.query<RuntimeDatabasePrincipalRow>(runtimeDatabasePrincipalSql)).rows[0],
+        );
+        assertRestrictedRuntimeDatabasePrincipal(principal);
+        const workspace = await client.query("SELECT id FROM workspaces WHERE id = $1 FOR UPDATE", [
+          workspaceId,
+        ]);
+        if (workspace.rowCount !== 1) {
+          throw new Error("Capacity-test workspace does not exist");
+        }
+
+        const subscription = await client.query<{
+          plan: Plan;
+          status: string;
+          provider_customer_id: string | null;
+          provider_subscription_id: string | null;
+        }>(
+          `SELECT plan, status, provider_customer_id, provider_subscription_id
+             FROM subscriptions
+            WHERE workspace_id = $1
+            FOR UPDATE`,
+          [workspaceId],
+        );
+        const current = subscription.rows[0];
+        const previousPlan = current?.plan ?? "free";
+        const previousStatus = current?.status ?? "free";
+        if (current?.provider_customer_id || current?.provider_subscription_id) {
+          throw new Error("Capacity-test provisioning refuses a provider-linked workspace");
+        }
+        const priorProvision = await client.query(
+          `SELECT 1
+             FROM audit_events
+            WHERE workspace_id = $1
+              AND action = 'operations.staging_capacity.provision'
+              AND target_type = 'workspace'
+              AND target_id = $1::uuid::text
+            LIMIT 1`,
+          [workspaceId],
+        );
+        if (previousPlan === "team" && previousStatus === "active") {
+          if (priorProvision.rowCount !== 1) {
+            throw new Error(
+              "Capacity-test provisioning refuses a Team workspace without its prior audit marker",
+            );
+          }
+          return {
+            workspaceId,
+            previousPlan,
+            previousStatus,
+            plan: "team",
+            status: "active",
+            changed: false,
+          };
+        }
+        if (previousPlan !== "free" || previousStatus !== "free") {
+          throw new Error("Capacity-test provisioning requires an untouched free workspace");
+        }
+        if (priorProvision.rowCount === 1) {
+          throw new Error("Capacity-test provisioning requires an untouched free workspace");
+        }
+
+        await client.query(
+          `INSERT INTO subscriptions (workspace_id, plan, status, updated_at)
+           VALUES ($1, 'team', 'active', now())
+           ON CONFLICT (workspace_id) DO UPDATE SET
+             plan = 'team',
+             status = 'active',
+             updated_at = now()`,
+          [workspaceId],
+        );
+        await client.query(
+          `INSERT INTO audit_events
+             (id, workspace_id, actor_id, action, target_type, target_id, request_id, metadata)
+           VALUES ($1,$2,NULL,'operations.staging_capacity.provision','workspace',$2::uuid::text,$3,$4)`,
+          [
+            randomUUID(),
+            workspaceId,
+            requestId,
+            JSON.stringify({
+              purpose: "target-region-load",
+              previousPlan,
+              previousStatus,
+              plan: "team",
+              status: "active",
+              maxParticipants: 250,
+            }),
+          ],
+        );
+        return {
+          workspaceId,
+          previousPlan,
+          previousStatus,
+          plan: "team",
+          status: "active",
+          changed: true,
+        };
+      },
+      { workspaceId },
     );
   }
 

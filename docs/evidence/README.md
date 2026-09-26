@@ -16,13 +16,16 @@ For each completed gate:
 5. Run `pnpm readiness:check`; run `pnpm readiness:require:beta:preflight` before tagging a beta
    candidate, then run `pnpm readiness:require:beta` after the signed-release evidence is accepted.
 
-Available templates cover [accessibility](accessibility-review.md),
-[security](security-review.md), [physical devices](device-matrix.md),
-[provider restoration](provider-restore.md), [alert delivery](operations-rehearsal.md),
-[target-region load and soak](target-region-load.md),
-[design-partner interviews](design-partner-interview.md), and
-[observed beta sessions](session-observation.md), plus the aggregate
-[P0 beta usability study](beta-usability.md) and
+Available release templates cover [single-VM staging](single-vm-staging.md),
+[alert delivery](operations-rehearsal.md), [target-region load and soak](target-region-load.md),
+[provider restoration](provider-restore.md), [accessibility](accessibility-review.md),
+[security](security-review.md), [privacy/legal approval](privacy-legal-approval.md),
+[live billing](live-billing-rehearsal.md), [repository governance](repository-governance-canary.md),
+[physical devices](device-matrix.md), and the [signed release candidate](signed-release-candidate.md).
+
+Research templates cover [design-partner interviews](design-partner-interview.md),
+[observed beta sessions](session-observation.md), the aggregate
+[P0 beta usability study](beta-usability.md), and the
 [Phase 0 segment/Phase 1 branch decision](phase0-stage-decision.md). Use the
 [research prototype evaluation](research-prototype-evaluation.md) for the allowlisted Companion,
 Question Health, and delayed-probe studies; a completed prototype record is research input and does

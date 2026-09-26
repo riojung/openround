@@ -47,6 +47,30 @@ export interface BillingEventInput {
   subscriptionId?: string;
 }
 
+export interface CapacityTestWorkspaceProvisionResult {
+  workspaceId: string;
+  previousPlan: Plan;
+  previousStatus: string;
+  plan: "team";
+  status: "active";
+  changed: boolean;
+}
+
+export interface RuntimeDatabasePrincipalSecurity {
+  principal: string;
+  sessionPrincipal: string;
+  sessionMatchesCurrent: boolean;
+  runtimeRoleMember: boolean;
+  superuser: boolean;
+  bypassRls: boolean;
+  createRole: boolean;
+  createDatabase: boolean;
+  replication: boolean;
+  privilegedRoleMember: boolean;
+  unexpectedRoleMember: boolean;
+  ownerRoleMember: boolean;
+}
+
 export interface CreatorContext {
   userId: string;
   workspaceId: string;
@@ -1353,6 +1377,10 @@ export interface Repository {
     plan: Plan,
     provider?: { customerId?: string; subscriptionId?: string; status?: string },
   ): Promise<void>;
+  provisionCapacityTestWorkspace(
+    workspaceId: string,
+    requestId: string,
+  ): Promise<CapacityTestWorkspaceProvisionResult>;
   recordBillingEvent(providerEventId: string, eventType: string): Promise<boolean>;
   applyBillingEvent(input: BillingEventInput): Promise<boolean>;
   recordAudit(input: AuditInput): Promise<void>;
