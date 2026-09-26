@@ -47,8 +47,27 @@ underlying command used by the protected staging-image workflow:
 ```
 
 Active staging requires signatures from `.github/workflows/staging-images.yml` running on `main`;
-an arbitrary workstation signature cannot satisfy its identity policy. Dispatch **Staging images**
-after the target config is reviewed, then download its signed manifest. Before a real deployment,
+an arbitrary workstation signature cannot satisfy its identity policy. Create and protect the
+`single-vm-staging` GitHub environment before the first dispatch; allowing GitHub to create it from
+a workflow job would leave the signing job without the required reviewer protection. After the
+target config is reviewed, dispatch **Staging images** through the default-branch-only repository
+event:
+
+```bash
+gh api --method POST repos/riojung/openround/dispatches --input - <<'JSON'
+{
+  "event_type": "staging-images"
+}
+JSON
+```
+
+The event intentionally accepts no caller-selected ref or inputs. GitHub loads the workflow from
+the default branch, and an unprotected preflight verifies that the checkout is the current
+`origin/main` tip before the environment, package-write permission, or signing identity becomes
+available. The protected job repeats that freshness check after reviewer approval and before
+package login or OIDC signing, so an approval delayed past a new `main` commit fails closed. Do not
+substitute `gh workflow run`, which uses the `workflow_dispatch` interface and can select another
+ref. Download the signed manifest only after the protected job succeeds. Before a real deployment,
 replace the `.example` domains and placeholder host names in
 `config/deploy/staging.json` and `config/deploy/production.json`. The build writes digest-selected
 references and the full Git commit to:
@@ -274,8 +293,9 @@ JSON, manifests, command arguments, logs, receipts, or release artifacts.
 For staging:
 
 1. Review and update `config/deploy/staging.json`, DNS, host-key pin, runtime values, and VM sizing.
-2. Dispatch the protected **Staging images** workflow from `main`. It builds, scans, signs, and
-   verifies both image digests. Download and review its complete manifest.
+2. Invoke the `staging-images` repository dispatch shown above. Its default-branch preflight must
+   pass before the protected job builds, scans, signs, and verifies both image digests. Download and
+   review its complete manifest.
 3. Run the deploy command first with `--dry-run`, then without it using the exact confirmation value.
 4. The deployer verifies inputs and gates, uploads a private incoming release, validates Compose,
    pulls exact images, runs the candidate configuration check, verifies the embedded web build ID,
