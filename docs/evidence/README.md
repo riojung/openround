@@ -12,7 +12,9 @@ For each completed gate:
 2. Attach redacted logs or checksums and a stable evidence URL with access appropriate to the
    reviewers.
 3. Record failures and follow-up issues; a partial exercise is not a passing gate.
-4. Update `docs/release-readiness.json` only after the named reviewer accepts the evidence.
+4. Update `docs/release-readiness.json` only after the named reviewer accepts the evidence. For the
+   signed-release gate, use the exact evidence-only transition and `releaseBinding` documented in
+   the signed release candidate record; do not combine that acceptance with any other change.
 5. Run `pnpm readiness:check`; run `pnpm readiness:require:beta:preflight` before tagging a beta
    candidate, then run `pnpm readiness:require:beta` after the signed-release evidence is accepted.
 

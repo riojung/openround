@@ -67,6 +67,58 @@ describe("workflow action supply chain", () => {
   });
 });
 
+describe("staging readiness trust boundary", () => {
+  it("uses a default-branch repository dispatch with a fail-closed payload", async () => {
+    const workflow = await readFile(
+      join(repositoryRoot, ".github/workflows/staging-readiness.yml"),
+      "utf8",
+    );
+    const mainCandidate = workflow.match(
+      / {2}main-candidate:\n([\s\S]*?)(?=\n {2}remote-readiness:)/,
+    )?.[1];
+
+    expect(mainCandidate).toBeDefined();
+    expect(workflow).toContain("repository_dispatch:\n    types: [staging-readiness]");
+    expect(workflow).not.toContain("workflow_dispatch:");
+    expect(mainCandidate).not.toMatch(/^ {4}if:/m);
+    expect(mainCandidate).not.toContain("environment:");
+    expect(mainCandidate).toContain("fetch-depth: 0");
+    expect(mainCandidate).toContain('test "$GITHUB_EVENT_NAME" = repository_dispatch');
+    expect(mainCandidate).toContain(
+      "git fetch --force origin '+refs/heads/main:refs/remotes/origin/main'",
+    );
+    expect(mainCandidate).toContain('test "$GITHUB_REF" = refs/heads/main');
+    expect(mainCandidate).toContain(
+      'test "$(git rev-parse --verify HEAD)" = "$(git rev-parse --verify origin/main)"',
+    );
+    expect(mainCandidate).toContain('new Set(["run_stripe_replay", "soak_minutes"])');
+    expect(mainCandidate).toContain('typeof runStripeReplay !== "boolean"');
+    expect(mainCandidate).toContain('typeof soakMinutes !== "string"');
+    expect(mainCandidate).toContain('["0", "15", "60"].includes(soakMinutes)');
+    expect(mainCandidate).toContain(
+      "run_stripe_replay: ${{ steps.payload.outputs.run_stripe_replay }}",
+    );
+    expect(mainCandidate).toContain("soak_minutes: ${{ steps.payload.outputs.soak_minutes }}");
+
+    expect(workflow).toContain("needs.main-candidate.outputs.soak_minutes != '0'");
+    expect(workflow).toContain("SOAK_MINUTES: ${{ needs.main-candidate.outputs.soak_minutes }}");
+    expect(workflow).toContain("needs.main-candidate.outputs.run_stripe_replay == 'true'");
+    expect(workflow).not.toMatch(/\binputs\.(?:soak_minutes|run_stripe_replay)\b/);
+
+    for (const [job, dependency] of [
+      ["remote-readiness", "needs: main-candidate"],
+      ["target-region-load", "needs: [main-candidate, remote-readiness]"],
+      ["stripe-replay", "needs: [main-candidate, remote-readiness]"],
+    ] as const) {
+      const section = workflow.match(new RegExp(`  ${job}:\\n([\\s\\S]*?)(?=\\n  \\S|$)`))?.[1];
+
+      expect(section, `${job} job`).toBeDefined();
+      expect(section).toContain("github.ref == 'refs/heads/main'");
+      expect(section).toContain(dependency);
+    }
+  });
+});
+
 describe("release image vulnerability evidence", () => {
   it("scans both immutable references before reporting vulnerability failures", async () => {
     const runCommand = vi.fn(async (_command: string, args: string[]) => {
@@ -87,7 +139,7 @@ describe("release image vulnerability evidence", () => {
     expect(runCommand.mock.calls.map(([, args]) => args.at(-1))).toEqual([serverRef, webRef]);
     for (const [, args] of runCommand.mock.calls) {
       expect(args).toContain("HIGH,CRITICAL");
-      expect(args).toContain("--ignore-unfixed");
+      expect(args).not.toContain("--ignore-unfixed");
       expect(args).toContain("--exit-code");
       expect(args).toContain("1");
     }
@@ -103,6 +155,7 @@ describe("release image vulnerability evidence", () => {
     expect(actionScans).toHaveLength(2);
     for (const scan of actionScans) {
       expect(scan).toMatch(/if: always\(\) && steps\.manifest\.outcome == 'success'/);
+      expect(scan).not.toMatch(/ignore-unfixed:/);
       expect(scan).toMatch(/limit-severities-for-sarif: true/);
       expect(scan).toMatch(/skip-setup-trivy: true/);
     }

@@ -1,19 +1,8 @@
 name: Staging readiness
 
 on:
-  workflow_dispatch:
-    inputs:
-      run_stripe_replay:
-        description: Run the destructive signed-webhook rehearsal on the dedicated staging account
-        required: true
-        default: false
-        type: boolean
-      soak_minutes:
-        description: Repeated target-region games after the primary check
-        required: true
-        default: "0"
-        type: choice
-        options: ["0", "15", "60"]
+  repository_dispatch:
+    types: [staging-readiness]
 
 permissions:
   contents: read
@@ -23,7 +12,61 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  main-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_stripe_replay: ${{ steps.payload.outputs.run_stripe_replay }}
+      soak_minutes: ${{ steps.payload.outputs.soak_minutes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Verify main-branch candidate
+        run: |
+          set -euo pipefail
+          git fetch --force origin '+refs/heads/main:refs/remotes/origin/main'
+          test "$GITHUB_EVENT_NAME" = repository_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse --verify HEAD)" = "$(git rev-parse --verify origin/main)"
+      - name: Validate dispatcher payload
+        id: payload
+        env:
+          CLIENT_PAYLOAD_JSON: ${{ toJSON(github.event.client_payload) }}
+        run: |
+          node <<'NODE'
+          const { appendFileSync } = require("node:fs");
+
+          const payload = JSON.parse(process.env.CLIENT_PAYLOAD_JSON ?? "null");
+          if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+            throw new Error("client_payload must be a JSON object");
+          }
+
+          const allowedKeys = new Set(["run_stripe_replay", "soak_minutes"]);
+          const unknownKeys = Object.keys(payload).filter((key) => !allowedKeys.has(key));
+          if (unknownKeys.length > 0) {
+            throw new Error(`Unsupported client_payload keys: ${unknownKeys.join(", ")}`);
+          }
+
+          const runStripeReplay = payload.run_stripe_replay ?? false;
+          const soakMinutes = payload.soak_minutes ?? "0";
+          if (typeof runStripeReplay !== "boolean") {
+            throw new Error("client_payload.run_stripe_replay must be a boolean");
+          }
+          if (typeof soakMinutes !== "string" || !["0", "15", "60"].includes(soakMinutes)) {
+            throw new Error('client_payload.soak_minutes must be one of "0", "15", or "60"');
+          }
+
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `run_stripe_replay=${runStripeReplay}\nsoak_minutes=${soakMinutes}\n`,
+            "utf8",
+          );
+          NODE
+
   remote-readiness:
+    if: github.ref == 'refs/heads/main'
+    needs: main-candidate
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: single-vm-staging
@@ -101,7 +144,8 @@ jobs:
           retention-days: 30
 
   target-region-load:
-    needs: remote-readiness
+    if: github.ref == 'refs/heads/main'
+    needs: [main-candidate, remote-readiness]
     runs-on: [self-hosted, single-vm-staging]
     timeout-minutes: 90
     environment: single-vm-staging
@@ -186,11 +230,11 @@ jobs:
           LOAD_OUTPUT: artifacts/readiness/target-region-presentation-250.json
         run: pnpm load:presentation:compose
       - name: Run repeated target-region soak
-        if: inputs.soak_minutes != '0'
+        if: needs.main-candidate.outputs.soak_minutes != '0'
         env:
           LOAD_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
           CLIENTS: "50"
-          SOAK_MINUTES: ${{ inputs.soak_minutes }}
+          SOAK_MINUTES: ${{ needs.main-candidate.outputs.soak_minutes }}
         run: |
           mkdir -p artifacts/readiness/soak
           started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -238,8 +282,10 @@ jobs:
           retention-days: 30
 
   stripe-replay:
-    if: inputs.run_stripe_replay
-    needs: remote-readiness
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      needs.main-candidate.outputs.run_stripe_replay == 'true'
+    needs: [main-candidate, remote-readiness]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: single-vm-staging

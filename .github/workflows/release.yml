@@ -190,7 +190,6 @@ jobs:
           format: sarif
           output: artifacts/release/server/trivy.sarif
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
           exit-code: 1
           limit-severities-for-sarif: true
           skip-setup-trivy: true
@@ -209,7 +208,6 @@ jobs:
           format: sarif
           output: artifacts/release/web/trivy.sarif
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
           exit-code: 1
           limit-severities-for-sarif: true
           skip-setup-trivy: true

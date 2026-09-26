@@ -1,6 +1,6 @@
 # Single-VM staging readiness workflow
 
-The manual `Staging readiness` GitHub workflow separates three kinds of evidence. A GitHub-hosted
+The API-triggered `Staging readiness` GitHub workflow separates three kinds of evidence. A GitHub-hosted
 Ubuntu runner probes public TLS, dependency health, feature flags, security headers, and the
 effective beta switches for one dedicated synthetic workspace. A self-hosted runner located near
 the target VM runs fixed 50- and 250-client Round and Presentation profiles plus a bounded soak. A
@@ -13,6 +13,12 @@ API/realtime, PostgreSQL, Valkey, MinIO, and ClamAV share that host. The profile
 failover, high availability, or SLA. A passing workflow does not remove the requirements for
 encrypted off-host backups, a clean replacement-VM restore drill, host patching, monitoring,
 strict SSH host-key verification, or public-production approval.
+
+The workflow accepts only the `staging-readiness` `repository_dispatch` event. GitHub therefore
+loads the workflow definition from the repository's default branch instead of letting a caller
+select a branch containing different self-hosted-runner or environment steps. The first unprotected
+job also requires the checked-out revision to be the current `main` tip and validates the complete
+client payload before any protected or self-hosted job can run.
 
 Open a [single-VM staging evidence record](../evidence/single-vm-staging.md) before provisioning so
 the candidate identity, host baseline, independent reviewer, service checks, and redacted artifact
@@ -145,7 +151,27 @@ durable audit marker already exists for the same workspace; an unrelated pre-exi
 workspace is rejected. Retain the redacted JSON result and approved request reference with the
 staging evidence record; do not retain the creator cookie there.
 
-Run the workflow with no soak first. Confirm the `single-vm-staging-remote-probe-*` artifact from
+Dispatch the first run with no soak:
+
+```bash
+gh api --method POST repos/riojung/openround/dispatches --input - <<'JSON'
+{
+  "event_type": "staging-readiness",
+  "client_payload": {
+    "run_stripe_replay": false,
+    "soak_minutes": "0"
+  }
+}
+JSON
+```
+
+The payload may contain only `run_stripe_replay` (a JSON boolean) and `soak_minutes` (the string
+`"0"`, `"15"`, or `"60"`). Omitting either field retains the safe defaults shown above. Unknown
+keys, stringified booleans, numeric soak values, and unsupported durations fail the workflow before
+protected jobs run. The caller needs repository Contents write access; environment reviewers still
+approve jobs that consume `single-vm-staging` secrets.
+
+Confirm the `single-vm-staging-remote-probe-*` artifact from
 the hosted runner and all four build-matched target-region artifacts from the target-VM runner:
 
 - `target-region-round-50.json`
@@ -153,7 +179,7 @@ the hosted runner and all four build-matched target-region artifacts from the ta
 - `target-region-round-250.json`
 - `target-region-presentation-250.json`
 
-After the fixed matrix passes, rerun with the 15-minute soak and inspect every per-game artifact.
+After the fixed matrix passes, dispatch the same event with `"soak_minutes": "15"` and inspect every per-game artifact.
 Use the 60-minute option for a release candidate only after confirming VM resources, disk
 headroom, backup timing, and synthetic-account isolation. The workflow asserts correctness,
 latency, reconnect, client-receipt, and report-reconciliation thresholds, cleans up disposable
@@ -179,7 +205,7 @@ unverified metadata. Retain the four load artifacts, runner provenance, soak sum
 saturation evidence together. Run sustained load against the actual VM size and networking path:
 local desktop results and a GitHub-hosted public probe are not capacity evidence for this target.
 
-Enable the Stripe replay only when an approved test configuration is active and no provider test
+Set `"run_stripe_replay": true` only when an approved test configuration is active and no provider test
 is manipulating the rehearsal workspace. The replay proves signature, duplicate, stale-event, and
 cancellation handling using locally signed payloads and is stored separately as
 `single-vm-staging-stripe-replay-*`; complete a real Stripe test-mode checkout, portal, delivery

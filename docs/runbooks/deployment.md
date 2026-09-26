@@ -290,6 +290,18 @@ For staging:
 Production repeats the process with an independently reviewed signed release manifest, all
 [production readiness](production-readiness.md) gates complete, a verified off-host backup
 reference, a rehearsed replacement-host restore, named responders, and a rollback decision owner.
+Run it from the reviewed evidence-acceptance commit described in the
+[repository governance runbook](repository-governance.md#release-controls). The normal source rule
+still requires operations `HEAD` to equal the manifest build ID. The sole exception is this
+production acceptance commit: the tagged build must be its ancestor; the full tree delta may
+contain only `docs/release-readiness.json`; only the `signed-release` acceptance may change inside
+that ledger; and its tag object, tagged commit, downloaded-manifest SHA-256, and both image digests
+must match the selected manifest. The deployer fetches `origin/main` and the exact release tag from
+the trusted OpenRound GitHub remote, requires `HEAD` to equal the fetched main tip, and verifies the
+exact annotated tag object's valid signature and target through the GitHub API, so run it with
+network access and read access to that repository. A local-only, unsigned, recreated, or substituted
+commit or tag, or any documentation, code, configuration, or unrelated gate change, requires a new
+reviewed release build and tag.
 
 ## Failure and rollback policy
 

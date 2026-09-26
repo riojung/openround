@@ -23,12 +23,14 @@ import {
   REMOTE_REMOVE_INCOMING_SCRIPT,
   REMOTE_RESTORE_PREVIOUS_SCRIPT,
   REMOTE_WRITE_SCRIPT,
+  assertProductionReleaseRevision,
   assertRemoteRollbackSource,
   assertRemoteTargetNotActive,
   main as deployMain,
   resolveReviewedDeploymentInputHashes,
   validateSingleVmRuntimeValues,
   verifyForwardDeploymentAncestry,
+  verifySignatures,
 } from "../../scripts/ops/deploy.mjs";
 import {
   assertNoEnvironmentKeyOverlap,
@@ -53,6 +55,7 @@ import {
   validateSingleVmConfig,
 } from "../../scripts/ops/lib.mjs";
 import { main as productBuildMain, withPreservedFiles } from "../../scripts/ops/product-build.mjs";
+import { validateReleaseBinding } from "../../scripts/ops/release-acceptance.mjs";
 import { REMOTE_SERVICE_SCRIPT, main as serviceMain } from "../../scripts/ops/service.mjs";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -260,6 +263,7 @@ async function withReviewedDeploymentGitState<T>(
         "scripts/deploy.sh",
         "scripts/ops/deploy.mjs",
         "scripts/ops/lib.mjs",
+        "scripts/ops/release-acceptance.mjs",
         "scripts/ops/service.mjs",
         "scripts/check-release-readiness.mjs",
         "docs/release-readiness.json",
@@ -295,6 +299,169 @@ async function withReviewedDeploymentGitState<T>(
     if (previousGitWorkTree === undefined) delete process.env.GIT_WORK_TREE;
     else process.env.GIT_WORK_TREE = previousGitWorkTree;
     await rm(fixtureRoot, { recursive: true, force: true });
+  }
+}
+
+async function withSignedReleaseAcceptance<T>(
+  options: {
+    changeOtherGate?: boolean;
+    extraChangedPath?: boolean;
+    manifestDigestOverride?: string;
+    publishAcceptance?: boolean;
+    serverDigestOverride?: string;
+  },
+  callback: (fixture: {
+    root: string;
+    buildId: string;
+    operationsRevision: string;
+    manifest: ReturnType<typeof buildManifest>;
+    manifestPath: string;
+    trustedRemoteUrls: string[];
+    tagObjectLookup: (tagObject: string) => Promise<unknown>;
+  }) => Promise<T>,
+) {
+  const artifactsRoot = join(repositoryRoot, "artifacts");
+  await mkdir(artifactsRoot, { recursive: true });
+  const root = await mkdtemp(join(artifactsRoot, "signed release acceptance "));
+  try {
+    await run("git", ["init", "--quiet"], { cwd: root, capture: true });
+    await run("git", ["config", "user.name", "OpenRound Test"], { cwd: root, capture: true });
+    await run("git", ["config", "user.email", "test@example.invalid"], {
+      cwd: root,
+      capture: true,
+    });
+    const trustedOrigin = join(root, ".trusted-origin.git");
+    await run("git", ["init", "--bare", "--quiet", trustedOrigin], {
+      cwd: root,
+      capture: true,
+    });
+    await run("git", ["remote", "add", "origin", trustedOrigin], {
+      cwd: root,
+      capture: true,
+    });
+    const readinessPath = join(root, "docs", "release-readiness.json");
+    await mkdir(dirname(readinessPath), { recursive: true });
+    const taggedLedger = {
+      schemaVersion: 1,
+      updatedAt: "2026-09-25",
+      releaseTarget: "single-vm-beta",
+      gates: [
+        {
+          id: "source-ci",
+          name: "Source CI",
+          owner: "engineering",
+          requiredFor: ["single-vm-beta-preflight", "single-vm-beta"],
+          status: "complete",
+          criterion: "The exact release source passed every required source check.",
+          evidence: ["https://example.test/source-ci"],
+        },
+        {
+          id: "signed-release",
+          name: "Signed release",
+          owner: "maintainer",
+          requiredFor: ["single-vm-beta"],
+          status: "pending",
+          criterion: "The exact candidate has retained signed release evidence.",
+          evidence: [],
+          nextAction: "Create and verify the protected release candidate.",
+        },
+      ],
+    };
+    await writeFile(readinessPath, `${JSON.stringify(taggedLedger, null, 2)}\n`);
+    await run("git", ["add", "--", "docs/release-readiness.json"], {
+      cwd: root,
+      capture: true,
+    });
+    await run("git", ["commit", "--quiet", "--no-gpg-sign", "--message", "release source"], {
+      cwd: root,
+      capture: true,
+    });
+    const candidateBuildId = await run("git", ["rev-parse", "HEAD"], {
+      cwd: root,
+      capture: true,
+    }).then(({ stdout }) => stdout.trim());
+    await run("git", ["tag", "--annotate", "v0.9.0", "--message", "OpenRound v0.9.0"], {
+      cwd: root,
+      capture: true,
+    });
+    const tagObject = await run("git", ["rev-parse", "refs/tags/v0.9.0"], {
+      cwd: root,
+      capture: true,
+    }).then(({ stdout }) => stdout.trim());
+    await run(
+      "git",
+      ["push", "origin", "HEAD:refs/heads/main", "refs/tags/v0.9.0:refs/tags/v0.9.0"],
+      { cwd: root, capture: true },
+    );
+    const manifest = buildManifest("production", candidateBuildId);
+    const manifestPath = join(root, "build-manifest.json");
+    const manifestContent = `${JSON.stringify(manifest, null, 2)}\n`;
+    await writeFile(manifestPath, manifestContent);
+    const manifestDigest = `sha256:${createHash("sha256").update(manifestContent).digest("hex")}`;
+    const acceptedLedger = structuredClone(taggedLedger);
+    const signedRelease = acceptedLedger.gates.find(({ id }) => id === "signed-release")!;
+    signedRelease.status = "complete";
+    signedRelease.evidence = ["https://example.test/releases/v0.9.0/evidence"];
+    delete signedRelease.nextAction;
+    Object.assign(signedRelease, {
+      releaseBinding: {
+        schemaVersion: 1,
+        tag: "v0.9.0",
+        tagObject,
+        buildId: candidateBuildId,
+        manifestDigest: options.manifestDigestOverride ?? manifestDigest,
+        imageDigests: {
+          server: options.serverDigestOverride ?? manifest.images.server.digest,
+          web: manifest.images.web.digest,
+        },
+      },
+    });
+    if (options.changeOtherGate) acceptedLedger.gates[0].owner = "unreviewed-owner";
+    await writeFile(readinessPath, `${JSON.stringify(acceptedLedger, null, 2)}\n`);
+    if (options.extraChangedPath) {
+      await writeFile(join(root, "deployment-code.txt"), "unreviewed deployment change\n");
+    }
+    await run(
+      "git",
+      [
+        "add",
+        "--",
+        "docs/release-readiness.json",
+        ...(options.extraChangedPath ? ["deployment-code.txt"] : []),
+      ],
+      { cwd: root, capture: true },
+    );
+    await run(
+      "git",
+      ["commit", "--quiet", "--no-gpg-sign", "--message", "accept release evidence"],
+      { cwd: root, capture: true },
+    );
+    const operationsRevision = await run("git", ["rev-parse", "HEAD"], {
+      cwd: root,
+      capture: true,
+    }).then(({ stdout }) => stdout.trim());
+    if (options.publishAcceptance !== false) {
+      await run("git", ["push", "origin", "HEAD:refs/heads/main"], {
+        cwd: root,
+        capture: true,
+      });
+    }
+    return await callback({
+      root,
+      buildId: candidateBuildId,
+      operationsRevision,
+      manifest,
+      manifestPath,
+      trustedRemoteUrls: [trustedOrigin],
+      tagObjectLookup: async (requestedTagObject) => ({
+        sha: requestedTagObject,
+        tag: "v0.9.0",
+        object: { type: "commit", sha: candidateBuildId },
+        verification: { verified: true, reason: "valid" },
+      }),
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 }
 
@@ -371,6 +538,213 @@ describe("operations environment contract", () => {
     } finally {
       await rm(fixtureRoot, { recursive: true, force: true });
     }
+  });
+
+  it("permits a production release only through its exact evidence-only acceptance commit", async () => {
+    await withSignedReleaseAcceptance({}, async (fixture) => {
+      await expect(
+        assertProductionReleaseRevision({
+          operationsRevision: fixture.operationsRevision,
+          manifest: fixture.manifest,
+          manifestPath: fixture.manifestPath,
+          root: fixture.root,
+          trustedRemoteUrls: fixture.trustedRemoteUrls,
+          tagObjectLookup: fixture.tagObjectLookup,
+        }),
+      ).resolves.toMatchObject({
+        tag: "v0.9.0",
+        buildId: fixture.buildId,
+        certificateIdentity:
+          "https://github.com/riojung/openround/.github/workflows/release.yml@refs/tags/v0.9.0",
+        imageDigests: {
+          server: fixture.manifest.images.server.digest,
+          web: fixture.manifest.images.web.digest,
+        },
+      });
+    });
+  });
+
+  it("rejects array values that stringify to valid release-binding fields", () => {
+    const manifestDigest = `sha256:${"d".repeat(64)}`;
+    const validBinding = {
+      schemaVersion: 1,
+      tag: "v0.9.0",
+      tagObject: "e".repeat(40),
+      buildId,
+      manifestDigest,
+      imageDigests: { server: serverDigest, web: webDigest },
+    };
+    const cases = [
+      {
+        field: "tag",
+        binding: { ...validBinding, tag: [validBinding.tag] },
+      },
+      {
+        field: "tagObject",
+        binding: { ...validBinding, tagObject: [validBinding.tagObject] },
+      },
+      {
+        field: "buildId",
+        binding: { ...validBinding, buildId: [validBinding.buildId] },
+      },
+      {
+        field: "manifestDigest",
+        binding: { ...validBinding, manifestDigest: [validBinding.manifestDigest] },
+      },
+      {
+        field: "imageDigests.server",
+        binding: {
+          ...validBinding,
+          imageDigests: { ...validBinding.imageDigests, server: [serverDigest] },
+        },
+      },
+      {
+        field: "imageDigests.web",
+        binding: {
+          ...validBinding,
+          imageDigests: { ...validBinding.imageDigests, web: [webDigest] },
+        },
+      },
+    ];
+
+    for (const { field, binding } of cases) {
+      expect(() => validateReleaseBinding(binding)).toThrow(`releaseBinding.${field} must be`);
+    }
+  });
+
+  it("verifies production images against the exact accepted release-tag identity", async () => {
+    const certificateIdentity =
+      "https://github.com/riojung/openround/.github/workflows/release.yml@refs/tags/v0.9.0";
+    const output = await captureStdout(() =>
+      verifySignatures(productionConfig(), buildManifest("production"), true, certificateIdentity),
+    );
+
+    expect(output.match(/cosign verify/g)).toHaveLength(2);
+    expect(output).toContain(`--certificate-identity ${certificateIdentity}`);
+    expect(output).not.toContain("--certificate-identity-regexp");
+  });
+
+  it("rejects an unsigned or substituted published release tag object", async () => {
+    await withSignedReleaseAcceptance({}, async (fixture) => {
+      await expect(
+        assertProductionReleaseRevision({
+          operationsRevision: fixture.operationsRevision,
+          manifest: fixture.manifest,
+          manifestPath: fixture.manifestPath,
+          root: fixture.root,
+          trustedRemoteUrls: fixture.trustedRemoteUrls,
+          tagObjectLookup: async (tagObject) => ({
+            sha: tagObject,
+            tag: "v0.9.0",
+            object: { type: "commit", sha: fixture.buildId },
+            verification: { verified: false, reason: "unsigned" },
+          }),
+        }),
+      ).rejects.toThrow("has not verified the exact annotated release tag object signature");
+
+      await expect(
+        assertProductionReleaseRevision({
+          operationsRevision: fixture.operationsRevision,
+          manifest: fixture.manifest,
+          manifestPath: fixture.manifestPath,
+          root: fixture.root,
+          trustedRemoteUrls: fixture.trustedRemoteUrls,
+          tagObjectLookup: async () => ({
+            sha: "d".repeat(40),
+            tag: "v0.9.0",
+            object: { type: "commit", sha: fixture.buildId },
+            verification: { verified: true, reason: "valid" },
+          }),
+        }),
+      ).rejects.toThrow("does not match the signed release acceptance");
+    });
+  });
+
+  it("rejects a non-descendant acceptance state and a local-only acceptance commit", async () => {
+    await withSignedReleaseAcceptance({}, async (fixture) => {
+      await expect(
+        assertProductionReleaseRevision({
+          operationsRevision: fixture.buildId,
+          manifest: fixture.manifest,
+          manifestPath: fixture.manifestPath,
+          root: fixture.root,
+          trustedRemoteUrls: fixture.trustedRemoteUrls,
+          tagObjectLookup: fixture.tagObjectLookup,
+        }),
+      ).rejects.toThrow("must be a strict evidence-only descendant");
+    });
+    await withSignedReleaseAcceptance({ publishAcceptance: false }, async (fixture) => {
+      await expect(
+        assertProductionReleaseRevision({
+          operationsRevision: fixture.operationsRevision,
+          manifest: fixture.manifest,
+          manifestPath: fixture.manifestPath,
+          root: fixture.root,
+          trustedRemoteUrls: fixture.trustedRemoteUrls,
+          tagObjectLookup: fixture.tagObjectLookup,
+        }),
+      ).rejects.toThrow("HEAD must match the fetched origin/main commit");
+    });
+  });
+
+  it("rejects a release acceptance descendant that changes anything outside the ledger", async () => {
+    await withSignedReleaseAcceptance({ extraChangedPath: true }, async (fixture) => {
+      await expect(
+        assertProductionReleaseRevision({
+          operationsRevision: fixture.operationsRevision,
+          manifest: fixture.manifest,
+          manifestPath: fixture.manifestPath,
+          root: fixture.root,
+          trustedRemoteUrls: fixture.trustedRemoteUrls,
+          tagObjectLookup: fixture.tagObjectLookup,
+        }),
+      ).rejects.toThrow("may differ from the release build only by docs/release-readiness.json");
+    });
+  });
+
+  it("rejects unrelated gate changes and artifact drift in a release acceptance", async () => {
+    await withSignedReleaseAcceptance({ changeOtherGate: true }, async (fixture) => {
+      await expect(
+        assertProductionReleaseRevision({
+          operationsRevision: fixture.operationsRevision,
+          manifest: fixture.manifest,
+          manifestPath: fixture.manifestPath,
+          root: fixture.root,
+          trustedRemoteUrls: fixture.trustedRemoteUrls,
+          tagObjectLookup: fixture.tagObjectLookup,
+        }),
+      ).rejects.toThrow("descendant may not change gate source-ci");
+    });
+    await withSignedReleaseAcceptance(
+      { manifestDigestOverride: `sha256:${"f".repeat(64)}` },
+      async (fixture) => {
+        await expect(
+          assertProductionReleaseRevision({
+            operationsRevision: fixture.operationsRevision,
+            manifest: fixture.manifest,
+            manifestPath: fixture.manifestPath,
+            root: fixture.root,
+            trustedRemoteUrls: fixture.trustedRemoteUrls,
+            tagObjectLookup: fixture.tagObjectLookup,
+          }),
+        ).rejects.toThrow("manifestDigest does not match the selected release artifact");
+      },
+    );
+    await withSignedReleaseAcceptance(
+      { serverDigestOverride: `sha256:${"f".repeat(64)}` },
+      async (fixture) => {
+        await expect(
+          assertProductionReleaseRevision({
+            operationsRevision: fixture.operationsRevision,
+            manifest: fixture.manifest,
+            manifestPath: fixture.manifestPath,
+            root: fixture.root,
+            trustedRemoteUrls: fixture.trustedRemoteUrls,
+            tagObjectLookup: fixture.tagObjectLookup,
+          }),
+        ).rejects.toThrow("server digest does not match the build manifest");
+      },
+    );
   });
 
   it("normalizes the documented development alias and rejects unknown environments", () => {
