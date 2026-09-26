@@ -116,7 +116,7 @@ jobs:
             > artifacts/release/preflight.json
       - name: Upload release preflight evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-preflight-${{ github.ref_name }}
           path: artifacts/release/preflight.json
@@ -254,7 +254,7 @@ jobs:
           done
       - name: Upload server release evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-evidence-server-${{ github.ref_name }}
           path: artifacts/release/server/
@@ -262,7 +262,7 @@ jobs:
           retention-days: 90
       - name: Upload web release evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-evidence-web-${{ github.ref_name }}
           path: artifacts/release/web/
@@ -270,7 +270,7 @@ jobs:
           retention-days: 90
       - name: Upload deployment manifest
         if: success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-deployment-manifest-${{ github.ref_name }}
           path: artifacts/deploy/production/build-manifest.json
