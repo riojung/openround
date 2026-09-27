@@ -3,6 +3,7 @@ primary_region = "yyz"
 
 [env]
   NODE_ENV = "production"
+  OPENROUND_DEPLOYMENT_ENVIRONMENT = "production"
   HOST = "0.0.0.0"
   PORT = "4000"
   WEB_ORIGIN = "https://openround-ca-web.fly.dev"

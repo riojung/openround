@@ -29,6 +29,8 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Validate configured production deployment target
+        run: node scripts/check-deployment-target.mjs production
       - run: pnpm install --frozen-lockfile
       - name: Require all pre-release single-VM beta gates
         run: pnpm readiness:require:beta:preflight

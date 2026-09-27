@@ -11,11 +11,21 @@ Every HTTP response carries `x-request-id`. When tracing is active it also carri
 and browser CORS exposes both. Support may ask for these identifiers, but must not ask for creator,
 host, or participant credentials.
 
-Set `TRACING_ENABLED=true` and a full `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`—normally ending in
-`/v1/traces`—to export HTTP, Fastify, session join, answer, and host-command spans. Configure the
-collector endpoint on a private authenticated service path. Health and metrics scrapes are omitted
-from traces. Validate export during deployment; `pnpm smoke:tracing` verifies the application path
-against a local temporary collector but does not test a production backend.
+Set `TRACING_ENABLED=true` and an explicit, credential-free HTTP(S)
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`—normally ending in `/v1/traces`—to export HTTP, Fastify,
+session join, answer, and host-command spans. A hosted endpoint may not use a reserved,
+placeholder, loopback, or unspecified address; leaving the endpoint blank is valid only while
+tracing is disabled. Configure authentication at a private collector or proxy boundary rather than
+embedding credentials, query parameters, or fragments in the URL. Health and metrics scrapes are
+omitted from traces. Hosted spans identify the reviewed deployment environment and use the
+immutable OpenRound build ID as their service version, regardless of an operator-supplied generic
+OTel service-version value.
+Validate export during deployment; `pnpm smoke:tracing` verifies the application path against a
+local temporary collector but does not test a production backend.
+
+The single-VM profile does not bundle or silently enable a collector. Select the backend,
+authentication boundary, retention, residency, ownership, and failure behavior before setting
+`TRACING_ENABLED=true`; otherwise leave tracing disabled and keep the readiness gate open.
 
 `infra/observability/otel-collector.example.yml` is a validated production starting point. It
 accepts application OTLP, scrapes the HTTPS metrics endpoint with its bearer token, batches both

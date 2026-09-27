@@ -221,6 +221,99 @@ describe("production configuration", () => {
     ).toBe(false);
   });
 
+  it("requires an explicit HTTP(S) endpoint when tracing is enabled", () => {
+    expect(
+      ConfigSchema.parse({
+        ...productionConfig,
+        TRACING_ENABLED: "false",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "",
+      }).OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+    ).toBeUndefined();
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        TRACING_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "",
+      }),
+    ).toThrow(/Required when distributed tracing is enabled/);
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        TRACING_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "ftp://collector.example.ca/v1/traces",
+      }),
+    ).toThrow(/Must use HTTP or HTTPS/);
+
+    expect(
+      ConfigSchema.parse({
+        ...productionConfig,
+        OPENROUND_DEPLOYMENT_ENVIRONMENT: "staging",
+        TRACING_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://otel-collector:4318/v1/traces",
+      }).OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+    ).toBe("http://otel-collector:4318/v1/traces");
+    expect(
+      ConfigSchema.parse({
+        ...productionConfig,
+        OPENROUND_DEPLOYMENT_ENVIRONMENT: "staging",
+        TRACING_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://[::ffff:8.8.8.8]/v1/traces",
+      }).OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+    ).toBe("https://[::ffff:8.8.8.8]/v1/traces");
+  });
+
+  it.each([
+    "http://localhost:4318/v1/traces",
+    "http://collector.localhost:4318/v1/traces",
+    "http://collector.localhost.:4318/v1/traces",
+    "http://127.0.0.2:4318/v1/traces",
+    "http://0.0.0.0:4318/v1/traces",
+    "https://[::1]:4318/v1/traces",
+    "https://[::]:4318/v1/traces",
+    "http://[::ffff:127.0.0.1]:4318/v1/traces",
+    "http://[::ffff:0.0.0.0]:4318/v1/traces",
+    "http://[::ffff:192.0.2.10]:4318/v1/traces",
+    "https://collector.example/v1/traces",
+    "https://replace-collector.openround.ca/v1/traces",
+    "https://192.0.2.10/v1/traces",
+  ])("rejects unusable hosted tracing endpoint %s", (endpoint) => {
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        OPENROUND_DEPLOYMENT_ENVIRONMENT: "staging",
+        TRACING_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: endpoint,
+      }),
+    ).toThrow(/must not use a reserved, placeholder, loopback, or unspecified address/);
+  });
+
+  it.each([
+    "https://user:secret@collector.openround.ca/v1/traces",
+    "https://collector.openround.ca/v1/traces?token=secret",
+    "https://collector.openround.ca/v1/traces#secret",
+  ])("rejects hosted tracing endpoint metadata in %s", (endpoint) => {
+    expect(() =>
+      ConfigSchema.parse({
+        ...productionConfig,
+        OPENROUND_DEPLOYMENT_ENVIRONMENT: "staging",
+        TRACING_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: endpoint,
+      }),
+    ).toThrow(/must not contain credentials, a query, or a fragment/);
+  });
+
+  it("keeps loopback tracing available outside a hosted deployment", () => {
+    const endpoint = "http://127.0.0.1:4318/v1/traces";
+    expect(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        TRACING_ENABLED: "true",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: endpoint,
+      }).OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+    ).toBe(endpoint);
+  });
+
   it.each(["WEB_ORIGIN", "PUBLIC_API_URL", "S3_PUBLIC_ENDPOINT"] as const)(
     "requires HTTPS for %s",
     (key) => {

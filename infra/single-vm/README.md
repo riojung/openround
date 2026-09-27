@@ -80,6 +80,20 @@ runbook is approved.
 Production sign-in requires a real SMTP provider. Mailpit and debug magic links are not part of
 this profile. Public media uploads always pass through the included ClamAV service.
 
+Tracing is off by default and this profile does not bundle an OpenTelemetry collector. When it is
+enabled, set an explicit credential-free HTTP(S) `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` reachable
+from the server container; hosted validation rejects reserved, placeholder, loopback, and
+unspecified addresses. Select and review the collector backend, authentication boundary,
+retention, and residency before activation. OpenRound stamps spans with the deployment environment
+and immutable build ID.
+
+Workspace allowlists need the real UUID created by the first hosted sign-in. Bootstrap a new
+target with workspace-gated features disabled and empty allowlists, capture and review the
+synthetic workspace UUID, run the staging-capacity provisioner when required, and activate that
+UUID through a second signed build/config deployment. Do not edit the active release `.env` or
+replace its immutable directory in place; the deployment command rejects the currently active
+build ID.
+
 ## Validate, migrate, and start
 
 The deployment command combines the reviewed operator runtime with the reserved image and build

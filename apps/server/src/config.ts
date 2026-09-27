@@ -82,10 +82,74 @@ function isPrivateHttpUrl(value: string) {
 function isLoopbackHttpUrl(value: string) {
   const url = new URL(value);
   if (url.protocol !== "http:") return false;
-  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return isLoopbackHostname(url.hostname);
+}
+
+function mappedIpv4Octets(hostname: string) {
+  const dotted = hostname.match(/^::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (dotted) {
+    const octets = dotted.slice(1).map(Number);
+    return octets.every((octet) => octet <= 255) ? octets : undefined;
+  }
+  const match = hostname.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (!match) return undefined;
+  const high = Number.parseInt(match[1]!, 16);
+  const low = Number.parseInt(match[2]!, 16);
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff];
+}
+
+function isReservedHostedIpv4([first, second, third]: number[]) {
+  return (
+    first === 0 ||
+    first === 127 ||
+    (first === 192 && second === 0 && third === 2) ||
+    (first === 198 && second === 51 && third === 100) ||
+    (first === 203 && second === 0 && third === 113)
+  );
+}
+
+function isLoopbackHostname(value: string) {
+  const hostname = value
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
   if (hostname === "localhost" || hostname.endsWith(".localhost")) return true;
   if (isIP(hostname) === 4) return hostname.split(".").map(Number)[0] === 127;
-  return isIP(hostname) === 6 && hostname === "::1";
+  if (isIP(hostname) !== 6) return false;
+  const mapped = mappedIpv4Octets(hostname);
+  return hostname === "::1" || mapped?.[0] === 127;
+}
+
+function isUnusableHostedTracingHostname(value: string) {
+  const hostname = value
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
+  if (isLoopbackHostname(hostname) || hostname === "::") return true;
+  if (isIP(hostname) === 4) {
+    return isReservedHostedIpv4(hostname.split(".").map(Number));
+  }
+  if (isIP(hostname) === 6) {
+    const mapped = mappedIpv4Octets(hostname);
+    return (
+      (mapped !== undefined && isReservedHostedIpv4(mapped)) || hostname.startsWith("2001:db8:")
+    );
+  }
+  if (
+    ["example", "invalid", "localhost", "test", "example.com", "example.net", "example.org"].some(
+      (suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`),
+    )
+  ) {
+    return true;
+  }
+  return hostname
+    .split(".")
+    .some(
+      (label) =>
+        ["changeme", "example", "placeholder", "replace"].includes(label) ||
+        label.startsWith("replace-") ||
+        label.startsWith("placeholder-"),
+    );
 }
 
 export const ConfigSchema = z
@@ -175,7 +239,7 @@ export const ConfigSchema = z
     METRICS_ENABLED: defaultTrueBooleanString,
     METRICS_TOKEN: z.string().min(24).optional(),
     TRACING_ENABLED: booleanString,
-    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: z.string().url().optional(),
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: optionalHttpUrl,
     OTEL_SERVICE_NAME: z.string().trim().min(1).max(120).default("openround-server"),
     OTEL_SERVICE_VERSION: z.string().trim().min(1).max(80).default("0.1.0"),
     OPENROUND_BUILD_ID: z.string().trim().min(1).max(200).default("unversioned"),
@@ -457,6 +521,29 @@ export const ConfigSchema = z
         path: ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"],
         message: "Required when distributed tracing is enabled",
       });
+    }
+    if (
+      config.TRACING_ENABLED &&
+      config.OPENROUND_DEPLOYMENT_ENVIRONMENT &&
+      config.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+    ) {
+      const endpoint = new URL(config.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT);
+      if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"],
+          message:
+            "Hosted distributed tracing endpoint must not contain credentials, a query, or a fragment",
+        });
+      }
+      if (isUnusableHostedTracingHostname(endpoint.hostname)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"],
+          message:
+            "Hosted distributed tracing endpoint must not use a reserved, placeholder, loopback, or unspecified address",
+        });
+      }
     }
   });
 

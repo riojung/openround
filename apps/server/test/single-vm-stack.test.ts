@@ -32,6 +32,17 @@ describe("single-VM security boundaries", () => {
     expect(caddyfile).toContain("header_up X-Forwarded-For {http.request.remote.host}");
   });
 
+  it("does not let hosted tracing silently target the server container itself", () => {
+    expect(compose).toContain(
+      'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}"',
+    );
+    expect(compose).not.toContain("127.0.0.1:4318");
+    expect(compose).toContain(
+      'OTEL_SERVICE_VERSION: "${OPENROUND_BUILD_ID:?Set OPENROUND_BUILD_ID}"',
+    );
+    expect(compose).not.toContain("OTEL_SERVICE_VERSION: ${OTEL_SERVICE_VERSION");
+  });
+
   it("reconciles the MinIO application policy on every initialization", () => {
     expect(compose).toContain(
       "mc admin policy create local openround-media /tmp/openround-media-policy.json",

@@ -27,14 +27,12 @@ close the staging gate.
 
 ## GitHub environment
 
-Create a protected `single-vm-staging` environment with required reviewers. Configure these
-non-secret variables:
+Create a protected `single-vm-staging` environment with required reviewers. The workflow derives
+its API, web, and media targets from the validated `config/deploy/staging.json`; do not duplicate
+those origins as environment variables. Configure these non-secret variables:
 
 | Variable                                   | Example/purpose                                              |
 | ------------------------------------------ | ------------------------------------------------------------ |
-| `OPENROUND_API_URL`                        | Public HTTPS API/Socket.IO origin; same origin as web        |
-| `OPENROUND_WEB_URL`                        | Public HTTPS application origin                              |
-| `OPENROUND_MEDIA_URL`                      | Public HTTPS MinIO/S3 media origin                           |
 | `OPENROUND_EXPECTED_BILLING`               | `disabled` for the active staging profile                    |
 | `OPENROUND_EXPECTED_COMMUNITY_MODE`        | Reviewed staging value                                       |
 | `OPENROUND_EXPECTED_SIGNUPS`               | Expected public signup switch                                |
@@ -109,7 +107,10 @@ limits, and UTC availability window in the private exercise record.
    never accept a key interactively or use trust-on-first-use.
 3. Point the application and media DNS names at the VM. Confirm Caddy has issued valid public
    certificates for both names, HTTP redirects to HTTPS, and certificate-expiry monitoring has an
-   owner.
+   owner. Run `node scripts/check-deployment-target.mjs staging` from a clean checkout. It must
+   validate the non-placeholder public origins, VM address, and exact host/port key pin before a
+   protected workflow can run. Both staging workflows repeat this check in their unprotected
+   `main` preflight and fail before requesting environment approval when it does not pass.
 4. Create and protect the `single-vm-staging` GitHub environment before invoking the
    default-branch-only `staging-images` repository dispatch documented in the
    [deployment runbook](deployment.md#build-product-images). Do not use a ref-selectable workflow
@@ -135,8 +136,10 @@ limits, and UTC availability window in the private exercise record.
 
 The hosted runtime must set `OPENROUND_DEPLOYMENT_ENVIRONMENT=staging`, keep
 `COMMUNITY_MODE=false` and `BILLING_MODE=disabled`, and set `MAX_SESSION_PARTICIPANTS=250` before
-the capacity exercise. After the dedicated synthetic creator has signed in, copy its exact
-workspace UUID from `/v1/workspaces` and run this one-shot command from the active staging release:
+the capacity exercise. For the first deployment, keep workspace-gated features disabled and their
+allowlists empty so the synthetic creator can sign in without pretending an unknown workspace UUID
+was pre-approved. After that creator has signed in, copy its exact workspace UUID from
+`/v1/workspaces` and run this one-shot command from the active staging release:
 
 ```bash
 export OPENROUND_CAPACITY_WORKSPACE_ID="the-reviewed-synthetic-workspace-uuid"
@@ -163,6 +166,14 @@ initial state other than untouched Free. The plan change commits in one transact
 durable audit marker already exists for the same workspace; an unrelated pre-existing Team
 workspace is rejected. Retain the redacted JSON result and approved request reference with the
 staging evidence record; do not retain the creator cookie there.
+
+Then place only that reviewed UUID in the relevant workspace allowlists and activate the required
+feature ceilings through a second reviewed, signed build/config deployment. The deployer treats a
+release directory as immutable and rejects redeploying the currently active build ID, so do not
+edit the remote `.env`, replace an active release in place, or bypass the signed-image workflow to
+make this change. Record both build IDs and the approved configuration change in the staging
+evidence record. Once the second build is active, create the environment-scoped synthetic cookie
+and confirm the effective switches through `/v1/workspaces` before dispatching readiness.
 
 Dispatch the first run with no soak:
 

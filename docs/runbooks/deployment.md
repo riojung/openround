@@ -40,11 +40,26 @@ including 4.0.0, an HTTPS application origin matching the checked-in target conf
 prefix matching that config, and `--push`. The build and deployment wrappers reject an unsupported
 or unparseable `cosign version` before signing or verifying because Cosign 2 cannot be relied on to
 discover the Cosign 3 signature format, while Cosign 4 compatibility has not been qualified. This
-is the underlying command used by the protected staging-image workflow:
+preflight must pass before requesting access to the protected build environment:
 
 ```bash
+node scripts/check-deployment-target.mjs staging
+```
+
+The check rejects reserved, example, placeholder, loopback, and unspecified target names. For a
+single-VM target, it also requires the checked-in OpenSSH known-hosts file to contain a valid,
+non-revoked key for the exact configured host and port. An OpenSSH hashed exact-host entry is
+valid; wildcard host patterns and `@cert-authority` trust entries are not exact pins and are
+rejected. The check is intentionally red while the checked-in `.example` targets or comment-only
+key files remain. Both staging workflows run it in their unprotected `main` preflight.
+
+After replacing and reviewing those target values, this is the underlying command used by the
+protected staging-image workflow (set the URL to the exact `publicApiUrl` in the reviewed config):
+
+```bash
+export OPENROUND_STAGING_API_URL="https://staging.your-domain.tld"
 ./scripts/product-build.sh staging \
-  --api-url https://staging.openround.example \
+  --api-url "$OPENROUND_STAGING_API_URL" \
   --registry ghcr.io/riojung/openround/openround \
   --push
 ```
@@ -81,7 +96,10 @@ artifacts/deploy/<environment>/build-manifest.json
 
 Do not replace digest references with mutable tags or combine server and web images from different
 manifests. Production images are built by the protected tag-triggered release workflow, scanned,
-signed using its allowlisted OIDC identity, and verified before promotion.
+signed using its allowlisted OIDC identity, and verified before promotion. Its unprotected
+preflight runs `node scripts/check-deployment-target.mjs production`, so a release tag cannot
+produce signed images while the production origin, VM target, or exact SSH key pin is still a
+placeholder.
 
 ### Operate services
 
@@ -296,6 +314,8 @@ JSON, manifests, command arguments, logs, receipts, or release artifacts.
 For staging:
 
 1. Review and update `config/deploy/staging.json`, DNS, host-key pin, runtime values, and VM sizing.
+   Run `node scripts/check-deployment-target.mjs staging`; do not proceed until it validates the
+   exact target and SSH key pin.
 2. Invoke the `staging-images` repository dispatch shown above. Its default-branch preflight must
    pass before the protected job builds, scans, signs, and verifies both image digests. Download and
    review its complete manifest.

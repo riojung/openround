@@ -99,6 +99,13 @@ describe("staging readiness trust boundary", () => {
       "run_stripe_replay: ${{ steps.payload.outputs.run_stripe_replay }}",
     );
     expect(mainCandidate).toContain("soak_minutes: ${{ steps.payload.outputs.soak_minutes }}");
+    expect(mainCandidate).toContain("node scripts/check-deployment-target.mjs staging");
+    expect(mainCandidate).toContain("public_api_url: ${{ steps.target.outputs.public_api_url }}");
+    expect(mainCandidate).toContain("public_web_url: ${{ steps.target.outputs.public_web_url }}");
+    expect(mainCandidate).toContain(
+      "public_media_url: ${{ steps.target.outputs.public_media_url }}",
+    );
+    expect(mainCandidate).toContain('readFileSync("config/deploy/staging.json", "utf8")');
 
     expect(workflow).toContain("needs.main-candidate.outputs.soak_minutes != '0'");
     expect(workflow).toContain("SOAK_MINUTES: ${{ needs.main-candidate.outputs.soak_minutes }}");
@@ -116,6 +123,25 @@ describe("staging readiness trust boundary", () => {
       expect(section).toContain("github.ref == 'refs/heads/main'");
       expect(section).toContain(dependency);
     }
+
+    expect(workflow).toContain(
+      "READINESS_API_URL: ${{ needs.main-candidate.outputs.public_api_url }}",
+    );
+    expect(workflow).toContain(
+      "READINESS_WEB_URL: ${{ needs.main-candidate.outputs.public_web_url }}",
+    );
+    expect(workflow).toContain(
+      "READINESS_MEDIA_URL: ${{ needs.main-candidate.outputs.public_media_url }}",
+    );
+    expect(workflow).toContain("LOAD_BASE_URL: ${{ needs.main-candidate.outputs.public_api_url }}");
+    expect(workflow).toContain("LOAD_ORIGIN: ${{ needs.main-candidate.outputs.public_web_url }}");
+    expect(workflow).toContain(
+      "STRIPE_REHEARSAL_BASE_URL: ${{ needs.main-candidate.outputs.public_api_url }}",
+    );
+    expect(workflow).toContain(
+      "STRIPE_REHEARSAL_ORIGIN: ${{ needs.main-candidate.outputs.public_web_url }}",
+    );
+    expect(workflow).not.toMatch(/\$\{\{ vars\.OPENROUND_(?:API|WEB|MEDIA)_URL \}\}/);
   });
 });
 
@@ -154,6 +180,7 @@ describe("staging image trust boundary", () => {
     expect(mainCandidate).toContain("const payload = event.client_payload ?? {};");
     expect(mainCandidate).toContain("Array.isArray(payload)");
     expect(mainCandidate).toContain("Object.keys(payload).length !== 0");
+    expect(mainCandidate).toContain("node scripts/check-deployment-target.mjs staging");
 
     expect(build).toContain("github.ref == 'refs/heads/main'");
     expect(build).toContain("needs: main-candidate");
@@ -175,6 +202,19 @@ describe("staging image trust boundary", () => {
     expect(checkoutIndex).toBeGreaterThanOrEqual(0);
     expect(revalidationIndex).toBeGreaterThan(checkoutIndex);
     expect(packageLoginIndex).toBeGreaterThan(revalidationIndex);
+  });
+});
+
+describe("production release target boundary", () => {
+  it("validates the production target and host-key pin before building release images", async () => {
+    const workflow = await readFile(join(repositoryRoot, ".github/workflows/release.yml"), "utf8");
+    const preflight = workflow.match(/ {2}preflight:\n([\s\S]*?)(?=\n {2}images:)/)?.[1];
+
+    expect(preflight).toBeDefined();
+    expect(preflight).toContain("node scripts/check-deployment-target.mjs production");
+    expect(workflow.indexOf("node scripts/check-deployment-target.mjs production")).toBeLessThan(
+      workflow.indexOf("./scripts/product-build.sh production"),
+    );
   });
 });
 

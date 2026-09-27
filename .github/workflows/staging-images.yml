@@ -47,6 +47,8 @@ jobs:
             throw new Error("The staging-images dispatch does not accept client_payload inputs");
           }
           NODE
+      - name: Validate configured staging deployment target
+        run: node scripts/check-deployment-target.mjs staging
 
   build:
     if: github.ref == 'refs/heads/main'
