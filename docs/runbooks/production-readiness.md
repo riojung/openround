@@ -83,6 +83,11 @@
   tracing is enabled, alert thresholds have owners, and signup/session/media/experience/Pulse/chat
   kill switches are rehearsed without interrupting an active game.
 - Status page, security contact, privacy contact, support rota, incident commander, and escalation contacts are live.
+- Accept the monitoring, paging, and support-rehearsal gate only after the same candidate passes
+  end-to-end alert delivery and a support incident drill covering intake, triage, escalation,
+  status communication, an applicable kill switch, and closure. The operations owner and an
+  independent reviewer must both accept the retained record; automated route checks alone do not
+  satisfy the gate.
 
 ## Release evidence
 
@@ -90,10 +95,15 @@
   from a clean checkout.
 - `pnpm audit --audit-level low` passes; `THIRD_PARTY_NOTICES.md` matches
   `pnpm licenses:report`; release SBOMs, provenance, signatures, and container scans are retained.
-- Staging promotion uses the complete manifest from the protected manual **Staging images** workflow
-  on `main`; production promotion uses the complete manifest from the protected tag-triggered
-  release workflow. Both signatures verify against the exact allowlisted GitHub Actions identity
-  in the target config. A workstation build, signature, or reconstructed manifest is not accepted.
+  Container scans include fixed and unfixed HIGH/CRITICAL findings; the release path has no
+  implicit `ignore-unfixed` exception.
+- Staging promotion uses the complete manifest from the protected, repository-dispatched
+  **Staging images** workflow on `main`; production promotion uses the complete manifest from the
+  protected tag-triggered release workflow. Both signatures verify against the exact allowlisted
+  GitHub Actions identity in the target config. Production also requires GitHub to report a valid
+  signature for the exact bound annotated tag object and confirms its name and target commit. A
+  workstation build, signature, reconstructed manifest, unsigned tag, or recreated tag is not
+  accepted.
 - Database migration succeeds on a production-like copy and has a forward-repair plan.
 - Chromium, WebKit, Firefox, mobile Safari, and mobile Chrome critical flows pass.
 - Recovery interventions/rechecks, cohosting, Q&A moderation, hostile portability imports,
@@ -161,8 +171,10 @@ probe and target-host game, and complete its
 [evidence templates](../evidence/README.md) for the other non-code gates and
 `pnpm readiness:require:beta:preflight` before creating a beta tag. After the workflow publishes
 and verifies the signed artifacts, complete and independently review the
-[signed release candidate record](../evidence/signed-release-candidate.md), accept that evidence
-for `signed-release`, and run `pnpm readiness:require:beta` for the final beta decision.
+[signed release candidate record](../evidence/signed-release-candidate.md), merge the independently
+reviewed ledger-only acceptance with its exact `releaseBinding`, and run
+`pnpm readiness:require:beta` for the final beta decision. Deploy the exact retained manifest from
+that acceptance commit; any other descendant change requires a new candidate and tag.
 
 None of these instructions establishes that a staging or production VM exists. Provisioning,
 operational ownership, and every external evidence item must be verified separately before public

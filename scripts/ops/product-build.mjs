@@ -186,7 +186,6 @@ export async function scanImagesForVulnerabilities(imageRecords, runCommand = ru
           "vuln",
           "--severity",
           "HIGH,CRITICAL",
-          "--ignore-unfixed",
           "--exit-code",
           "1",
           "--no-progress",

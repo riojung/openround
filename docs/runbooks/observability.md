@@ -116,7 +116,10 @@ would create false confidence. `infra/observability/alertmanager.example.yml` ma
 deployment configuration, replace every `.example.invalid` destination through the operations
 secret workflow, and run `pnpm test:alert-routing` before deployment. A production deployment must
 send the same rules to its managed Prometheus-compatible service, protect metrics transport, and
-rehearse each route end to end with a named responder.
+rehearse each route end to end with a named responder. Alert delivery alone does not close the
+beta-preflight gate: activate the named support rota, incident and escalation ownership, and public
+status, security, privacy, and support contacts, then exercise support intake, triage, escalation,
+communication, mitigation, and closure for the same exact build candidate.
 
 CI runs `pnpm test:alerts`, `pnpm test:alert-routing`, and `pnpm test:collector-config`. The first
 executes `promtool test rules` against
