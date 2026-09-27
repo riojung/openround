@@ -100,12 +100,15 @@ in the private exercise record.
 3. Point the application and media DNS names at the VM. Confirm Caddy has issued valid public
    certificates for both names, HTTP redirects to HTTPS, and certificate-expiry monitoring has an
    owner.
-4. Dispatch the protected **Staging images** workflow from `main` for the exact candidate commit.
-   Download its signed manifest only after the workflow builds, scans, signs, and verifies both
-   application-image digests with the allowlisted GitHub Actions identity. A workstation build or
-   signature is not promotable. Run `node dist/config-check.js` against the reviewed environment
-   and deploy with that manifest through the checked single-VM workflow. Keep owner-level migration
-   credentials out of the long-lived server.
+4. Create and protect the `single-vm-staging` GitHub environment before invoking the
+   default-branch-only `staging-images` repository dispatch documented in the
+   [deployment runbook](deployment.md#build-product-images). Do not use a ref-selectable workflow
+   dispatch. Download the signed manifest only after its unprotected `main` preflight and protected
+   build both pass, and after the workflow builds, scans, signs, and verifies both application-image
+   digests with the allowlisted GitHub Actions identity. A workstation build or signature is not
+   promotable. Run `node dist/config-check.js` against the reviewed environment and deploy with that
+   manifest through the checked single-VM workflow. Keep owner-level migration credentials out of
+   the long-lived server.
 5. Confirm `docker compose ps`, the server `/health/ready` dependency checks, the web build marker,
    the media quarantine/scan path, and external TLS probes all pass for the exact build ID.
 6. Configure the private metrics collector and every expected feature variable above. Omitted

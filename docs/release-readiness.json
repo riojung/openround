@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-25",
+  "updatedAt": "2026-09-26",
   "releaseTarget": "single-vm-beta",
   "gates": [
     {
@@ -44,13 +44,13 @@
     },
     {
       "id": "paging",
-      "name": "Monitoring and paging delivery",
+      "name": "Monitoring, paging, and support rehearsal",
       "owner": "operations",
       "requiredFor": ["single-vm-beta-preflight", "single-vm-beta", "single-vm-ga"],
       "status": "pending",
-      "criterion": "Production telemetry reaches the selected backend and test page, warning, and ticket alerts reach named responders.",
+      "criterion": "For one exact build candidate, production telemetry reaches the selected backend; test page, warning, and ticket alerts reach named responders; a named support rota, incident commander, escalation contacts, and public status, security, privacy, and support contacts are active; and an end-to-end support incident drill exercises triage, escalation, status communication, an applicable kill switch, and closure with operations-owner and independent-reviewer acceptance.",
       "evidence": [],
-      "nextAction": "Install the collector and Alertmanager templates, configure secret receiver URLs, then record a notification drill."
+      "nextAction": "Install the collector and Alertmanager templates; configure secret receiver URLs, the named support rota and escalation contacts, and public status, security, privacy, and support contacts; then complete the end-to-end alert and support incident rehearsal for the same exact build candidate with operations-owner and independent-reviewer decisions."
     },
     {
       "id": "target-region-load",

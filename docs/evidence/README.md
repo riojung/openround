@@ -19,7 +19,8 @@ For each completed gate:
    candidate, then run `pnpm readiness:require:beta` after the signed-release evidence is accepted.
 
 Available release templates cover [single-VM staging](single-vm-staging.md),
-[alert delivery](operations-rehearsal.md), [target-region load and soak](target-region-load.md),
+[monitoring, paging, and support rehearsal](operations-rehearsal.md),
+[target-region load and soak](target-region-load.md),
 [provider restoration](provider-restore.md), [accessibility](accessibility-review.md),
 [security](security-review.md), [privacy/legal approval](privacy-legal-approval.md),
 [live billing](live-billing-rehearsal.md), [repository governance](repository-governance-canary.md),

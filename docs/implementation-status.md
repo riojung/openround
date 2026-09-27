@@ -40,6 +40,12 @@ release-workflow certificate identity. HIGH/CRITICAL image scans no
 longer omit findings merely because no upstream fix exists. None of these controls substitutes for
 running and independently reviewing the corresponding external exercises.
 
+The beta-preflight monitoring gate also explicitly includes support readiness. Automated alert
+routing cannot complete it without an active named support rota, incident and escalation ownership,
+public status, security, privacy, and support contacts, and an end-to-end support incident drill for
+the same exact build candidate accepted by the operations owner and an independent reviewer. The
+gate remains pending until that external rehearsal occurs.
+
 Live mutation orchestration and deterministic response policy now sit behind the existing service
 façade, while memory and PostgreSQL session repositories are separated behind the unchanged
 repository factory. Public `/v1` and Socket.IO contracts, error identities, transaction boundaries,

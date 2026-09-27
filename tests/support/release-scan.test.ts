@@ -119,6 +119,65 @@ describe("staging readiness trust boundary", () => {
   });
 });
 
+describe("staging image trust boundary", () => {
+  it("verifies the default-branch repository dispatch before granting write credentials", async () => {
+    const workflow = await readFile(
+      join(repositoryRoot, ".github/workflows/staging-images.yml"),
+      "utf8",
+    );
+    const mainCandidate = workflow.match(/ {2}main-candidate:\n([\s\S]*?)(?=\n {2}build:)/)?.[1];
+    const build = workflow.match(/ {2}build:\n([\s\S]*)$/)?.[1];
+    const topLevelPermissions = workflow.match(
+      /\npermissions:\n([\s\S]*?)(?=\n\nconcurrency:)/,
+    )?.[1];
+
+    expect(mainCandidate).toBeDefined();
+    expect(build).toBeDefined();
+    expect(workflow).toContain("repository_dispatch:\n    types: [staging-images]");
+    expect(workflow).not.toContain("workflow_dispatch:");
+    expect(topLevelPermissions?.trim()).toBe("contents: read");
+
+    expect(mainCandidate).not.toMatch(/^ {4}if:/m);
+    expect(mainCandidate).not.toContain("environment:");
+    expect(mainCandidate).not.toContain("packages: write");
+    expect(mainCandidate).not.toContain("id-token: write");
+    expect(mainCandidate).toContain("fetch-depth: 0");
+    expect(mainCandidate).toContain('test "$GITHUB_EVENT_NAME" = repository_dispatch');
+    expect(mainCandidate).toContain(
+      "git fetch --force origin '+refs/heads/main:refs/remotes/origin/main'",
+    );
+    expect(mainCandidate).toContain('test "$GITHUB_REF" = refs/heads/main');
+    expect(mainCandidate).toContain(
+      'test "$(git rev-parse --verify HEAD)" = "$(git rev-parse --verify origin/main)"',
+    );
+    expect(mainCandidate).toContain('event.action !== "staging-images"');
+    expect(mainCandidate).toContain("const payload = event.client_payload ?? {};");
+    expect(mainCandidate).toContain("Array.isArray(payload)");
+    expect(mainCandidate).toContain("Object.keys(payload).length !== 0");
+
+    expect(build).toContain("github.ref == 'refs/heads/main'");
+    expect(build).toContain("needs: main-candidate");
+    expect(build).toContain("environment: single-vm-staging");
+    expect(build).toContain("contents: read");
+    expect(build).toContain("packages: write");
+    expect(build).toContain("id-token: write");
+    expect(build).toContain("Revalidate current main candidate after approval");
+    expect(build).toContain("git fetch --force origin '+refs/heads/main:refs/remotes/origin/main'");
+    expect(build).toContain('test "$GITHUB_EVENT_NAME" = repository_dispatch');
+    expect(build).toContain('test "$GITHUB_REF" = refs/heads/main');
+    expect(build).toContain(
+      'test "$(git rev-parse --verify HEAD)" = "$(git rev-parse --verify origin/main)"',
+    );
+
+    const checkoutIndex = build.indexOf("actions/checkout@");
+    const revalidationIndex = build.indexOf("Revalidate current main candidate after approval");
+    const packageLoginIndex = build.indexOf("docker/login-action@");
+    expect(checkoutIndex).toBeGreaterThanOrEqual(0);
+    expect(revalidationIndex).toBeGreaterThan(checkoutIndex);
+    expect(packageLoginIndex).toBeGreaterThan(revalidationIndex);
+  });
+});
+
 describe("release image vulnerability evidence", () => {
   it("scans both immutable references before reporting vulnerability failures", async () => {
     const runCommand = vi.fn(async (_command: string, args: string[]) => {
