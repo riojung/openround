@@ -86,6 +86,64 @@ describe("Phase 0 evidence contract", () => {
     expect(gate?.criterion).toMatch(/50- and 250-client Round and Presentation/);
   });
 
+  it("keeps support readiness inside the beta-preflight operations gate", async () => {
+    const [ledgerText, template, observability, productionReadiness] = await Promise.all([
+      repositoryFile("docs/release-readiness.json"),
+      repositoryFile("docs/evidence/operations-rehearsal.md"),
+      repositoryFile("docs/runbooks/observability.md"),
+      repositoryFile("docs/runbooks/production-readiness.md"),
+    ]);
+    const ledger = JSON.parse(ledgerText) as {
+      gates: Array<{
+        id: string;
+        name: string;
+        status: string;
+        requiredFor: string[];
+        criterion: string;
+        evidence: unknown[];
+        nextAction?: string;
+      }>;
+    };
+    const gate = ledger.gates.find(({ id }) => id === "paging");
+
+    expect(gate).toMatchObject({
+      name: "Monitoring, paging, and support rehearsal",
+      status: "pending",
+      evidence: [],
+    });
+    expect(gate?.requiredFor).toContain("single-vm-beta-preflight");
+    expect(gate?.criterion).toMatch(/For one exact build candidate/);
+    expect(gate?.criterion).toMatch(/named support rota/);
+    expect(gate?.criterion).toMatch(/escalation contacts/);
+    expect(gate?.criterion).toMatch(/status, security, privacy, and support contacts/);
+    expect(gate?.criterion).toMatch(/support incident drill/);
+    expect(gate?.criterion).toMatch(/operations-owner and independent-reviewer acceptance/);
+    expect(gate?.nextAction).toMatch(/same exact build candidate/);
+    expect(gate?.nextAction).toMatch(/status, security, privacy, and support contacts/);
+    expect(gate?.nextAction).toMatch(/operations-owner and independent-reviewer decisions/);
+
+    for (const field of [
+      "Operations owner",
+      "Independent reviewer",
+      "Support rota and escalation-policy reference",
+      "Public status, security, privacy, and support contact references",
+      "Synthetic support report and intake route",
+      "Severity classification and triage result",
+      "Technical escalation and responder handoff result",
+      "Initial status/support communication and update timing",
+      "Resolution, customer-facing closure, and queue disposition",
+      "Operations owner decision",
+      "Independent reviewer decision",
+    ]) {
+      expect(template).toContain(field);
+    }
+    expect(template).toMatch(/Alert delivery alone is not sufficient/);
+    expect(observability).toMatch(/Alert delivery alone does not close the\s+beta-preflight gate/);
+    expect(observability).toMatch(/same exact build candidate/);
+    expect(observability).toMatch(/status, security, privacy, and support contacts/);
+    expect(productionReadiness).toMatch(/automated route checks alone do not\s+satisfy the gate/i);
+  });
+
   it("captures reviewed repeat-use, recovery-loop, and Phase 1 selection denominators", async () => {
     const [session, interview, usability, decision, plan, campaign] = await Promise.all([
       repositoryFile("docs/evidence/session-observation.md"),

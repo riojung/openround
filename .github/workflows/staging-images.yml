@@ -1,26 +1,70 @@
 name: Staging images
 
 on:
-  workflow_dispatch:
+  repository_dispatch:
+    types: [staging-images]
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
 
 concurrency:
   group: single-vm-staging-images
   cancel-in-progress: false
 
 jobs:
+  main-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Verify main-branch candidate
+        run: |
+          set -euo pipefail
+          git fetch --force origin '+refs/heads/main:refs/remotes/origin/main'
+          test "$GITHUB_EVENT_NAME" = repository_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse --verify HEAD)" = "$(git rev-parse --verify origin/main)"
+      - name: Reject dispatcher inputs
+        run: |
+          node <<'NODE'
+          const { readFileSync } = require("node:fs");
+
+          const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
+          if (event.action !== "staging-images") {
+            throw new Error("Unexpected repository_dispatch event type");
+          }
+
+          const payload = event.client_payload ?? {};
+          if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+            throw new Error("client_payload must be a JSON object when provided");
+          }
+          if (Object.keys(payload).length !== 0) {
+            throw new Error("The staging-images dispatch does not accept client_payload inputs");
+          }
+          NODE
+
   build:
     if: github.ref == 'refs/heads/main'
+    needs: main-candidate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     environment: single-vm-staging
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+      - name: Revalidate current main candidate after approval
+        run: |
+          set -euo pipefail
+          git fetch --force origin '+refs/heads/main:refs/remotes/origin/main'
+          test "$GITHUB_EVENT_NAME" = repository_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse --verify HEAD)" = "$(git rev-parse --verify origin/main)"
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 10.15.1
@@ -41,12 +85,6 @@ jobs:
           version: v0.68.2
           cache: true
       - run: pnpm install --frozen-lockfile
-      - name: Verify main-branch candidate
-        run: |
-          set -euo pipefail
-          git fetch --force origin '+refs/heads/main:refs/remotes/origin/main'
-          test "$GITHUB_REF" = refs/heads/main
-          test "$(git rev-parse --verify HEAD)" = "$(git rev-parse --verify origin/main)"
       - name: Build, scan, sign, and verify staging images
         run: |
           set -euo pipefail

@@ -28,6 +28,24 @@ staging deployment, privacy/legal decision, live billing rehearsal, protected-br
 signed release. These controls make the remaining exercises executable and reviewable; they do not
 claim that a staging host, independent review, user study, or signed release exists.
 
+The follow-on evidence-closure hardening keeps those gates pending while tightening how they can be
+run and accepted. Staging readiness is now API-triggered through a default-branch-only repository
+dispatch with a strictly validated bounded payload, and executes protected and self-hosted jobs
+only after an unprotected job proves the checkout is the current `main` tip. Backup/restore verification
+discovers and fingerprints every durable public table instead of a fixed historical subset. The
+production deployer accepts the signed-release ledger only as a reviewed `origin/main`
+evidence-only descendant of the exact tagged build, bound to the annotated tag object, manifest
+hash, image digests, GitHub's valid signature result for that exact tag object, and exact
+release-workflow certificate identity. HIGH/CRITICAL image scans no
+longer omit findings merely because no upstream fix exists. None of these controls substitutes for
+running and independently reviewing the corresponding external exercises.
+
+The beta-preflight monitoring gate also explicitly includes support readiness. Automated alert
+routing cannot complete it without an active named support rota, incident and escalation ownership,
+public status, security, privacy, and support contacts, and an end-to-end support incident drill for
+the same exact build candidate accepted by the operations owner and an independent reviewer. The
+gate remains pending until that external rehearsal occurs.
+
 Live mutation orchestration and deterministic response policy now sit behind the existing service
 façade, while memory and PostgreSQL session repositories are separated behind the unchanged
 repository factory. Public `/v1` and Socket.IO contracts, error identities, transaction boundaries,

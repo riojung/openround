@@ -31,6 +31,7 @@ import {
   validateFlyWebEnvironment,
   validateRollbackConfirmation,
 } from "./lib.mjs";
+import { validateSignedReleaseLedgerTransition } from "./release-acceptance.mjs";
 import { main as serviceMain } from "./service.mjs";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -39,12 +40,22 @@ export const HOSTED_DEPLOYMENT_AUTOMATION_FILES = Object.freeze([
   "scripts/deploy.sh",
   "scripts/ops/deploy.mjs",
   "scripts/ops/lib.mjs",
+  "scripts/ops/release-acceptance.mjs",
   "scripts/ops/service.mjs",
 ]);
 const READINESS_GATE_INPUT_FILES = Object.freeze([
   "scripts/check-release-readiness.mjs",
   "docs/release-readiness.json",
 ]);
+const TRUSTED_PRODUCTION_RELEASE_REMOTE_URLS = Object.freeze([
+  "https://github.com/riojung/openround.git",
+  "git@github.com:riojung/openround.git",
+  "ssh://git@github.com/riojung/openround.git",
+]);
+const TRUSTED_PRODUCTION_RELEASE_WORKFLOW_IDENTITY_PREFIX =
+  "https://github.com/riojung/openround/.github/workflows/release.yml@refs/tags/";
+const TRUSTED_PRODUCTION_RELEASE_TAG_API =
+  "https://api.github.com/repos/riojung/openround/git/tags/";
 
 function usage() {
   return `Usage: scripts/deploy.sh development [--dry-run]
@@ -98,6 +109,171 @@ async function assertOperationsRevision(expectedRevision) {
     throw new Error("Operations HEAD changed during deployment preflight; restart the deployment");
   }
   return true;
+}
+
+function parseReleaseLedger(content, label) {
+  try {
+    return JSON.parse(content);
+  } catch (error) {
+    throw new Error(`${label} is not valid JSON`, { cause: error });
+  }
+}
+
+async function gitOutput(arguments_, root = repositoryRoot) {
+  const result = await run("git", arguments_, { cwd: root, capture: true });
+  return result.stdout.trim();
+}
+
+export async function fetchPublishedReleaseTagObject(tagObject) {
+  assertFullGitSha(tagObject, "release tag object");
+  let response;
+  try {
+    response = await fetch(`${TRUSTED_PRODUCTION_RELEASE_TAG_API}${tagObject}`, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "OpenRound-production-deploy",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    throw new Error("Could not verify the release tag object with GitHub", { cause: error });
+  }
+  if (!response.ok) {
+    throw new Error(`GitHub could not verify the release tag object (HTTP ${response.status})`);
+  }
+  try {
+    return await response.json();
+  } catch (error) {
+    throw new Error("GitHub returned invalid release tag verification data", { cause: error });
+  }
+}
+
+function assertPublishedReleaseTagObject(payload, binding, buildId) {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("GitHub returned invalid release tag verification data");
+  }
+  if (payload.sha !== binding.tagObject) {
+    throw new Error("GitHub release tag object does not match the signed release acceptance");
+  }
+  if (payload.tag !== binding.tag) {
+    throw new Error("GitHub release tag name does not match the signed release acceptance");
+  }
+  if (payload.object?.type !== "commit" || payload.object.sha !== buildId) {
+    throw new Error("GitHub release tag does not resolve to the build manifest commit");
+  }
+  if (payload.verification?.verified !== true || payload.verification.reason !== "valid") {
+    throw new Error("GitHub has not verified the exact annotated release tag object signature");
+  }
+  return true;
+}
+
+export async function assertProductionReleaseRevision({
+  operationsRevision,
+  manifest,
+  manifestPath,
+  root = repositoryRoot,
+  trustedRemoteUrls = TRUSTED_PRODUCTION_RELEASE_REMOTE_URLS,
+  tagObjectLookup = fetchPublishedReleaseTagObject,
+}) {
+  assertFullGitSha(operationsRevision, "operations HEAD");
+  assertFullGitSha(manifest.buildId, "release build ID");
+
+  const readinessPath = "docs/release-readiness.json";
+  const checkedReadinessPath = await resolveCheckedRepositoryFile(
+    readinessPath,
+    root,
+    "release readiness ledger",
+    { requireGitClean: true },
+  );
+  const acceptedLedger = parseReleaseLedger(
+    await readFile(checkedReadinessPath, "utf8"),
+    "Release readiness ledger",
+  );
+  const expected = {
+    buildId: manifest.buildId,
+    manifestDigest: `sha256:${await sha256File(manifestPath)}`,
+  };
+  if (operationsRevision === manifest.buildId) {
+    throw new Error(
+      "Production release acceptance must be a strict evidence-only descendant of the release build",
+    );
+  }
+  try {
+    await run("git", ["merge-base", "--is-ancestor", manifest.buildId, operationsRevision], {
+      cwd: root,
+      capture: true,
+    });
+  } catch (error) {
+    throw new Error("Production operations HEAD must descend from the accepted release build", {
+      cause: error,
+    });
+  }
+  const changedPaths = (
+    await gitOutput(
+      ["diff", "--name-only", "--no-renames", manifest.buildId, operationsRevision, "--"],
+      root,
+    )
+  )
+    .split("\n")
+    .filter(Boolean);
+  if (changedPaths.length !== 1 || changedPaths[0] !== readinessPath) {
+    throw new Error(
+      "Production operations HEAD may differ from the release build only by docs/release-readiness.json",
+    );
+  }
+  const taggedLedger = parseReleaseLedger(
+    await gitOutput(["show", `${manifest.buildId}:${readinessPath}`], root),
+    "Tagged release readiness ledger",
+  );
+  const binding = validateSignedReleaseLedgerTransition(taggedLedger, acceptedLedger, expected);
+
+  if (binding.imageDigests.server !== manifest.images.server.digest) {
+    throw new Error("Signed release acceptance server digest does not match the build manifest");
+  }
+  if (binding.imageDigests.web !== manifest.images.web.digest) {
+    throw new Error("Signed release acceptance web digest does not match the build manifest");
+  }
+
+  const tagReference = `refs/tags/${binding.tag}`;
+  const originUrl = await gitOutput(["remote", "get-url", "origin"], root);
+  if (!trustedRemoteUrls.includes(originUrl)) {
+    throw new Error("Production release acceptance requires the trusted OpenRound origin remote");
+  }
+  await run(
+    "git",
+    [
+      "fetch",
+      "--no-tags",
+      "origin",
+      "refs/heads/main:refs/remotes/origin/main",
+      `${tagReference}:${tagReference}`,
+    ],
+    { cwd: root, capture: true },
+  );
+  const reviewedMain = await gitOutput(["rev-parse", "--verify", "refs/remotes/origin/main"], root);
+  if (reviewedMain !== operationsRevision) {
+    throw new Error("Production release acceptance HEAD must match the fetched origin/main commit");
+  }
+  const resolvedTagObject = await gitOutput(["rev-parse", "--verify", tagReference], root);
+  if (resolvedTagObject !== binding.tagObject) {
+    throw new Error("Signed release acceptance tag object does not match the local release tag");
+  }
+  const tagType = await gitOutput(["cat-file", "-t", binding.tagObject], root);
+  if (tagType !== "tag") {
+    throw new Error("Signed release acceptance must reference an annotated release tag object");
+  }
+  const taggedCommit = await gitOutput(["rev-parse", "--verify", `${tagReference}^{commit}`], root);
+  if (taggedCommit !== manifest.buildId) {
+    throw new Error("Signed release acceptance tag does not resolve to the build manifest commit");
+  }
+  const publishedTagObject = await tagObjectLookup(binding.tagObject);
+  assertPublishedReleaseTagObject(publishedTagObject, binding, manifest.buildId);
+  return {
+    ...binding,
+    certificateIdentity: `${TRUSTED_PRODUCTION_RELEASE_WORKFLOW_IDENTITY_PREFIX}${binding.tag}`,
+  };
 }
 
 export async function resolveReviewedDeploymentInputHashes(paths, root = repositoryRoot) {
@@ -470,15 +646,17 @@ export async function verifyForwardDeploymentAncestry(activeBuildId, targetBuild
   return true;
 }
 
-async function verifySignatures(config, manifest, dryRun) {
+export async function verifySignatures(config, manifest, dryRun, certificateIdentity) {
   if (!config.requireSigning) return;
   for (const component of ["server", "web"]) {
+    const identityArguments = certificateIdentity
+      ? ["--certificate-identity", certificateIdentity]
+      : ["--certificate-identity-regexp", config.cosignIdentityRegexp];
     await run(
       "cosign",
       [
         "verify",
-        "--certificate-identity-regexp",
-        config.cosignIdentityRegexp,
+        ...identityArguments,
         "--certificate-oidc-issuer",
         config.cosignOidcIssuer,
         manifest.images[component].ref,
@@ -1137,6 +1315,7 @@ async function deploySingleVm({ environment, parsed, dryRun, config }) {
 
   const rollback = parsed.flags.has("rollback");
   const rollbackFrom = parsed.values.get("rollback-from");
+  let productionReleaseAcceptance;
   if (rollback) {
     assertFullGitSha(rollbackFrom, "rollback source build ID");
     validateRollbackConfirmation(
@@ -1150,8 +1329,20 @@ async function deploySingleVm({ environment, parsed, dryRun, config }) {
     if (rollbackFrom) throw new Error("--rollback-from requires --rollback");
     validateDeploymentConfirmation(parsed.values.get("confirm"), environment, manifest.buildId);
   }
-  if (!rollback && config.operationsRevision !== manifest.buildId) {
-    throw new Error("Normal single-VM deploys require operations HEAD to match the build manifest");
+  if (!rollback) {
+    const productionAcceptance =
+      environment === "production" && config.requireSigning && config.requireReadinessGate;
+    if (productionAcceptance) {
+      productionReleaseAcceptance = await assertProductionReleaseRevision({
+        operationsRevision: config.operationsRevision,
+        manifest,
+        manifestPath,
+      });
+    } else if (config.operationsRevision !== manifest.buildId) {
+      throw new Error(
+        "Normal single-VM deploys require operations HEAD to match the build manifest",
+      );
+    }
   }
 
   const runtimePath = parsed.values.get("runtime-env");
@@ -1223,7 +1414,12 @@ async function deploySingleVm({ environment, parsed, dryRun, config }) {
       { cwd: repositoryRoot, dryRun },
     );
   }
-  await verifySignatures(config, manifest, dryRun);
+  await verifySignatures(
+    config,
+    manifest,
+    dryRun,
+    productionReleaseAcceptance?.certificateIdentity,
+  );
   if (rollback) await verifyRollbackSource(config, rollbackFrom, manifest.buildId, dryRun);
 
   const runtimeContent = runtimeEnv.content;
