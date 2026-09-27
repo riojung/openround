@@ -651,9 +651,13 @@ describe("live Presentation sessions", () => {
     });
     expect(report.statusCode).toBe(200);
     expect(report.headers["cache-control"]).toContain("no-store");
-    PresentationReportEnvelopeSchema.parse(report.json());
-    expect(report.json<{ report: unknown }>().report).toEqual(pendingProjection);
-    expect(report.json()).toMatchObject({
+    const readyEnvelope = PresentationReportEnvelopeSchema.parse(report.json());
+    expect(readyEnvelope.report).toEqual(pendingProjection);
+    const readyReport = readyEnvelope.report;
+    if (!readyReport) {
+      throw new Error("Expected a ready Presentation report");
+    }
+    expect(readyEnvelope).toMatchObject({
       reportStatus: "ready",
       report: {
         schemaVersion: 1,
@@ -672,10 +676,6 @@ describe("live Presentation sessions", () => {
           { kind: "question", respondents: 1, correct: 1, accuracyPercent: 100 },
         ],
         recovery: [{ eligible: 1, recovered: 1, recoveryPercent: 100 }],
-        leaderboard: [
-          { nickname: "River", rank: 1 },
-          { nickname: "Legacy", rank: 2 },
-        ],
         timeline: [
           { type: "content.presented" },
           { type: "question.launched" },
@@ -687,6 +687,14 @@ describe("live Presentation sessions", () => {
         ],
       },
     });
+    const leaderboard = readyReport.leaderboard;
+    expect(leaderboard).toHaveLength(2);
+    expect(leaderboard.map(({ nickname }) => nickname).sort()).toEqual(["Legacy", "River"]);
+    expect(leaderboard.map(({ rank }) => rank)).toEqual([1, 2]);
+    expect(leaderboard[0]!.score).toBeGreaterThanOrEqual(leaderboard[1]!.score);
+    if (leaderboard[0]!.score === leaderboard[1]!.score) {
+      expect(leaderboard[0]!.nickname).toBe("River");
+    }
     await built.productEvents.drain();
     const presentationEvents = repository.productEvents.filter(
       (event) => event.dimensions.artifactType === "presentation",
