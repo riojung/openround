@@ -34,6 +34,7 @@ import {
 } from "../../scripts/ops/deploy.mjs";
 import {
   assertNoEnvironmentKeyOverlap,
+  assertSupportedCosignVersion,
   composeArgv,
   expectedDeploymentConfirmation,
   expectedProductionConfirmation,
@@ -854,6 +855,26 @@ describe("operations environment contract", () => {
 });
 
 describe("deployment configuration and manifest validation", () => {
+  it("requires the Cosign 3 signing and verification format", () => {
+    expect(assertSupportedCosignVersion("GitVersion: v3.0.6\n")).toBe("3.0.6");
+    expect(assertSupportedCosignVersion("GitVersion: v3.1.3\n")).toBe("3.1.3");
+    expect(() => assertSupportedCosignVersion("GitVersion: v2.6.5\n")).toThrow(
+      "from 3.0.6 up to, but not including, 4.0.0",
+    );
+    expect(() => assertSupportedCosignVersion("GitVersion: v3.0.5\n")).toThrow(
+      "Cosign 3.0.6 or newer is required",
+    );
+    expect(() => assertSupportedCosignVersion("GitVersion: v3.0.6-rc.1\n")).toThrow(
+      "a stable Cosign 3.0.6 or newer release is required",
+    );
+    expect(() => assertSupportedCosignVersion("GitVersion: v4.0.0+build.1\n")).toThrow(
+      "up to, but not including, 4.0.0",
+    );
+    expect(() => assertSupportedCosignVersion("unknown version")).toThrow(
+      "Unable to determine Cosign version",
+    );
+  });
+
   it("accepts a complete hosted config and rejects target, URL, and production-gate drift", () => {
     expect(validateDeployConfig(stagingConfig(), "staging").environment).toBe("staging");
     expect(validateDeployConfig(productionConfig(), "production").environment).toBe("production");
@@ -876,6 +897,12 @@ describe("deployment configuration and manifest validation", () => {
     expect(() =>
       validateDeployConfig({ ...productionConfig(), requireSigning: false }, "production"),
     ).toThrow("production must require image signing");
+    expect(() =>
+      validateDeployConfig(
+        { ...productionConfig(), cosignIdentityRegexp: "^(?:https://example\\.test)$" },
+        "production",
+      ),
+    ).toThrow("must use Cosign-compatible RE2 syntax");
     expect(() => validateDeployConfig({ ...stagingConfig(), unexpected: true }, "staging")).toThrow(
       "unsupported key unexpected",
     );

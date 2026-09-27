@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   main-candidate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       run_stripe_replay: ${{ steps.payload.outputs.run_stripe_replay }}
@@ -22,6 +22,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
       - name: Verify main-branch candidate
         run: |
           set -euo pipefail
@@ -67,7 +70,7 @@ jobs:
   remote-readiness:
     if: github.ref == 'refs/heads/main'
     needs: main-candidate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     environment: single-vm-staging
     env:
@@ -146,7 +149,7 @@ jobs:
   target-region-load:
     if: github.ref == 'refs/heads/main'
     needs: [main-candidate, remote-readiness]
-    runs-on: [self-hosted, single-vm-staging]
+    runs-on: [self-hosted, single-vm-staging, actions-runner-2-327-1-plus]
     timeout-minutes: 90
     environment: single-vm-staging
     env:
@@ -193,7 +196,13 @@ jobs:
                   name: process.env.RUNNER_NAME,
                   os: process.env.RUNNER_OS,
                   architecture: process.env.RUNNER_ARCH,
-                  requiredLabels: ["self-hosted", "single-vm-staging"],
+                  minimumRequiredVersion: "2.327.1",
+                  versionAttestationLabel: "actions-runner-2-327-1-plus",
+                  requiredLabels: [
+                    "self-hosted",
+                    "single-vm-staging",
+                    "actions-runner-2-327-1-plus",
+                  ],
                 },
               }, null, 2)}\n`,
               { mode: 0o600 },
@@ -286,7 +295,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       needs.main-candidate.outputs.run_stripe_replay == 'true'
     needs: [main-candidate, remote-readiness]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     environment: single-vm-staging
     env:

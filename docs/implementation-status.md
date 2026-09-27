@@ -46,6 +46,13 @@ public status, security, privacy, and support contacts, and an end-to-end suppor
 the same exact build candidate accepted by the operations owner and an independent reviewer. The
 gate remains pending until that external rehearsal occurs.
 
+The runner-compatibility hardening slice makes the staging preflights select Node 22 explicitly,
+requires a reviewed Node 24-compatible Actions Runner attestation before the target-region load job
+can select a self-hosted runner, and records that minimum and label in its provenance. A separate
+Ubuntu 26 canary exercises native builds, service containers, all supported browser engines, the
+production Compose path, and image tooling ahead of GitHub's hosted-runner migration. Canary latency
+is not target-region capacity evidence, and these controls do not complete a pending readiness gate.
+
 Live mutation orchestration and deterministic response policy now sit behind the existing service
 façade, while memory and PostgreSQL session repositories are separated behind the unchanged
 repository factory. Public `/v1` and Socket.IO contracts, error identities, transaction boundaries,

@@ -76,18 +76,28 @@ signed payloads alone do not complete that gate.
 
 ## Target-VM load runner
 
-Register an ephemeral or tightly controlled GitHub Actions runner near the staging VM and give it
-both the standard `self-hosted` label and the custom `single-vm-staging` label. Restrict it to this
-repository, use an outbound-only network policy, keep its OS and Node tooling patched, and destroy
-or reimage it after the exercise. The workflow deliberately leaves latency and soak queued when no
-matching runner is online; do not relabel a distant runner to make the job start.
+Register an ephemeral or tightly controlled GitHub Actions runner near the staging VM. Use Actions
+Runner `2.327.1` or newer, keep automatic runner updates enabled, and satisfy any newer GitHub
+registration minimum in force at exercise time. From the runner installation directory, capture
+the output of `bin/Runner.Listener --version` in the private inventory and have the independent
+reviewer confirm it meets the minimum. Only then give the runner the standard `self-hosted` label
+and the custom `single-vm-staging` and `actions-runner-2-327-1-plus` labels. The last label is a
+reviewed attestation, not runtime discovery; remove it whenever the runner is reinstalled or its
+version can no longer be verified.
+
+Restrict the runner to this repository, use an outbound-only network policy, keep its OS and Node
+tooling patched, and destroy or reimage it after the exercise. The workflow deliberately leaves
+latency and soak queued when no fully matching runner is online; do not relabel a distant or
+unverified runner to make the job start. Node 24-based pinned actions fail on older runner binaries,
+so a queued job is safer than collecting incomplete evidence on an unsupported runner.
 
 Set `OPENROUND_LOAD_RUNNER_REGION` to the documented VM/load-generator location. The workflow stores
-that value, required labels, and non-secret runner metadata in `load-runner-provenance.json`. This
-is a declared provenance record, not independent proof of physical location, so reconcile it
-against the VM and runner inventory. Do not run unrelated jobs during measurement. Record provider,
-location, machine class, network path, runner version, resource limits, and UTC availability window
-in the private exercise record.
+that value, the minimum runner version, the attestation label, all required labels, and non-secret
+runner metadata in `load-runner-provenance.json`. This is a declared provenance record, not
+independent proof of physical location or the installed binary version, so reconcile it against the
+VM and runner inventory plus the captured version output. Do not run unrelated jobs during
+measurement. Record provider, location, machine class, network path, runner version, resource
+limits, and UTC availability window in the private exercise record.
 
 ## Before running
 

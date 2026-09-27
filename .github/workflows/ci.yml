@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -56,7 +56,7 @@ jobs:
           node -e "JSON.parse(require('node:fs').readFileSync('infra/observability/grafana/dashboards/openround-overview.json', 'utf8'))"
 
   postgres-migration:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     services:
       postgres:
@@ -106,7 +106,7 @@ jobs:
           TEST_REDIS_URL: redis://localhost:6379
 
   browser-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

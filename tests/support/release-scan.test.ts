@@ -218,7 +218,7 @@ describe("release image vulnerability evidence", () => {
       expect(scan).toMatch(/limit-severities-for-sarif: true/);
       expect(scan).toMatch(/skip-setup-trivy: true/);
     }
-    expect(workflow).toMatch(/version: v0\.68\.2/);
+    expect(workflow).toMatch(/version: v0\.74\.0/);
     expect(workflow).toMatch(
       /printf '%s\\n' "\$image_ref" > "artifacts\/release\/\$component\/ref\.txt"/,
     );
