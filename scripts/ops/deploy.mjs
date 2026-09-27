@@ -9,12 +9,15 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, URL } from "node:url";
 import {
   assertCommandAvailable,
+  assertConfiguredHostedTarget,
   assertFullGitSha,
+  assertKnownHostsTarget,
   assertNoEnvironmentKeyOverlap,
   assertPathWithin,
   assertPrivateIgnoredEnvFile,
   createPrivateFileSnapshot,
   ensureIgnoredEnvFile,
+  isPlaceholderHostedHostname,
   isHostedEnvironment,
   normalizeEnvironment,
   parseCliArguments,
@@ -1183,6 +1186,7 @@ async function resolveSingleVmFiles(config, identityPath) {
     "SSH known-hosts file",
     { requireGitClean: true },
   );
+  await assertKnownHostsTarget(knownHostsFile, config.singleVm);
   const identityFile = await resolveSshIdentityFile(identityPath, repositoryRoot);
   const knownHostsContent = await readFile(knownHostsFile);
   const deploymentFiles = new Map();
@@ -1233,6 +1237,43 @@ function environmentFileValue(content, key) {
 
 const PLAIN_DNS_HOSTNAME_PATTERN =
   /^(?=.{1,253}$)(?!-)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+
+function validateHostedTracingValues(content) {
+  const tracingEnabled = environmentFileValue(content, "TRACING_ENABLED") ?? "false";
+  if (!new Set(["true", "false"]).has(tracingEnabled)) {
+    throw new Error("TRACING_ENABLED must be true or false");
+  }
+  if (tracingEnabled === "false") return;
+
+  const endpoint = environmentFileValue(content, "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
+  if (!endpoint || endpoint.toLowerCase().includes("replace-")) {
+    throw new Error(
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must contain a non-placeholder value when tracing is enabled",
+    );
+  }
+  let url;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new Error("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must be a valid HTTP(S) URL");
+  }
+  if (
+    !new Set(["http:", "https:"]).has(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must be a credential-free HTTP(S) URL without a query or fragment",
+    );
+  }
+  if (isPlaceholderHostedHostname(url.hostname)) {
+    throw new Error(
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must not use a reserved, placeholder, loopback, or unspecified address for a hosted deployment",
+    );
+  }
+}
 
 export function validateSingleVmRuntimeValues(content, config) {
   const deploymentEnvironment = environmentFileValue(content, "OPENROUND_DEPLOYMENT_ENVIRONMENT");
@@ -1296,6 +1337,7 @@ export function validateSingleVmRuntimeValues(content, config) {
   if (environmentFileValue(content, "COMMUNITY_MODE") !== "false") {
     throw new Error("COMMUNITY_MODE must be false for a hosted single-VM deployment");
   }
+  validateHostedTracingValues(content);
   return true;
 }
 
@@ -1633,6 +1675,7 @@ async function deployHosted({ environment, parsed, dryRun }) {
     { requireGitClean: true },
   );
   const config = await readStrictJson(configPath, validateDeployConfig, environment);
+  assertConfiguredHostedTarget(config);
   const reviewedAutomationFiles = [
     ...HOSTED_DEPLOYMENT_AUTOMATION_FILES,
     ...(config.requireReadinessGate ? READINESS_GATE_INPUT_FILES : []),

@@ -18,6 +18,9 @@ jobs:
     outputs:
       run_stripe_replay: ${{ steps.payload.outputs.run_stripe_replay }}
       soak_minutes: ${{ steps.payload.outputs.soak_minutes }}
+      public_api_url: ${{ steps.target.outputs.public_api_url }}
+      public_web_url: ${{ steps.target.outputs.public_web_url }}
+      public_media_url: ${{ steps.target.outputs.public_media_url }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -66,6 +69,23 @@ jobs:
             "utf8",
           );
           NODE
+      - name: Validate configured staging deployment target
+        run: node scripts/check-deployment-target.mjs staging
+      - name: Export reviewed staging target
+        id: target
+        run: |
+          node <<'NODE'
+          const { appendFileSync, readFileSync } = require("node:fs");
+
+          const config = JSON.parse(readFileSync("config/deploy/staging.json", "utf8"));
+          for (const [output, key] of [
+            ["public_api_url", "publicApiUrl"],
+            ["public_web_url", "publicWebUrl"],
+            ["public_media_url", "publicMediaUrl"],
+          ]) {
+            appendFileSync(process.env.GITHUB_OUTPUT, `${output}=${new URL(config[key]).origin}\n`);
+          }
+          NODE
 
   remote-readiness:
     if: github.ref == 'refs/heads/main'
@@ -74,10 +94,10 @@ jobs:
     timeout-minutes: 20
     environment: single-vm-staging
     env:
-      READINESS_API_URL: ${{ vars.OPENROUND_API_URL }}
-      READINESS_WEB_URL: ${{ vars.OPENROUND_WEB_URL }}
-      READINESS_MEDIA_URL: ${{ vars.OPENROUND_MEDIA_URL }}
-      READINESS_EXPECTED_WEB_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
+      READINESS_API_URL: ${{ needs.main-candidate.outputs.public_api_url }}
+      READINESS_WEB_URL: ${{ needs.main-candidate.outputs.public_web_url }}
+      READINESS_MEDIA_URL: ${{ needs.main-candidate.outputs.public_media_url }}
+      READINESS_EXPECTED_WEB_ORIGIN: ${{ needs.main-candidate.outputs.public_web_url }}
       READINESS_EXPECT_BILLING: ${{ vars.OPENROUND_EXPECTED_BILLING }}
       READINESS_EXPECT_COMMUNITY_MODE: ${{ vars.OPENROUND_EXPECTED_COMMUNITY_MODE }}
       READINESS_EXPECT_SIGNUPS: ${{ vars.OPENROUND_EXPECTED_SIGNUPS }}
@@ -153,8 +173,8 @@ jobs:
     timeout-minutes: 90
     environment: single-vm-staging
     env:
-      LOAD_BASE_URL: ${{ vars.OPENROUND_API_URL }}
-      LOAD_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
+      LOAD_BASE_URL: ${{ needs.main-candidate.outputs.public_api_url }}
+      LOAD_ORIGIN: ${{ needs.main-candidate.outputs.public_web_url }}
       LOAD_RUNNER_REGION: ${{ vars.OPENROUND_LOAD_RUNNER_REGION }}
       LOAD_EXPECTED_BUILD_ID: ${{ github.sha }}
       LOAD_RUN_ID: staging-${{ github.run_id }}-${{ github.run_attempt }}
@@ -299,8 +319,8 @@ jobs:
     timeout-minutes: 20
     environment: single-vm-staging
     env:
-      STRIPE_REHEARSAL_BASE_URL: ${{ vars.OPENROUND_API_URL }}
-      STRIPE_REHEARSAL_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
+      STRIPE_REHEARSAL_BASE_URL: ${{ needs.main-candidate.outputs.public_api_url }}
+      STRIPE_REHEARSAL_ORIGIN: ${{ needs.main-candidate.outputs.public_web_url }}
       STRIPE_REHEARSAL_CREATOR_COOKIE: ${{ secrets.OPENROUND_STRIPE_REHEARSAL_COOKIE }}
       STRIPE_REHEARSAL_WEBHOOK_SECRET: ${{ secrets.OPENROUND_STRIPE_WEBHOOK_SECRET }}
       STRIPE_REHEARSAL_OUTPUT: artifacts/readiness/stripe-replay.json

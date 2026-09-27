@@ -53,6 +53,16 @@ Ubuntu 26 canary exercises native builds, service containers, all supported brow
 production Compose path, and image tooling ahead of GitHub's hosted-runner migration. Canary latency
 is not target-region capacity evidence, and these controls do not complete a pending readiness gate.
 
+Staging preflight now also rejects reserved, example, placeholder, loopback, or unspecified public
+and SSH targets, and requires a valid non-revoked SSH key pin for the exact configured host and
+port before a protected workflow requests approval. Readiness, target-region load, and Stripe
+rehearsal jobs receive their public origins from that reviewed configuration instead of independent
+environment variables. Hosted tracing no longer falls back to a container-local collector: enabled
+deployments require an explicit non-loopback HTTP(S) endpoint, and spans carry the reviewed
+deployment environment and immutable build ID. The checked-in staging target and key pin remain
+placeholders, and no collector backend, retention, residency, or alert owner has been selected, so
+these controls intentionally do not mark the external staging or monitoring gates complete.
+
 Live mutation orchestration and deterministic response policy now sit behind the existing service
 façade, while memory and PostgreSQL session repositories are separated behind the unchanged
 repository factory. Public `/v1` and Socket.IO contracts, error identities, transaction boundaries,

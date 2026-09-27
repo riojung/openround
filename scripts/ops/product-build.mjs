@@ -7,6 +7,7 @@ import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
 import {
   assertCommandAvailable,
+  assertConfiguredHostedTarget,
   assertFullGitSha,
   assertPathWithin,
   composeBuildArgv,
@@ -273,6 +274,7 @@ export async function main(argv = process.argv.slice(2)) {
         "build manifest output",
       )
     : undefined;
+  if (hosted) assertConfiguredHostedTarget(config);
 
   await assertCommandAvailable("git", { cwd: repositoryRoot, dryRun: false });
   const buildId = assertFullGitSha(await gitOutput(["rev-parse", "--verify", "HEAD"]));

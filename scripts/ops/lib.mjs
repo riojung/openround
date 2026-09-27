@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
 import { lstat, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
@@ -79,6 +80,23 @@ const REMOTE_PATH_PATTERN = /^\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/;
 const REPOSITORY_PATH_PATTERN = /^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/;
 const COMPOSE_PROJECT_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 const HOSTED_IMAGE_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
+const RESERVED_HOSTED_TARGET_SUFFIXES = Object.freeze([
+  "example",
+  "invalid",
+  "localhost",
+  "test",
+  "example.com",
+  "example.net",
+  "example.org",
+]);
+const PLACEHOLDER_HOST_LABELS = new Set([
+  "changeme",
+  "example",
+  "placeholder",
+  "replace",
+  "replace-me",
+  "replace-this",
+]);
 const SINGLE_VM_RUNTIME_ENV_KEYS = new Set([
   "NODE_ENV",
   "OPENROUND_DEPLOYMENT_ENVIRONMENT",
@@ -587,6 +605,87 @@ export function validateDeployConfig(input, expectedEnvironment) {
   return input;
 }
 
+function mappedIpv4Octets(hostname) {
+  const dotted = hostname.match(/^::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (dotted) {
+    const octets = dotted.slice(1).map(Number);
+    return octets.every((octet) => octet <= 255) ? octets : undefined;
+  }
+  const match = hostname.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (!match) return undefined;
+  const high = Number.parseInt(match[1], 16);
+  const low = Number.parseInt(match[2], 16);
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff];
+}
+
+function isReservedHostedIpv4([first, second, third]) {
+  return (
+    first === 0 ||
+    first === 127 ||
+    (first === 192 && second === 0 && third === 2) ||
+    (first === 198 && second === 51 && third === 100) ||
+    (first === 203 && second === 0 && third === 113)
+  );
+}
+
+export function isPlaceholderHostedHostname(hostname) {
+  const normalized = String(hostname ?? "")
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
+  const addressKind = isIP(normalized);
+  if (addressKind === 4 && isReservedHostedIpv4(normalized.split(".").map(Number))) return true;
+  if (addressKind === 6) {
+    if (normalized === "::" || normalized === "::1" || normalized.startsWith("2001:db8:")) {
+      return true;
+    }
+    const mapped = mappedIpv4Octets(normalized);
+    if (mapped && isReservedHostedIpv4(mapped)) return true;
+  }
+  if (
+    addressKind === 0 &&
+    /^(?:0x[0-9a-f]+|[0-9]+)(?:\.(?:0x[0-9a-f]+|[0-9]+))*$/.test(normalized)
+  ) {
+    return true;
+  }
+  if (
+    RESERVED_HOSTED_TARGET_SUFFIXES.some(
+      (suffix) => normalized === suffix || normalized.endsWith(`.${suffix}`),
+    )
+  ) {
+    return true;
+  }
+  return normalized
+    .split(".")
+    .some(
+      (label) =>
+        PLACEHOLDER_HOST_LABELS.has(label) ||
+        label.startsWith("replace-") ||
+        label.startsWith("placeholder-"),
+    );
+}
+
+export function assertConfiguredHostedTarget(config) {
+  if (!isHostedEnvironment(config?.environment)) {
+    throw new Error("Hosted target validation requires staging or production configuration");
+  }
+  for (const key of ["publicWebUrl", "publicApiUrl", "publicMediaUrl"]) {
+    if (config[key] === undefined) continue;
+    const hostname = new URL(config[key]).hostname;
+    if (isPlaceholderHostedHostname(hostname)) {
+      throw new Error(
+        `deployment config ${key} must not use a reserved example, placeholder, loopback, or unspecified hostname`,
+      );
+    }
+  }
+  if (config.singleVm && isPlaceholderHostedHostname(String(config.singleVm.host ?? ""))) {
+    throw new Error(
+      "deployment config singleVm.host must not use a reserved example, placeholder, loopback, or unspecified hostname",
+    );
+  }
+  return config;
+}
+
 export function parseFlyTomlEnvironment(content) {
   const environment = {};
   let inEnvironment = false;
@@ -1072,6 +1171,89 @@ export async function run(command, args, options = {}) {
       reject(error);
     });
   });
+}
+
+export async function assertKnownHostsTarget(knownHostsFile, singleVm, runCommand = run) {
+  validateSingleVmConfig(singleVm);
+  if (typeof knownHostsFile !== "string" || !isAbsolute(knownHostsFile)) {
+    throw new Error("SSH known-hosts file must be an absolute path");
+  }
+  const lookupHost = singleVm.port === 22 ? singleVm.host : `[${singleVm.host}]:${singleVm.port}`;
+  let rawResult;
+  try {
+    rawResult = await runCommand("ssh-keygen", ["-F", lookupHost, "-f", knownHostsFile], {
+      capture: true,
+    });
+  } catch (error) {
+    if (error?.exitCode === 1) {
+      throw new Error(`SSH known-hosts file must contain a valid host key for ${lookupHost}`, {
+        cause: error,
+      });
+    }
+    throw new Error(`Could not validate the SSH host key for ${lookupHost}`, { cause: error });
+  }
+
+  let hasExactPin = false;
+  const acceptedKeyIdentities = new Set();
+  const revokedKeyIdentities = new Set();
+  const normalizedLookupHost = lookupHost.toLowerCase();
+  for (const sourceLine of String(rawResult?.stdout ?? "").split(/\r?\n/)) {
+    const line = sourceLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const fields = line.split(/\s+/);
+    const marker = fields[0]?.startsWith("@") ? fields.shift() : undefined;
+    const hosts = fields[0] ?? "";
+    const keyIdentity = fields.length >= 3 ? `${fields[1]} ${fields[2]}` : undefined;
+    if (marker === "@revoked") {
+      if (keyIdentity) revokedKeyIdentities.add(keyIdentity);
+      continue;
+    }
+    if (marker !== undefined || hosts.includes("*") || hosts.includes("?") || hosts.includes("!")) {
+      throw new Error(`SSH known-hosts file must use an exact host-key pin for ${lookupHost}`);
+    }
+    const hasLiteralExactPin = hosts
+      .split(",")
+      .some((host) => host.toLowerCase() === normalizedLookupHost);
+    if (hosts.startsWith("|1|") || hasLiteralExactPin) {
+      hasExactPin = true;
+      if (keyIdentity) acceptedKeyIdentities.add(keyIdentity);
+      continue;
+    }
+    throw new Error(`SSH known-hosts file must use an exact host-key pin for ${lookupHost}`);
+  }
+  if (!hasExactPin) {
+    throw new Error(`SSH known-hosts file must contain a valid host key for ${lookupHost}`);
+  }
+  if ([...acceptedKeyIdentities].some((key) => revokedKeyIdentities.has(key))) {
+    throw new Error(`SSH known-hosts file must not revoke a pinned host key for ${lookupHost}`);
+  }
+
+  let fingerprintResult;
+  try {
+    fingerprintResult = await runCommand(
+      "ssh-keygen",
+      ["-l", "-F", lookupHost, "-f", knownHostsFile],
+      { capture: true },
+    );
+  } catch (error) {
+    if (error?.exitCode === 1) {
+      throw new Error(`SSH known-hosts file must contain a valid host key for ${lookupHost}`, {
+        cause: error,
+      });
+    }
+    throw new Error(`Could not validate the SSH host key for ${lookupHost}`, { cause: error });
+  }
+  const matchHeaders = String(fingerprintResult?.stdout ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("# Host "));
+  if (
+    matchHeaders.length === 0 ||
+    matchHeaders.every((line) => line.endsWith(" REVOKED") || line.endsWith(" CA"))
+  ) {
+    throw new Error(`SSH known-hosts file must contain a valid host key for ${lookupHost}`);
+  }
+  return true;
 }
 
 export function shellDisplayToken(value) {
