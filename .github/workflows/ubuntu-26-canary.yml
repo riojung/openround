@@ -1,0 +1,301 @@
+name: Ubuntu 26 compatibility canary
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/*.yml
+      - .dockerignore
+      - apps/server/Dockerfile
+      - apps/web/Dockerfile
+      - compose.yaml
+      - compose.*.yaml
+      - pnpm-lock.yaml
+  workflow_dispatch:
+  schedule:
+    - cron: "43 10 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ubuntu-26-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - name: Validate fail-fast hosted production configuration
+        run: pnpm --filter @openround/server config:check
+        env:
+          NODE_ENV: production
+          DATABASE_URL: postgresql://runtime:example@database.internal/openround
+          REDIS_URL: rediss://cache.internal:6380
+          WEB_ORIGIN: https://quiz.example.ca
+          PUBLIC_API_URL: https://api.example.ca
+          COOKIE_SECURE: "true"
+          FEATURE_SIGNUPS: "false"
+          METRICS_ENABLED: "false"
+      - run: pnpm readiness:check
+      - run: pnpm smoke:tracing
+      - name: Validate Prometheus configuration and alert rules
+        run: |
+          docker run --rm \
+            --volume "$PWD/infra/observability:/etc/prometheus:ro" \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.5.0 \
+            check config /etc/prometheus/prometheus.yml
+          pnpm test:alerts
+          pnpm test:alert-routing
+          pnpm test:collector-config
+
+  postgres-migration:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: openround
+          POSTGRES_USER: openround
+          POSTGRES_PASSWORD: test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openround -d openround"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://openround:test-only@localhost:5432/openround
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @openround/db migrate
+      - run: pnpm --filter @openround/db migrate
+      - run: pnpm --filter @openround/db test:postgres
+        env:
+          TEST_DATABASE_ADMIN_URL: postgresql://openround:test-only@localhost:5432/openround
+          TEST_DATABASE_URL: postgresql://openround_test_app:test-only-runtime@localhost:5432/openround
+      - run: pnpm test:multi-writer
+        env:
+          TEST_DATABASE_ADMIN_URL: postgresql://openround:test-only@localhost:5432/openround
+          TEST_DATABASE_URL: postgresql://openround_test_app:test-only-runtime@localhost:5432/openround
+          TEST_REDIS_URL: redis://localhost:6379
+
+  browser-smoke:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - name: Run feature-off browser suite
+        run: pnpm test:e2e
+      - name: Run UX beta browser suite
+        run: pnpm test:e2e:beta
+      - name: Upload browser failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ubuntu-26-browser-smoke-failure
+          path: |
+            playwright-report/
+            playwright-report-beta/
+            test-results/
+            test-results-beta/
+          if-no-files-found: ignore
+
+  production-compose:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify MinIO volume ownership across upgrade and rollback
+        run: pnpm smoke:minio-volume-upgrade
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Start production media profile
+        run: docker compose -f compose.yaml -f compose.media.yaml up -d --build --wait
+      - name: Verify one-shot image migration
+        run: >-
+          docker compose -f compose.yaml -f compose.media.yaml
+          run --rm --no-deps server node dist/migrate.js
+      - name: API and dependency smoke
+        run: pnpm smoke:compose
+      - name: Browser media smoke
+        run: pnpm test:e2e:compose
+      - name: Provision dashboard and evaluate alert rules
+        run: |
+          docker compose -f compose.yaml -f compose.media.yaml -f compose.observability.yaml --profile observability up -d prometheus grafana
+          pnpm smoke:observability
+      - name: Two-process mutation and process-loss smoke
+        run: |
+          docker compose -f compose.yaml -f compose.test.yaml -f compose.multiwriter.yaml up -d --no-build --wait server server-secondary mailpit
+          pnpm smoke:multi-process
+      - name: Isolated backup and restore drill
+        run: pnpm smoke:restore
+      - name: 100-client correctness, latency, and restart recovery
+        run: pnpm load:compose
+        env:
+          ASSERT_PERFORMANCE: "false"
+          CLIENTS: "100"
+          JOIN_BATCH_SIZE: "20"
+          LOAD_OUTPUT: artifacts/readiness/ubuntu-26-production-smoke-load.json
+          RESTART_SERVER: "true"
+      - name: Capture Compose logs
+        if: failure()
+        run: docker compose -f compose.yaml -f compose.media.yaml -f compose.test.yaml -f compose.multiwriter.yaml -f compose.observability.yaml --profile observability logs --no-color > ubuntu-26-compose-failure.log
+      - name: Capture server metrics
+        if: always()
+        continue-on-error: true
+        run: docker compose -f compose.yaml -f compose.media.yaml -f compose.test.yaml -f compose.multiwriter.yaml -f compose.observability.yaml --profile observability exec -T server wget -qO- http://127.0.0.1:4000/metrics > ubuntu-26-production-smoke-metrics.prom
+      - name: Upload Ubuntu 26 Compose evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ubuntu-26-production-smoke-${{ github.run_id }}
+          path: |
+            artifacts/readiness/ubuntu-26-production-smoke-load.json
+            ubuntu-26-compose-failure.log
+            ubuntu-26-production-smoke-metrics.prom
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Stop disposable stack
+        if: always()
+        run: docker compose -f compose.yaml -f compose.media.yaml -f compose.test.yaml -f compose.multiwriter.yaml -f compose.observability.yaml --profile observability down --volumes
+
+  image-toolchain:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Install Trivy CLI
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+          cache: true
+      - name: Record host and image-toolchain versions
+        run: |
+          mkdir -p artifacts/readiness
+          {
+            uname -a
+            docker version
+            docker compose version
+            docker buildx version
+            cosign version
+            trivy --version
+          } > artifacts/readiness/ubuntu-26-image-toolchain.txt 2>&1
+      - name: Build server and web images
+        run: |
+          docker buildx build \
+            --load \
+            --file apps/server/Dockerfile \
+            --build-arg OPENROUND_BUILD_ID="$GITHUB_SHA" \
+            --tag openround-server:ubuntu-26-canary \
+            .
+          docker buildx build \
+            --load \
+            --file apps/web/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL=https://api.example.ca \
+            --build-arg OPENROUND_BUILD_ID="$GITHUB_SHA" \
+            --tag openround-web:ubuntu-26-canary \
+            .
+      - name: Scan canary images
+        run: |
+          trivy image \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --exit-code 0 \
+            --output artifacts/readiness/ubuntu-26-server-trivy.txt \
+            openround-server:ubuntu-26-canary
+          trivy image \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --exit-code 0 \
+            --output artifacts/readiness/ubuntu-26-web-trivy.txt \
+            openround-web:ubuntu-26-canary
+      - name: Sign and verify a local canary payload
+        env:
+          COSIGN_PASSWORD: ubuntu-26-canary-only
+        run: |
+          set -euo pipefail
+          key_prefix="$RUNNER_TEMP/ubuntu-26-cosign"
+          payload=artifacts/readiness/ubuntu-26-cosign-payload.txt
+          signature=artifacts/readiness/ubuntu-26-cosign-signature.txt
+          printf '%s\n' "$GITHUB_SHA" > "$payload"
+          cosign generate-key-pair --output-key-prefix "$key_prefix"
+          cosign sign-blob \
+            --yes \
+            --use-signing-config=false \
+            --new-bundle-format=false \
+            --tlog-upload=false \
+            --key "${key_prefix}.key" \
+            --output-signature "$signature" \
+            "$payload"
+          cosign verify-blob \
+            --insecure-ignore-tlog \
+            --key "${key_prefix}.pub" \
+            --signature "$signature" \
+            "$payload" \
+            > artifacts/readiness/ubuntu-26-cosign-verification.txt
+          rm -f "${key_prefix}.key" "${key_prefix}.pub"
+      - name: Upload Ubuntu 26 image-toolchain evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ubuntu-26-image-toolchain-${{ github.run_id }}
+          path: |
+            artifacts/readiness/ubuntu-26-image-toolchain.txt
+            artifacts/readiness/ubuntu-26-server-trivy.txt
+            artifacts/readiness/ubuntu-26-web-trivy.txt
+            artifacts/readiness/ubuntu-26-cosign-payload.txt
+            artifacts/readiness/ubuntu-26-cosign-signature.txt
+            artifacts/readiness/ubuntu-26-cosign-verification.txt
+          if-no-files-found: error
+          retention-days: 14

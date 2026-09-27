@@ -33,6 +33,7 @@ education and workplace learning. Use this index to choose the shortest path for
   images, local service lifecycle, safe Docker cleanup and rebuilds, and digest-pinned remote
   single-VM promotion.
 - [Single-VM staging readiness](runbooks/staging-readiness.md),
+  [Ubuntu 26 runner migration](runbooks/ubuntu-26-runner-migration.md),
   [repository governance](runbooks/repository-governance.md),
   [backup and restore](runbooks/backup-restore.md), [upgrade](runbooks/upgrade.md),
   [audience interaction moderation](runbooks/audience-moderation.md),

@@ -35,9 +35,12 @@ Build local development images:
 ./scripts/product-build.sh development
 ```
 
-Hosted builds require a clean Git worktree, Buildx, an HTTPS application origin matching the
-checked-in target config, a registry prefix matching that config, and `--push`. This is the
-underlying command used by the protected staging-image workflow:
+Hosted builds require a clean Git worktree, Buildx, a stable Cosign release from 3.0.6 up to but not
+including 4.0.0, an HTTPS application origin matching the checked-in target config, a registry
+prefix matching that config, and `--push`. The build and deployment wrappers reject an unsupported
+or unparseable `cosign version` before signing or verifying because Cosign 2 cannot be relied on to
+discover the Cosign 3 signature format, while Cosign 4 compatibility has not been qualified. This
+is the underlying command used by the protected staging-image workflow:
 
 ```bash
 ./scripts/product-build.sh staging \

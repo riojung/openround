@@ -9,6 +9,10 @@ measurements, and independently reviewed infrastructure inventory references.
 - Workflow run and attempt:
 - Staging inventory reference (provider, region, machine class, resource limits):
 - Load-runner inventory reference and declared region:
+- Installed Actions Runner version:
+- Runner-version command output/checksum or inventory evidence reference:
+- `actions-runner-2-327-1-plus` label applied after version review (reviewer and UTC):
+- Automatic-update/current-release verification:
 - Network path and expected round-trip characteristics:
 - Owner and independent reviewer:
 

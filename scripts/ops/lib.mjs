@@ -572,6 +572,11 @@ export function validateDeployConfig(input, expectedEnvironment) {
     if (!input.cosignIdentityRegexp.startsWith("^") || !input.cosignIdentityRegexp.endsWith("$")) {
       throw new Error("cosignIdentityRegexp must be anchored at both ends");
     }
+    if (input.cosignIdentityRegexp.includes("(?:")) {
+      throw new Error(
+        "cosignIdentityRegexp must use Cosign-compatible RE2 syntax; non-capturing groups are unsupported",
+      );
+    }
     try {
       new RegExp(input.cosignIdentityRegexp);
     } catch {
@@ -1074,6 +1079,37 @@ export function shellDisplayToken(value) {
   return /^[A-Za-z0-9_./:@%+=,-]+$/.test(token) ? token : `'${token.replaceAll("'", "'\\''")}'`;
 }
 
+const MINIMUM_COSIGN_VERSION = [3, 0, 6];
+
+export function assertSupportedCosignVersion(output) {
+  const match = String(output).match(/\bGitVersion:\s*v?(\d+)\.(\d+)\.(\d+)([-+][^\s]+)?(?:\s|$)/i);
+  if (!match) {
+    throw new Error("Unable to determine Cosign version; Cosign 3.0.6 or newer is required");
+  }
+  if (match[4]?.startsWith("-")) {
+    throw new Error(
+      `Cosign ${match.slice(1, 4).join(".")}${match[4]} is unsupported; a stable Cosign 3.0.6 or newer release is required`,
+    );
+  }
+  const installed = match.slice(1, 4).map(Number);
+  if (installed[0] !== MINIMUM_COSIGN_VERSION[0]) {
+    throw new Error(
+      `Cosign ${installed.join(".")} is unsupported; a stable Cosign release from 3.0.6 up to, but not including, 4.0.0 is required`,
+    );
+  }
+  const comparisonIndex = installed.findIndex(
+    (value, index) => value !== MINIMUM_COSIGN_VERSION[index],
+  );
+  const supported =
+    comparisonIndex === -1 || installed[comparisonIndex] > MINIMUM_COSIGN_VERSION[comparisonIndex];
+  if (!supported) {
+    throw new Error(
+      `Cosign ${installed.join(".")} is unsupported; Cosign 3.0.6 or newer is required`,
+    );
+  }
+  return installed.join(".");
+}
+
 export async function assertCommandAvailable(command, { cwd, dryRun = false } = {}) {
   if (dryRun) return;
   const versionArguments =
@@ -1082,7 +1118,10 @@ export async function assertCommandAvailable(command, { cwd, dryRun = false } = 
       : command === "ssh"
         ? ["-V"]
         : ["--version"];
-  await run(command, versionArguments, { cwd, capture: true });
+  const result = await run(command, versionArguments, { cwd, capture: true });
+  if (command === "cosign") {
+    assertSupportedCosignVersion(`${result.stdout}\n${result.stderr}`);
+  }
 }
 
 export async function isIgnoredByGit(path, repositoryRoot) {
