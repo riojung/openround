@@ -1118,6 +1118,18 @@ describe("deployment configuration and manifest validation", () => {
 
     expect(validateFlyRuntimeEnvironment(serverEnvironment, checkedConfig)).toBe(serverEnvironment);
     expect(validateFlyWebEnvironment(webEnvironment, checkedConfig)).toBe(webEnvironment);
+    expect(serverEnvironment.OPENROUND_DEPLOYMENT_ENVIRONMENT).toBe("staging");
+    expect(() =>
+      validateFlyRuntimeEnvironment(
+        { ...serverEnvironment, OPENROUND_DEPLOYMENT_ENVIRONMENT: "production" },
+        checkedConfig,
+      ),
+    ).toThrow("Fly [env] OPENROUND_DEPLOYMENT_ENVIRONMENT must be staging");
+    const { OPENROUND_DEPLOYMENT_ENVIRONMENT: _deploymentEnvironment, ...missingEnvironment } =
+      serverEnvironment;
+    expect(() => validateFlyRuntimeEnvironment(missingEnvironment, checkedConfig)).toThrow(
+      "Fly [env] OPENROUND_DEPLOYMENT_ENVIRONMENT must be staging",
+    );
     expect(() =>
       validateFlyRuntimeEnvironment(
         { ...serverEnvironment, DATABASE_URL: "postgresql://secret" },
@@ -1130,6 +1142,29 @@ describe("deployment configuration and manifest validation", () => {
         checkedConfig,
       ),
     ).toThrow("NEXT_PUBLIC_API_URL");
+
+    const productionServerEnvironment = parseFlyTomlEnvironment(
+      await readFile(join(repositoryRoot, "config/deploy/fly/production-server.toml"), "utf8"),
+    );
+    const checkedProductionConfig = validateDeployConfig(
+      {
+        ...productionConfig(),
+        publicWebUrl: "https://openround-ca-web.fly.dev",
+        publicApiUrl: "https://openround-ca-server.fly.dev",
+        imageRepository: "ghcr.io/riojung/openround/openround",
+        fly: {
+          serverApp: "openround-ca-server",
+          webApp: "openround-ca-web",
+          serverConfig: "config/deploy/fly/production-server.toml",
+          webConfig: "config/deploy/fly/production-web.toml",
+        },
+      },
+      "production",
+    );
+    expect(productionServerEnvironment.OPENROUND_DEPLOYMENT_ENVIRONMENT).toBe("production");
+    expect(
+      validateFlyRuntimeEnvironment(productionServerEnvironment, checkedProductionConfig),
+    ).toBe(productionServerEnvironment);
   });
 
   it("validates single-VM targets, strict SSH arguments, and safe runtime values", () => {

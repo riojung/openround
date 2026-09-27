@@ -712,6 +712,7 @@ export function parseFlyTomlEnvironment(content) {
 export function validateFlyRuntimeEnvironment(environment, config) {
   const expected = {
     NODE_ENV: "production",
+    OPENROUND_DEPLOYMENT_ENVIRONMENT: config.environment,
     HOST: "0.0.0.0",
     PORT: "4000",
     WEB_ORIGIN: config.publicWebUrl,
