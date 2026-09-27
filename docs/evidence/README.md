@@ -12,12 +12,15 @@ For each completed gate:
 2. Attach redacted logs or checksums and a stable evidence URL with access appropriate to the
    reviewers.
 3. Record failures and follow-up issues; a partial exercise is not a passing gate.
-4. Update `docs/release-readiness.json` only after the named reviewer accepts the evidence.
+4. Update `docs/release-readiness.json` only after the named reviewer accepts the evidence. For the
+   signed-release gate, use the exact evidence-only transition and `releaseBinding` documented in
+   the signed release candidate record; do not combine that acceptance with any other change.
 5. Run `pnpm readiness:check`; run `pnpm readiness:require:beta:preflight` before tagging a beta
    candidate, then run `pnpm readiness:require:beta` after the signed-release evidence is accepted.
 
 Available release templates cover [single-VM staging](single-vm-staging.md),
-[alert delivery](operations-rehearsal.md), [target-region load and soak](target-region-load.md),
+[monitoring, paging, and support rehearsal](operations-rehearsal.md),
+[target-region load and soak](target-region-load.md),
 [provider restoration](provider-restore.md), [accessibility](accessibility-review.md),
 [security](security-review.md), [privacy/legal approval](privacy-legal-approval.md),
 [live billing](live-billing-rehearsal.md), [repository governance](repository-governance-canary.md),

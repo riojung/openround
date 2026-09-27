@@ -59,9 +59,21 @@ the release gate complete.
    retag or use `latest` in production.
 5. Verify signatures and digests before promotion; retain the workflow URL and digest in the
    [signed release candidate record](../evidence/signed-release-candidate.md).
-6. Mark `signed-release` complete only after its digest, SBOM, SARIF, provenance, and successful
-   Cosign verification are retained, then run `pnpm readiness:require:beta` for the final decision.
-7. Follow the upgrade canary and rollback runbook. A failed gate requires a new reviewed commit
+6. After its manifest digest, image digests, SBOM, SARIF, provenance, and successful Cosign
+   verification are retained, open and independently review an evidence-only PR. Its complete tree
+   delta from the tagged commit must be only `docs/release-readiness.json`; within that ledger it
+   may update only `updatedAt` and move `signed-release` from pending to complete with stable HTTPS
+   evidence and the exact tag object, tagged build commit, manifest SHA-256, and server/web image
+   digests in `releaseBinding`. Merge it without bypass, then run `pnpm readiness:require:beta` for
+   the final decision.
+7. Deploy the exact downloaded manifest from that evidence-only descendant. The deployer verifies
+   the descendant and binding, fetches the protected `origin/main` and exact tag, and requires the
+   operations `HEAD` to equal that fetched main tip. It also requires GitHub to report a valid
+   signature for the exact bound annotated tag object and confirms that object's name and target.
+   A local, unsigned, recreated, or substituted tag cannot satisfy this gate. Cosign must also match
+   the exact release-workflow certificate identity for the bound tag, not merely another semver
+   release tag. The exact-source rule remains in force for every ordinary deployment.
+8. Follow the upgrade canary and rollback runbook. A failed gate requires a new reviewed commit
    and tag rather than rewriting an existing release.
 
 ## Audit record
