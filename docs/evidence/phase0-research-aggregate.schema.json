@@ -1,0 +1,642 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openround.dev/schemas/phase0-research-aggregate.schema.json",
+  "title": "OpenRound Phase 0 research aggregate",
+  "description": "Redaction-safe, independently reviewed inputs for the Phase 0 research gate and ordered Phase 1 decision. Semantic cross-record checks are enforced by scripts/check-phase0-research.mjs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schemaVersion",
+    "campaign",
+    "facilitators",
+    "cohortSubstitutions",
+    "sessions",
+    "usability",
+    "measuredFailures",
+    "aggregateReview",
+    "declaredDecisions"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "./phase0-research-aggregate.schema.json"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "campaign": {
+      "$ref": "#/$defs/campaign"
+    },
+    "facilitators": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/facilitator"
+      }
+    },
+    "cohortSubstitutions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/cohortSubstitution"
+      }
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/session"
+      }
+    },
+    "usability": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/usability"
+      }
+    },
+    "measuredFailures": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/measuredFailure"
+      }
+    },
+    "aggregateReview": {
+      "$ref": "#/$defs/aggregateReview"
+    },
+    "declaredDecisions": {
+      "$ref": "#/$defs/declaredDecisions"
+    }
+  },
+  "$defs": {
+    "version": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$"
+    },
+    "segment": {
+      "enum": ["higher-education", "workplace"]
+    },
+    "disposition": {
+      "description": "Every included record must already have a final independently reviewed disposition; pending is intentionally not valid.",
+      "enum": ["accepted", "rejected", "excluded"]
+    },
+    "facilitatorId": {
+      "type": "string",
+      "pattern": "^fac-[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "partnerId": {
+      "type": "string",
+      "pattern": "^partner-[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "sessionId": {
+      "type": "string",
+      "pattern": "^session-[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "workflowId": {
+      "type": "string",
+      "pattern": "^workflow-[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "studyId": {
+      "type": "string",
+      "pattern": "^study-[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "failureId": {
+      "type": "string",
+      "pattern": "^failure-[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "substitutionId": {
+      "type": "string",
+      "pattern": "^substitution-[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "reasonCode": {
+      "enum": [
+        "eligibility-failure",
+        "withdrawal",
+        "unusable-protocol-record",
+        "failed-instrumentation",
+        "protocol-exclusion"
+      ]
+    },
+    "nullableReasonCode": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/reasonCode"
+        }
+      ]
+    },
+    "independentReview": {
+      "description": "The independent reviewer accepted the record's disposition, counts, and reason code.",
+      "const": "accepted"
+    },
+    "evidenceReference": {
+      "description": "Use a content checksum or an opaque handle resolved in the approved private evidence index; do not place a private URL here.",
+      "type": "string",
+      "pattern": "^(sha256:[a-f0-9]{64}|ref:[a-z0-9][a-z0-9._/-]{2,127})$"
+    },
+    "evidenceReferences": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/evidenceReference"
+      }
+    },
+    "campaign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "cohortVersion",
+        "cohortFrozen",
+        "primaryCohortFrozen",
+        "cutoffUtc",
+        "evidenceReferences"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "cohortVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "cohortFrozen": {
+          "type": "boolean"
+        },
+        "primaryCohortFrozen": {
+          "type": "boolean"
+        },
+        "cutoffUtc": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            }
+          ]
+        },
+        "evidenceReferences": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidenceReference"
+          }
+        }
+      }
+    },
+    "facilitator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "facilitatorId",
+        "partnerId",
+        "segment",
+        "enrollmentOrder",
+        "eligibleAtFreeze",
+        "initialPrimary",
+        "primary",
+        "disposition",
+        "eligible",
+        "recurringProblem",
+        "activationSeconds",
+        "willingnessToPay",
+        "reasonCode",
+        "independentReview",
+        "evidenceReferences"
+      ],
+      "properties": {
+        "facilitatorId": {
+          "$ref": "#/$defs/facilitatorId"
+        },
+        "partnerId": {
+          "$ref": "#/$defs/partnerId"
+        },
+        "segment": {
+          "$ref": "#/$defs/segment"
+        },
+        "enrollmentOrder": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "eligibleAtFreeze": {
+          "type": "boolean"
+        },
+        "initialPrimary": {
+          "type": "boolean"
+        },
+        "primary": {
+          "type": "boolean"
+        },
+        "disposition": {
+          "$ref": "#/$defs/disposition"
+        },
+        "eligible": {
+          "type": "boolean"
+        },
+        "recurringProblem": {
+          "type": "boolean"
+        },
+        "activationSeconds": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            }
+          ]
+        },
+        "willingnessToPay": {
+          "enum": ["yes", "no", "unknown"]
+        },
+        "reasonCode": {
+          "$ref": "#/$defs/nullableReasonCode"
+        },
+        "independentReview": {
+          "$ref": "#/$defs/independentReview"
+        },
+        "evidenceReferences": {
+          "$ref": "#/$defs/evidenceReferences"
+        }
+      }
+    },
+    "cohortSubstitution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "substitutionId",
+        "segment",
+        "sequence",
+        "removedFacilitatorId",
+        "reserveFacilitatorId",
+        "reasonCode",
+        "independentReview",
+        "evidenceReferences"
+      ],
+      "properties": {
+        "substitutionId": {
+          "$ref": "#/$defs/substitutionId"
+        },
+        "segment": {
+          "$ref": "#/$defs/segment"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "removedFacilitatorId": {
+          "$ref": "#/$defs/facilitatorId"
+        },
+        "reserveFacilitatorId": {
+          "$ref": "#/$defs/facilitatorId"
+        },
+        "reasonCode": {
+          "enum": ["eligibility-failure", "withdrawal", "unusable-protocol-record"]
+        },
+        "independentReview": {
+          "$ref": "#/$defs/independentReview"
+        },
+        "evidenceReferences": {
+          "$ref": "#/$defs/evidenceReferences"
+        }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "facilitatorId",
+        "partnerId",
+        "workflowId",
+        "segment",
+        "disposition",
+        "eligible",
+        "recoveryEligibleCheckpoints",
+        "recoveryCompleteCheckpoints",
+        "eligibleAttempts",
+        "timingConnectivityAffectedAttempts",
+        "timingConnectivityExcluded",
+        "seriousAccessibilityFinding",
+        "externalDeckUsed",
+        "materialContextSwitch",
+        "reasonCode",
+        "independentReview",
+        "evidenceReferences"
+      ],
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/sessionId"
+        },
+        "facilitatorId": {
+          "$ref": "#/$defs/facilitatorId"
+        },
+        "partnerId": {
+          "$ref": "#/$defs/partnerId"
+        },
+        "workflowId": {
+          "$ref": "#/$defs/workflowId"
+        },
+        "segment": {
+          "$ref": "#/$defs/segment"
+        },
+        "disposition": {
+          "$ref": "#/$defs/disposition"
+        },
+        "eligible": {
+          "type": "boolean"
+        },
+        "recoveryEligibleCheckpoints": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recoveryCompleteCheckpoints": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eligibleAttempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timingConnectivityAffectedAttempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timingConnectivityExcluded": {
+          "type": "boolean"
+        },
+        "seriousAccessibilityFinding": {
+          "type": "boolean"
+        },
+        "externalDeckUsed": {
+          "type": "boolean"
+        },
+        "materialContextSwitch": {
+          "type": "boolean"
+        },
+        "reasonCode": {
+          "$ref": "#/$defs/nullableReasonCode"
+        },
+        "independentReview": {
+          "$ref": "#/$defs/independentReview"
+        },
+        "evidenceReferences": {
+          "$ref": "#/$defs/evidenceReferences"
+        }
+      }
+    },
+    "usability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "studyId",
+        "segment",
+        "attemptOrder",
+        "supersedesStudyId",
+        "disposition",
+        "result",
+        "eligibleFirstTimeFacilitators",
+        "eligibleParticipants",
+        "metrics",
+        "reasonCode",
+        "independentReview",
+        "evidenceReferences"
+      ],
+      "properties": {
+        "studyId": {
+          "$ref": "#/$defs/studyId"
+        },
+        "segment": {
+          "$ref": "#/$defs/segment"
+        },
+        "attemptOrder": {
+          "description": "One-based position in this segment's complete usability-attempt chain.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "supersedesStudyId": {
+          "description": "The immediately preceding study in this segment, or null for attempt 1.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/studyId"
+            }
+          ]
+        },
+        "disposition": {
+          "$ref": "#/$defs/disposition"
+        },
+        "result": {
+          "enum": ["accepted", "rejected", "not-evaluated"]
+        },
+        "eligibleFirstTimeFacilitators": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "eligibleParticipants": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "metrics": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "starterSessionWithin5Minutes",
+                "blankRoundPublishSeconds",
+                "validNextActionWithin10Seconds",
+                "firstSubmitWithoutHelp",
+                "savedAcknowledgementMilliseconds",
+                "retainedResultWithin45Seconds",
+                "mainUnresolvedConceptWithin45Seconds",
+                "recoveryRehearsalWithoutHelp"
+              ],
+              "properties": {
+                "starterSessionWithin5Minutes": {
+                  "$ref": "#/$defs/usabilityRateMetric"
+                },
+                "blankRoundPublishSeconds": {
+                  "$ref": "#/$defs/usabilityTimingMetric"
+                },
+                "validNextActionWithin10Seconds": {
+                  "$ref": "#/$defs/usabilityRateMetric"
+                },
+                "firstSubmitWithoutHelp": {
+                  "$ref": "#/$defs/usabilityRateMetric"
+                },
+                "savedAcknowledgementMilliseconds": {
+                  "$ref": "#/$defs/usabilityTimingMetric"
+                },
+                "retainedResultWithin45Seconds": {
+                  "$ref": "#/$defs/usabilityRateMetric"
+                },
+                "mainUnresolvedConceptWithin45Seconds": {
+                  "$ref": "#/$defs/usabilityRateMetric"
+                },
+                "recoveryRehearsalWithoutHelp": {
+                  "$ref": "#/$defs/usabilityRateMetric"
+                }
+              }
+            }
+          ]
+        },
+        "reasonCode": {
+          "$ref": "#/$defs/nullableReasonCode"
+        },
+        "independentReview": {
+          "$ref": "#/$defs/independentReview"
+        },
+        "evidenceReferences": {
+          "$ref": "#/$defs/evidenceReferences"
+        }
+      }
+    },
+    "usabilityRateMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "denominator": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
+    },
+    "usabilityTimingMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["samples"],
+      "properties": {
+        "samples": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 500,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "measuredFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "failureId",
+        "kind",
+        "disposition",
+        "affected",
+        "eligibleDenominator",
+        "severity",
+        "reasonCode",
+        "independentReview",
+        "evidenceReferences"
+      ],
+      "properties": {
+        "failureId": {
+          "$ref": "#/$defs/failureId"
+        },
+        "kind": {
+          "enum": ["activation", "correctness"]
+        },
+        "disposition": {
+          "$ref": "#/$defs/disposition"
+        },
+        "affected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eligibleDenominator": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "severity": {
+          "enum": ["low", "moderate", "serious", "critical"]
+        },
+        "reasonCode": {
+          "$ref": "#/$defs/nullableReasonCode"
+        },
+        "independentReview": {
+          "$ref": "#/$defs/independentReview"
+        },
+        "evidenceReferences": {
+          "$ref": "#/$defs/evidenceReferences"
+        }
+      }
+    },
+    "aggregateReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["researchOwnerDecision", "independentReviewerDecision", "evidenceReferences"],
+      "properties": {
+        "researchOwnerDecision": {
+          "enum": ["accepted", "rejected", "pending"]
+        },
+        "independentReviewerDecision": {
+          "enum": ["accepted", "rejected", "pending"]
+        },
+        "evidenceReferences": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidenceReference"
+          }
+        }
+      }
+    },
+    "declaredDecisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase0Gate",
+        "acquisitionSegment",
+        "accessGate",
+        "companionGate",
+        "phase1Branch",
+        "measuredFailureId"
+      ],
+      "properties": {
+        "phase0Gate": {
+          "enum": ["accepted", "rejected", "pending"]
+        },
+        "acquisitionSegment": {
+          "enum": ["higher-education", "workplace", "pending"]
+        },
+        "accessGate": {
+          "enum": ["pass", "fail", "pending"]
+        },
+        "companionGate": {
+          "enum": ["pass", "fail", "not-evaluated", "pending"]
+        },
+        "phase1Branch": {
+          "enum": ["access", "companion", "measured-failure", "pending"]
+        },
+        "measuredFailureId": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/failureId"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

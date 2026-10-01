@@ -33,6 +33,7 @@ import {
   SessionCodeConflictError,
   SessionNotActiveError,
   SessionVersionConflictError,
+  WorkspaceDeletionInProgressError,
 } from "../src/types.js";
 import { discoverMigrations, runMigrations } from "../src/migrations.js";
 import { expectPresentationSessionRepositoryConformance } from "./support/presentation-session-conformance.js";
@@ -198,7 +199,7 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
           verificationClient.query<{ count: string; maximum: number }>(
             "SELECT count(*) AS count, max(version) AS maximum FROM _openround_migrations",
           ),
-        ).resolves.toMatchObject({ rows: [{ count: "40", maximum: 40 }] });
+        ).resolves.toMatchObject({ rows: [{ count: "43", maximum: 43 }] });
 
         await expect(
           verificationClient.query(
@@ -573,6 +574,84 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
   });
 });
 
+describe.skipIf(!adminUrl)("PostgreSQL media cleanup migration", () => {
+  it("backfills old finalized media directly into the final sweep", async () => {
+    const schema = `openround_cleanup_${randomUUID().replaceAll("-", "")}`;
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const preCleanupDirectory = await mkdtemp(join(tmpdir(), "openround-pre-cleanup-"));
+    const adminPool = new Pool({ connectionString: adminUrl });
+    let isolatedPool: Pool | undefined;
+
+    try {
+      const migrations = await discoverMigrations(migrationsDirectory);
+      for (const migration of migrations.filter(({ version }) => version <= 42)) {
+        await writeFile(join(preCleanupDirectory, migration.fileName), migration.sql);
+      }
+      await adminPool.query(`CREATE SCHEMA "${schema}"`);
+      const isolatedUrl = new URL(adminUrl!);
+      isolatedUrl.searchParams.set("options", `-csearch_path=${schema},public`);
+      isolatedPool = new Pool({ connectionString: isolatedUrl.toString(), max: 1 });
+      await runMigrations(isolatedPool, preCleanupDirectory);
+      await isolatedPool.query("SELECT set_config('app.system_access', 'on', false)");
+
+      const ownerId = randomUUID();
+      const workspaceId = randomUUID();
+      const oldId = randomUUID();
+      const recentId = randomUUID();
+      const legacyId = randomUUID();
+      const oldFinalizedAt = new Date(Date.now() - 8 * 24 * 60 * 60_000);
+      const recentFinalizedAt = new Date(Date.now() - 2 * 24 * 60 * 60_000);
+      await isolatedPool.query("INSERT INTO users (id, email) VALUES ($1, $2)", [
+        ownerId,
+        `cleanup-${ownerId}@example.com`,
+      ]);
+      await isolatedPool.query(
+        "INSERT INTO workspaces (id, name, segment, owner_id) VALUES ($1, 'Cleanup upgrade', 'workplace', $2)",
+        [workspaceId, ownerId],
+      );
+      for (const [id, finalizedAt] of [
+        [oldId, oldFinalizedAt],
+        [recentId, recentFinalizedAt],
+        [legacyId, null],
+      ] as const) {
+        await isolatedPool.query(
+          `INSERT INTO media_assets
+             (id, workspace_id, object_key, mime_type, size_bytes, scan_status,
+              alt_text, created_at, finalized_at)
+           VALUES ($1, $2, $3, 'image/png', 128, 'clean', 'A chart', $4, $5)`,
+          [id, workspaceId, `media/${workspaceId}/${id}.png`, oldFinalizedAt, finalizedAt],
+        );
+      }
+
+      await runMigrations(isolatedPool, migrationsDirectory);
+      const migrated = await isolatedPool.query<{
+        id: string;
+        object_cleanup_pass: number;
+        object_cleanup_due_at: Date | null;
+        cleanup_due_now: boolean | null;
+      }>(
+        `SELECT id, object_cleanup_pass, object_cleanup_due_at,
+                object_cleanup_due_at <= now() AS cleanup_due_now
+         FROM media_assets WHERE id = ANY($1::uuid[])`,
+        [[oldId, recentId, legacyId]],
+      );
+      const byId = new Map(migrated.rows.map((row) => [row.id, row]));
+      expect(byId.get(oldId)).toMatchObject({ object_cleanup_pass: 1, cleanup_due_now: true });
+      expect(byId.get(recentId)).toMatchObject({ object_cleanup_pass: 0 });
+      expect(byId.get(recentId)?.object_cleanup_due_at).toEqual(recentFinalizedAt);
+      expect(byId.get(legacyId)).toMatchObject({
+        object_cleanup_pass: 0,
+        object_cleanup_due_at: null,
+      });
+    } finally {
+      await isolatedPool?.end();
+      await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      await adminPool.end();
+      await rm(preCleanupDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
 describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
   let repository: PostgresRepository;
   let runtimePool: Pool;
@@ -642,6 +721,9 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 38, name: "presentation_concurrent_event_sequence" },
       { version: 39, name: "presentation_event_sequence_compatibility" },
       { version: 40, name: "presentation_event_sequence_compatibility_backfill" },
+      { version: 41, name: "media_deletion_tombstone" },
+      { version: 42, name: "workspace_deletion_cleanup" },
+      { version: 43, name: "bounded_media_object_cleanup" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -651,7 +733,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("40");
+    expect(bootstrapped.rows[0]?.count).toBe("43");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -854,6 +936,151 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     return { session, sessions };
   }
 
+  it("linearizes workspace deletion ahead of concurrent Round, Presentation, and media creation", async () => {
+    const waitForWorkspaceLock = async (queryFragment: string) => {
+      const deadline = Date.now() + 3_000;
+      while (Date.now() < deadline) {
+        const waiting = await runtimePool.query<{ count: string }>(
+          `SELECT count(*)::text AS count
+             FROM pg_stat_activity
+             WHERE pid <> pg_backend_pid()
+               AND datname = current_database()
+               AND state = 'active'
+               AND wait_event_type = 'Lock'
+               AND query LIKE $1`,
+          [`%${queryFragment}%`],
+        );
+        if (Number(waiting.rows[0]?.count ?? 0) > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for deletion-fenced query: ${queryFragment}`);
+    };
+    const fenceBefore = async <T>(
+      workspaceId: string,
+      queryFragment: string,
+      operation: () => Promise<T>,
+    ) => {
+      const blocker = await runtimePool.connect();
+      try {
+        await blocker.query("BEGIN");
+        await blocker.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+        await expect(
+          blocker.query(
+            `UPDATE workspaces
+               SET deletion_started_at = now()
+               WHERE id = $1`,
+            [workspaceId],
+          ),
+        ).resolves.toMatchObject({ rowCount: 1 });
+        const pending = operation().then(
+          (value) => ({ status: "fulfilled" as const, value }),
+          (error: unknown) => ({ status: "rejected" as const, error }),
+        );
+        await waitForWorkspaceLock(queryFragment);
+        await blocker.query("COMMIT");
+        return await pending;
+      } catch (error) {
+        await blocker.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        blocker.release();
+      }
+    };
+
+    const roundOwner = await creator("deletion-race-round");
+    const round = await createPublishedRoundFixture(roundOwner, "Deletion-fenced Round");
+    const roundNow = new Date();
+    const roundSessionId = randomUUID();
+    const roundState = createGameState({
+      sessionId: roundSessionId,
+      code: String(randomInt(1_000_000, 10_000_000)),
+      quiz: round.content,
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "friendly_only",
+      },
+    });
+    const roundOutcome = await fenceBefore(
+      roundOwner.workspaceId,
+      "INSERT INTO game_sessions",
+      () =>
+        repository.createSession({
+          id: roundSessionId,
+          workspaceId: roundOwner.workspaceId,
+          quizVersionId: round.version.id,
+          hostId: roundOwner.userId,
+          hostTokenHash: randomUUID(),
+          state: roundState,
+          expiresAt: new Date(roundNow.getTime() + 60_000),
+          retentionExpiresAt: new Date(roundNow.getTime() + 30 * 24 * 60 * 60_000),
+          createdAt: roundNow,
+          updatedAt: roundNow,
+        }),
+    );
+    expect(roundOutcome).toMatchObject({
+      status: "rejected",
+      error: expect.any(WorkspaceDeletionInProgressError),
+    });
+
+    const presentationOwner = await creator("deletion-race-presentation");
+    const presentation = await createPublishedPresentationFixture(
+      presentationOwner,
+      "Deletion-fenced Presentation",
+    );
+    const presentationSessions = new PostgresPresentationSessionRepository(repository);
+    const presentationNow = new Date();
+    const presentationOutcome = await fenceBefore(
+      presentationOwner.workspaceId,
+      "INSERT INTO presentation_live_sessions",
+      () =>
+        presentationSessions.createSession({
+          id: randomUUID(),
+          workspaceId: presentationOwner.workspaceId,
+          presentationId: presentation.presentation.id,
+          presentationVersionId: presentation.version.id,
+          title: presentation.content.title,
+          content: presentation.content,
+          code: String(randomInt(1_000_000, 10_000_000)),
+          status: "active",
+          phase: "lobby",
+          currentBlockIndex: -1,
+          revision: 0,
+          createdBy: presentationOwner.userId,
+          createdAt: presentationNow,
+          updatedAt: presentationNow,
+          finishedAt: null,
+          liveExpiresAt: new Date(presentationNow.getTime() + 60_000),
+          retentionExpiresAt: new Date(presentationNow.getTime() + 30 * 24 * 60 * 60_000),
+        }),
+    );
+    expect(presentationOutcome).toMatchObject({
+      status: "rejected",
+      error: expect.any(WorkspaceDeletionInProgressError),
+    });
+
+    const mediaOwner = await creator("deletion-race-media");
+    const mediaId = randomUUID();
+    const mediaOutcome = await fenceBefore(mediaOwner.workspaceId, "INSERT INTO media_assets", () =>
+      repository.createMediaAsset({
+        id: mediaId,
+        workspaceId: mediaOwner.workspaceId,
+        objectKey: `quarantine/${mediaOwner.workspaceId}/${mediaId}.png`,
+        mimeType: "image/png",
+        sizeBytes: 128,
+        scanStatus: "pending",
+        altText: "Deletion race fixture",
+        createdAt: new Date(),
+      }),
+    );
+    expect(mediaOutcome).toMatchObject({
+      status: "rejected",
+      error: expect.objectContaining({ message: "Workspace deletion is in progress" }),
+    });
+  }, 15_000);
+
   it("keeps PostgreSQL on the shared Presentation repository conformance contract", async () => {
     const owner = await creator("presentation-repository-conformance");
     const published = await createPublishedPresentationFixture(
@@ -868,6 +1095,9 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       presentationVersionId: published.version.id,
       createdBy: owner.userId,
       content: published.content,
+      beginWorkspaceDeletion: async () => {
+        await repository.claimWorkspaceMediaDeletion(owner.workspaceId);
+      },
     });
   });
 
@@ -3139,12 +3369,96 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       tags: ["Safety"],
     });
     expect(await repository.getMediaAsset(second.workspaceId, mediaId)).toBeNull();
+    const finalizationToken = randomUUID();
+    expect(
+      await repository.claimMediaAssetFinalization(first.workspaceId, mediaId, finalizationToken),
+    ).toMatchObject({ scanStatus: "finalizing" });
+    expect(
+      await repository.claimMediaAssetFinalization(first.workspaceId, mediaId, randomUUID()),
+    ).toBeNull();
+    expect(
+      await repository.releaseMediaAssetFinalization(first.workspaceId, mediaId, randomUUID()),
+    ).toBe(false);
+    expect(
+      await repository.releaseMediaAssetFinalization(first.workspaceId, mediaId, finalizationToken),
+    ).toBe(true);
+    expect(
+      await repository.claimMediaAssetFinalization(first.workspaceId, mediaId, finalizationToken),
+    ).toMatchObject({ scanStatus: "finalizing" });
+    const finalizedAt = new Date();
     expect(
       await repository.updateMediaAsset(first.workspaceId, mediaId, {
         scanStatus: "clean",
         objectKey: `media/${first.workspaceId}/${mediaId}.png`,
+        finalizationToken,
+        finalizedAt,
       }),
     ).toMatchObject({ scanStatus: "clean" });
+    const initialClaims = await repository.claimMediaObjectCleanupCandidates(finalizedAt, 100);
+    const initialClaim = initialClaims.find(({ asset }) => asset.id === mediaId);
+    expect(initialClaim).toMatchObject({ pass: 0 });
+    const renewedAt = new Date(finalizedAt.getTime() + 4 * 60_000);
+    expect(await repository.renewMediaObjectCleanupClaim(initialClaim!, renewedAt)).toBe(true);
+    expect(
+      (
+        await repository.claimMediaObjectCleanupCandidates(
+          new Date(finalizedAt.getTime() + 5 * 60_000),
+          100,
+        )
+      ).some(({ asset }) => asset.id === mediaId),
+    ).toBe(false);
+    const replacementAt = new Date(renewedAt.getTime() + 5 * 60_000);
+    const replacementClaims = await repository.claimMediaObjectCleanupCandidates(
+      replacementAt,
+      100,
+    );
+    const replacementClaim = replacementClaims.find(({ asset }) => asset.id === mediaId);
+    expect(replacementClaim).toMatchObject({ pass: 0 });
+    expect(replacementClaim!.claimToken).not.toBe(initialClaim!.claimToken);
+    expect(await repository.renewMediaObjectCleanupClaim(initialClaim!, replacementAt)).toBe(false);
+    expect(await repository.completeMediaObjectCleanupClaim(initialClaim!, replacementAt)).toBe(
+      false,
+    );
+    expect(await repository.completeMediaObjectCleanupClaim(replacementClaim!, replacementAt)).toBe(
+      true,
+    );
+    expect(await repository.completeMediaObjectCleanupClaim(replacementClaim!, replacementAt)).toBe(
+      false,
+    );
+    const finalSweepAt = new Date(finalizedAt.getTime() + 6 * 24 * 60 * 60_000);
+    const finalClaims = await repository.claimMediaObjectCleanupCandidates(finalSweepAt, 100);
+    const finalClaim = finalClaims.find(({ asset }) => asset.id === mediaId);
+    expect(finalClaim).toMatchObject({ pass: 1 });
+    const retryAt = new Date(finalSweepAt.getTime() + 60 * 60_000);
+    expect(await repository.deferMediaObjectCleanupClaim(finalClaim!, retryAt)).toBe(true);
+    const retryClaims = await repository.claimMediaObjectCleanupCandidates(retryAt, 100);
+    const retryClaim = retryClaims.find(({ asset }) => asset.id === mediaId);
+    expect(retryClaim).toMatchObject({ pass: 1 });
+    expect(await repository.completeMediaObjectCleanupClaim(retryClaim!, retryAt)).toBe(true);
+
+    const inlineId = randomUUID();
+    const inlineToken = randomUUID();
+    await repository.createMediaAsset({
+      id: inlineId,
+      workspaceId: second.workspaceId,
+      objectKey: `quarantine/${second.workspaceId}/${inlineId}.png`,
+      mimeType: "image/png",
+      sizeBytes: 128,
+      scanStatus: "pending",
+      altText: "An inline cleanup fixture",
+      createdAt: finalizedAt,
+    });
+    await repository.claimMediaAssetFinalization(second.workspaceId, inlineId, inlineToken);
+    const inlineAsset = await repository.updateMediaAsset(second.workspaceId, inlineId, {
+      scanStatus: "clean",
+      objectKey: `media/${second.workspaceId}/${inlineId}/${inlineToken}.png`,
+      finalizationToken: inlineToken,
+      finalizedAt,
+    });
+    expect(await repository.completeInlineMediaObjectCleanup(inlineAsset!, finalizedAt)).toBe(true);
+    expect(await repository.completeInlineMediaObjectCleanup(inlineAsset!, finalizedAt)).toBe(
+      false,
+    );
     expect((await repository.listMediaAssets(first.workspaceId)).map(({ id }) => id)).toEqual([
       mediaId,
     ]);

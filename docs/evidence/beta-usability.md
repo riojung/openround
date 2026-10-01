@@ -20,9 +20,25 @@ Record both the numerator/denominator (or complete timing sample) and the aggreg
 threshold passes only when the reviewed protocol measures the stated task without coaching unless
 the metric explicitly asks whether help was required.
 
-Report each numerator/denominator or timing sample separately for education and workplace,
-including excluded or failed instrumentation. The overall result does not replace either segment
-result when choosing the primary acquisition segment.
+Report each numerator/denominator or timing sample separately for education and workplace. Preserve
+excluded or failed-instrumentation attempts as separate rejected/excluded aggregate records with
+null metrics; do not merge their partial data into a replacement study. Number every segment's
+attempts contiguously with `attemptOrder`, and link each replacement to the immediately preceding
+`studyId` with `supersedesStudyId`. The overall result does not replace either segment result when
+choosing the primary acquisition segment.
+
+The redacted research aggregate must encode the six ratio rows as exact numerator/denominator
+pairs and the publish/acknowledgement rows as complete bounded timing samples. `pnpm research:check`
+recomputes every rate, the publish median, and the nearest-rank acknowledgement p95; a typed
+`accepted` label cannot override a failed threshold.
+
+Every accepted segment record must cover the full declared eligible population: facilitator tasks
+use the `eligibleFirstTimeFacilitators` denominator/sample size and participant response tasks use
+the `eligibleParticipants` denominator/sample size. Do not silently drop failed instrumentation or
+other observations. Close that study record as rejected or excluded with the predeclared reason and
+run a new independently reviewed study when the protocol requires replacement evidence.
+The replacement becomes the segment's only eligible accepted decision record and must be the final
+entry in that segment's explicit supersession chain; the earlier attempt remains preserved.
 
 | Metric                                                                                 | Required threshold                          | Education result/sample | Workplace result/sample | Overall result | Result  |
 | -------------------------------------------------------------------------------------- | ------------------------------------------- | ----------------------- | ----------------------- | -------------- | ------- |

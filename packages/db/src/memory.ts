@@ -3,12 +3,14 @@ import {
   AudienceStoreError,
   FollowupAccessLimitError,
   FollowupVersionConflictError,
+  MEDIA_DELETION_TOMBSTONE_HOLD_MS,
   PublishedQuizLimitError,
   QuizDraftMutationConflictError,
   QuizDraftRevisionConflictError,
   SessionCodeConflictError,
   SessionNotActiveError,
   SessionVersionConflictError,
+  WorkspaceDeletionInProgressError,
 } from "./types.js";
 import type {
   AudienceEventInput,
@@ -45,10 +47,11 @@ import type {
   LiveRoomCodeClaim,
   LiveRoomCodeRecord,
   MagicTokenRecord,
+  MediaAssetCreateInput,
   MediaAssetRecord,
+  MediaObjectCleanupClaim,
   MediaReferenceOwnerType,
   MediaReferenceRecord,
-  MediaScanStatus,
   OperationalFeaturesRecord,
   OperationalFeaturesUpdate,
   ParticipantRecord,
@@ -68,7 +71,9 @@ import type {
   SessionStaffCredentialRecord,
   SessionStaffCredentialInput,
   SessionHistoryRecord,
+  SessionInvalidationTarget,
   StoredSession,
+  WorkspaceMediaDeletionJobRecord,
   WorkspaceInvitationRecord,
   WorkspaceMemberRecord,
   WorkspaceSummaryRecord,
@@ -240,6 +245,18 @@ export class MemoryRepository implements Repository {
   readonly audienceRestrictions = new Map<string, AudienceRestrictionRecord>();
   readonly audienceOutbox = new Map<string, AudienceOutboxRecord>();
   readonly mediaAssets = new Map<string, MediaAssetRecord>();
+  readonly mediaFinalizationLeases = new Map<string, { token: string; startedAt: Date }>();
+  readonly mediaObjectCleanup = new Map<
+    string,
+    {
+      pass: 0 | 1 | 2;
+      dueAt: Date | null;
+      claimToken: string | null;
+      claimedAt: Date | null;
+    }
+  >();
+  readonly workspaceMediaDeletionClaims = new Set<string>();
+  readonly workspaceMediaDeletionJobs = new Map<string, WorkspaceMediaDeletionJobRecord>();
   readonly mediaReferences = new Map<string, MediaReferenceRecord>();
   readonly answers = new Map<string, EngineAnswer>();
   readonly reports = new Map<string, Report>();
@@ -1379,7 +1396,14 @@ export class MemoryRepository implements Repository {
     return structuredClone(claim);
   }
 
+  assertWorkspaceLiveSessionCreationAllowed(workspaceId: string) {
+    if (this.workspaceMediaDeletionClaims.has(workspaceId)) {
+      throw new WorkspaceDeletionInProgressError(workspaceId);
+    }
+  }
+
   async claimLiveRoomCode(input: LiveRoomCodeClaim) {
+    this.assertWorkspaceLiveSessionCreationAllowed(input.workspaceId);
     const now = new Date();
     const current = this.liveRoomCodes.get(input.code);
     if (current && current.releasedAt === null && current.expiresAt > now) {
@@ -1416,6 +1440,9 @@ export class MemoryRepository implements Repository {
       createdAt: input.createdAt,
     });
     try {
+      // `claimLiveRoomCode` is awaited by callers, so account deletion can start between the
+      // reservation and this write. Recheck synchronously before publishing any session state.
+      this.assertWorkspaceLiveSessionCreationAllowed(input.workspaceId);
       this.sessions.set(
         input.id,
         structuredClone({
@@ -1465,6 +1492,17 @@ export class MemoryRepository implements Repository {
       .filter((session) => session.workspaceId === workspaceId)
       .map((session) => session.id)
       .sort();
+  }
+
+  async listSessionInvalidationTargets(workspaceId: string): Promise<SessionInvalidationTarget[]> {
+    return [...this.sessions.values()]
+      .filter((session) => session.workspaceId === workspaceId)
+      .map((session) => ({ sessionId: session.id, code: session.state.code }))
+      .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
+  }
+
+  async workspaceDeletionStarted(workspaceId: string) {
+    return this.workspaceMediaDeletionClaims.has(workspaceId);
   }
 
   async listSessionHistory(
@@ -1554,6 +1592,9 @@ export class MemoryRepository implements Repository {
   }
 
   async saveSession(input: StoredSession, expectedVersion: number, report?: Report) {
+    if (this.workspaceMediaDeletionClaims.has(input.workspaceId)) {
+      throw new WorkspaceDeletionInProgressError(input.workspaceId);
+    }
     const current = this.sessions.get(input.id);
     if (!current || current.state.version !== expectedVersion) {
       throw new SessionVersionConflictError(input.id, expectedVersion);
@@ -1713,6 +1754,7 @@ export class MemoryRepository implements Repository {
     participants: ParticipantRecord[],
     expectedVersion: number,
   ) {
+    this.assertWorkspaceLiveSessionCreationAllowed(session.workspaceId);
     const current = this.sessions.get(session.id);
     if (!current || current.state.version !== expectedVersion) {
       throw new SessionVersionConflictError(session.id, expectedVersion);
@@ -2642,9 +2684,17 @@ export class MemoryRepository implements Repository {
     ];
   }
 
-  async createMediaAsset(input: MediaAssetRecord) {
-    this.mediaAssets.set(input.id, structuredClone(input));
-    return structuredClone(input);
+  async createMediaAsset(input: MediaAssetCreateInput) {
+    if (this.workspaceMediaDeletionClaims.has(input.workspaceId)) {
+      throw new Error("Workspace deletion is in progress");
+    }
+    const asset = {
+      ...structuredClone(input),
+      deletionStartedAt: input.deletionStartedAt ?? null,
+      finalizedAt: input.finalizedAt ?? null,
+    };
+    this.mediaAssets.set(input.id, asset);
+    return structuredClone(asset);
   }
 
   async getMediaAsset(workspaceId: string, mediaId: string) {
@@ -2713,7 +2763,7 @@ export class MemoryRepository implements Repository {
   validateMediaReferences(workspaceId: string, mediaIds: string[]) {
     const invalidMediaId = [...new Set(mediaIds)].find((mediaId) => {
       const asset = this.mediaAssets.get(mediaId);
-      return !asset || asset.workspaceId !== workspaceId;
+      return !asset || asset.workspaceId !== workspaceId || asset.scanStatus === "deleting";
     });
     if (invalidMediaId) {
       throw new Error(`Media asset ${invalidMediaId} is unavailable in this workspace`);
@@ -2724,8 +2774,8 @@ export class MemoryRepository implements Repository {
     return [...this.mediaAssets.values()]
       .filter(
         (asset) =>
-          asset.scanStatus !== "clean" &&
-          asset.createdAt <= cutoff &&
+          (asset.scanStatus === "deleting" ||
+            (asset.scanStatus !== "clean" && asset.createdAt <= cutoff)) &&
           ![...this.mediaReferences.values()].some(
             (reference) =>
               reference.workspaceId === asset.workspaceId && reference.mediaId === asset.id,
@@ -2751,21 +2801,305 @@ export class MemoryRepository implements Repository {
       .map((asset) => structuredClone(asset));
   }
 
+  async claimMediaObjectCleanupCandidates(now: Date, limit = 100) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("Media cleanup batch limit must be between 1 and 100");
+    }
+    const claimToken = crypto.randomUUID();
+    return [...this.mediaAssets.values()]
+      .filter((asset) => {
+        const state = this.mediaObjectCleanup.get(asset.id);
+        return (
+          asset.scanStatus === "clean" &&
+          asset.finalizedAt !== null &&
+          state !== undefined &&
+          state.pass < 2 &&
+          state.dueAt !== null &&
+          state.dueAt <= now &&
+          (state.claimToken === null ||
+            (state.claimedAt !== null && now.getTime() - state.claimedAt.getTime() >= 5 * 60_000))
+        );
+      })
+      .sort((left, right) => {
+        const leftDueAt = this.mediaObjectCleanup.get(left.id)!.dueAt!;
+        const rightDueAt = this.mediaObjectCleanup.get(right.id)!.dueAt!;
+        return leftDueAt.getTime() - rightDueAt.getTime() || left.id.localeCompare(right.id);
+      })
+      .slice(0, limit)
+      .map((asset): MediaObjectCleanupClaim => {
+        const state = this.mediaObjectCleanup.get(asset.id)!;
+        state.claimToken = claimToken;
+        state.claimedAt = new Date(now);
+        return { asset: structuredClone(asset), pass: state.pass as 0 | 1, claimToken };
+      });
+  }
+
+  async completeMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, completedAt: Date) {
+    const { asset: claimedAsset, pass, claimToken } = claim;
+    const asset = this.mediaAssets.get(claimedAsset.id);
+    const state = this.mediaObjectCleanup.get(claimedAsset.id);
+    if (
+      !asset ||
+      !state ||
+      !asset.finalizedAt ||
+      !claimedAsset.finalizedAt ||
+      asset.workspaceId !== claimedAsset.workspaceId ||
+      asset.scanStatus !== "clean" ||
+      asset.objectKey !== claimedAsset.objectKey ||
+      asset.finalizedAt.getTime() !== claimedAsset.finalizedAt.getTime() ||
+      state.pass !== pass ||
+      state.claimToken !== claimToken
+    ) {
+      return false;
+    }
+    state.pass = pass === 0 ? 1 : 2;
+    state.dueAt =
+      pass === 0
+        ? new Date(
+            Math.max(
+              asset.finalizedAt.getTime() + 6 * 24 * 60 * 60_000,
+              completedAt.getTime() + 60 * 60_000,
+            ),
+          )
+        : null;
+    state.claimToken = null;
+    state.claimedAt = null;
+    return true;
+  }
+
+  async renewMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, renewedAt: Date) {
+    const { asset: claimedAsset, pass, claimToken } = claim;
+    const asset = this.mediaAssets.get(claimedAsset.id);
+    const state = this.mediaObjectCleanup.get(claimedAsset.id);
+    if (
+      !asset ||
+      !state ||
+      !asset.finalizedAt ||
+      !claimedAsset.finalizedAt ||
+      asset.workspaceId !== claimedAsset.workspaceId ||
+      asset.scanStatus !== "clean" ||
+      asset.objectKey !== claimedAsset.objectKey ||
+      asset.finalizedAt.getTime() !== claimedAsset.finalizedAt.getTime() ||
+      state.pass !== pass ||
+      state.claimToken !== claimToken
+    ) {
+      return false;
+    }
+    state.claimedAt = new Date(renewedAt);
+    return true;
+  }
+
+  async deferMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, retryAt: Date) {
+    const { asset: claimedAsset, pass, claimToken } = claim;
+    const asset = this.mediaAssets.get(claimedAsset.id);
+    const state = this.mediaObjectCleanup.get(claimedAsset.id);
+    if (
+      !asset ||
+      !state ||
+      !asset.finalizedAt ||
+      !claimedAsset.finalizedAt ||
+      asset.workspaceId !== claimedAsset.workspaceId ||
+      asset.scanStatus !== "clean" ||
+      asset.objectKey !== claimedAsset.objectKey ||
+      asset.finalizedAt.getTime() !== claimedAsset.finalizedAt.getTime() ||
+      state.pass !== pass ||
+      state.claimToken !== claimToken
+    ) {
+      return false;
+    }
+    state.dueAt = new Date(retryAt);
+    state.claimToken = null;
+    state.claimedAt = null;
+    return true;
+  }
+
+  async completeInlineMediaObjectCleanup(asset: MediaAssetRecord, completedAt: Date) {
+    const current = this.mediaAssets.get(asset.id);
+    const state = this.mediaObjectCleanup.get(asset.id);
+    if (
+      !current ||
+      !state ||
+      !asset.finalizedAt ||
+      !current.finalizedAt ||
+      current.workspaceId !== asset.workspaceId ||
+      current.scanStatus !== "clean" ||
+      current.objectKey !== asset.objectKey ||
+      current.finalizedAt.getTime() !== asset.finalizedAt.getTime() ||
+      state.pass !== 0 ||
+      state.claimToken !== null
+    ) {
+      return false;
+    }
+    state.pass = 1;
+    state.dueAt = new Date(
+      Math.max(
+        current.finalizedAt.getTime() + 6 * 24 * 60 * 60_000,
+        completedAt.getTime() + 60 * 60_000,
+      ),
+    );
+    return true;
+  }
+
   async updateMediaAsset(
     workspaceId: string,
     mediaId: string,
-    update: { objectKey?: string; scanStatus: MediaScanStatus },
+    update: {
+      objectKey?: string;
+      scanStatus: "clean" | "rejected";
+      finalizationToken: string;
+      finalizedAt: Date;
+    },
   ) {
     const asset = this.mediaAssets.get(mediaId);
-    if (!asset || asset.workspaceId !== workspaceId) return null;
+    const lease = this.mediaFinalizationLeases.get(mediaId);
+    if (
+      !asset ||
+      asset.workspaceId !== workspaceId ||
+      asset.scanStatus !== "finalizing" ||
+      lease?.token !== update.finalizationToken
+    ) {
+      return null;
+    }
     asset.scanStatus = update.scanStatus;
+    asset.deletionStartedAt = null;
+    asset.finalizedAt = new Date(update.finalizedAt);
     if (update.objectKey) asset.objectKey = update.objectKey;
+    this.mediaFinalizationLeases.delete(mediaId);
+    if (update.scanStatus === "clean") {
+      this.mediaObjectCleanup.set(mediaId, {
+        pass: 0,
+        dueAt: new Date(update.finalizedAt),
+        claimToken: null,
+        claimedAt: null,
+      });
+    } else {
+      this.mediaObjectCleanup.delete(mediaId);
+    }
     return structuredClone(asset);
   }
 
-  async deleteMediaAsset(workspaceId: string, mediaId: string) {
+  async claimMediaAssetFinalization(
+    workspaceId: string,
+    mediaId: string,
+    finalizationToken: string,
+    claimedAt = new Date(),
+  ) {
     const asset = this.mediaAssets.get(mediaId);
-    if (!asset || asset.workspaceId !== workspaceId) return false;
+    if (!asset || asset.workspaceId !== workspaceId) return null;
+    const lease = this.mediaFinalizationLeases.get(mediaId);
+    const leaseExpired =
+      asset.scanStatus === "finalizing" &&
+      (!lease || claimedAt.getTime() - lease.startedAt.getTime() >= 5 * 60_000);
+    if (asset.scanStatus !== "pending" && !leaseExpired) return null;
+    asset.scanStatus = "finalizing";
+    asset.deletionStartedAt = null;
+    this.mediaFinalizationLeases.set(mediaId, {
+      token: finalizationToken,
+      startedAt: new Date(claimedAt),
+    });
+    return structuredClone(asset);
+  }
+
+  async releaseMediaAssetFinalization(
+    workspaceId: string,
+    mediaId: string,
+    finalizationToken: string,
+  ) {
+    const asset = this.mediaAssets.get(mediaId);
+    const lease = this.mediaFinalizationLeases.get(mediaId);
+    if (
+      !asset ||
+      asset.workspaceId !== workspaceId ||
+      asset.scanStatus !== "finalizing" ||
+      lease?.token !== finalizationToken
+    ) {
+      return false;
+    }
+    asset.scanStatus = "pending";
+    asset.deletionStartedAt = null;
+    this.mediaFinalizationLeases.delete(mediaId);
+    return true;
+  }
+
+  async claimMediaAssetDeletion(workspaceId: string, mediaId: string, now = new Date()) {
+    const asset = this.mediaAssets.get(mediaId);
+    if (!asset || asset.workspaceId !== workspaceId) return null;
+    if (
+      [...this.mediaReferences.values()].some(
+        (reference) => reference.workspaceId === workspaceId && reference.mediaId === mediaId,
+      )
+    ) {
+      return null;
+    }
+    const lease = this.mediaFinalizationLeases.get(mediaId);
+    if (
+      asset.scanStatus === "finalizing" &&
+      lease &&
+      now.getTime() - lease.startedAt.getTime() < 5 * 60_000
+    ) {
+      return null;
+    }
+    if (asset.scanStatus !== "deleting") {
+      asset.scanStatus = "deleting";
+      asset.deletionStartedAt = new Date(now);
+    }
+    this.mediaFinalizationLeases.delete(mediaId);
+    this.mediaObjectCleanup.delete(mediaId);
+    return structuredClone(asset);
+  }
+
+  async claimWorkspaceMediaDeletion(workspaceId: string, now = new Date()) {
+    this.workspaceMediaDeletionClaims.add(workspaceId);
+    const claimed = [...this.mediaAssets.values()]
+      .filter((asset) => asset.workspaceId === workspaceId)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    if (claimed.length > 0 && !this.workspaceMediaDeletionJobs.has(workspaceId)) {
+      this.workspaceMediaDeletionJobs.set(workspaceId, {
+        workspaceId,
+        deletionStartedAt: new Date(now),
+        sweepAfter: new Date(now.getTime() + MEDIA_DELETION_TOMBSTONE_HOLD_MS),
+      });
+    }
+    for (const asset of claimed) {
+      if (asset.scanStatus !== "deleting") {
+        asset.scanStatus = "deleting";
+        asset.deletionStartedAt = new Date(now);
+      }
+      this.mediaFinalizationLeases.delete(asset.id);
+      this.mediaObjectCleanup.delete(asset.id);
+    }
+    return claimed.map((asset) => structuredClone(asset));
+  }
+
+  async listDueWorkspaceMediaDeletionJobs(now: Date, limit = 100) {
+    return [...this.workspaceMediaDeletionJobs.values()]
+      .filter((job) => job.sweepAfter <= now)
+      .sort(
+        (left, right) =>
+          left.sweepAfter.getTime() - right.sweepAfter.getTime() ||
+          left.workspaceId.localeCompare(right.workspaceId),
+      )
+      .slice(0, limit)
+      .map((job) => structuredClone(job));
+  }
+
+  async completeWorkspaceMediaDeletionJob(workspaceId: string, deletionStartedAt: Date) {
+    const job = this.workspaceMediaDeletionJobs.get(workspaceId);
+    if (!job || job.deletionStartedAt.getTime() !== deletionStartedAt.getTime()) return false;
+    return this.workspaceMediaDeletionJobs.delete(workspaceId);
+  }
+
+  async deleteMediaAsset(workspaceId: string, mediaId: string, now = new Date()) {
+    const asset = this.mediaAssets.get(mediaId);
+    if (
+      !asset ||
+      asset.workspaceId !== workspaceId ||
+      asset.scanStatus !== "deleting" ||
+      !asset.deletionStartedAt ||
+      now.getTime() - asset.deletionStartedAt.getTime() < MEDIA_DELETION_TOMBSTONE_HOLD_MS
+    ) {
+      return false;
+    }
     if (
       [...this.mediaReferences.values()].some(
         (reference) => reference.workspaceId === workspaceId && reference.mediaId === mediaId,
@@ -2773,6 +3107,8 @@ export class MemoryRepository implements Repository {
     ) {
       return false;
     }
+    this.mediaFinalizationLeases.delete(mediaId);
+    this.mediaObjectCleanup.delete(mediaId);
     return this.mediaAssets.delete(mediaId);
   }
 
@@ -2797,6 +3133,9 @@ export class MemoryRepository implements Repository {
     expectedVersion: number,
     _options: { roundEvidencePersisted?: boolean } = {},
   ) {
+    if (this.workspaceMediaDeletionClaims.has(session.workspaceId)) {
+      throw new WorkspaceDeletionInProgressError(session.workspaceId);
+    }
     const current = this.sessions.get(session.id);
     if (!current || current.state.version !== expectedVersion) {
       throw new SessionVersionConflictError(session.id, expectedVersion);
@@ -3856,7 +4195,11 @@ export class MemoryRepository implements Repository {
       if (deletedSessionIds.has(report.sessionId)) this.reports.delete(id);
     }
     for (const [id, asset] of this.mediaAssets) {
-      if (ownedWorkspaceIds.has(asset.workspaceId)) this.mediaAssets.delete(id);
+      if (ownedWorkspaceIds.has(asset.workspaceId)) {
+        this.mediaAssets.delete(id);
+        this.mediaFinalizationLeases.delete(id);
+        this.mediaObjectCleanup.delete(id);
+      }
     }
     for (const [key, reference] of this.mediaReferences) {
       if (ownedWorkspaceIds.has(reference.workspaceId)) this.mediaReferences.delete(key);

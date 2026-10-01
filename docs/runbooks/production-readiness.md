@@ -41,8 +41,10 @@
   credentials authenticate. Remote probes must compare both the running server's `/health/live`
   build ID and the web root's `X-OpenRound-Build-Id` with that candidate marker; target-host
   probes independently compare the server marker.
-- Production metrics require a bearer token at startup. Keep `METRICS_ENABLED=false` until a
-  private authenticated collector is ready; do not expose the route through the public ingress.
+- Hosted production requires `METRICS_ENABLED=true`, a non-default bearer token, and the private
+  authenticated collector overlay. Bind the collector scrape path only on the private service
+  network, retain the token outside evidence/logs, and never expose the metrics route through the
+  public Caddy ingress.
 - Application traffic uses a non-owner PostgreSQL role; only the migration job receives the
   owner-level `DATABASE_MIGRATION_URL`, and the production-like forced-RLS test passes.
 - PostgreSQL, Valkey, MinIO, Caddy, web, API/realtime, and ClamAV run on the same production VM.

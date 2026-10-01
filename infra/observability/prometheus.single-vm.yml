@@ -1,0 +1,29 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    service: openround
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: openround
+    scheme: http
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /run/openround/metrics-token
+    static_configs:
+      - targets: ["server:4000"]
+        labels:
+          deployment: __OPENROUND_DEPLOYMENT__
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]

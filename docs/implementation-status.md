@@ -46,12 +46,37 @@ public status, security, privacy, and support contacts, and an end-to-end suppor
 the same exact build candidate accepted by the operations owner and an independent reviewer. The
 gate remains pending until that external rehearsal occurs.
 
+The Phase 0 closure tooling now makes the remaining evidence handoffs more deterministic without
+turning them into repository-complete gates. A confirmation-gated synthetic alert rehearsal injects
+and resolves build-bound `page`, `warning`, and `ticket` alerts and writes a redaction-safe request
+receipt; receiver observation and the support incident exercise still require human evidence. The
+target-region tool hashes and binds the exact four-profile matrix, soak, runner provenance,
+saturation reference, and durable archive. Separate validators recompute the off-host
+backup/restore bindings and the reviewed research aggregate. Finally, the readiness checker rejects
+duplicate or unstable evidence references and, when a human-assurance gate is eventually marked
+complete, requires build-bound owner and independent-reviewer acceptance. All thirteen externally
+dependent gates remain pending.
+
 The runner-compatibility hardening slice makes the staging preflights select Node 22 explicitly,
 requires a reviewed Node 24-compatible Actions Runner attestation before the target-region load job
 can select a self-hosted runner, and records that minimum and label in its provenance. A separate
 Ubuntu 26 canary exercises native builds, service containers, all supported browser engines, the
 production Compose path, and image tooling ahead of GitHub's hosted-runner migration. Canary latency
 is not target-region capacity evidence, and these controls do not complete a pending readiness gate.
+
+The final technical closure pass adds the hosted single-VM observability overlay, authenticated
+private metrics collection, build-bound alert rehearsal, strict target-load and replacement-host
+restore evidence validators, and an immutable signed-release acceptance/deployment lifecycle. It
+also fences Round and Presentation creation and live mutations during account deletion, and makes
+media finalization durable with token-scoped claims, winner tagging before database acknowledgement,
+deletion tombstones, repeated cleanup, and bucket lifecycle expiry for interrupted uploads or
+finalizers. The accepted release remains a draft through its first verified deployment. It can be
+redeployed unchanged after publication, including onto a clean replacement host, only with an
+independently reviewed, digest-pinned receipt from that exact successful pre-publication production
+deployment. Release-tag creation authority and no-bypass tag immutability are separate rulesets so
+the release actor cannot rewrite or delete an existing tag. These controls close repository
+implementation gaps; they do not convert any unperformed external drill, independent review,
+provider check, device run, or participant study into completed evidence.
 
 Staging preflight now also rejects reserved, example, placeholder, loopback, or unspecified public
 and SSH targets, and requires a valid non-revoked SSH key pin for the exact configured host and

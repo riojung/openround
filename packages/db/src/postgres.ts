@@ -18,12 +18,14 @@ import {
   AudienceStoreError,
   FollowupAccessLimitError,
   FollowupVersionConflictError,
+  MEDIA_DELETION_TOMBSTONE_HOLD_MS,
   PublishedQuizLimitError,
   QuizDraftMutationConflictError,
   QuizDraftRevisionConflictError,
   SessionCodeConflictError,
   SessionNotActiveError,
   SessionVersionConflictError,
+  WorkspaceDeletionInProgressError,
 } from "./types.js";
 import { runMigrations } from "./migrations.js";
 import {
@@ -71,10 +73,11 @@ import type {
   LiveRoomCodeClaim,
   LiveRoomCodeRecord,
   MagicTokenRecord,
+  MediaAssetCreateInput,
   MediaAssetRecord,
+  MediaObjectCleanupClaim,
   MediaReferenceOwnerType,
   MediaReferenceRecord,
-  MediaScanStatus,
   OperationalFeaturesRecord,
   OperationalFeaturesUpdate,
   ParticipantRecord,
@@ -97,8 +100,10 @@ import type {
   SessionStaffCredentialRecord,
   SessionStaffCredentialInput,
   SessionHistoryRecord,
+  SessionInvalidationTarget,
   StoredSession,
   WorkspaceInvitationRecord,
+  WorkspaceMediaDeletionJobRecord,
   WorkspaceMemberRecord,
   WorkspaceSummaryRecord,
 } from "./types.js";
@@ -490,6 +495,16 @@ function mapMediaAsset(row: QueryResultRow): MediaAssetRecord {
     scanStatus: row.scan_status,
     altText: row.alt_text,
     createdAt: date(row.created_at),
+    deletionStartedAt: row.deletion_started_at ? date(row.deletion_started_at) : null,
+    finalizedAt: row.finalized_at ? date(row.finalized_at) : null,
+  };
+}
+
+function mapWorkspaceMediaDeletionJob(row: QueryResultRow): WorkspaceMediaDeletionJobRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    deletionStartedAt: date(row.deletion_started_at),
+    sweepAfter: date(row.sweep_after),
   };
 }
 
@@ -2729,16 +2744,23 @@ export class PostgresRepository implements Repository {
     try {
       await this.workspaceQuery(
         input.workspaceId,
-        `WITH inserted_session AS (
+        `WITH eligible_workspace AS (
+           SELECT id FROM workspaces
+           WHERE id = $2 AND deletion_started_at IS NULL
+           FOR SHARE
+         ), inserted_session AS (
            INSERT INTO game_sessions
              (id, workspace_id, quiz_version_id, host_id, code, state, version, seq, deadline,
               settings, state_snapshot, state_schema_version, host_token_hash, trust_mode,
               expires_at, retention_expires_at, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+           SELECT $1, eligible_workspace.id, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+                  $16,$17,$18
+           FROM eligible_workspace
            RETURNING id, workspace_id
          )
          INSERT INTO session_interaction_settings (session_id, workspace_id)
-         SELECT id, workspace_id FROM inserted_session`,
+         SELECT id, workspace_id FROM inserted_session
+         RETURNING session_id`,
         [
           input.id,
           input.workspaceId,
@@ -2759,7 +2781,11 @@ export class PostgresRepository implements Repository {
           input.createdAt,
           input.updatedAt,
         ],
-      );
+      ).then((result) => {
+        if (result.rowCount !== 1) {
+          throw new WorkspaceDeletionInProgressError(input.workspaceId);
+        }
+      });
     } catch (error) {
       const postgresError = error as { code?: string; constraint?: string };
       if (
@@ -2798,6 +2824,28 @@ export class PostgresRepository implements Repository {
       [workspaceId],
     );
     return result.rows.map((row) => String(row.id));
+  }
+
+  async listSessionInvalidationTargets(workspaceId: string): Promise<SessionInvalidationTarget[]> {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT id, code FROM game_sessions
+       WHERE workspace_id = $1
+       ORDER BY id`,
+      [workspaceId],
+    );
+    return result.rows.map((row) => ({
+      sessionId: String(row.id),
+      code: String(row.code),
+    }));
+  }
+
+  async workspaceDeletionStarted(workspaceId: string) {
+    const result = await this.systemQuery(
+      "SELECT deletion_started_at FROM workspaces WHERE id = $1",
+      [workspaceId],
+    );
+    return !result.rows[0] || result.rows[0].deletion_started_at !== null;
   }
 
   async listSessionHistory(
@@ -2891,6 +2939,15 @@ export class PostgresRepository implements Repository {
     if (report && report.sessionId !== input.id) throw new Error("Report session does not match");
     await this.transaction(
       async (client) => {
+        const workspace = await client.query(
+          `SELECT id FROM workspaces
+           WHERE id = $1 AND deletion_started_at IS NULL
+           FOR SHARE`,
+          [input.workspaceId],
+        );
+        if (!workspace.rows[0]) {
+          throw new WorkspaceDeletionInProgressError(input.workspaceId);
+        }
         const result = await client.query(
           `UPDATE game_sessions SET state = $2, version = $3, seq = $4, deadline = $5,
            state_snapshot = $6, state_schema_version = $7,
@@ -2974,6 +3031,15 @@ export class PostgresRepository implements Repository {
     if (participants.length === 0) return;
     await this.transaction(
       async (client) => {
+        const workspace = await client.query(
+          `SELECT id FROM workspaces
+           WHERE id = $1 AND deletion_started_at IS NULL
+           FOR SHARE`,
+          [session.workspaceId],
+        );
+        if (!workspace.rows[0]) {
+          throw new WorkspaceDeletionInProgressError(session.workspaceId);
+        }
         const inserted = await client.query(
           `INSERT INTO participants (id, session_id, nickname, token_hash, status, joined_at)
            SELECT id, session_id, nickname, token_hash, status, joined_at
@@ -4374,12 +4440,19 @@ export class PostgresRepository implements Repository {
     return result.rows.map((row) => String(row.participant_id));
   }
 
-  async createMediaAsset(input: MediaAssetRecord) {
+  async createMediaAsset(input: MediaAssetCreateInput) {
     const result = await this.workspaceQuery(
       input.workspaceId,
-      `INSERT INTO media_assets
-       (id, workspace_id, object_key, mime_type, size_bytes, scan_status, alt_text, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      `WITH eligible_workspace AS (
+         SELECT id FROM workspaces
+         WHERE id = $2 AND deletion_started_at IS NULL
+         FOR SHARE
+       )
+       INSERT INTO media_assets
+         (id, workspace_id, object_key, mime_type, size_bytes, scan_status, alt_text, created_at)
+       SELECT $1, eligible_workspace.id, $3, $4, $5, $6, $7, $8
+       FROM eligible_workspace
+       RETURNING *`,
       [
         input.id,
         input.workspaceId,
@@ -4391,6 +4464,7 @@ export class PostgresRepository implements Repository {
         input.createdAt,
       ],
     );
+    if (!result.rows[0]) throw new Error("Workspace deletion is in progress");
     return mapMediaAsset(result.rows[0]!);
   }
 
@@ -4436,7 +4510,10 @@ export class PostgresRepository implements Repository {
         if (uniqueMediaIds.length > 0) {
           const existing = await client.query<{ id: string }>(
             `SELECT id FROM media_assets
-             WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
+             WHERE workspace_id = $1 AND id = ANY($2::uuid[])
+               AND scan_status <> 'deleting'
+             ORDER BY id
+             FOR UPDATE`,
             [workspaceId, uniqueMediaIds],
           );
           const existingIds = new Set(existing.rows.map(({ id }) => String(id)));
@@ -4476,7 +4553,8 @@ export class PostgresRepository implements Repository {
   async listStaleMedia(cutoff: Date, limit = 100) {
     const result = await this.systemQuery(
       `SELECT asset.* FROM media_assets asset
-       WHERE asset.scan_status <> 'clean' AND asset.created_at <= $1
+       WHERE (asset.scan_status = 'deleting'
+              OR (asset.scan_status <> 'clean' AND asset.created_at <= $1))
          AND NOT EXISTS (
            SELECT 1 FROM media_references reference
            WHERE reference.workspace_id = asset.workspace_id AND reference.media_id = asset.id
@@ -4501,31 +4579,330 @@ export class PostgresRepository implements Repository {
     return result.rows.map(mapMediaAsset);
   }
 
+  async claimMediaObjectCleanupCandidates(now: Date, limit = 100) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("Media cleanup batch limit must be between 1 and 100");
+    }
+    const claimToken = randomUUID();
+    const result = await this.systemQuery(
+      `WITH due AS (
+         SELECT id FROM media_assets
+         WHERE scan_status = 'clean' AND object_cleanup_pass < 2
+           AND object_cleanup_due_at <= $1
+           AND (object_cleanup_claim_token IS NULL
+                OR object_cleanup_claimed_at <= $1::timestamptz - interval '5 minutes')
+         ORDER BY object_cleanup_due_at, id
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+       )
+       UPDATE media_assets AS asset
+       SET object_cleanup_claim_token = $3, object_cleanup_claimed_at = $1
+       FROM due
+       WHERE asset.id = due.id
+       RETURNING asset.*`,
+      [now, limit, claimToken],
+    );
+    return result.rows
+      .sort(
+        (left, right) =>
+          date(left.object_cleanup_due_at).getTime() -
+            date(right.object_cleanup_due_at).getTime() ||
+          String(left.id).localeCompare(String(right.id)),
+      )
+      .map((row): MediaObjectCleanupClaim => ({
+        asset: mapMediaAsset(row),
+        pass: Number(row.object_cleanup_pass) as 0 | 1,
+        claimToken,
+      }));
+  }
+
+  async completeMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, completedAt: Date) {
+    const { asset, pass, claimToken } = claim;
+    if (!asset.finalizedAt) return false;
+    const result = await this.workspaceQuery(
+      asset.workspaceId,
+      `UPDATE media_assets
+       SET object_cleanup_pass = CASE WHEN $5 = 0 THEN 1 ELSE 2 END,
+           object_cleanup_due_at = CASE WHEN $5 = 0
+             THEN GREATEST(finalized_at + interval '6 days', $7::timestamptz + interval '1 hour')
+             ELSE NULL END,
+           object_cleanup_claim_token = NULL, object_cleanup_claimed_at = NULL
+       WHERE workspace_id = $1 AND id = $2 AND scan_status = 'clean'
+         AND object_key = $3 AND finalized_at = $4
+         AND object_cleanup_pass = $5 AND object_cleanup_claim_token = $6
+       RETURNING id`,
+      [
+        asset.workspaceId,
+        asset.id,
+        asset.objectKey,
+        asset.finalizedAt,
+        pass,
+        claimToken,
+        completedAt,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
+  async renewMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, renewedAt: Date) {
+    const { asset, pass, claimToken } = claim;
+    if (!asset.finalizedAt) return false;
+    const result = await this.workspaceQuery(
+      asset.workspaceId,
+      `UPDATE media_assets
+       SET object_cleanup_claimed_at = $7
+       WHERE workspace_id = $1 AND id = $2 AND scan_status = 'clean'
+         AND object_key = $3 AND finalized_at = $4
+         AND object_cleanup_pass = $5 AND object_cleanup_claim_token = $6
+       RETURNING id`,
+      [
+        asset.workspaceId,
+        asset.id,
+        asset.objectKey,
+        asset.finalizedAt,
+        pass,
+        claimToken,
+        renewedAt,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
+  async deferMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, retryAt: Date) {
+    const { asset, pass, claimToken } = claim;
+    if (!asset.finalizedAt) return false;
+    const result = await this.workspaceQuery(
+      asset.workspaceId,
+      `UPDATE media_assets
+       SET object_cleanup_due_at = $7,
+           object_cleanup_claim_token = NULL, object_cleanup_claimed_at = NULL
+       WHERE workspace_id = $1 AND id = $2 AND scan_status = 'clean'
+         AND object_key = $3 AND finalized_at = $4
+         AND object_cleanup_pass = $5 AND object_cleanup_claim_token = $6
+       RETURNING id`,
+      [asset.workspaceId, asset.id, asset.objectKey, asset.finalizedAt, pass, claimToken, retryAt],
+    );
+    return result.rowCount === 1;
+  }
+
+  async completeInlineMediaObjectCleanup(asset: MediaAssetRecord, completedAt: Date) {
+    if (asset.scanStatus !== "clean" || !asset.finalizedAt) return false;
+    const result = await this.workspaceQuery(
+      asset.workspaceId,
+      `UPDATE media_assets
+       SET object_cleanup_pass = 1,
+           object_cleanup_due_at = GREATEST(finalized_at + interval '6 days', $5::timestamptz + interval '1 hour')
+       WHERE workspace_id = $1 AND id = $2 AND scan_status = 'clean'
+         AND object_key = $3 AND finalized_at = $4
+         AND object_cleanup_pass = 0 AND object_cleanup_claim_token IS NULL
+       RETURNING id`,
+      [asset.workspaceId, asset.id, asset.objectKey, asset.finalizedAt, completedAt],
+    );
+    return result.rowCount === 1;
+  }
+
   async updateMediaAsset(
     workspaceId: string,
     mediaId: string,
-    update: { objectKey?: string; scanStatus: MediaScanStatus },
+    update: {
+      objectKey?: string;
+      scanStatus: "clean" | "rejected";
+      finalizationToken: string;
+      finalizedAt: Date;
+    },
   ) {
     const result = await this.workspaceQuery(
       workspaceId,
-      `UPDATE media_assets SET scan_status = $3, object_key = COALESCE($4, object_key)
-       WHERE workspace_id = $1 AND id = $2 RETURNING *`,
-      [workspaceId, mediaId, update.scanStatus, update.objectKey ?? null],
+      `UPDATE media_assets
+       SET scan_status = $3, object_key = COALESCE($4, object_key),
+           finalization_token = NULL, finalization_started_at = NULL,
+           deletion_started_at = NULL, finalized_at = $6::timestamptz,
+           object_cleanup_pass = 0,
+           object_cleanup_due_at = CASE WHEN $3 = 'clean' THEN $6::timestamptz ELSE NULL END,
+           object_cleanup_claim_token = NULL, object_cleanup_claimed_at = NULL
+       WHERE workspace_id = $1 AND id = $2 AND scan_status = 'finalizing'
+         AND finalization_token = $5
+       RETURNING *`,
+      [
+        workspaceId,
+        mediaId,
+        update.scanStatus,
+        update.objectKey ?? null,
+        update.finalizationToken,
+        update.finalizedAt,
+      ],
     );
     return result.rows[0] ? mapMediaAsset(result.rows[0]) : null;
   }
 
-  async deleteMediaAsset(workspaceId: string, mediaId: string) {
+  async claimMediaAssetFinalization(
+    workspaceId: string,
+    mediaId: string,
+    finalizationToken: string,
+    claimedAt = new Date(),
+  ) {
+    return this.transaction(
+      async (client) => {
+        const claimed = await client.query(
+          `UPDATE media_assets
+           SET scan_status = 'finalizing', finalization_token = $3,
+               finalization_started_at = $4::timestamptz, deletion_started_at = NULL
+           WHERE workspace_id = $1 AND id = $2
+             AND (
+               scan_status = 'pending'
+               OR (
+                 scan_status = 'finalizing'
+                 AND (
+                   finalization_started_at IS NULL
+                   OR finalization_started_at <= $4::timestamptz - interval '5 minutes'
+                 )
+               )
+             )
+           RETURNING *`,
+          [workspaceId, mediaId, finalizationToken, claimedAt],
+        );
+        return claimed.rows[0] ? mapMediaAsset(claimed.rows[0]) : null;
+      },
+      { workspaceId },
+    );
+  }
+
+  async releaseMediaAssetFinalization(
+    workspaceId: string,
+    mediaId: string,
+    finalizationToken: string,
+  ) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `UPDATE media_assets
+       SET scan_status = 'pending', finalization_token = NULL,
+           finalization_started_at = NULL, deletion_started_at = NULL
+       WHERE workspace_id = $1 AND id = $2 AND scan_status = 'finalizing'
+         AND finalization_token = $3
+       RETURNING id`,
+      [workspaceId, mediaId, finalizationToken],
+    );
+    return result.rowCount === 1;
+  }
+
+  async claimMediaAssetDeletion(workspaceId: string, mediaId: string, now = new Date()) {
+    return this.transaction(
+      async (client) => {
+        const current = await client.query(
+          `SELECT * FROM media_assets
+           WHERE workspace_id = $1 AND id = $2
+           FOR UPDATE`,
+          [workspaceId, mediaId],
+        );
+        if (!current.rows[0]) return null;
+        const references = await client.query(
+          `SELECT 1 FROM media_references
+           WHERE workspace_id = $1 AND media_id = $2
+           LIMIT 1`,
+          [workspaceId, mediaId],
+        );
+        if (references.rowCount !== 0) return null;
+        if (
+          current.rows[0].scan_status === "finalizing" &&
+          current.rows[0].finalization_started_at &&
+          date(current.rows[0].finalization_started_at).getTime() > now.getTime() - 5 * 60_000
+        ) {
+          return null;
+        }
+        if (current.rows[0].scan_status === "deleting") {
+          return mapMediaAsset(current.rows[0]);
+        }
+        const claimed = await client.query(
+          `UPDATE media_assets
+           SET scan_status = 'deleting', finalization_token = NULL,
+               finalization_started_at = NULL,
+               deletion_started_at = COALESCE(deletion_started_at, $3)
+           WHERE workspace_id = $1 AND id = $2
+           RETURNING *`,
+          [workspaceId, mediaId, now],
+        );
+        return mapMediaAsset(claimed.rows[0]);
+      },
+      { workspaceId },
+    );
+  }
+
+  async claimWorkspaceMediaDeletion(workspaceId: string, now = new Date()) {
+    return this.transaction(
+      async (client) => {
+        const workspace = await client.query(
+          `UPDATE workspaces
+           SET deletion_started_at = COALESCE(deletion_started_at, $2)
+           WHERE id = $1
+           RETURNING id`,
+          [workspaceId, now],
+        );
+        if (!workspace.rows[0]) return [];
+        const claimed = await client.query(
+          `UPDATE media_assets
+           SET scan_status = 'deleting', finalization_token = NULL,
+               finalization_started_at = NULL,
+               deletion_started_at = COALESCE(deletion_started_at, $2)
+           WHERE workspace_id = $1
+           RETURNING *`,
+          [workspaceId, now],
+        );
+        if ((claimed.rowCount ?? 0) > 0) {
+          await client.query(
+            `INSERT INTO workspace_media_deletion_jobs
+               (workspace_id, deletion_started_at, sweep_after)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (workspace_id) DO NOTHING`,
+            [workspaceId, now, new Date(now.getTime() + MEDIA_DELETION_TOMBSTONE_HOLD_MS)],
+          );
+        }
+        return claimed.rows
+          .map(mapMediaAsset)
+          .sort(
+            (left, right) =>
+              left.createdAt.getTime() - right.createdAt.getTime() ||
+              left.id.localeCompare(right.id),
+          );
+      },
+      { workspaceId },
+    );
+  }
+
+  async listDueWorkspaceMediaDeletionJobs(now: Date, limit = 100) {
+    const result = await this.systemQuery(
+      `SELECT workspace_id, deletion_started_at, sweep_after
+       FROM workspace_media_deletion_jobs
+       WHERE sweep_after <= $1
+       ORDER BY sweep_after, workspace_id
+       LIMIT $2`,
+      [now, limit],
+    );
+    return result.rows.map(mapWorkspaceMediaDeletionJob);
+  }
+
+  async completeWorkspaceMediaDeletionJob(workspaceId: string, deletionStartedAt: Date) {
+    const result = await this.systemQuery(
+      `DELETE FROM workspace_media_deletion_jobs
+       WHERE workspace_id = $1 AND deletion_started_at = $2
+       RETURNING workspace_id`,
+      [workspaceId, deletionStartedAt],
+    );
+    return result.rowCount === 1;
+  }
+
+  async deleteMediaAsset(workspaceId: string, mediaId: string, now = new Date()) {
     const result = await this.workspaceQuery(
       workspaceId,
       `DELETE FROM media_assets asset
        WHERE asset.workspace_id = $1 AND asset.id = $2
+         AND asset.scan_status = 'deleting'
+         AND asset.deletion_started_at <= $3
          AND NOT EXISTS (
            SELECT 1 FROM media_references reference
            WHERE reference.workspace_id = asset.workspace_id AND reference.media_id = asset.id
          )
        RETURNING id`,
-      [workspaceId, mediaId],
+      [workspaceId, mediaId, new Date(now.getTime() - MEDIA_DELETION_TOMBSTONE_HOLD_MS)],
     );
     return result.rowCount === 1;
   }
@@ -4572,6 +4949,15 @@ export class PostgresRepository implements Repository {
     if (answers.length === 0) return [];
     return this.transaction(
       async (client) => {
+        const workspace = await client.query(
+          `SELECT id FROM workspaces
+           WHERE id = $1 AND deletion_started_at IS NULL
+           FOR SHARE`,
+          [session.workspaceId],
+        );
+        if (!workspace.rows[0]) {
+          throw new WorkspaceDeletionInProgressError(session.workspaceId);
+        }
         if (!options.roundEvidencePersisted) await this.syncSessionEvidence(client, session);
         const result = await client.query(
           `WITH answer_input AS (

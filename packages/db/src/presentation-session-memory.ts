@@ -51,8 +51,14 @@ export class MemoryPresentationSessionRepository
   >();
 
   constructor(
-    private readonly liveRooms: Pick<Repository, "claimLiveRoomCode" | "releaseLiveRoomCode">,
+    private readonly liveRooms: Pick<Repository, "claimLiveRoomCode" | "releaseLiveRoomCode"> & {
+      assertWorkspaceLiveSessionCreationAllowed?: (workspaceId: string) => void;
+    },
   ) {}
+
+  private assertWorkspaceMutationAllowed(workspaceId: string) {
+    this.liveRooms.assertWorkspaceLiveSessionCreationAllowed?.(workspaceId);
+  }
 
   exportAccount({ ownedWorkspaceIds }: MemoryRepositoryLifecycleContext) {
     const sessions = [...this.sessions.values()].filter((session) =>
@@ -170,6 +176,7 @@ export class MemoryPresentationSessionRepository
 
   async createSession(input: PresentationSessionCreateInput) {
     const normalized = normalizeSession(input);
+    this.assertWorkspaceMutationAllowed(normalized.workspaceId);
     await this.liveRooms.claimLiveRoomCode({
       code: normalized.code,
       workspaceId: normalized.workspaceId,
@@ -179,6 +186,7 @@ export class MemoryPresentationSessionRepository
       createdAt: normalized.createdAt,
     });
     try {
+      this.assertWorkspaceMutationAllowed(normalized.workspaceId);
       this.sessions.set(input.id, clone(normalized));
       if (normalized.status !== "active" || normalized.liveExpiresAt <= new Date()) {
         await this.liveRooms.releaseLiveRoomCode(
@@ -203,6 +211,7 @@ export class MemoryPresentationSessionRepository
     credential: PresentationSessionCredentialRecord,
   ) {
     const normalized = normalizeSession(input);
+    this.assertWorkspaceMutationAllowed(normalized.workspaceId);
     if (
       credential.workspaceId !== normalized.workspaceId ||
       credential.sessionId !== normalized.id
@@ -223,6 +232,7 @@ export class MemoryPresentationSessionRepository
       createdAt: normalized.createdAt,
     });
     try {
+      this.assertWorkspaceMutationAllowed(normalized.workspaceId);
       this.sessions.set(normalized.id, clone(normalized));
       this.credentials.set(credential.id, clone(credential));
       if (normalized.status !== "active" || normalized.liveExpiresAt <= new Date()) {
@@ -268,6 +278,7 @@ export class MemoryPresentationSessionRepository
   private async applyTransition(input: PresentationSessionTransitionInput, commandId?: string) {
     const session = this.sessions.get(input.sessionId);
     if (!session || session.workspaceId !== input.workspaceId) return null;
+    this.assertWorkspaceMutationAllowed(input.workspaceId);
     if (session.revision !== input.expectedRevision) {
       throw new PresentationSessionConflictError(input.expectedRevision, session.revision);
     }
@@ -357,12 +368,11 @@ export class MemoryPresentationSessionRepository
     participantLimit: number,
   ): Promise<PresentationParticipantJoin> {
     const session = this.sessions.get(input.sessionId);
-    if (
-      !session ||
-      session.workspaceId !== input.workspaceId ||
-      session.status !== "active" ||
-      input.joinedAt >= session.liveExpiresAt
-    ) {
+    if (!session || session.workspaceId !== input.workspaceId) {
+      return { status: "closed" };
+    }
+    this.assertWorkspaceMutationAllowed(input.workspaceId);
+    if (session.status !== "active" || input.joinedAt >= session.liveExpiresAt) {
       return { status: "closed" };
     }
     const participantCount = [...this.participants.values()].filter(
@@ -456,9 +466,11 @@ export class MemoryPresentationSessionRepository
       }
     }
     const session = this.sessions.get(input.sessionId);
+    if (!session || session.workspaceId !== input.workspaceId) {
+      return { status: "phase_closed" };
+    }
+    this.assertWorkspaceMutationAllowed(input.workspaceId);
     if (
-      !session ||
-      session.workspaceId !== input.workspaceId ||
       ![...this.participants.values()].some(
         (participant) =>
           participant.workspaceId === input.workspaceId &&
