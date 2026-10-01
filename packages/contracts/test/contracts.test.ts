@@ -25,6 +25,7 @@ import {
   ProductEventNameSchema,
   PublicFeaturesSchema,
   PublishQuizRequestSchema,
+  QuestionHealthResultSchema,
   QuizContentSchema,
   QuizDraftSchema,
   QuestionSchema,
@@ -38,6 +39,38 @@ import {
 } from "../src/index.js";
 
 describe("public contracts", () => {
+  it("validates bounded, versioned Question Health findings", () => {
+    const result = QuestionHealthResultSchema.parse({
+      quizId: randomUUID(),
+      draftRevision: 3,
+      rulesetVersion: "1.0.0",
+      evaluatedQuestionCount: 1,
+      findings: [
+        {
+          id: `qh-${randomUUID()}`,
+          ruleId: "question.missing_citation",
+          ruleVersion: 1,
+          rulesetVersion: "1.0.0",
+          severity: "advisory",
+          questionId: randomUUID(),
+          fieldPath: "questions.0.sourceCitations",
+          contentHash: "a".repeat(64),
+          reason: "No source citation is attached.",
+          evidence: "The citation list is empty.",
+          recommendedAction: "Attach a reviewed citation.",
+        },
+      ],
+      findingsTruncated: false,
+    });
+    expect(result.findings).toHaveLength(1);
+    expect(
+      QuestionHealthResultSchema.safeParse({
+        ...result,
+        findings: [{ ...result.findings[0], contentHash: "not-a-content-hash" }],
+      }).success,
+    ).toBe(false);
+  });
+
   it("defaults legacy reports to Learning mode", () => {
     expect(
       LegacyReportSchema.parse({

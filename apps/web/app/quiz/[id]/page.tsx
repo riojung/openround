@@ -24,6 +24,7 @@ import {
 } from "../../../components/editor/question-inspector";
 import { QuestionNavigator } from "../../../components/editor/question-navigator";
 import { QuestionReusePicker } from "../../../components/editor/question-reuse-picker";
+import { QuestionHealthPanel } from "../../../components/editor/question-health-panel";
 import { ReadinessSummary } from "../../../components/editor/readiness-summary";
 import { ResponseEditor } from "../../../components/editor/response-editor";
 import builderStyles from "../../../components/editor/round-builder.module.css";
@@ -65,6 +66,7 @@ interface EditorProductFeatures {
   builderV2: boolean;
   practiceAssignments?: boolean;
   workspaceShell: boolean;
+  questionHealth?: boolean;
 }
 
 function newChoices(type: ChoiceQuestionDraft["type"]): ChoiceDraft[] {
@@ -1375,6 +1377,17 @@ export default function QuizEditorPage() {
                   issues={readinessIssues}
                   onSelectIssue={focusReadinessIssue}
                 />
+                {productFeatures?.questionHealth ? (
+                  <QuestionHealthPanel
+                    currentDraftRevision={serverRevision.current}
+                    draftSaved={
+                      saveState === "saved" &&
+                      !saveConflict &&
+                      JSON.stringify(draft) === lastSavedJson.current
+                    }
+                    quizId={id}
+                  />
+                ) : null}
                 <section
                   aria-label={t("delivery.builder.question", { number: selectedIndex + 1 })}
                   className={builderStyles.canvas}

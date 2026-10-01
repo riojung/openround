@@ -99,6 +99,23 @@ Phase 2 and the post-24-week capabilities are unstarted beyond shared feature-co
 foundations. This is an evidence boundary, not permission to substitute local automation for
 facilitator research, independent review, or production-environment drills.
 
+At the product owner's direction, the partner-evidence branch/bet decision is deferred for later
+revisit; feature implementation may proceed provisionally without recording any evidence gate as
+passed. The current unmerged worktree advances the default Question Health path with a shared,
+deterministic `@openround/insights` evaluator, versioned advisory contract, authenticated draft-only
+API, and read-only Round Builder panel behind `FEATURE_QUESTION_HEALTH` plus the evidence workspace
+allowlist. The evaluator is capped at 1,000 findings and marks truncated output. The flag remains
+off by default. Persistent dismissals, revision apply/undo, published-content analysis, and post-use
+observations are not implemented yet; partner usefulness/retained-revision thresholds remain
+unmeasured, and this work does not close Phase 1/2 or release-readiness gates.
+
+As of the merged `main` snapshot on 2026-10-01, all repository-side functionality committed for
+Phase 0 is implemented. The open Phase 0 items are evidence and release-readiness gates, not an
+unfinished feature backlog. The market-plan baseline is reconciled to this status; later roadmap
+capabilities such as production Companion, first-class Recovery Packs, production Question Health,
+Delayed Recovery Trail, Decision Replay, and Concept Health remain unbuilt or prototype-only and
+must not be described as delivered.
+
 An Access/resilience implementation slice is complete in the repository provisionally, without
 claiming that Phase 1's branch-selection gate passed. Gated whole-room flex mode is available for
 new Rounds and Presentations in allowlisted workspaces when `FEATURE_LIVE_FLEX_MODE` is enabled. It has no

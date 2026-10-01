@@ -110,6 +110,7 @@ export const WorkspaceProductFeaturesSchema = z.object({
   presentations: z.boolean(),
   presentationRealtime: z.boolean(),
   liveFlexMode: z.boolean().default(false),
+  questionHealth: z.boolean().default(false),
   groups: z.boolean(),
   discover: z.boolean(),
 });
@@ -555,6 +556,46 @@ export const QuestionDraftSchema = z.union([
   RatingQuestionDraftSchema,
 ]);
 export type QuestionDraft = z.infer<typeof QuestionDraftSchema>;
+
+export const QUESTION_HEALTH_RULE_IDS = [
+  "choice.duplicate",
+  "choice.overlap",
+  "choice.length_cue",
+  "choice.missing_rationale",
+  "question.missing_explanation",
+  "question.missing_citation",
+  "question.dense_content",
+  "question.configuration_mismatch",
+  "recheck.same_prompt",
+  "recheck.concept_mismatch",
+] as const;
+export const QuestionHealthRuleIdSchema = z.enum(QUESTION_HEALTH_RULE_IDS);
+export type QuestionHealthRuleId = z.infer<typeof QuestionHealthRuleIdSchema>;
+
+export const QuestionHealthFindingSchema = z.object({
+  id: z.string().min(1).max(500),
+  ruleId: QuestionHealthRuleIdSchema,
+  ruleVersion: z.number().int().positive().max(99),
+  rulesetVersion: z.string().min(1).max(32),
+  severity: z.literal("advisory"),
+  questionId: z.string().uuid(),
+  fieldPath: z.string().min(1).max(500),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  reason: z.string().min(1).max(1_000),
+  evidence: z.string().min(1).max(1_000),
+  recommendedAction: z.string().min(1).max(1_000),
+});
+export type QuestionHealthFinding = z.infer<typeof QuestionHealthFindingSchema>;
+
+export const QuestionHealthResultSchema = z.object({
+  quizId: z.string().uuid(),
+  draftRevision: z.number().int().nonnegative(),
+  rulesetVersion: z.string().min(1).max(32),
+  evaluatedQuestionCount: z.number().int().nonnegative().max(200),
+  findings: z.array(QuestionHealthFindingSchema).max(1_000),
+  findingsTruncated: z.boolean(),
+});
+export type QuestionHealthResult = z.infer<typeof QuestionHealthResultSchema>;
 
 const CommonQuestionSchema = CommonQuestionDraftSchema.extend({
   prompt: z.string().trim().min(1, "Enter the checkpoint prompt").max(500),
