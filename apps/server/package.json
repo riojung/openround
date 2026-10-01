@@ -27,6 +27,7 @@
     "@openround/db": "workspace:*",
     "@openround/experience": "workspace:*",
     "@openround/game-engine": "workspace:*",
+    "@openround/insights": "workspace:*",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/exporter-trace-otlp-http": "0.222.0",
     "@opentelemetry/instrumentation-http": "0.222.0",

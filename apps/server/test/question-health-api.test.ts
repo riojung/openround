@@ -1,0 +1,170 @@
+import { randomUUID } from "node:crypto";
+import { afterEach, describe, expect, it } from "vitest";
+import type { FastifyInstance } from "fastify";
+import { QuestionHealthResultSchema } from "@openround/contracts";
+import { MemoryRepository } from "@openround/db";
+import { buildApp } from "../src/app.js";
+import { MemorySessionCache } from "../src/cache.js";
+import { ConfigSchema } from "../src/config.js";
+
+let app: FastifyInstance | undefined;
+
+async function signIn(target: FastifyInstance, email: string) {
+  const magic = await target.inject({
+    method: "POST",
+    url: "/v1/auth/magic-link",
+    payload: { email, segment: "workplace", acceptPolicies: true },
+  });
+  const token = new URL(magic.json<{ debugUrl: string }>().debugUrl).searchParams.get("token")!;
+  const verified = await target.inject({ method: "GET", url: `/v1/auth/verify?token=${token}` });
+  const setCookie = verified.headers["set-cookie"]!;
+  return (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(";")[0]!;
+}
+
+async function build(questionHealthEnabled: boolean) {
+  const workspaceId = randomUUID();
+  const repository = new MemoryRepository({ initialWorkspaceId: workspaceId });
+  const built = await buildApp(
+    ConfigSchema.parse({
+      NODE_ENV: "test",
+      ALLOW_IN_MEMORY: "true",
+      COMMUNITY_MODE: "false",
+      WEB_ORIGIN: "http://localhost:3000",
+      PUBLIC_API_URL: "http://localhost:4000",
+      LOG_LEVEL: "silent",
+      TEST_INITIAL_WORKSPACE_ID: workspaceId,
+      FEATURE_QUESTION_HEALTH: String(questionHealthEnabled),
+      EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: workspaceId,
+    }),
+    { repository, cache: new MemorySessionCache() },
+  );
+  app = built.app;
+  return built.app;
+}
+
+afterEach(async () => {
+  if (app) await app.close();
+  app = undefined;
+});
+
+describe("Question Health draft route", () => {
+  it("fails closed when disabled without making the existing draft unreadable", async () => {
+    const target = await build(false);
+    const cookie = await signIn(target, "question-health-disabled@example.com");
+    const created = await target.inject({
+      method: "POST",
+      url: "/v1/quizzes",
+      headers: { cookie },
+      payload: { title: "Existing draft", description: "" },
+    });
+    const quizId = created.json<{ quiz: { id: string } }>().quiz.id;
+
+    const hidden = await target.inject({
+      method: "GET",
+      url: `/v1/quizzes/${quizId}/question-health`,
+      headers: { cookie },
+    });
+    const readable = await target.inject({
+      method: "GET",
+      url: `/v1/quizzes/${quizId}`,
+      headers: { cookie },
+    });
+
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json()).toMatchObject({ error: { code: "NOT_FOUND" } });
+    expect(readable.statusCode).toBe(200);
+  });
+
+  it("evaluates only the allowlisted creator's current draft and fences the result by revision", async () => {
+    const target = await build(true);
+    const cookie = await signIn(target, "question-health-enabled@example.com");
+    const account = await target.inject({ method: "GET", url: "/v1/auth/me", headers: { cookie } });
+    expect(account.json()).toMatchObject({ productFeatures: { questionHealth: true } });
+    const created = await target.inject({
+      method: "POST",
+      url: "/v1/quizzes",
+      headers: { cookie },
+      payload: { title: "Question Health draft", description: "" },
+    });
+    const quizId = created.json<{ quiz: { id: string } }>().quiz.id;
+    const draft = {
+      title: "Question Health draft",
+      description: "",
+      questions: [
+        {
+          id: randomUUID(),
+          type: "single_select",
+          prompt: "Which option should be chosen?",
+          purpose: "diagnostic",
+          confidence: "off",
+          delivery: "main",
+          conceptKeys: ["safe.choice"],
+          linkedRecheckQuestionId: null,
+          choices: [
+            { id: randomUUID(), label: "The correct answer", isCorrect: true },
+            { id: randomUUID(), label: "A distractor", isCorrect: false },
+          ],
+          timeLimitSeconds: 30,
+          basePoints: 1_000,
+          explanation: "",
+          mediaId: null,
+          mediaAlt: null,
+        },
+      ],
+    };
+    const saved = await target.inject({
+      method: "PATCH",
+      url: `/v1/quizzes/${quizId}`,
+      headers: { cookie },
+      payload: { draft, expectedDraftRevision: 0 },
+    });
+    expect(saved.statusCode).toBe(200);
+
+    const first = await target.inject({
+      method: "GET",
+      url: `/v1/quizzes/${quizId}/question-health`,
+      headers: { cookie },
+    });
+    const repeated = await target.inject({
+      method: "GET",
+      url: `/v1/quizzes/${quizId}/question-health`,
+      headers: { cookie },
+    });
+    const result = QuestionHealthResultSchema.parse(first.json());
+    expect(first.statusCode).toBe(200);
+    expect(first.headers["cache-control"]).toBe("private, no-store");
+    expect(first.headers.etag).toBe('"draft-1"');
+    expect(result).toMatchObject({ quizId, draftRevision: 1, evaluatedQuestionCount: 1 });
+    expect(result.findings.map((finding) => finding.ruleId)).toEqual(
+      expect.arrayContaining(["question.missing_explanation", "question.missing_citation"]),
+    );
+    expect(repeated.json()).toEqual(first.json());
+
+    const edited = await target.inject({
+      method: "PATCH",
+      url: `/v1/quizzes/${quizId}`,
+      headers: { cookie },
+      payload: {
+        draft: { ...draft, questions: [{ ...draft.questions[0], prompt: "A changed prompt?" }] },
+        expectedDraftRevision: 1,
+      },
+    });
+    expect(edited.statusCode).toBe(200);
+    const afterEditResponse = await target.inject({
+      method: "GET",
+      url: `/v1/quizzes/${quizId}/question-health`,
+      headers: { cookie },
+    });
+    const afterEdit = QuestionHealthResultSchema.parse(afterEditResponse.json());
+    const oldCitation = result.findings.find(
+      (finding) => finding.ruleId === "question.missing_citation",
+    );
+    const newCitation = afterEdit.findings.find(
+      (finding) => finding.ruleId === "question.missing_citation",
+    );
+    expect(afterEdit.draftRevision).toBe(2);
+    expect(afterEditResponse.headers.etag).toBe('"draft-2"');
+    expect(newCitation?.id).toBe(oldCitation?.id);
+    expect(newCitation?.contentHash).not.toBe(oldCitation?.contentHash);
+  });
+});

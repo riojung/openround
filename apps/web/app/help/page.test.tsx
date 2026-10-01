@@ -18,6 +18,7 @@ const fixtures = vi.hoisted(() => ({
       presentations: true,
       presentationRealtime: true,
       liveFlexMode: true,
+      questionHealth: false,
       groups: true,
       discover: true,
     },

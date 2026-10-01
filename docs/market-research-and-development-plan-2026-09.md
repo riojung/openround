@@ -76,6 +76,10 @@ roadmap treats those limits as gates rather than footnotes.
 
 ## Current OpenRound baseline
 
+**Implementation snapshot reconciled 2026-10-01:** the repository status below is aligned with
+`main` at `c7d7764` (merged PR #60). The research date at the top of this document describes the
+market-source review and has not been refreshed; it is not the date of this implementation audit.
+
 OpenRound is already much more than a happy-path quiz application. The audited repository includes:
 
 - six response types, confidence, concepts, misconception labels, private feedback, linked
@@ -95,18 +99,25 @@ OpenRound is already much more than a happy-path quiz application. The audited r
 
 The current constraints matter more than the feature count:
 
-| Boundary               | Current reality                                                                                                                   |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Public readiness       | Source CI and local production smoke are complete; thirteen gates remain, primarily awaiting external or human evidence           |
-| Rollout                | Major workspace, builder, Presentation, Group, Discover, rehearsal, and practice capabilities default off or require allowlisting |
-| Presentation delivery  | The newer live Presentation host and participant paths poll rather than using the mature Round Socket.IO/reconnect path           |
-| Live accessibility     | Practice/follow-up accommodation passes exist; private live extra time/time-flex remains unresolved                               |
-| Response breadth       | Exact short text and rank/order are absent; moderated open response, drawing, and word cloud are deliberate later decisions       |
-| Existing-deck workflow | A structured Presentation builder exists, but there is no lightweight slide companion/remote or native add-in                     |
-| Reuse                  | Cross-Round reuse creates independent snapshots; there is no synchronized question bank or version-aware reusable Recovery Pack   |
-| Longitudinal evidence  | Reports describe one session; no privacy-safe cross-session concept view or delayed transfer trail exists                         |
-| Institution mode       | LTI launch/Deep Linking exists; roster, identified learner, grade passback, SAML/SCIM, and certification remain contract-gated    |
-| Maintainability        | Several routes, repositories, contracts, builders, and session services are already very large and should be split when touched   |
+| Boundary               | Current reality                                                                                                                                                                                                                                     |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Public readiness       | Source CI and local production smoke are complete; thirteen release-readiness gates remain, primarily awaiting external or human evidence. These are not missing product-code features.                                                             |
+| Rollout                | Major workspace, builder, Presentation, Group, Discover, rehearsal, practice, and live-flex capabilities are gated or require workspace allowlisting; repository presence does not mean general availability.                                       |
+| Presentation delivery  | Live Presentations have server-authoritative realtime synchronization, acknowledgement/reconnect handling, role-filtered projections, and report reconciliation. The older polling-only description is obsolete.                                    |
+| Live accessibility     | Whole-room timed/flex mode is implemented for new Rounds and Presentations behind `FEATURE_LIVE_FLEX_MODE` and a workspace allowlist. Private individual extra-time passes remain deferred pending fairness, privacy, and reveal research.          |
+| Response breadth       | Six response types are implemented. Exact short text and rank/order are not; add them only if the roadmap's observed demand threshold passes. Moderated open response, drawing, and word cloud remain deliberate later decisions.                   |
+| Existing-deck workflow | A structured Presentation builder exists. Companion mode is a research prototype, not a production sidecar; native slide add-ins are explicitly out of scope.                                                                                       |
+| Reuse                  | Cross-Round reuse creates independent snapshots. A first-class immutable, versioned Recovery Pack with update review and multi-surface insertion is not implemented.                                                                                |
+| Longitudinal evidence  | Immediate linked rechecks and accountless practice/follow-ups exist. The delayed Recovery Trail, durable Session Decision Replay, and privacy-safe Concept Health product views are not implemented; delayed probes have a research prototype only. |
+| Institution mode       | Creator OIDC and instructor LTI launch/Deep Linking foundations exist. Verified learners, NRPS/AGS roster and grade delivery, managed SAML/SCIM, certification, and institutional pilots remain contract-gated.                                     |
+| Maintainability        | Core session repositories and mutation orchestration have been split behind stable facades. Some large routes/builders remain and should be refactored when touched; this is ongoing engineering hygiene, not a Phase 0 feature blocker.            |
+
+The repository-side functionality committed for Phase 0 is implemented. Phase 0 is not formally
+closed because the research, manual review, and deployment evidence gates remain open. Phase 1 is
+also not formally selected: the whole-room flex capability is a provisional Access/resilience slice,
+not evidence that the Access branch-selection gate passed. See the [implementation status](implementation-status.md)
+and [Phase 0 decision record](evidence/phase0-stage-decision.md) for the separate code and evidence
+states.
 
 The implementation source of truth remains [implementation status](implementation-status.md),
 [product design](design.md), [architecture](architecture.md), and the
@@ -366,21 +377,21 @@ privacy-safe aggregate view across eligible sessions.
 
 ## Priority portfolio
 
-| Rank | Capability                                      | Demand evidence | Strategic fit | Differentiation | Relative effort/risk  | Decision                                      |
-| ---: | ----------------------------------------------- | --------------- | ------------- | --------------- | --------------------- | --------------------------------------------- |
-|    1 | Beta, production, and primary-customer evidence | Very high       | Essential     | Trust layer     | High/external         | Do now; no substitution by feature work       |
-|    2 | Presentation realtime and resilient-room work   | Very high       | Essential     | Medium          | Medium                | Do now before Presentation breadth            |
-|    3 | Browser slide companion/remote                  | Very high       | High          | Medium          | Medium                | Prototype in the first pilot cycle            |
-|    4 | Live time-flex and private extra-time design    | High            | High          | Medium          | Medium/high           | Prototype, usability-test, then implement     |
-|    5 | Recovery Pack as a reusable unit                | High            | Very high     | High            | Medium, high leverage | Build after the evidence baseline             |
-|    6 | Question Health Lab                             | High            | Very high     | High            | Medium                | Highest-confidence innovative build           |
-|    7 | Delayed Recovery Trail                          | Medium/high     | Very high     | High            | Medium                | Concierge-test, then build                    |
-|    8 | Exact short text and rank/order                 | High            | Medium        | Low             | Medium                | Thin parity lane; do not add a format catalog |
-|    9 | Session Decision Replay and Concept Health      | Medium          | Very high     | High            | Medium/high           | Build only after concept metadata is healthy  |
-|   10 | Self-paced Presentation                         | Medium/high     | Medium        | Low             | Medium                | After live Presentation evidence              |
-|   11 | Structured contrast-pair discussion             | Medium          | High          | Medium          | High                  | Pilot only; competitors already do grouping   |
-|   12 | NRPS/AGS, identified learner, grade passback    | High for buyers | Conditional   | Low             | Very high             | Two named institutional pilots first          |
-|   13 | Moderated open response/word cloud              | High            | Low/medium    | Low             | High safety cost      | Later, after moderation evaluation            |
+| Rank | Capability                                    | Demand evidence | Strategic fit | Differentiation | Relative effort/risk  | Decision                                                                                                              |
+| ---: | --------------------------------------------- | --------------- | ------------- | --------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------- |
+|    1 | Partner and product-evidence decisions        | Very high       | Essential     | Trust layer     | High/external         | Collect evidence needed for Phase 1/2 choices; keep staging and release-readiness work outside this feature sequence  |
+|    2 | Presentation realtime and resilient-room work | Very high       | Essential     | Medium          | Medium                | Realtime implementation is in place; complete target-host and real-session validation before capacity claims          |
+|    3 | Browser slide companion/remote                | Very high       | High          | Medium          | Medium                | Research prototype exists; build production companion only if its Phase 1 gate passes                                 |
+|    4 | Live time-flex and private extra-time design  | High            | High          | Medium          | Medium/high           | Whole-room flex is implemented provisionally; validate it, and defer private passes pending fairness/privacy research |
+|    5 | Recovery Pack as a reusable unit              | High            | Very high     | High            | Medium, high leverage | Build after the evidence baseline                                                                                     |
+|    6 | Question Health Lab                           | High            | Very high     | High            | Medium                | Highest-confidence innovative build                                                                                   |
+|    7 | Delayed Recovery Trail                        | Medium/high     | Very high     | High            | Medium                | Concierge-test, then build                                                                                            |
+|    8 | Exact short text and rank/order               | High            | Medium        | Low             | Medium                | Thin parity lane; do not add a format catalog                                                                         |
+|    9 | Session Decision Replay and Concept Health    | Medium          | Very high     | High            | Medium/high           | Build only after concept metadata is healthy                                                                          |
+|   10 | Self-paced Presentation                       | Medium/high     | Medium        | Low             | Medium                | After live Presentation evidence                                                                                      |
+|   11 | Structured contrast-pair discussion           | Medium          | High          | Medium          | High                  | Pilot only; competitors already do grouping                                                                           |
+|   12 | NRPS/AGS, identified learner, grade passback  | High for buyers | Conditional   | Low             | Very high             | Two named institutional pilots first                                                                                  |
+|   13 | Moderated open response/word cloud            | High            | Low/medium    | Low             | High safety cost      | Later, after moderation evaluation                                                                                    |
 
 The ordering is deliberately not pure competitor parity. Recovery Pack and Question Health rank
 above several common formats because they strengthen the outcome OpenRound is trying to own.
@@ -391,6 +402,33 @@ Timing is an engineering estimate, not a launch promise. External review and pil
 run in parallel, but a failed gate changes the next phase. Reserve roughly seven of the first 24
 engineer-weeks for defects, operations, security, support, and contingency; external specialists
 must perform work an engineer cannot self-certify.
+
+### Implementation plan update — 2026-10-01
+
+This sequence is reconciled to the implementation snapshot above. It prioritizes product
+functionality and feature readiness; staging and production-readiness work remain separate release
+gates and are not substituted with local test results.
+
+| Sequence                   | Current state                                                                                                | Next work and completion condition                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 0 repository scope   | Implemented; no committed Phase 0 feature epic remains.                                                      | Preserve compatibility and close the separate evidence record with the required reviewed partner, session, usability, accessibility, and security inputs. Do not mark the formal phase exit accepted without those inputs.                                                                                                                                                                                                                                                         |
+| Phase 1 branch             | Pending evidence-based selection. Whole-room flex is implemented provisionally for Rounds and Presentations. | Apply the ordered Access → Companion → measured activation/correctness decision. For Access, add only the room-health/reconnect improvements supported by observations; do not reimplement flex or ship private extra-time passes without a fairness/privacy decision. For Companion, implement the thin browser sidecar only if its gate passes. If neither passes, fix the unique highest measured failure.                                                                      |
+| Phase 2 differentiated bet | Not selected; the research lab is prototype-only.                                                            | Build Question Health if at least 70% of findings are useful across 20 real questions and at least half produce a retained revision or deliberate dismissal. Otherwise build Recovery Pack only if preparation cost is the primary blocker and the prototype reduces median preparation time by at least 30% without increasing invalid-item or correction rates. If neither gate passes, fix measured adoption/correctness problems instead. Do not build both bets in this slot. |
+| Delayed evidence           | Concierge prototype only; no full Recovery Trail.                                                            | Continue the concierge check during Phase 2 hardening. Schedule the full Trail only if at least 30% of eligible pilots issue it, at least 50% of invited participants complete it, and facilitators use the result to change a later action.                                                                                                                                                                                                                                       |
+| Video-based Round          | Unscheduled candidate; requirements and delivery model are not validated.                                    | After the current Phase 1 branch and one Phase 2 bet are decided, run discovery before implementation. Treat recorded/on-demand lessons and live webinars as separate use cases. Choose the initial delivery mode and media-source model from observed workflows; define playback/stream control, timestamped Round interactions, captions/transcripts, reconnect/late-join behavior, accessibility, privacy/retention, and operator cost before committing an MVP.                |
+
+At the product owner's direction, partner-evidence branch/bet selection is deferred and will be
+revisited later; code implementation is not blocked on that decision. This is a provisional coding
+order only: it does not represent any partner threshold as met, select a rollout branch, close a
+research gate, or make the separate production-readiness ledger optional for a later hosted release.
+
+**Current unmerged implementation slice (2026-10-01):** work is proceeding provisionally with the
+Question Health default path after the already-implemented whole-room flex slice. The shared
+deterministic evaluator, versioned advisory result contract, allowlisted authenticated draft-analysis
+endpoint, and read-only Round Builder panel are present in the current worktree. `FEATURE_QUESTION_HEALTH`
+and the workspace allowlist still default closed. This is not the 20-question/70%-usefulness study and
+does not complete production Question Health: persistent dismissals, apply/undo revisions, published
+artifact analysis, and post-use observations remain future implementation slices.
 
 ### Phase 0 — prove and harden the product (weeks 0–10, overlapping tracks)
 
@@ -413,9 +451,11 @@ Product and research work:
 Engineering and release work:
 
 - Move or adapt live Presentations onto the mature realtime acknowledgement/reconnect foundation;
-  add a complete host/participant/reconnect/report browser journey.
+  add a complete host/participant/reconnect/report browser journey. **Repository implementation is
+  complete**; target-host and independent device/accessibility validation remain evidence gates.
 - Add visible room/network health and verify low-bandwidth payload behavior without preloading
-  answer keys or hidden diagnostic metadata.
+  answer keys or hidden diagnostic metadata. **Repository controls and automated checks exist**;
+  target-host performance and real-device behavior remain unverified.
 - Split the largest touched Presentation/session components before expanding them.
 - Provision staging and complete the release-ledger work for TLS, pinned hosts, private telemetry,
   paging, off-host backup, replacement-host restore, physical devices, target-host load/soak,
@@ -434,6 +474,11 @@ Exit gates:
 **Stop/reframe rule:** if users consistently use OpenRound only as a generic poll and do not act on
 the Recovery Compass, narrow the target segment or revise the workflow before adding breadth.
 
+**Implementation checkpoint (2026-10-01):** whole-room timed/flex mode is implemented for Rounds
+and Presentations, behind a default-off deployment flag and explicit workspace allowlist. This closes
+that repository feature slice only; it does not select the Access branch, close the research gate,
+or authorize a public capacity/accessibility claim.
+
 ### Phase 1 — remove the highest observed workflow blocker (weeks 11–14)
 
 **Outcome:** OpenRound works beside the user's existing material and supports a calmer, more
@@ -443,9 +488,9 @@ Select exactly **one** implementation from observed sessions, in this order:
 
 - **Access path first** if timing or connectivity excludes participants in at least three partner
   workflows, affects at least 10% of observed attempts, or produces a serious accessibility
-  finding. Ship whole-room live time-flex and the highest-impact room-health/reconnect improvements.
-  Do not ship private 1.5×/2× passes until research establishes reveal, privacy, and fairness
-  behavior.
+  finding. Whole-room live time-flex is already implemented provisionally; use accepted observations
+  to select and deliver the highest-impact remaining room-health/reconnect improvements. Do not
+  ship private 1.5×/2× passes until research establishes reveal, privacy, and fairness behavior.
 - **Companion path otherwise** if at least four repeat facilitators use an external deck and at
   least two observed sessions suffer a material context-switch interruption. Ship a thin browser
   companion with join overlay, prepared-question insertion, phase-aware controls, results overlay,
@@ -495,6 +540,14 @@ Trail. Do not implement both primary bets or the full delayed system in this cyc
 
 Exact short text and rank/order remain a thin parity option only if at least 30% of otherwise
 qualified pilot sessions cannot express a required check with the existing six formats.
+
+**Unscheduled discovery candidate — video-based Rounds:** support for Rounds based on recorded
+lectures or live webinars is not part of the committed 24-week scope and has no validated user
+workflow yet. Assess recorded/on-demand and live/synchronized delivery as separate jobs, including
+video controls and question timing, captions/transcripts, reconnect and low-bandwidth behavior,
+host control, accessibility, and media privacy/retention. Do not start implementation until the
+current Phase 0/Phase 1 evidence decisions are resolved and this candidate is compared against the
+existing Phase 2 gates.
 
 Exit gates:
 
