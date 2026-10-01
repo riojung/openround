@@ -94,13 +94,17 @@ async function addFixtureParticipant(
 describe("presentation response acceptance", () => {
   it("keeps the memory repository on the shared Presentation conformance contract", async () => {
     const memory = new MemoryRepository();
+    const workspaceId = randomUUID();
     await expectPresentationSessionRepositoryConformance({
       repository: new MemoryPresentationSessionRepository(memory),
-      workspaceId: randomUUID(),
+      workspaceId,
       presentationId: randomUUID(),
       presentationVersionId: randomUUID(),
       createdBy: randomUUID(),
       content: presentationSessionConformanceContent(),
+      beginWorkspaceDeletion: async () => {
+        await memory.claimWorkspaceMediaDeletion(workspaceId);
+      },
     });
   });
 

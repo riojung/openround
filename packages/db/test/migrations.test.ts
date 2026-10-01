@@ -113,4 +113,35 @@ describe("database migration discovery", () => {
     );
     expect(backfill?.sql).toContain("event_seq_offset + (target_sequence - effective_sequence)");
   });
+
+  it("adds idempotent media finalization and deletion fences", async () => {
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migrations = await discoverMigrations(migrationsDirectory);
+    const migration = migrations.find(({ version }) => version === 41);
+
+    expect(migration?.sql).toContain("ALTER TABLE workspaces");
+    expect(migration?.sql).toContain("ADD COLUMN IF NOT EXISTS deletion_started_at");
+    expect(migration?.sql).toContain(
+      "DROP CONSTRAINT IF EXISTS media_assets_finalization_lease_check",
+    );
+    expect(migration?.sql).toContain(
+      "DROP CONSTRAINT IF EXISTS media_assets_deletion_tombstone_check",
+    );
+    expect(migration?.sql).toContain("'pending', 'finalizing', 'clean', 'rejected', 'deleting'");
+    expect(migration?.sql).toContain("media_assets_finalization_lease_check");
+    expect(migration?.sql).toContain("media_assets_deletion_tombstone_check");
+  });
+
+  it("retains a forced-RLS workspace object cleanup job past account cascade", async () => {
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migrations = await discoverMigrations(migrationsDirectory);
+    const migration = migrations.find(({ version }) => version === 42);
+
+    expect(migration?.sql).toContain("CREATE TABLE IF NOT EXISTS workspace_media_deletion_jobs");
+    expect(migration?.sql).not.toContain("REFERENCES workspaces");
+    expect(migration?.sql).toContain("interval '11 minutes'");
+    expect(migration?.sql).toContain("ENABLE ROW LEVEL SECURITY");
+    expect(migration?.sql).toContain("FORCE ROW LEVEL SECURITY");
+    expect(migration?.sql).toContain("GRANT SELECT, INSERT, DELETE");
+  });
 });

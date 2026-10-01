@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-26",
+  "updatedAt": "2026-09-27",
   "releaseTarget": "single-vm-beta",
   "gates": [
     {
@@ -48,9 +48,9 @@
       "owner": "operations",
       "requiredFor": ["single-vm-beta-preflight", "single-vm-beta", "single-vm-ga"],
       "status": "pending",
-      "criterion": "For one exact build candidate, production telemetry reaches the selected backend; test page, warning, and ticket alerts reach named responders; a named support rota, incident commander, escalation contacts, and public status, security, privacy, and support contacts are active; and an end-to-end support incident drill exercises triage, escalation, status communication, an applicable kill switch, and closure with operations-owner and independent-reviewer acceptance.",
+      "criterion": "For one exact build candidate, production telemetry reaches the selected backend; build-bound synthetic page, warning, and ticket alerts are injected and resolved and reach named responders; a named support rota, incident commander, escalation contacts, and public status, security, privacy, and support contacts are active; and an end-to-end support incident drill exercises triage, escalation, status communication, an applicable kill switch, and closure with operations-owner and independent-reviewer acceptance.",
       "evidence": [],
-      "nextAction": "Install the collector and Alertmanager templates; configure secret receiver URLs, the named support rota and escalation contacts, and public status, security, privacy, and support contacts; then complete the end-to-end alert and support incident rehearsal for the same exact build candidate with operations-owner and independent-reviewer decisions."
+      "nextAction": "Install the collector and Alertmanager templates; configure secret receiver URLs, the named support rota and escalation contacts, and public status, security, privacy, and support contacts; run the confirmation-gated synthetic alert rehearsal; then retain receiver acknowledgements and complete the end-to-end support incident rehearsal for the same exact build candidate with operations-owner and independent-reviewer decisions."
     },
     {
       "id": "target-region-load",
@@ -58,9 +58,9 @@
       "owner": "engineering",
       "requiredFor": ["single-vm-beta-preflight", "single-vm-beta", "single-vm-ga"],
       "status": "pending",
-      "criterion": "Single-VM staging passes build-matched 50- and 250-client Round and Presentation target-region profiles plus a representative soak, meeting acknowledgement and client-receipt latency gates with no correctness, duplication, leakage, reconnect, or report-reconciliation loss.",
+      "criterion": "Single-VM staging passes build- and region-matched 50- and 250-client Round and Presentation profiles plus a representative soak, meeting acknowledgement and client-receipt latency gates with no correctness, duplication, leakage, reconnect, or report-reconciliation loss; the exact matrix, runner provenance, target-service saturation evidence, soak, and durable archive are bound in a validated checksummed bundle.",
       "evidence": [],
-      "nextAction": "Bring an isolated runner online near the selected VM region, run the fixed four-profile Staging readiness matrix and representative soak, complete the target-region evidence template, and attach runner provenance, all four load artifacts, the soak summary, and VM saturation evidence."
+      "nextAction": "Bring an isolated runner online near the selected VM region, run the fixed four-profile Staging readiness matrix and representative soak, build the target-region evidence bundle, complete the target-region evidence template, and attach the validated bundle with runner provenance, all four load artifacts, the soak summary, target-service saturation evidence, and durable archive reference."
     },
     {
       "id": "off-host-restore",
@@ -68,9 +68,9 @@
       "owner": "operations",
       "requiredFor": ["single-vm-beta-preflight", "single-vm-beta", "single-vm-ga"],
       "status": "pending",
-      "criterion": "Encrypted PostgreSQL and private object-storage backups from the VM are restored onto a replacement host and verified against the stated RPO and RTO.",
+      "criterion": "Encrypted PostgreSQL and private object-storage backups created with reviewed least-privilege identities are restored onto a clean replacement host in a separate failure domain; machine-validated, checksum-bound manifests and receipts prove complete inventory restoration and the stated RPO and RTO, with operations-owner and independent-reviewer acceptance.",
       "evidence": [],
-      "nextAction": "Rebuild a clean replacement VM, restore database and media from the off-host copies, and complete the restoration evidence template."
+      "nextAction": "Provision reviewed least-privilege backup identities, create encrypted off-host database and media backups, rebuild a clean replacement VM in a separate failure domain, validate the bound backup manifest and restore receipt, and complete the restoration evidence template with operations-owner and independent-reviewer decisions."
     },
     {
       "id": "accessibility-review",
@@ -138,9 +138,9 @@
       "owner": "product",
       "requiredFor": ["single-vm-beta-preflight", "single-vm-beta", "single-vm-ga"],
       "status": "pending",
-      "criterion": "At least six higher-education and six workplace facilitators are interviewed; at least eight demonstrate the recurring post-result decision problem; at least three partners per segment run twice; at least ten real sessions are observed; and at least half of eligible checkpoints complete a reviewed diagnostic, intervention, valid linked recheck, and reconciled report loop.",
+      "criterion": "An independently reviewed, machine-validated aggregate proves at least six higher-education and six workplace facilitators are interviewed; at least eight of the frozen primary twelve demonstrate the recurring post-result decision problem; at least three partners per segment run twice; at least ten real sessions are observed; and at least half of eligible checkpoints complete a reviewed diagnostic, intervention, valid linked recheck, and reconciled report loop.",
       "evidence": [],
-      "nextAction": "Recruit the two segment cohorts; record reviewer-coded facilitator eligibility, recurring-problem evidence, timing/connectivity exclusions and attempt denominator, serious accessibility findings, repeat external-deck use, and material context-switch interruptions; store redacted session records with repeat-run references and eligible/completed checkpoint denominators; and obtain independent review before selecting the primary acquisition segment or Phase 1 branch."
+      "nextAction": "Recruit the two segment cohorts; freeze the primary and reserve order; record reviewer-coded eligibility, final dispositions, recurring-problem evidence, timing/connectivity exclusions and attempt denominator, serious accessibility findings, repeat external-deck use, material context-switch interruptions, repeat-run references, and eligible/completed checkpoint denominators; validate the redacted aggregate and obtain research-owner and independent review before selecting the primary acquisition segment or Phase 1 branch."
     },
     {
       "id": "beta-usability",
@@ -148,9 +148,9 @@
       "owner": "product-research",
       "requiredFor": ["single-vm-beta-preflight", "single-vm-beta", "single-vm-ga"],
       "status": "pending",
-      "criterion": "Representative first-time facilitators and participants meet every P0 creation, live-action comprehension, response, receipt, results-discovery, report-comprehension, and Recovery Rehearsal threshold in an accepted usability study.",
+      "criterion": "An independently reviewed, machine-validated aggregate proves that each segment includes at least six eligible first-time facilitators and twenty eligible participants and meets every P0 creation, live-action comprehension, response, receipt, results-discovery, report-comprehension, and Recovery Rehearsal threshold in an accepted usability study.",
       "evidence": [],
-      "nextAction": "Run the moderated beta usability protocol and have product research approve a completed usability evidence record."
+      "nextAction": "Run the moderated beta usability protocol with the frozen per-segment sample floors and disposition rules, validate the redacted aggregate, and obtain product-research owner and independent-reviewer acceptance of the completed usability evidence record."
     },
     {
       "id": "signed-release",

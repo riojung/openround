@@ -101,6 +101,11 @@ read-only content/report access. Account export excludes bearer-token hashes and
 collaboration, Pulse, chat, moderation, Q&A, recovery, follow-up, and authoring records owned by
 the workspace.
 
+Account deletion durably marks every owned workspace as deleting before its media object sweep.
+That fence rejects new media records and invalidates in-flight finalization commits before account
+metadata is cascaded. Any token-scoped object copied by an interrupted finalizer remains tagged
+temporary and is removed by the bucket lifecycle even if the account row no longer exists.
+
 ## Institution identity and LTI APIs
 
 These routes are disabled by default and require an operator-granted workspace policy. Enabling a
@@ -196,11 +201,18 @@ selection, and source-created artifacts remain unpublished drafts.
 - `POST /v1/media` — constrained signed quarantine upload.
 - `POST /v1/media/{id}/complete` — verify metadata/bytes/signature, scan, and promote clean data.
 - `GET /v1/media/{id}` — creator-scoped signed clean-object URL.
+- `DELETE /v1/media/{id}` — owner/editor logical deletion for unreferenced workspace media.
 - `GET /v1/sessions/{sessionId}/media/{mediaId}` — authorized frozen-session media.
 - `GET /v1/followups/{id}/media/{mediaId}` — current follow-up checkpoint media.
 
-Pending or rejected media is never returned by a read endpoint and is eligible for scheduled
-cleanup.
+Pending, rejected, or deleting media is never returned by a read endpoint. DELETE rejects media
+that still has a durable content reference, immediately blocks completion/download/reference
+creation, and retains an internal tombstone beyond the ten-minute presigned-upload lifetime.
+Retention performs a second object sweep before removing that metadata; a successful DELETE means
+the public metadata is unavailable, not that the internal tombstone has already been purged.
+Abandoned quarantine uploads and temporary finalization candidates also have bucket lifecycle
+expiry. This deferred physical cleanup prevents a late PUT or stale finalizer from recreating a
+permanent untracked object.
 
 ## Live session, staff, presenter, and embed APIs
 

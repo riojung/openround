@@ -94,6 +94,32 @@ services:
         mc alias set local http://minio:9000 openround change-this-local-secret
         mc mb --ignore-existing local/openround-media
         mc anonymous set none local/openround-media
+        cat > /tmp/openround-media-lifecycle.json <<EOF
+        {
+          "Rules": [
+            {
+              "ID": "expire-abandoned-quarantine-uploads",
+              "Status": "Enabled",
+              "Filter": { "Prefix": "quarantine/" },
+              "Expiration": { "Days": 1 }
+            },
+            {
+              "ID": "expire-abandoned-finalization-candidates",
+              "Status": "Enabled",
+              "Filter": {
+                "And": {
+                  "Prefix": "media/",
+                  "Tags": [
+                    { "Key": "openround-finalization-state", "Value": "temporary" }
+                  ]
+                }
+              },
+              "Expiration": { "Days": 7 }
+            }
+          ]
+        }
+        EOF
+        mc ilm rule import local/openround-media < /tmp/openround-media-lifecycle.json
     restart: "no"
 
   mailpit:

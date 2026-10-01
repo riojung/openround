@@ -22,7 +22,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  ubuntu26-check:
+    name: Ubuntu 26 / check
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
@@ -60,7 +61,8 @@ jobs:
           pnpm test:alert-routing
           pnpm test:collector-config
 
-  postgres-migration:
+  ubuntu26-postgres-migration:
+    name: Ubuntu 26 / postgres migration
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     services:
@@ -110,7 +112,8 @@ jobs:
           TEST_DATABASE_URL: postgresql://openround_test_app:test-only-runtime@localhost:5432/openround
           TEST_REDIS_URL: redis://localhost:6379
 
-  browser-smoke:
+  ubuntu26-browser-smoke:
+    name: Ubuntu 26 / browser smoke
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
@@ -140,7 +143,8 @@ jobs:
             test-results-beta/
           if-no-files-found: ignore
 
-  production-compose:
+  ubuntu26-production-compose:
+    name: Ubuntu 26 / production Compose
     runs-on: ubuntu-26.04
     timeout-minutes: 35
     steps:
@@ -208,7 +212,8 @@ jobs:
         if: always()
         run: docker compose -f compose.yaml -f compose.media.yaml -f compose.test.yaml -f compose.multiwriter.yaml -f compose.observability.yaml --profile observability down --volumes
 
-  image-toolchain:
+  ubuntu26-image-toolchain:
+    name: Ubuntu 26 / image toolchain
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:

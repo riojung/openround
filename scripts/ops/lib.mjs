@@ -83,6 +83,8 @@ const HOSTED_IMAGE_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
 const RESERVED_HOSTED_TARGET_SUFFIXES = Object.freeze([
   "example",
   "invalid",
+  "internal",
+  "local",
   "localhost",
   "test",
   "example.com",
@@ -170,10 +172,16 @@ const SINGLE_VM_RUNTIME_ENV_KEYS = new Set([
   "EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST",
   "METRICS_ENABLED",
   "METRICS_TOKEN",
+  "OPENROUND_LOG_SHIPPING_MODE",
   "TRACING_ENABLED",
   "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
   "OTEL_SERVICE_NAME",
   "OTEL_SERVICE_VERSION",
+  "OPENROUND_OTLP_BACKEND_ENDPOINT",
+  "OPENROUND_OTLP_BACKEND_TOKEN",
+  "OPENROUND_PAGING_WEBHOOK_URL",
+  "OPENROUND_WARNING_WEBHOOK_URL",
+  "OPENROUND_TICKET_WEBHOOK_URL",
   "SMTP_URL",
   "EMAIL_FROM",
   "DEVELOPMENT_EMAIL_INBOX_URL",
@@ -242,6 +250,19 @@ const SINGLE_VM_RUNTIME_ENV_KEYS = new Set([
   "OPENROUND_CADDY_CPUS",
   "OPENROUND_CADDY_MEMORY_LIMIT",
   "OPENROUND_CADDY_PIDS_LIMIT",
+  "OPENROUND_OTEL_HEALTH_PORT",
+  "OPENROUND_OTEL_CPUS",
+  "OPENROUND_OTEL_MEMORY_LIMIT",
+  "OPENROUND_OTEL_PIDS_LIMIT",
+  "OPENROUND_PROMETHEUS_PORT",
+  "OPENROUND_PROMETHEUS_RETENTION",
+  "OPENROUND_PROMETHEUS_CPUS",
+  "OPENROUND_PROMETHEUS_MEMORY_LIMIT",
+  "OPENROUND_PROMETHEUS_PIDS_LIMIT",
+  "OPENROUND_ALERTMANAGER_PORT",
+  "OPENROUND_ALERTMANAGER_CPUS",
+  "OPENROUND_ALERTMANAGER_MEMORY_LIMIT",
+  "OPENROUND_ALERTMANAGER_PIDS_LIMIT",
 ]);
 
 export function normalizeEnvironment(value) {
@@ -629,10 +650,9 @@ function isReservedHostedIpv4([first, second, third]) {
 }
 
 export function isPlaceholderHostedHostname(hostname) {
-  const normalized = String(hostname ?? "")
-    .toLowerCase()
-    .replace(/^\[|\]$/g, "")
-    .replace(/\.$/, "");
+  const rawHostname = String(hostname ?? "").toLowerCase();
+  if (rawHostname.endsWith(".")) return true;
+  const normalized = rawHostname.replace(/^\[|\]$/g, "");
   const addressKind = isIP(normalized);
   if (addressKind === 4 && isReservedHostedIpv4(normalized.split(".").map(Number))) return true;
   if (addressKind === 6) {
@@ -916,7 +936,15 @@ export function validateEnvFileKeys(keysOrContent, kind) {
       "MINIO_APP_SECRET_KEY",
       "SMTP_URL",
       "EMAIL_FROM",
+      "METRICS_ENABLED",
       "METRICS_TOKEN",
+      "TRACING_ENABLED",
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+      "OPENROUND_OTLP_BACKEND_ENDPOINT",
+      "OPENROUND_OTLP_BACKEND_TOKEN",
+      "OPENROUND_PAGING_WEBHOOK_URL",
+      "OPENROUND_WARNING_WEBHOOK_URL",
+      "OPENROUND_TICKET_WEBHOOK_URL",
       "ADMIN_TOKEN",
     ]) {
       if (!unique.has(required)) {

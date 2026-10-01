@@ -524,6 +524,85 @@ describe("PresentationSessionService realtime integration", () => {
     } satisfies Partial<PresentationSessionServiceError>);
   });
 
+  it("closes new live mutations during workspace deletion while replaying durable receipts", async () => {
+    const { repository, service, hosted, joined, ids } = await fixture();
+    const contentCommandId = randomUUID();
+    await service.command({
+      sessionId: hosted.snapshot.sessionId,
+      controlToken: hosted.controlToken,
+      commandId: contentCommandId,
+      expectedRevision: 0,
+      action: "advance",
+    });
+    await service.command({
+      sessionId: hosted.snapshot.sessionId,
+      controlToken: hosted.controlToken,
+      commandId: randomUUID(),
+      expectedRevision: 1,
+      action: "advance",
+    });
+    const responseInput = {
+      sessionId: hosted.snapshot.sessionId,
+      participantToken: joined.participantToken,
+      blockId: ids.questionBlockId,
+      expectedRevision: 2,
+      idempotencyKey: randomUUID(),
+      response: { choiceIds: [ids.correctChoiceId], confidence: 2 as const },
+    };
+    const accepted = await service.submitResponse(responseInput);
+
+    await repository.claimWorkspaceMediaDeletion(ids.workspaceId);
+
+    await expect(
+      service.command({
+        sessionId: hosted.snapshot.sessionId,
+        controlToken: hosted.controlToken,
+        commandId: contentCommandId,
+        expectedRevision: 0,
+        action: "advance",
+      }),
+    ).resolves.toMatchObject({ phase: "question_open", revision: 2 });
+    await expect(service.submitResponse(responseInput)).resolves.toMatchObject({
+      responseId: accepted.responseId,
+      duplicate: true,
+    });
+
+    await expect(service.join(hosted.snapshot.code, "Late learner")).rejects.toMatchObject({
+      status: 404,
+      code: "NOT_FOUND",
+    } satisfies Partial<PresentationSessionServiceError>);
+    await expect(
+      service.command({
+        sessionId: hosted.snapshot.sessionId,
+        controlToken: hosted.controlToken,
+        commandId: randomUUID(),
+        expectedRevision: 2,
+        action: "advance",
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "PHASE_CLOSED",
+    } satisfies Partial<PresentationSessionServiceError>);
+    await expect(
+      service.advance({
+        workspaceId: ids.workspaceId,
+        userId: ids.userId,
+        sessionId: hosted.snapshot.sessionId,
+        expectedRevision: 2,
+        requestId: randomUUID(),
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "PHASE_CLOSED",
+    } satisfies Partial<PresentationSessionServiceError>);
+    await expect(
+      service.submitResponse({ ...responseInput, idempotencyKey: randomUUID() }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "PHASE_CLOSED",
+    } satisfies Partial<PresentationSessionServiceError>);
+  });
+
   it("recovers the original durable receipt when acknowledgement delivery fails after acceptance", async () => {
     const { service, sessions, hosted, joined, ids } = await fixture();
     await service.command({

@@ -466,6 +466,13 @@ export class SessionNotActiveError extends Error {
   }
 }
 
+export class WorkspaceDeletionInProgressError extends Error {
+  constructor(public readonly workspaceId: string) {
+    super(`Workspace ${workspaceId} is being deleted`);
+    this.name = "WorkspaceDeletionInProgressError";
+  }
+}
+
 export class FollowupVersionConflictError extends Error {
   constructor(
     public readonly attemptId: string,
@@ -818,7 +825,11 @@ export class AudienceStoreError extends Error {
   }
 }
 
-export type MediaScanStatus = "pending" | "clean" | "rejected";
+export type MediaScanStatus = "pending" | "finalizing" | "clean" | "rejected" | "deleting";
+
+// Presigned uploads are valid for ten minutes. Keep a deletion tombstone beyond that window so a
+// late client cannot recreate a quarantine object after the final object sweep and metadata purge.
+export const MEDIA_DELETION_TOMBSTONE_HOLD_MS = 11 * 60_000;
 
 export interface MediaAssetRecord {
   id: string;
@@ -829,7 +840,31 @@ export interface MediaAssetRecord {
   scanStatus: MediaScanStatus;
   altText: string;
   createdAt: Date;
+  deletionStartedAt: Date | null;
+  finalizedAt: Date | null;
 }
+
+export interface MediaObjectCleanupClaim {
+  asset: MediaAssetRecord;
+  pass: 0 | 1;
+  claimToken: string;
+}
+
+export interface WorkspaceMediaDeletionJobRecord {
+  workspaceId: string;
+  deletionStartedAt: Date;
+  sweepAfter: Date;
+}
+
+export interface SessionInvalidationTarget {
+  sessionId: string;
+  code: string;
+}
+
+export type MediaAssetCreateInput = Omit<MediaAssetRecord, "deletionStartedAt" | "finalizedAt"> & {
+  deletionStartedAt?: null;
+  finalizedAt?: null;
+};
 
 export type MediaReferenceOwnerType =
   | "quiz_draft"
@@ -1045,6 +1080,8 @@ export interface Repository {
   getSessionById(sessionId: string): Promise<StoredSession | null>;
   getSessionByCode(code: string): Promise<StoredSession | null>;
   listSessionIds(workspaceId: string): Promise<string[]>;
+  listSessionInvalidationTargets(workspaceId: string): Promise<SessionInvalidationTarget[]>;
+  workspaceDeletionStarted(workspaceId: string): Promise<boolean>;
   listSessionHistory(
     workspaceId: string,
     options: {
@@ -1234,7 +1271,7 @@ export interface Repository {
     sessionId: string,
     participantIds: string[],
   ): Promise<string[]>;
-  createMediaAsset(input: MediaAssetRecord): Promise<MediaAssetRecord>;
+  createMediaAsset(input: MediaAssetCreateInput): Promise<MediaAssetRecord>;
   getMediaAsset(workspaceId: string, mediaId: string): Promise<MediaAssetRecord | null>;
   listMediaAssets(workspaceId: string): Promise<MediaAssetRecord[]>;
   listMediaReferences(workspaceId: string, mediaId?: string): Promise<MediaReferenceRecord[]>;
@@ -1247,12 +1284,47 @@ export interface Repository {
   ): Promise<MediaReferenceRecord[]>;
   listStaleMedia(cutoff: Date, limit?: number): Promise<MediaAssetRecord[]>;
   listUnattachedMedia(cutoff: Date, limit?: number): Promise<MediaAssetRecord[]>;
+  claimMediaObjectCleanupCandidates(now: Date, limit?: number): Promise<MediaObjectCleanupClaim[]>;
+  renewMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, renewedAt: Date): Promise<boolean>;
+  completeMediaObjectCleanupClaim(
+    claim: MediaObjectCleanupClaim,
+    completedAt: Date,
+  ): Promise<boolean>;
+  deferMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, retryAt: Date): Promise<boolean>;
+  completeInlineMediaObjectCleanup(asset: MediaAssetRecord, completedAt: Date): Promise<boolean>;
   updateMediaAsset(
     workspaceId: string,
     mediaId: string,
-    update: { objectKey?: string; scanStatus: MediaScanStatus },
+    update: {
+      objectKey?: string;
+      scanStatus: "clean" | "rejected";
+      finalizationToken: string;
+      finalizedAt: Date;
+    },
   ): Promise<MediaAssetRecord | null>;
-  deleteMediaAsset(workspaceId: string, mediaId: string): Promise<boolean>;
+  claimMediaAssetFinalization(
+    workspaceId: string,
+    mediaId: string,
+    finalizationToken: string,
+    claimedAt?: Date,
+  ): Promise<MediaAssetRecord | null>;
+  releaseMediaAssetFinalization(
+    workspaceId: string,
+    mediaId: string,
+    finalizationToken: string,
+  ): Promise<boolean>;
+  claimMediaAssetDeletion(
+    workspaceId: string,
+    mediaId: string,
+    now?: Date,
+  ): Promise<MediaAssetRecord | null>;
+  claimWorkspaceMediaDeletion(workspaceId: string, now?: Date): Promise<MediaAssetRecord[]>;
+  listDueWorkspaceMediaDeletionJobs(
+    now: Date,
+    limit?: number,
+  ): Promise<WorkspaceMediaDeletionJobRecord[]>;
+  completeWorkspaceMediaDeletionJob(workspaceId: string, deletionStartedAt: Date): Promise<boolean>;
+  deleteMediaAsset(workspaceId: string, mediaId: string, now?: Date): Promise<boolean>;
   persistAnswer(
     workspaceId: string,
     sessionId: string,

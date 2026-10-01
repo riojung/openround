@@ -19,6 +19,7 @@ export function createConfigCheckSummary(config: AppConfig) {
         ? "protected"
         : "unprotected"
       : "disabled",
+    logs: config.OPENROUND_LOG_SHIPPING_MODE,
     tracing: config.TRACING_ENABLED ? "otlp" : "disabled",
     participantLimit: config.MAX_SESSION_PARTICIPANTS,
     practicePersonalLinkLimit: config.MAX_PRACTICE_PERSONAL_LINKS,

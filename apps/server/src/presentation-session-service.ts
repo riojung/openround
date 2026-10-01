@@ -14,6 +14,7 @@ import {
 } from "@openround/contracts";
 import {
   SessionCodeConflictError,
+  WorkspaceDeletionInProgressError,
   type PresentationRepository,
   type PresentationSessionRecord,
   type PresentationSessionRepository,
@@ -259,6 +260,13 @@ export class PresentationSessionService {
         controlToken = candidateControlToken;
         controlCredentialId = created.credential.id;
       } catch (error) {
+        if (error instanceof WorkspaceDeletionInProgressError) {
+          throw new PresentationSessionServiceError(
+            409,
+            "CONFLICT",
+            "This workspace is being deleted",
+          );
+        }
         const databaseError = error as { code?: string; constraint?: string; message?: string };
         const codeConflict =
           error instanceof SessionCodeConflictError ||
@@ -413,18 +421,29 @@ export class PresentationSessionService {
     const now = new Date();
     const plan = await this.dependencies.repository.getPlan(session.workspaceId);
     const participantLimit = entitlementsFor(plan, this.dependencies.config).maxParticipants;
-    const joined = await this.sessions.joinParticipantWithinLimit(
-      {
-        id: randomUUID(),
-        workspaceId: session.workspaceId,
-        sessionId: session.id,
-        nickname,
-        tokenHash: presentationParticipantTokenHash(participantToken),
-        joinedAt: now,
-        lastSeenAt: now,
-      },
-      participantLimit,
-    );
+    const joined = await this.sessions
+      .joinParticipantWithinLimit(
+        {
+          id: randomUUID(),
+          workspaceId: session.workspaceId,
+          sessionId: session.id,
+          nickname,
+          tokenHash: presentationParticipantTokenHash(participantToken),
+          joinedAt: now,
+          lastSeenAt: now,
+        },
+        participantLimit,
+      )
+      .catch((error: unknown) => {
+        if (error instanceof WorkspaceDeletionInProgressError) {
+          throw new PresentationSessionServiceError(
+            404,
+            "NOT_FOUND",
+            "Active Presentation not found",
+          );
+        }
+        throw error;
+      });
     if (joined.status === "closed") {
       throw new PresentationSessionServiceError(404, "NOT_FOUND", "Active Presentation not found");
     }

@@ -238,6 +238,7 @@ export const ConfigSchema = z
     TEST_INITIAL_PLAN: z.enum(["free", "pro", "team"]).optional(),
     METRICS_ENABLED: defaultTrueBooleanString,
     METRICS_TOKEN: z.string().min(24).optional(),
+    OPENROUND_LOG_SHIPPING_MODE: z.enum(["disabled", "external-host-agent"]).default("disabled"),
     TRACING_ENABLED: booleanString,
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: optionalHttpUrl,
     OTEL_SERVICE_NAME: z.string().trim().min(1).max(120).default("openround-server"),

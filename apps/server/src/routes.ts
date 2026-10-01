@@ -2956,32 +2956,148 @@ export async function registerRoutes(
     if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
     const { id } = IdParamsSchema.parse(request.params);
     const asset = await repository.getMediaAsset(creator.workspaceId, id);
-    if (!asset) return apiError(reply, 404, "NOT_FOUND", "Media not found", request.id);
+    if (!asset || asset.scanStatus === "deleting") {
+      return apiError(reply, 404, "NOT_FOUND", "Media not found", request.id);
+    }
+    if (asset.scanStatus === "clean" || asset.scanStatus === "rejected") {
+      return {
+        media: { id, scanStatus: asset.scanStatus, altText: asset.altText },
+        ...(asset.scanStatus === "clean"
+          ? { downloadUrl: await storage.createDownloadUrl(asset) }
+          : {}),
+      };
+    }
+    const finalizationToken = randomUUID();
+    let finalizationCommitted = false;
+    let failureCleanupAllowed = true;
     try {
-      const result = await storage.finalize(asset);
-      const updated = await repository.updateMediaAsset(creator.workspaceId, id, result);
-      await repository.recordAudit({
-        workspaceId: creator.workspaceId,
-        actorId: creator.userId,
-        action: `media.${result.scanStatus}`,
-        targetType: "media_asset",
-        targetId: id,
-        requestId: request.id,
-      });
+      const claimed = await repository.claimMediaAssetFinalization(
+        creator.workspaceId,
+        id,
+        finalizationToken,
+      );
+      if (!claimed) {
+        return apiError(reply, 409, "CONFLICT", "Media state changed; retry shortly", request.id);
+      }
+      const result = await storage.finalize(claimed, finalizationToken);
+      if (result.scanStatus === "clean") {
+        // A clean row is externally visible and may be referenced immediately. Make the winner
+        // lifecycle-safe before the conditional database commit can acknowledge it.
+        await storage.commitFinalizationCandidate(claimed, finalizationToken, result.objectKey);
+      }
+      let updated: Awaited<ReturnType<Repository["updateMediaAsset"]>>;
+      try {
+        updated = await repository.updateMediaAsset(creator.workspaceId, id, {
+          ...result,
+          finalizationToken,
+          finalizedAt: new Date(),
+        });
+      } catch (updateError) {
+        // A dropped connection can hide a committed CAS. Reconcile before deleting the candidate;
+        // otherwise a clean row could be left pointing at an object we just removed.
+        failureCleanupAllowed = false;
+        const authoritative = await repository
+          .getMediaAsset(creator.workspaceId, id)
+          .catch(() => null);
+        const committedThisAttempt =
+          authoritative !== null &&
+          ((result.scanStatus === "clean" &&
+            authoritative.scanStatus === "clean" &&
+            authoritative.objectKey === result.objectKey) ||
+            (result.scanStatus === "rejected" && authoritative.scanStatus === "rejected"));
+        if (committedThisAttempt) {
+          updated = authoritative;
+          finalizationCommitted = true;
+        } else {
+          // This conditional release succeeds only while this attempt still owns the lease. If
+          // ownership or the authoritative read is uncertain, preserve the private candidate for
+          // retry/retention instead of risking deletion of a committed winner.
+          failureCleanupAllowed = await repository
+            .releaseMediaAssetFinalization(creator.workspaceId, id, finalizationToken)
+            .catch(() => false);
+          throw updateError;
+        }
+      }
+      if (!updated) {
+        await storage
+          .deleteFinalizationCandidate(
+            claimed,
+            finalizationToken,
+            result.scanStatus === "clean" ? result.objectKey : undefined,
+          )
+          .catch((cleanupError) => {
+            request.log.error(
+              {
+                errorType: cleanupError instanceof Error ? cleanupError.name : "unknown",
+                mediaId: id,
+              },
+              "stale media finalization candidate cleanup deferred",
+            );
+          });
+        return apiError(reply, 409, "CONFLICT", "Media state changed; retry shortly", request.id);
+      }
+      finalizationCommitted = true;
+      try {
+        await storage.cleanupFinalization(updated);
+        if (updated.scanStatus === "clean") {
+          await repository.completeInlineMediaObjectCleanup(updated, new Date());
+        }
+      } catch (cleanupError) {
+        request.log.error(
+          {
+            errorType: cleanupError instanceof Error ? cleanupError.name : "unknown",
+            mediaId: id,
+          },
+          "media finalization object cleanup deferred",
+        );
+      }
+      await repository
+        .recordAudit({
+          workspaceId: creator.workspaceId,
+          actorId: creator.userId,
+          action: `media.${result.scanStatus}`,
+          targetType: "media_asset",
+          targetId: id,
+          requestId: request.id,
+        })
+        .catch((auditError) => {
+          request.log.error(
+            {
+              errorType: auditError instanceof Error ? auditError.name : "unknown",
+              mediaId: id,
+            },
+            "media finalization audit write failed after authoritative commit",
+          );
+        });
       metrics.recordMediaFinalization(result.scanStatus);
       return {
         media: {
           id,
-          scanStatus: updated?.scanStatus ?? result.scanStatus,
+          scanStatus: updated.scanStatus,
           altText: asset.altText,
         },
         ...(result.scanStatus === "clean"
-          ? { downloadUrl: await storage.createDownloadUrl(updated ?? { ...asset, ...result }) }
+          ? { downloadUrl: await storage.createDownloadUrl(updated) }
           : {}),
       };
     } catch (error) {
-      metrics.recordMediaFinalization("error");
-      request.log.warn({ err: error, mediaId: id }, "media finalization deferred");
+      if (!finalizationCommitted) {
+        if (failureCleanupAllowed) {
+          await storage
+            .deleteFinalizationCandidate(asset, finalizationToken)
+            .catch(() => undefined);
+          await repository
+            .releaseMediaAssetFinalization(creator.workspaceId, id, finalizationToken)
+            .catch(() => undefined);
+        }
+        metrics.recordMediaFinalization("error");
+      }
+      request.log.warn(
+        { err: error, mediaId: id, finalizationCommitted },
+        finalizationCommitted
+          ? "media finalization committed but response delivery failed"
+          : "media finalization deferred",
+      );
       return apiError(
         reply,
         409,
@@ -2997,7 +3113,9 @@ export async function registerRoutes(
     if (!creator) return;
     const { id } = IdParamsSchema.parse(request.params);
     const asset = await repository.getMediaAsset(creator.workspaceId, id);
-    if (!asset) return apiError(reply, 404, "NOT_FOUND", "Media not found", request.id);
+    if (!asset || asset.scanStatus === "deleting") {
+      return apiError(reply, 404, "NOT_FOUND", "Media not found", request.id);
+    }
     if (asset.scanStatus !== "clean") {
       return apiError(reply, 409, "CONFLICT", "Media is not available", request.id);
     }
@@ -3005,6 +3123,57 @@ export async function registerRoutes(
       media: { id: asset.id, scanStatus: asset.scanStatus, altText: asset.altText },
       downloadUrl: await storage.createDownloadUrl(asset),
     };
+  });
+
+  app.delete("/v1/media/:id", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+    const { id } = IdParamsSchema.parse(request.params);
+    const asset = await repository.getMediaAsset(creator.workspaceId, id);
+    if (!asset) return apiError(reply, 404, "NOT_FOUND", "Media not found", request.id);
+
+    const references = await repository.listMediaReferences(creator.workspaceId, id);
+    if (references.length > 0) {
+      return apiError(reply, 409, "CONFLICT", "Referenced media cannot be deleted", request.id);
+    }
+
+    // The durable `deleting` tombstone is the atomic claim. It remains longer than the presigned
+    // PUT lifetime so retention can perform a second object sweep before metadata is removed.
+    const claimedAsset = await repository.claimMediaAssetDeletion(creator.workspaceId, id);
+    if (!claimedAsset) {
+      const current = await repository.getMediaAsset(creator.workspaceId, id);
+      return current
+        ? apiError(reply, 409, "CONFLICT", "Referenced media cannot be deleted", request.id)
+        : apiError(reply, 404, "NOT_FOUND", "Media not found", request.id);
+    }
+    try {
+      await storage.deleteAsset(claimedAsset);
+    } catch (error) {
+      request.log.error(
+        {
+          errorType: error instanceof Error ? error.name : "unknown",
+          mediaId: id,
+        },
+        "media deletion deferred with durable tombstone",
+      );
+      return apiError(
+        reply,
+        503,
+        "DEPENDENCY_UNAVAILABLE",
+        "Media deletion could not be completed; retry shortly",
+        request.id,
+      );
+    }
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "media.deletion_requested",
+      targetType: "media_asset",
+      targetId: id,
+      requestId: request.id,
+    });
+    return reply.code(204).send();
   });
 
   app.get("/v1/sessions/:id/media/:mediaId", async (request, reply) => {
@@ -3274,11 +3443,9 @@ export async function registerRoutes(
     const ownedWorkspaceData = await Promise.all(
       ownedWorkspaces.map(async (workspace) => ({
         workspace,
-        sessionIds: await repository.listSessionIds(workspace.id),
         mediaAssets: await repository.listMediaAssets(workspace.id),
       })),
     );
-    const sessionIds = ownedWorkspaceData.flatMap((item) => item.sessionIds);
     const mediaAssets = ownedWorkspaceData.flatMap((item) => item.mediaAssets);
     if (mediaAssets.length > 0 && !storage.configured) {
       return apiError(
@@ -3289,9 +3456,34 @@ export async function registerRoutes(
         request.id,
       );
     }
+    const deletionStartedAt = new Date();
+    const claimedWorkspaceData = await Promise.all(
+      ownedWorkspaceData.map(async ({ workspace }) => ({
+        workspace,
+        mediaAssets: await repository.claimWorkspaceMediaDeletion(workspace.id, deletionStartedAt),
+      })),
+    );
+    // Session creation takes a workspace row lock and refuses the durable deletion fence. Reading
+    // invalidation targets only after every fence is committed therefore includes creations that
+    // won the race, including their Redis room-code reservations.
+    const sessionInvalidationTargets = (
+      await Promise.all(
+        ownedWorkspaces.map((workspace) => repository.listSessionInvalidationTargets(workspace.id)),
+      )
+    ).flat();
+    const claimedMediaAssets = claimedWorkspaceData.flatMap((item) => item.mediaAssets);
+    if (claimedMediaAssets.length > 0 && !storage.configured) {
+      return apiError(
+        reply,
+        503,
+        "DEPENDENCY_UNAVAILABLE",
+        "Account media could not be removed because object storage is unavailable",
+        request.id,
+      );
+    }
     try {
-      for (const asset of mediaAssets) await storage.deleteAsset(asset);
-      await sessions.invalidate(sessionIds);
+      for (const asset of claimedMediaAssets) await storage.deleteAsset(asset);
+      await sessions.invalidateWorkspaceDeletion(sessionInvalidationTargets);
     } catch {
       return apiError(
         reply,
@@ -3302,7 +3494,7 @@ export async function registerRoutes(
       );
     }
     await Promise.all(
-      ownedWorkspaceData.map(({ workspace, mediaAssets: workspaceMedia }) =>
+      claimedWorkspaceData.map(({ workspace, mediaAssets: workspaceMedia }) =>
         repository.recordAudit({
           workspaceId: workspace.id,
           actorId: creator.userId,

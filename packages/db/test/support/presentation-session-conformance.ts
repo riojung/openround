@@ -1,10 +1,25 @@
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import type { PresentationContent } from "@openround/contracts";
-import type {
-  PresentationSessionRepository,
-  PresentationSessionResponseRecord,
+import {
+  WorkspaceDeletionInProgressError,
+  type PresentationSessionRepository,
+  type PresentationSessionResponseRecord,
 } from "../../src/index.js";
+/*
+ * This suite intentionally exercises both durable backends through their public repository
+ * contract. The deletion hook is supplied by the owning repository because Presentation session
+ * repositories do not own account lifecycle state.
+ */
+export interface PresentationSessionRepositoryConformanceInput {
+  repository: PresentationSessionRepository;
+  workspaceId: string;
+  presentationId: string;
+  presentationVersionId: string;
+  createdBy: string;
+  content: PresentationContent;
+  beginWorkspaceDeletion(): Promise<void>;
+}
 
 export function presentationSessionConformanceContent(): PresentationContent {
   return {
@@ -39,14 +54,9 @@ export function presentationSessionConformanceContent(): PresentationContent {
   };
 }
 
-export async function expectPresentationSessionRepositoryConformance(input: {
-  repository: PresentationSessionRepository;
-  workspaceId: string;
-  presentationId: string;
-  presentationVersionId: string;
-  createdBy: string;
-  content: PresentationContent;
-}) {
+export async function expectPresentationSessionRepositoryConformance(
+  input: PresentationSessionRepositoryConformanceInput,
+) {
   const questionBlock = input.content.blocks.find((block) => block.kind === "question");
   if (!questionBlock || questionBlock.question.type !== "numeric") {
     throw new Error("Presentation repository conformance requires one numeric question");
@@ -234,4 +244,82 @@ export async function expectPresentationSessionRepositoryConformance(input: {
     expect.objectContaining({ sequence: 1, type: "question.launched" }),
     expect.objectContaining({ sequence: 4, type: "question.revealed" }),
   ]);
+
+  await input.beginWorkspaceDeletion();
+
+  // Existing receipts remain recoverable after the deletion fence closes new mutations.
+  await expect(input.repository.transitionSessionCommand(openCommand)).resolves.toMatchObject({
+    status: "duplicate",
+    session: { revision: 2, eventSeq: 4 },
+  });
+  await expect(
+    input.repository.transitionSessionCommand({ ...openCommand, expectedRevision: 1 }),
+  ).resolves.toMatchObject({
+    status: "idempotency_conflict",
+    session: { revision: 2, eventSeq: 4 },
+  });
+  await expect(
+    input.repository.acceptResponse({ ...response, id: randomUUID() }, 0),
+  ).resolves.toMatchObject({
+    status: "duplicate",
+    response: { id: response.id },
+    acknowledgement: { session: { revision: 2, eventSeq: 4 } },
+  });
+  await expect(
+    input.repository.acceptResponse(
+      { ...response, id: randomUUID(), requestHash: "d".repeat(64) },
+      0,
+    ),
+  ).resolves.toMatchObject({ status: "idempotency_conflict", response: { id: response.id } });
+
+  await expect(
+    input.repository.joinParticipantWithinLimit(
+      {
+        ...participant,
+        id: randomUUID(),
+        tokenHash: createHash("sha256").update(randomUUID()).digest("hex"),
+      },
+      20,
+    ),
+  ).rejects.toBeInstanceOf(WorkspaceDeletionInProgressError);
+  await expect(
+    input.repository.transitionSessionCommand({
+      workspaceId: input.workspaceId,
+      sessionId,
+      commandId: randomUUID(),
+      expectedRevision: 2,
+      phase: "finished",
+      currentBlockIndex: 0,
+      status: "finished",
+      occurredAt: new Date(now.getTime() + 3_000),
+      event: { type: "presentation.finished", blockIndex: null, blockId: null },
+    }),
+  ).rejects.toBeInstanceOf(WorkspaceDeletionInProgressError);
+  await expect(
+    input.repository.transitionSession({
+      workspaceId: input.workspaceId,
+      sessionId,
+      expectedRevision: 2,
+      phase: "finished",
+      currentBlockIndex: 0,
+      status: "finished",
+      occurredAt: new Date(now.getTime() + 3_000),
+      event: { type: "presentation.finished", blockIndex: null, blockId: null },
+    }),
+  ).rejects.toBeInstanceOf(WorkspaceDeletionInProgressError);
+  await expect(
+    input.repository.acceptResponse(
+      {
+        ...response,
+        id: randomUUID(),
+        idempotencyKey: randomUUID(),
+        requestHash: "e".repeat(64),
+      },
+      2,
+    ),
+  ).rejects.toBeInstanceOf(WorkspaceDeletionInProgressError);
+
+  await expect(input.repository.listParticipants(sessionId)).resolves.toHaveLength(1);
+  await expect(input.repository.listResponses(sessionId)).resolves.toHaveLength(1);
+  await expect(input.repository.listTimeline(sessionId)).resolves.toHaveLength(2);
 }

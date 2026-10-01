@@ -19,6 +19,10 @@ runner-sensitive workflow, Dockerfile, Compose file, or lockfile. It covers:
 - the production Compose media, observability, multi-process, backup/restore, and restart paths;
 - Buildx plus server/web image builds, with Trivy and Cosign installation/version checks.
 
+Every canary job has an explicit `Ubuntu 26 / ...` display name and a prefixed job identifier.
+These contexts do not replace, satisfy, or share a name with any required `CI` or `Security`
+context. A scheduled canary result therefore cannot be mistaken for a required pull-request check.
+
 The canary deliberately disables hosted-runner latency assertions in its 100-client Compose sample.
 It checks correctness, restart recovery, response uniqueness, and report reconciliation; variable
 GitHub-hosted hardware is not target-region capacity evidence and cannot close a release-readiness

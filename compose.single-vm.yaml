@@ -164,6 +164,32 @@ services:
         mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
         mc mb --ignore-existing "local/$$MINIO_BUCKET"
         mc anonymous set none "local/$$MINIO_BUCKET"
+        cat > /tmp/openround-media-lifecycle.json <<EOF
+        {
+          "Rules": [
+            {
+              "ID": "expire-abandoned-quarantine-uploads",
+              "Status": "Enabled",
+              "Filter": { "Prefix": "quarantine/" },
+              "Expiration": { "Days": 1 }
+            },
+            {
+              "ID": "expire-abandoned-finalization-candidates",
+              "Status": "Enabled",
+              "Filter": {
+                "And": {
+                  "Prefix": "media/",
+                  "Tags": [
+                    { "Key": "openround-finalization-state", "Value": "temporary" }
+                  ]
+                }
+              },
+              "Expiration": { "Days": 7 }
+            }
+          ]
+        }
+        EOF
+        mc ilm rule import "local/$$MINIO_BUCKET" < /tmp/openround-media-lifecycle.json
         cat > /tmp/openround-media-policy.json <<EOF
         {
           "Version": "2012-10-17",
@@ -175,7 +201,7 @@ services:
             },
             {
               "Effect": "Allow",
-              "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+              "Action": ["s3:GetObject", "s3:PutObject", "s3:PutObjectTagging", "s3:DeleteObject"],
               "Resource": ["arn:aws:s3:::$$MINIO_BUCKET/*"]
             }
           ]
@@ -320,6 +346,7 @@ services:
       AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_TOKEN: ${METRICS_TOKEN:?Set METRICS_TOKEN}
+      OPENROUND_LOG_SHIPPING_MODE: ${OPENROUND_LOG_SHIPPING_MODE:-disabled}
       TRACING_ENABLED: ${TRACING_ENABLED:-false}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}"
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-openround-server}

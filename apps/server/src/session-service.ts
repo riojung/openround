@@ -25,10 +25,12 @@ import {
   SessionCodeConflictError,
   SessionNotActiveError,
   SessionVersionConflictError,
+  WorkspaceDeletionInProgressError,
   type AudienceOutboxRecord,
   type CreatorContext,
   type ParticipantRecord,
   type Repository,
+  type SessionInvalidationTarget,
   type SessionStaffCredentialRecord,
   type SessionStaffCredentialReplacement,
   type StoredSession,
@@ -301,7 +303,8 @@ export class SessionService {
 
   private async mutate<T>(
     sessionId: string,
-    operation: "answer" | "deadline" | "delete" | "disconnect" | "host" | "join" | "resume",
+    operation:
+      "answer" | "create" | "deadline" | "delete" | "disconnect" | "host" | "join" | "resume",
     work: () => Promise<T>,
   ): Promise<T> {
     return this.exclusive(sessionId, async () => {
@@ -387,6 +390,14 @@ export class SessionService {
       return null;
     }
     const cached = await this.cache.get(sessionId);
+    // Check after the last asynchronous cache read. If deletion fenced the workspace while this
+    // load was in flight, do not republish the now-deleted session into the process-local cache.
+    if (await this.repository.workspaceDeletionStarted(persisted.workspaceId)) {
+      this.active.delete(sessionId);
+      this.metrics.setActiveSessions(this.active.size);
+      await this.cache.delete(sessionId).catch(() => undefined);
+      return null;
+    }
     persisted.state = upgradeGameState(persisted.state);
     if (cached && cached.version >= persisted.state.version) {
       persisted.state = upgradeGameState(cached);
@@ -402,6 +413,12 @@ export class SessionService {
     const active = this.active.get(sessionId);
     if (active) {
       if (active.expiresAt.getTime() <= Date.now()) {
+        this.active.delete(sessionId);
+        this.metrics.setActiveSessions(this.active.size);
+        await this.cache.delete(sessionId).catch(() => undefined);
+        return null;
+      }
+      if (await this.repository.workspaceDeletionStarted(active.workspaceId)) {
         this.active.delete(sessionId);
         this.metrics.setActiveSessions(this.active.size);
         await this.cache.delete(sessionId).catch(() => undefined);
@@ -805,30 +822,35 @@ export class SessionService {
           createdAt: now,
           updatedAt: now,
         };
-        await this.repository.createSession(session);
-        retained = true;
-        await this.cache.set(session.state, ttlMs / 1_000).catch(() => undefined);
-        this.active.set(session.id, session);
-        this.metrics.setActiveSessions(this.active.size);
-        this.recordSessionProductEvents(
-          session.workspaceId,
-          [
-            {
-              name: "host_setup_completed",
-              occurredAt: now.toISOString(),
-              dimensions: { artifactType: "round" },
-            },
-          ],
-          creator.segment,
-        );
-        return {
-          sessionId,
-          code,
-          hostToken,
-          snapshot: snapshotForRole(session.state, { role: "host" }),
-        };
+        return await this.mutate(sessionId, "create", async () => {
+          await this.repository.createSession(session);
+          retained = true;
+          await this.cache.set(session.state, ttlMs / 1_000).catch(() => undefined);
+          this.active.set(session.id, session);
+          this.metrics.setActiveSessions(this.active.size);
+          this.recordSessionProductEvents(
+            session.workspaceId,
+            [
+              {
+                name: "host_setup_completed",
+                occurredAt: now.toISOString(),
+                dimensions: { artifactType: "round" },
+              },
+            ],
+            creator.segment,
+          );
+          return {
+            sessionId,
+            code,
+            hostToken,
+            snapshot: snapshotForRole(session.state, { role: "host" }),
+          };
+        });
       } catch (error) {
         if (error instanceof SessionCodeConflictError) continue;
+        if (error instanceof WorkspaceDeletionInProgressError) {
+          throw new SessionError("CONFLICT", "This workspace is being deleted");
+        }
         throw error;
       } finally {
         if (reserved && !retained) {
@@ -1044,6 +1066,9 @@ export class SessionService {
         );
       } catch (error) {
         session.state = priorState;
+        if (error instanceof WorkspaceDeletionInProgressError) {
+          throw new SessionError("CONFLICT", "This workspace is being deleted");
+        }
         throw error;
       }
       this.active.set(session.id, session);
@@ -1476,6 +1501,9 @@ export class SessionService {
           }
         } catch (error) {
           session.state = priorState;
+          if (error instanceof WorkspaceDeletionInProgressError) {
+            throw new SessionError("CONFLICT", "This workspace is being deleted");
+          }
           throw error;
         }
         this.active.set(session.id, session);
@@ -1782,6 +1810,37 @@ export class SessionService {
       .map((result) => result.reason);
     if (failures.length > 0) {
       throw new AggregateError(failures, "One or more session cache entries could not be deleted");
+    }
+  }
+
+  async invalidateWorkspaceDeletion(targets: SessionInvalidationTarget[]) {
+    const uniqueTargets = [
+      ...new Map(targets.map((target) => [target.sessionId, target])).values(),
+    ];
+    const results = await Promise.allSettled(
+      uniqueTargets.map((target) =>
+        this.mutate(target.sessionId, "delete", async () => {
+          const cleanup = await Promise.allSettled([
+            this.cache.releaseSessionCode(target.code, target.sessionId),
+            this.invalidate([target.sessionId]),
+          ]);
+          const failures = cleanup
+            .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+            .map((result) => result.reason);
+          if (failures.length > 0) {
+            throw new AggregateError(
+              failures,
+              `Session ${target.sessionId} could not be invalidated for workspace deletion`,
+            );
+          }
+        }),
+      ),
+    );
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason);
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "Workspace session invalidation did not complete");
     }
   }
 
