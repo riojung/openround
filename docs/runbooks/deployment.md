@@ -396,6 +396,12 @@ change—requires a new reviewed release build and tag.
 - Database migrations are forward-only. Repair schema/data with a reviewed forward migration.
 - A code rollback is safe only when the older images tolerate the current schema. Preserve
   expand/contract compatibility during every rollout window.
+- Deploy a flex-capable image with `FEATURE_LIVE_FLEX_MODE=false` first, and retain that image as
+  the approved rollback target before enabling flex creation. Do not roll back to a pre-flex image
+  after flex creation is enabled: older code cannot accept untimed responses, reads null Round
+  deadlines as invalid numbers, and may overwrite them with synthetic deadlines on a later save.
+  If the flex-capable image is defective, disable new flex creation and use a reviewed forward fix
+  or another flex-capable image; draining rooms alone does not make a pre-flex rollback safe.
 - Keep at least the current and previous approved release available on the VM, but treat the
   off-host database/media backup as the disaster-recovery source when the host is lost.
 - After rollback or recovery, verify readiness, build markers, live-session behavior, reports,

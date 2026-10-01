@@ -35,12 +35,17 @@ embed, and follow-up routes use their own scoped credentials as documented by th
 
 `FEATURE_UX_BETA`, `FEATURE_RECOVERY_REHEARSAL`, `FEATURE_PRACTICE_ASSIGNMENTS`,
 `FEATURE_WORKSPACE_SHELL`, `FEATURE_BUILDER_V2`, `FEATURE_PRESENTATIONS`,
-`FEATURE_PRESENTATION_REALTIME`, `FEATURE_GROUPS`, and `FEATURE_DISCOVER` default off. These
-professional-workspace switches are independent rollback ceilings. Disabling Presentations blocks
+`FEATURE_PRESENTATION_REALTIME`, `FEATURE_LIVE_FLEX_MODE`, `FEATURE_GROUPS`, and
+`FEATURE_DISCOVER` default off. These
+opt-in switches are independent rollback ceilings. Disabling Presentations blocks
 new Presentation authoring; disabling Presentation realtime, or removing its workspace allowlist,
 blocks new live-session creation. Existing live sessions, scoped credentials, reports, joins,
 commands, responses, and recovery reads remain registered and usable so a rollback cannot strand
 an active room or make its evidence unreadable. Disabling Groups removes its collaboration routes.
+`FEATURE_LIVE_FLEX_MODE` additionally requires explicit
+`EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST` membership. Turning it off prevents creating new flex
+Rounds or Presentations, but never disables control, joining, answering, or reporting for an
+existing flex room.
 The authenticated
 `productFeatures` view requires explicit membership in `UX_BETA_WORKSPACE_ALLOWLIST`; an empty
 allowlist fails closed and enables no workspace. Presentation authoring, new Presentation-session
@@ -229,6 +234,17 @@ permanent untracked object.
 - Session staff credential creation/list/revocation routes under `/v1/sessions/{id}/staff`
 - Presenter/embed policy issuance under the session routes
 - `GET /v1/embed/policies/{sessionId}/{policyKey}`
+
+Live Round creation accepts `settings.timeMode: "timed" | "flex"`; omission preserves the
+existing timed behavior. Flex is frozen at creation: an open question has no deadline, the host
+closes it, and speed scoring is replaced by accuracy scoring. Timed and flex Round snapshots and
+ready reports expose their effective `timeMode`. Live Presentation creation likewise accepts a
+top-level `timeMode` and defaults to timed. Its flex questions have no `questionClosesAt` and
+remain open until the host reveals/closes them. Both creation paths require the deployment flag
+and workspace allowlist for flex; existing rooms remain usable if eligibility changes later. The
+stored Presentation V1 report and default report response remain unchanged for strict legacy
+readers; `GET /v1/presentation-sessions/{id}/report?includeSessionContext=true` adds
+`sessionContext.timeMode` to an opt-in response.
 
 `POST /v1/sessions/join` accepts an optional `JoinRequest.avatarId` from the fixed, content-free
 allowlist `comet`, `fox`, `owl`, `otter`, `panda`, `robot`, `rocket`, and `star`. Omitting it keeps

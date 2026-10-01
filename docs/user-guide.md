@@ -137,8 +137,11 @@ muted and duplicates visual status rather than carrying unique information.
 
 ## Host a live round
 
-Select **Host** on a published set. Review audience, scoring, result visibility, late joining,
-nickname policy, Round Experience, presenter sound, and Q&A settings before creating the room.
+Select **Host** on a published set. Review audience, response timing, scoring, result visibility,
+late joining, nickname policy, Round Experience, presenter sound, and Q&A settings before creating
+the room. Timed is the default. An allowlisted workspace with live flex mode enabled can choose
+**Flex** for a whole room: no response countdown or deadline, no speed scoring, and the host
+decides when to close each question. The choice is frozen when the session is created.
 OpenRound then issues a seven-digit code, direct link, downloadable QR, and one-time host
 credential.
 
@@ -158,10 +161,12 @@ access instead of sharing the host credential.
 
 ### Run the Recovery Loop
 
-1. **Start round** opens the main checkpoint using a server-owned deadline.
+1. **Start round** opens the main checkpoint. Timed rooms use a server-owned deadline; flex rooms
+   stay open until the host closes responses.
 2. Participants answer and optionally report confidence. An answer is complete only after
    **Answer received and saved**.
-3. Lock at the deadline or select **Lock answers** early.
+3. In a timed room, let the deadline close responses or select **Lock answers** early. In a flex
+   room, select **Lock answers** when participants have had enough time.
 4. Review the measured participation, correctness, confidence, and misconception signals. Every
    insight card shows the threshold and measurement behind its suggestion; it is guidance, not an
    automated judgment.
@@ -170,7 +175,8 @@ access instead of sharing the host credential.
 6. Run the linked recheck, or use a same-checkpoint revote when no linked recheck exists.
 7. Finish the recovery branch before showing standings or moving to the next main checkpoint.
 
-Pause and resume preserve server time. Reconnect restores the exact lobby, checkpoint,
+Pause and resume preserve remaining server time in timed rooms; flex rooms remain untimed.
+Reconnect restores the exact lobby, checkpoint,
 intervention, or recheck state. Open checkpoint payloads never expose answer keys, explanations,
 misconception labels, private citations, or response distributions.
 
@@ -342,19 +348,19 @@ text and set the corresponding policy version.
 
 ## Troubleshooting
 
-| Message or symptom                                      | Meaning and response                                                                 |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| **Invalid code**                                        | Check all seven digits; the round may have ended or expired.                         |
-| **Session is not accepting participants**               | The lobby is locked, late join is off, or the round ended.                           |
-| **Time expired before the server received that answer** | The authoritative deadline passed before receipt.                                    |
-| **This tab does not have the host credential**          | Return to the original host tab or issue a new scoped staff credential.              |
-| **Reconnecting…**                                       | Leave the tab open; the client requests an authoritative snapshot.                   |
-| **Room chat is closed**                                 | The host must enable chat for this session; Pulse may still be available.            |
-| **You are sending messages too quickly**                | Wait for the displayed slow-mode/rate-limit interval, then retry once.               |
-| Pulse totals are hidden                                 | Fewer than five unique participants have signalled in the current context.           |
-| Report says **Finalizing…**                             | Wait up to 60 seconds, then ask the operator to inspect report jobs.                 |
-| Authoring says **disabled**                             | The operator has not configured an approved provider; no source is sent.             |
-| An authoring proposal **needs attention**               | Review its extraction/provider message and submit a corrected source or retry later. |
+| Message or symptom                                      | Meaning and response                                                                        |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| **Invalid code**                                        | Check all seven digits; the round may have ended or expired.                                |
+| **Session is not accepting participants**               | The lobby is locked, late join is off, or the round ended.                                  |
+| **Time expired before the server received that answer** | The timed room's authoritative deadline passed before receipt. Flex rooms have no deadline. |
+| **This tab does not have the host credential**          | Return to the original host tab or issue a new scoped staff credential.                     |
+| **Reconnecting…**                                       | Leave the tab open; the client requests an authoritative snapshot.                          |
+| **Room chat is closed**                                 | The host must enable chat for this session; Pulse may still be available.                   |
+| **You are sending messages too quickly**                | Wait for the displayed slow-mode/rate-limit interval, then retry once.                      |
+| Pulse totals are hidden                                 | Fewer than five unique participants have signalled in the current context.                  |
+| Report says **Finalizing…**                             | Wait up to 60 seconds, then ask the operator to inspect report jobs.                        |
+| Authoring says **disabled**                             | The operator has not configured an approved provider; no source is sent.                    |
+| An authoring proposal **needs attention**               | Review its extraction/provider message and submit a corrected source or retry later.        |
 
 Operators should continue with the [production readiness checklist](runbooks/production-readiness.md)
 and [incident response runbook](runbooks/incident-response.md).

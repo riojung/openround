@@ -2,9 +2,32 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { Report } from "@openround/contracts";
 import { addParticipant, createGameState, type EngineAnswer } from "@openround/game-engine";
-import { generateReport, reportCsv } from "../src/reporting.js";
+import { createPendingReport, generateReport, reportCsv } from "../src/reporting.js";
 
 describe("report CSV", () => {
+  it("records the frozen Round time mode in new reports", () => {
+    const state = createGameState({
+      sessionId: randomUUID(),
+      code: "1234567",
+      quiz: { title: "Flex evidence", description: "", questions: [] },
+      settings: {
+        audienceLimit: 20,
+        timeMode: "flex",
+        scoringMode: "speed",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    expect(createPendingReport(state, new Date("2026-10-01T00:00:00.000Z"))).toMatchObject({
+      timeMode: "flex",
+      trustMode: "learning",
+    });
+    const ready = generateReport(state, new Date("2026-10-01T00:00:00.000Z"));
+    expect(ready.timeMode).toBe("flex");
+    expect(reportCsv(ready)).toContain("time_mode,flex");
+  });
+
   it("neutralizes spreadsheet formulas in participant-controlled nicknames", () => {
     const dangerousNicknames = ["=1+1", "+SUM(A1:A2)", "-2+3", "@IMPORTDATA(A1)", "\t=1+1"];
     const report: Report = {

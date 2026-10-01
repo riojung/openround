@@ -199,7 +199,7 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
           verificationClient.query<{ count: string; maximum: number }>(
             "SELECT count(*) AS count, max(version) AS maximum FROM _openround_migrations",
           ),
-        ).resolves.toMatchObject({ rows: [{ count: "43", maximum: 43 }] });
+        ).resolves.toMatchObject({ rows: [{ count: "44", maximum: 44 }] });
 
         await expect(
           verificationClient.query(
@@ -724,6 +724,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 41, name: "media_deletion_tombstone" },
       { version: 42, name: "workspace_deletion_cleanup" },
       { version: 43, name: "bounded_media_object_cleanup" },
+      { version: 44, name: "round_flex_deadlines" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -733,7 +734,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("43");
+    expect(bootstrapped.rows[0]?.count).toBe("44");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -4899,6 +4900,40 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       }),
     ).toBe(true);
     expect(await repository.getPlan(first.workspaceId)).toBe("pro");
+
+    const flexSessionId = randomUUID();
+    const flexLobby = createGameState({
+      sessionId: flexSessionId,
+      code: String(randomInt(1_000_000, 10_000_000)),
+      quiz: firstVersion.content,
+      settings: {
+        audienceLimit: 20,
+        timeMode: "flex",
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    const flexStoredSession = {
+      ...persistedSession,
+      id: flexSessionId,
+      hostTokenHash: randomUUID(),
+      state: flexLobby,
+    };
+    await repository.createSession(flexStoredSession);
+    const flexOpened = applyHostCommand(flexLobby, {
+      commandId: randomUUID(),
+      expectedVersion: flexLobby.version,
+      action: "start",
+      nowMs: Date.now(),
+      newRoundId: randomUUID,
+    }).state;
+    flexStoredSession.state = flexOpened;
+    await repository.saveSession(flexStoredSession, flexLobby.version);
+    expect(await repository.getSessionEvidence(first.workspaceId, flexSessionId)).toMatchObject({
+      rounds: [{ id: flexOpened.roundId, deadlineMs: null }],
+    });
   });
 
   it("atomically provisions and audits one synthetic capacity workspace", async () => {

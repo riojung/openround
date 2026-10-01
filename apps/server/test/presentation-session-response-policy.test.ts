@@ -220,6 +220,12 @@ describe("Presentation response policy", () => {
     expect(flexResult).toEqual({ responseMs: 15_000, remainingRatio: 1 });
     expect(presentationResponseScore(question, true, flexResult.remainingRatio)).toBe(1_000);
     expect(presentationResponseScore(question, false, flexResult.remainingRatio)).toBe(0);
+    expect(
+      presentationResponseTiming(
+        { ...timed, settings: { timeMode: "flex" }, questionClosesAt: null },
+        new Date(timed.questionOpenedAt!.getTime() + 90_000),
+      ),
+    ).toEqual({ responseMs: 90_000, remainingRatio: 1 });
   });
 
   it("clamps timing at both boundaries and keeps the missing-open fallback", () => {

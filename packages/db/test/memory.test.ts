@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { Report } from "@openround/contracts";
-import { createGameState } from "@openround/game-engine";
+import { applyHostCommand, createGameState } from "@openround/game-engine";
 import {
   FollowupAccessLimitError,
   MEDIA_DELETION_TOMBSTONE_HOLD_MS,
@@ -62,6 +62,48 @@ async function finalizedMediaForCleanup(
 }
 
 describe("memory repository", () => {
+  it("preserves a flex Round's missing deadline in durable evidence", async () => {
+    const repository = new MemoryRepository();
+    const sessionId = randomUUID();
+    const workspaceId = randomUUID();
+    const lobby = createGameState({
+      sessionId,
+      code: "1234567",
+      quiz: publishableRound("Untimed checkpoint"),
+      settings: {
+        audienceLimit: 20,
+        timeMode: "flex",
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    const opened = applyHostCommand(lobby, {
+      commandId: randomUUID(),
+      expectedVersion: lobby.version,
+      action: "start",
+      nowMs: Date.now(),
+      newRoundId: randomUUID,
+    }).state;
+    const now = new Date();
+    await repository.createSession({
+      id: sessionId,
+      workspaceId,
+      quizVersionId: randomUUID(),
+      hostId: randomUUID(),
+      hostTokenHash: randomUUID(),
+      state: opened,
+      expiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(await repository.getSessionEvidence(workspaceId, sessionId)).toMatchObject({
+      rounds: [{ id: opened.roundId, deadlineMs: null }],
+    });
+  });
+
   it("fences stale draft saves and publishes the acknowledged revision idempotently", async () => {
     const repository = new MemoryRepository();
     const workspaceId = randomUUID();

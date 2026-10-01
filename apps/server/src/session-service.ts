@@ -63,6 +63,7 @@ import { createPendingReport } from "./reporting.js";
 import type { MetricsService } from "./metrics.js";
 import { entitlementsFor, retentionExpiry } from "./entitlements.js";
 import { ProductEventDispatcher, type ProductEventInput } from "./product-events.js";
+import { evidenceWorkspaceFeatureEnabled } from "./workspace-rollout.js";
 
 export interface SessionMutation {
   state: GameState;
@@ -682,7 +683,12 @@ export class SessionService {
     const existing = this.timers.get(session.id);
     if (existing) clearTimeout(existing);
     this.timers.delete(session.id);
-    if (session.state.phase !== "question_open" || !session.state.deadlineMs) return;
+    if (
+      session.state.phase !== "question_open" ||
+      session.state.settings.timeMode === "flex" ||
+      session.state.deadlineMs === null
+    )
+      return;
     const delay = Math.max(0, session.state.deadlineMs - Date.now());
     const deadlineMs = session.state.deadlineMs;
     const timer = setTimeout(
@@ -702,7 +708,13 @@ export class SessionService {
       await this.flushAnswersReceivedBy(sessionId, deadlineMs);
       await this.mutate(sessionId, "deadline", async () => {
         const session = await this.loadSessionForMutation(sessionId);
-        if (!session || session.state.phase !== "question_open") return;
+        if (
+          !session ||
+          session.state.phase !== "question_open" ||
+          session.state.settings.timeMode === "flex" ||
+          session.state.deadlineMs === null
+        )
+          return;
         if (session.state.deadlineMs && Date.now() < session.state.deadlineMs) {
           this.scheduleDeadline(session);
           return;
@@ -738,6 +750,12 @@ export class SessionService {
   ): Promise<{ sessionId: string; code: string; hostToken: string; snapshot: SessionSnapshot }> {
     if (creator.role === "viewer") {
       throw new SessionError("UNAUTHORIZED", "Viewers cannot host live rounds");
+    }
+    if (
+      settings.timeMode === "flex" &&
+      !evidenceWorkspaceFeatureEnabled(this.config, creator.workspaceId, "liveFlexMode")
+    ) {
+      throw new SessionError("NOT_FOUND", "Flex sessions are not available in this workspace");
     }
     if (settings.trustMode === "verified") {
       throw new SessionError(

@@ -52,6 +52,7 @@ describe("professional workspace rollout flags", () => {
         builderV2: false,
         presentations: false,
         presentationRealtime: false,
+        liveFlexMode: false,
         groups: false,
         discover: false,
       },

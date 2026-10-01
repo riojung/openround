@@ -47,14 +47,13 @@ export function presentationResponseTiming(
   const durationMs = block.question.timeLimitSeconds * 1_000;
   if (!session.questionOpenedAt) {
     return {
-      responseMs: durationMs,
+      responseMs: session.settings.timeMode === "flex" ? 0 : durationMs,
       remainingRatio: session.settings.timeMode === "flex" ? 1 : 0,
     };
   }
-  const responseMs = Math.max(
-    0,
-    Math.min(durationMs, receivedAt.getTime() - session.questionOpenedAt.getTime()),
-  );
+  const elapsedMs = Math.max(0, receivedAt.getTime() - session.questionOpenedAt.getTime());
+  const responseMs =
+    session.settings.timeMode === "flex" ? elapsedMs : Math.min(durationMs, elapsedMs);
   return {
     responseMs,
     remainingRatio:

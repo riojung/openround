@@ -30,6 +30,7 @@ import {
   QuestionSchema,
   ResponseDistributionSchema,
   RoundFilterOptionsResponseSchema,
+  SessionSettingsSchema,
   SessionSnapshotSchema,
   SyncRequestSchema,
   UpdateQuizRequestSchema,
@@ -53,8 +54,20 @@ describe("public contracts", () => {
         },
         questions: [],
         participants: [],
-      }).trustMode,
-    ).toBe("learning");
+      }),
+    ).toMatchObject({ trustMode: "learning", timeMode: "timed" });
+  });
+
+  it("defaults existing live Round settings to timed mode", () => {
+    expect(
+      SessionSettingsSchema.parse({
+        audienceLimit: 20,
+        scoringMode: "speed",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      }).timeMode,
+    ).toBe("timed");
   });
 
   it("accepts every presentation-session error emitted by the API", () => {
@@ -191,10 +204,27 @@ describe("public contracts", () => {
         builderV2: true,
         presentations: false,
         presentationRealtime: false,
+        liveFlexMode: false,
         groups: true,
         discover: false,
       }),
     ).toMatchObject({ workspaceShell: true, presentations: false, groups: true });
+    expect(
+      WorkspaceProductFeaturesSchema.parse({
+        roundExperiences: true,
+        audiencePulse: true,
+        roomChat: true,
+        uxBeta: true,
+        recoveryRehearsal: false,
+        practiceAssignments: false,
+        workspaceShell: true,
+        builderV2: true,
+        presentations: false,
+        presentationRealtime: false,
+        groups: true,
+        discover: false,
+      }).liveFlexMode,
+    ).toBe(false);
     expect(
       WorkspaceProductFeaturesSchema.safeParse({
         roundExperiences: true,

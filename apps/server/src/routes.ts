@@ -491,6 +491,7 @@ export async function registerRoutes(
       presentationRealtime:
         professionalWorkspaceFeatureEnabled(config, workspaceId, "presentations") &&
         evidenceWorkspaceFeatureEnabled(config, workspaceId, "presentationRealtime"),
+      liveFlexMode: evidenceWorkspaceFeatureEnabled(config, workspaceId, "liveFlexMode"),
       groups: professionalWorkspaceFeatureEnabled(config, workspaceId, "groups"),
       discover: professionalWorkspaceFeatureEnabled(config, workspaceId, "discover"),
     };
