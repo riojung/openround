@@ -33,6 +33,7 @@ const fixtures = vi.hoisted(() => ({
       builderV2: true,
       presentations: true,
       presentationRealtime: true,
+      liveFlexMode: true,
       groups: true,
       discover: true,
     },

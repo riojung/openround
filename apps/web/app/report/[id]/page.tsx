@@ -922,6 +922,12 @@ export default function ReportPage() {
         ) : null}
         {report?.status === "ready" ? (
           <>
+            <p className="muted" lang="en-CA">
+              Response timing:{" "}
+              {report.timeMode === "flex"
+                ? "Flex — facilitator closes responses"
+                : "Timed — question deadline"}
+            </p>
             {!uxBeta ? (
               <p className="notice" style={{ marginBottom: 26 }}>
                 This report&apos;s stored retention deadline is{" "}

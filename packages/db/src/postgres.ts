@@ -1161,9 +1161,11 @@ export class PostgresRepository implements Repository {
       const question = session.state.quiz.questions[round.position];
       const openedAtMs = round.openedAtMs > 0 ? round.openedAtMs : session.createdAt.getTime();
       const deadlineMs =
-        round.deadlineMs > openedAtMs
-          ? round.deadlineMs
-          : openedAtMs + (question?.timeLimitSeconds ?? 20) * 1_000;
+        round.deadlineMs === null
+          ? null
+          : round.deadlineMs > openedAtMs
+            ? round.deadlineMs
+            : openedAtMs + (question?.timeLimitSeconds ?? 20) * 1_000;
       await client.query(
         `INSERT INTO question_rounds
            (id, session_id, question_id, position, opened_at, deadline, locked_at, round_kind)
@@ -1181,7 +1183,7 @@ export class PostgresRepository implements Repository {
           round.questionId,
           round.position,
           new Date(openedAtMs),
-          new Date(deadlineMs),
+          deadlineMs === null ? null : new Date(deadlineMs),
           round.lockedAtMs === null ? null : new Date(round.lockedAtMs),
           round.kind,
         ],
@@ -4354,7 +4356,7 @@ export class PostgresRepository implements Repository {
             sourceRoundId: row.source_round_id,
             interventionId: row.intervention_id,
             openedAtMs: date(row.opened_at).getTime(),
-            deadlineMs: date(row.deadline).getTime(),
+            deadlineMs: row.deadline ? date(row.deadline).getTime() : null,
             lockedAtMs: row.locked_at ? date(row.locked_at).getTime() : null,
           })),
           interventions: interventionResult.rows.map((row) => ({

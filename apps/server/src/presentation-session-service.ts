@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import {
   PresentationReportEnvelopeSchema,
   PresentationReportV1Schema,
+  PresentationReportWithSessionContextEnvelopeSchema,
   type PresentationCommand,
   type PresentationHostSnapshot,
   type PresentationParticipantSnapshot,
@@ -11,6 +12,7 @@ import {
   type PresentationSessionResponse,
   type PresentationSyncRequest,
   type PresentationSyncResponse,
+  type PresentationTimeMode,
 } from "@openround/contracts";
 import {
   SessionCodeConflictError,
@@ -170,6 +172,7 @@ export class PresentationSessionService {
     workspaceId: string;
     userId: string;
     presentationId: string;
+    timeMode?: PresentationTimeMode;
     requestId: string;
   }) {
     const institutionPolicy = await this.dependencies.repository.getInstitutionPolicy(
@@ -230,7 +233,7 @@ export class PresentationSessionService {
             phase: "lobby",
             currentBlockIndex: -1,
             revision: 0,
-            settings: { timeMode: "timed" },
+            settings: { timeMode: input.timeMode ?? "timed" },
             trustMode: "learning",
             eventSeq: 0,
             questionOpenedAt: null,
@@ -651,7 +654,7 @@ export class PresentationSessionService {
     return this.liveMutations.submitLegacyResponse(input);
   }
 
-  async getReport(workspaceId: string, sessionId: string) {
+  async getReport(workspaceId: string, sessionId: string, includeSessionContext = false) {
     const session = await this.sessions.getSessionForWorkspace(workspaceId, sessionId);
     if (!session) {
       throw new PresentationSessionServiceError(404, "NOT_FOUND", "Presentation session not found");
@@ -685,10 +688,16 @@ export class PresentationSessionService {
       ]);
       report = generatePresentationReport({ session, participants, responses, timeline });
     }
-    return PresentationReportEnvelopeSchema.parse({
+    const envelope = PresentationReportEnvelopeSchema.parse({
       reportStatus: stored.status,
       report,
     });
+    return includeSessionContext
+      ? PresentationReportWithSessionContextEnvelopeSchema.parse({
+          ...envelope,
+          sessionContext: { timeMode: session.settings.timeMode },
+        })
+      : envelope;
   }
 
   async workspaceForCode(code: string) {

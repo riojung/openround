@@ -259,6 +259,10 @@ function PresentationHostContent() {
                           unitDisplay: "narrow",
                         })}
                       </p>
+                    ) : snapshot.acceptingResponses && snapshot.settings.timeMode === "flex" ? (
+                      <p className="muted" lang={locale} role="status">
+                        {t("live.common.flexOpen")}
+                      </p>
                     ) : null}
                     <h1 lang="">{block.question.prompt}</h1>
                     <PresentationMedia

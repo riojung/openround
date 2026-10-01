@@ -145,6 +145,7 @@ describe("Presentation report worker", () => {
       leaderboard: [{ id: participantId, nickname: "River", score: 975, rank: 1 }],
       evidence: [{ blockId, respondents: 1, correct: 1, accuracyPercent: 100 }],
     });
+    expect(stored?.payload).not.toHaveProperty("timeMode");
     expect(repository.productEvents).toEqual([
       expect.objectContaining({
         workspaceId,
@@ -172,5 +173,13 @@ describe("Presentation report worker", () => {
         timeline,
       }).finishedAt,
     ).toBe(finishedSession!.updatedAt.toISOString());
+    expect(
+      generatePresentationReport({
+        session: { ...finishedSession!, settings: { timeMode: "flex" } },
+        participants,
+        responses,
+        timeline,
+      }),
+    ).not.toHaveProperty("timeMode");
   });
 });

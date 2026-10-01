@@ -30,7 +30,10 @@ import {
   PresentationSessionServiceError,
 } from "./presentation-session-service.js";
 import type { StorageService } from "./storage.js";
-import { professionalFeatureUnavailable } from "./workspace-rollout.js";
+import {
+  evidenceWorkspaceFeatureEnabled,
+  professionalFeatureUnavailable,
+} from "./workspace-rollout.js";
 
 const IdParamsSchema = z.object({ id: z.string().uuid() });
 const SessionMediaParamsSchema = z.object({
@@ -40,6 +43,9 @@ const SessionMediaParamsSchema = z.object({
 const ControlPassParamsSchema = z.object({
   id: z.string().uuid(),
   credentialId: z.string().uuid(),
+});
+const PresentationReportQuerySchema = z.object({
+  includeSessionContext: z.literal("true").optional(),
 });
 
 function apiError(
@@ -195,13 +201,7 @@ export async function registerPresentationSessionRoutes(
     presentations: PresentationRepository;
     presentationSessions: PresentationSessionRepository;
     auth: AuthService;
-    config: Pick<
-      AppConfig,
-      | "COMMUNITY_MODE"
-      | "COMMUNITY_REPORT_RETENTION_DAYS"
-      | "MAX_SESSION_PARTICIPANTS"
-      | "MAX_PRACTICE_PERSONAL_LINKS"
-    >;
+    config: AppConfig;
     storage: StorageService;
     workspaceEnabled: (workspaceId: string) => boolean;
     metrics?: Pick<MetricsService, "recordPresentationAdmission" | "observePresentationResponse">;
@@ -262,11 +262,18 @@ export async function registerPresentationSessionRoutes(
     if (requirePresentationWorkspace(creator.workspaceId, reply, request.id) !== true) return;
     if (requireEditor(creator, reply, request.id) !== true) return;
     const input = CreatePresentationSessionSchema.parse(request.body);
+    if (
+      input.timeMode === "flex" &&
+      !evidenceWorkspaceFeatureEnabled(dependencies.config, creator.workspaceId, "liveFlexMode")
+    ) {
+      return professionalFeatureUnavailable(reply, request.id, "Flex session not found");
+    }
     try {
       const created = await service.createSession({
         workspaceId: creator.workspaceId,
         userId: creator.userId,
         presentationId: input.presentationId,
+        timeMode: input.timeMode,
         requestId: request.id,
       });
       const response = PresentationRestV1CreateSessionResponseSchema.parse({
@@ -647,8 +654,13 @@ export async function registerPresentationSessionRoutes(
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
     const { id } = IdParamsSchema.parse(request.params);
+    const { includeSessionContext } = PresentationReportQuerySchema.parse(request.query);
     try {
-      const result = await service.getReport(creator.workspaceId, id);
+      const result = await service.getReport(
+        creator.workspaceId,
+        id,
+        includeSessionContext === "true",
+      );
       return reply
         .code(result.reportStatus === "pending" && !result.report ? 202 : 200)
         .send(result);

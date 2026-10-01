@@ -99,6 +99,14 @@ Phase 2 and the post-24-week capabilities are unstarted beyond shared feature-co
 foundations. This is an evidence boundary, not permission to substitute local automation for
 facilitator research, independent review, or production-environment drills.
 
+An Access/resilience implementation slice is complete in the repository provisionally, without
+claiming that Phase 1's branch-selection gate passed. Gated whole-room flex mode is available for
+new Rounds and Presentations in allowlisted workspaces when `FEATURE_LIVE_FLEX_MODE` is enabled. It has no
+response countdown or deadline, lets the facilitator close questions, and gives no speed bonus.
+The time mode is frozen at creation and disabling the gate preserves existing rooms. The
+design-partner timing/connectivity and accessibility evidence required to select and roll out this
+branch remains pending; private 1.5×/2× passes remain deferred.
+
 ## Phase 0 research Prototype Lab
 
 The repository now includes an allowlisted, browser-memory-only research lab for the three Phase 0

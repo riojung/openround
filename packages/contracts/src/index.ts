@@ -109,6 +109,7 @@ export const WorkspaceProductFeaturesSchema = z.object({
   builderV2: z.boolean(),
   presentations: z.boolean(),
   presentationRealtime: z.boolean(),
+  liveFlexMode: z.boolean().default(false),
   groups: z.boolean(),
   discover: z.boolean(),
 });
@@ -867,6 +868,9 @@ export function questionDelivery(question: Pick<QuestionDraft, "delivery">) {
 export const ScoringModeSchema = z.enum(["accuracy", "speed"]);
 export type ScoringMode = z.infer<typeof ScoringModeSchema>;
 
+export const RoundTimeModeSchema = z.enum(["timed", "flex"]);
+export type RoundTimeMode = z.infer<typeof RoundTimeModeSchema>;
+
 export const ResultVisibilitySchema = z.enum(["private", "leaderboard"]);
 export type ResultVisibility = z.infer<typeof ResultVisibilitySchema>;
 
@@ -875,6 +879,7 @@ export type TrustMode = z.infer<typeof TrustModeSchema>;
 
 export const SessionSettingsSchema = z.object({
   audienceLimit: z.number().int().min(1).max(250),
+  timeMode: RoundTimeModeSchema.default("timed"),
   scoringMode: ScoringModeSchema,
   resultVisibility: ResultVisibilitySchema,
   allowLateJoin: z.boolean(),
@@ -2275,6 +2280,7 @@ const ReportBaseShape = {
   id: z.string().uuid(),
   sessionId: z.string().uuid(),
   trustMode: TrustModeSchema.default("learning"),
+  timeMode: RoundTimeModeSchema.default("timed"),
   status: z.enum(["pending", "ready", "failed"]),
   generatedAt: z.string().datetime().nullable(),
   expiresAt: z.string().datetime(),
@@ -3605,6 +3611,7 @@ export type PresentationCommand = z.infer<typeof PresentationCommandSchema>;
 
 export const CreatePresentationSessionSchema = z.object({
   presentationId: z.string().uuid(),
+  timeMode: PresentationTimeModeSchema.default("timed"),
 });
 
 export const AdvancePresentationSessionSchema = z.object({
@@ -3879,3 +3886,12 @@ export const PresentationReportEnvelopeSchema = z
     }
   });
 export type PresentationReportEnvelope = z.infer<typeof PresentationReportEnvelopeSchema>;
+
+/** Opt-in session context keeps the persisted V1 report and original REST envelope unchanged. */
+export const PresentationReportWithSessionContextEnvelopeSchema =
+  PresentationReportEnvelopeSchema.safeExtend({
+    sessionContext: z.object({ timeMode: PresentationTimeModeSchema }).strict(),
+  });
+export type PresentationReportWithSessionContextEnvelope = z.infer<
+  typeof PresentationReportWithSessionContextEnvelopeSchema
+>;

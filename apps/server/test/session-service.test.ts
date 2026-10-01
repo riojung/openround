@@ -183,6 +183,64 @@ afterEach(() => {
 });
 
 describe("session service ordering", () => {
+  it("gates new flex rooms while keeping existing rooms readable after the flag is disabled", async () => {
+    const { repository, cache, service, creator, quizId } = await hostedRoundFixture();
+    const settings = {
+      audienceLimit: 20,
+      timeMode: "flex" as const,
+      scoringMode: "speed" as const,
+      resultVisibility: "private" as const,
+      allowLateJoin: true,
+      nicknamePolicy: "custom" as const,
+    };
+    await expect(service.createSession(creator, quizId, settings)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    const enabledConfig = ConfigSchema.parse({
+      NODE_ENV: "test",
+      ALLOW_IN_MEMORY: "true",
+      COMMUNITY_MODE: "false",
+      WEB_ORIGIN: "http://localhost:3000",
+      PUBLIC_API_URL: "http://localhost:4000",
+      LOG_LEVEL: "silent",
+      FEATURE_LIVE_FLEX_MODE: "true",
+      EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: creator.workspaceId,
+    });
+    const enabled = new SessionService(repository, cache, enabledConfig, new MetricsService());
+    const hosted = await enabled.createSession(creator, quizId, settings);
+    expect(hosted.snapshot.settings).toMatchObject({
+      timeMode: "flex",
+      scoringMode: "accuracy",
+    });
+    const started = await enabled.hostCommand({
+      sessionId: hosted.sessionId,
+      hostToken: hosted.hostToken,
+      commandId: randomUUID(),
+      expectedVersion: hosted.snapshot.version,
+      action: "start",
+    });
+    expect(started.deadline).toBeNull();
+    expect(
+      (enabled as unknown as { timers: Map<string, unknown> }).timers.has(hosted.sessionId),
+    ).toBe(false);
+    const disabled = new SessionService(repository, cache, config, new MetricsService());
+    expect(
+      await disabled.snapshot({ sessionId: hosted.sessionId, hostToken: hosted.hostToken }),
+    ).toMatchObject({ settings: { timeMode: "flex" }, deadline: null });
+    expect(
+      await disabled.hostCommand({
+        sessionId: hosted.sessionId,
+        hostToken: hosted.hostToken,
+        commandId: randomUUID(),
+        expectedVersion: started.version,
+        action: "lock",
+      }),
+    ).toMatchObject({ phase: "question_locked", settings: { timeMode: "flex" } });
+    enabled.close();
+    disabled.close();
+    service.close();
+  });
+
   it("reserves PostgreSQL capacity while synchronized rooms commit answers", async () => {
     const service = new SessionService(
       new MemoryRepository(),

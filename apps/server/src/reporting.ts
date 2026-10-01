@@ -40,6 +40,7 @@ function stateEvidence(state: GameState): SessionEvidence {
 function emptyReportFields(state: GameState) {
   return {
     trustMode: state.settings.trustMode ?? "learning",
+    timeMode: state.settings.timeMode ?? "timed",
     metrics: {
       participantCount: Object.values(state.participants).filter(
         (participant) => !participant.kicked,
@@ -342,6 +343,8 @@ export function generateReport(
   return {
     id: options.id ?? randomUUID(),
     sessionId: state.sessionId,
+    trustMode: state.settings.trustMode ?? "learning",
+    timeMode: state.settings.timeMode ?? "timed",
     schemaVersion: 3,
     status: "ready",
     generatedAt: (options.generatedAt ?? new Date()).toISOString(),
@@ -443,6 +446,8 @@ export function reportCsv(report: Report): string {
       participant.correctCount,
       participant.answerCount,
     ]),
+    [],
+    ["time_mode", report.timeMode ?? "timed"],
   ];
   if (report.schemaVersion === 2 || report.schemaVersion === 3) {
     rows.push(

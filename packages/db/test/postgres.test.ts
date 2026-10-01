@@ -4899,6 +4899,40 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       }),
     ).toBe(true);
     expect(await repository.getPlan(first.workspaceId)).toBe("pro");
+
+    const flexSessionId = randomUUID();
+    const flexLobby = createGameState({
+      sessionId: flexSessionId,
+      code: String(randomInt(1_000_000, 10_000_000)),
+      quiz: firstVersion.content,
+      settings: {
+        audienceLimit: 20,
+        timeMode: "flex",
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    const flexStoredSession = {
+      ...persistedSession,
+      id: flexSessionId,
+      hostTokenHash: randomUUID(),
+      state: flexLobby,
+    };
+    await repository.createSession(flexStoredSession);
+    const flexOpened = applyHostCommand(flexLobby, {
+      commandId: randomUUID(),
+      expectedVersion: flexLobby.version,
+      action: "start",
+      nowMs: Date.now(),
+      newRoundId: randomUUID,
+    }).state;
+    flexStoredSession.state = flexOpened;
+    await repository.saveSession(flexStoredSession, flexLobby.version);
+    expect(await repository.getSessionEvidence(first.workspaceId, flexSessionId)).toMatchObject({
+      rounds: [{ id: flexOpened.roundId, deadlineMs: null }],
+    });
   });
 
   it("atomically provisions and audits one synthetic capacity workspace", async () => {
