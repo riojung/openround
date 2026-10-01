@@ -1379,6 +1379,7 @@ export default function QuizEditorPage() {
                 />
                 <QuestionHealthPanel
                   key={id}
+                  canEdit={canEdit}
                   currentDraftRevision={serverRevision.current}
                   draftSaved={
                     saveState === "saved" &&

@@ -24,6 +24,8 @@ CREATE INDEX IF NOT EXISTS question_health_dismissals_quiz_idx
 ALTER TABLE question_health_dismissals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE question_health_dismissals FORCE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS question_health_dismissals_workspace_isolation
+  ON question_health_dismissals;
 CREATE POLICY question_health_dismissals_workspace_isolation
   ON question_health_dismissals
   USING (

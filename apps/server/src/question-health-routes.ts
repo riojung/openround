@@ -33,6 +33,7 @@ async function currentQuestionHealth(
   repository: Repository,
   workspaceId: string,
   quizId: string,
+  includeFindingIds?: ReadonlySet<string>,
 ): Promise<
   | {
       status: "ok";
@@ -47,7 +48,11 @@ async function currentQuestionHealth(
   const draft = QuizDraftSchema.safeParse(quiz.draft);
   if (!draft.success) return { status: "invalid_draft" };
   const draftRevision = quiz.draftRevision ?? 0;
-  const result = await evaluateQuestionHealth(draft.data, { quizId: quiz.id, draftRevision });
+  const result = await evaluateQuestionHealth(draft.data, {
+    quizId: quiz.id,
+    draftRevision,
+    includeFindingIds,
+  });
   return { status: "ok", draftRevision, result };
 }
 
@@ -85,13 +90,16 @@ export async function registerQuestionHealthRoutes(
     const enabled = evidenceWorkspaceFeatureEnabled(config, creator.workspaceId, "questionHealth");
 
     const { id } = IdParamsSchema.parse(request.params);
-    const savedDismissals = enabled
-      ? null
-      : await repository.listQuestionHealthDismissals(creator.workspaceId, id);
-    if (savedDismissals?.length === 0) {
+    const stored = await repository.listQuestionHealthDismissals(creator.workspaceId, id);
+    if (!enabled && stored.length === 0) {
       return apiError(reply, 404, "NOT_FOUND", "Question Health is not available", request.id);
     }
-    const current = await currentQuestionHealth(repository, creator.workspaceId, id);
+    const current = await currentQuestionHealth(
+      repository,
+      creator.workspaceId,
+      id,
+      new Set(stored.map((dismissal) => dismissal.findingId)),
+    );
     if (current.status === "not_found") {
       return apiError(reply, 404, "NOT_FOUND", "Round not found", request.id);
     }
@@ -108,8 +116,6 @@ export async function registerQuestionHealthRoutes(
       );
     }
 
-    const stored =
-      savedDismissals ?? (await repository.listQuestionHealthDismissals(creator.workspaceId, id));
     const dismissals = stored
       .filter((dismissal) =>
         current.result.findings.some((finding) => dismissalMatchesFinding(dismissal, finding)),
@@ -228,7 +234,12 @@ export async function registerQuestionHealthRoutes(
 
     const { id, findingId } = DismissalParamsSchema.parse(request.params);
     const input = DismissalRemovalBodySchema.parse(request.body);
-    const current = await currentQuestionHealth(repository, creator.workspaceId, id);
+    const current = await currentQuestionHealth(
+      repository,
+      creator.workspaceId,
+      id,
+      new Set([findingId]),
+    );
     if (current.status === "not_found") {
       return apiError(reply, 404, "NOT_FOUND", "Round not found", request.id);
     }

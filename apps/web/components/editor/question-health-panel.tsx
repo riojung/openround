@@ -32,11 +32,13 @@ const dismissalReasonLabels: Record<QuestionHealthDismissalReason, string> = {
 
 export function QuestionHealthPanel({
   quizId,
+  canEdit,
   currentDraftRevision,
   draftSaved,
   featureEnabled = true,
 }: {
   quizId: string;
+  canEdit: boolean;
   currentDraftRevision: number;
   draftSaved: boolean;
   featureEnabled?: boolean;
@@ -111,7 +113,7 @@ export function QuestionHealthPanel({
   }
 
   async function dismissFinding(finding: QuestionHealthFinding) {
-    if (!featureEnabled) return;
+    if (!canEdit || !featureEnabled) return;
     const reason = selectedReasons[finding.id];
     if (!reason) return;
     setSavingFindingId(finding.id);
@@ -139,6 +141,7 @@ export function QuestionHealthPanel({
   }
 
   async function reopenFinding(dismissal: QuestionHealthDismissal) {
+    if (!canEdit) return;
     setSavingFindingId(dismissal.findingId);
     setError("");
     try {
@@ -173,7 +176,9 @@ export function QuestionHealthPanel({
         <p className={styles.description}>
           {featureEnabled
             ? "Review deterministic writing checks on the saved draft. These suggestions do not block publishing and never change question content."
-            : "These saved dismissals remain available for review and reopening. New Question Health reviews are currently unavailable."}
+            : canEdit
+              ? "These saved dismissals remain available for review and reopening. New Question Health reviews are currently unavailable."
+              : "These saved dismissals remain available for review. New Question Health reviews are currently unavailable."}
         </p>
         <button
           className="button-secondary small-button"
@@ -237,40 +242,42 @@ export function QuestionHealthPanel({
                           {finding.recommendedAction}
                         </p>
                         <small>{finding.fieldPath}</small>
-                        <div className={styles.dismissControls}>
-                          <label htmlFor={`dismiss-reason-${finding.id}`}>Dismiss reason</label>
-                          <select
-                            id={`dismiss-reason-${finding.id}`}
-                            value={selectedReasons[finding.id] ?? ""}
-                            disabled={stale || Boolean(savingFindingId)}
-                            onChange={(event) => {
-                              const parsed = QuestionHealthDismissalReasonSchema.safeParse(
-                                event.target.value,
-                              );
-                              setSelectedReasons((current) => ({
-                                ...current,
-                                [finding.id]: parsed.success ? parsed.data : "",
-                              }));
-                            }}
-                          >
-                            <option value="">Choose a reason</option>
-                            {QuestionHealthDismissalReasonSchema.options.map((reason) => (
-                              <option key={reason} value={reason}>
-                                {dismissalReasonLabels[reason]}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            className="button-secondary small-button"
-                            type="button"
-                            disabled={
-                              stale || Boolean(savingFindingId) || !selectedReasons[finding.id]
-                            }
-                            onClick={() => void dismissFinding(finding)}
-                          >
-                            {savingFindingId === finding.id ? "Saving…" : "Dismiss finding"}
-                          </button>
-                        </div>
+                        {canEdit ? (
+                          <div className={styles.dismissControls}>
+                            <label htmlFor={`dismiss-reason-${finding.id}`}>Dismiss reason</label>
+                            <select
+                              id={`dismiss-reason-${finding.id}`}
+                              value={selectedReasons[finding.id] ?? ""}
+                              disabled={stale || Boolean(savingFindingId)}
+                              onChange={(event) => {
+                                const parsed = QuestionHealthDismissalReasonSchema.safeParse(
+                                  event.target.value,
+                                );
+                                setSelectedReasons((current) => ({
+                                  ...current,
+                                  [finding.id]: parsed.success ? parsed.data : "",
+                                }));
+                              }}
+                            >
+                              <option value="">Choose a reason</option>
+                              {QuestionHealthDismissalReasonSchema.options.map((reason) => (
+                                <option key={reason} value={reason}>
+                                  {dismissalReasonLabels[reason]}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              className="button-secondary small-button"
+                              type="button"
+                              disabled={
+                                stale || Boolean(savingFindingId) || !selectedReasons[finding.id]
+                              }
+                              onClick={() => void dismissFinding(finding)}
+                            >
+                              {savingFindingId === finding.id ? "Saving…" : "Dismiss finding"}
+                            </button>
+                          </div>
+                        ) : null}
                       </li>
                     ))}
                   </ul>
@@ -292,14 +299,16 @@ export function QuestionHealthPanel({
                               <p>{finding.reason}</p>
                               <small>{dismissalReasonLabels[dismissal.reason]}</small>
                             </div>
-                            <button
-                              className="button-secondary small-button"
-                              type="button"
-                              disabled={stale || Boolean(savingFindingId)}
-                              onClick={() => void reopenFinding(dismissal)}
-                            >
-                              {savingFindingId === finding.id ? "Saving…" : "Reopen finding"}
-                            </button>
+                            {canEdit ? (
+                              <button
+                                className="button-secondary small-button"
+                                type="button"
+                                disabled={stale || Boolean(savingFindingId)}
+                                onClick={() => void reopenFinding(dismissal)}
+                              >
+                                {savingFindingId === finding.id ? "Saving…" : "Reopen finding"}
+                              </button>
+                            ) : null}
                           </li>
                         );
                       })}

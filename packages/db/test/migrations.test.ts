@@ -158,5 +158,13 @@ describe("database migration discovery", () => {
       "'false_positive', 'intentional_choice', 'will_address_later'",
     );
     expect(migration?.sql).toContain("content_hash char(64) NOT NULL CHECK");
+    const dropPolicy = migration!.sql.indexOf(
+      "DROP POLICY IF EXISTS question_health_dismissals_workspace_isolation",
+    );
+    const createPolicy = migration!.sql.indexOf(
+      "CREATE POLICY question_health_dismissals_workspace_isolation",
+    );
+    expect(dropPolicy).toBeGreaterThan(-1);
+    expect(createPolicy).toBeGreaterThan(dropPolicy);
   });
 });
