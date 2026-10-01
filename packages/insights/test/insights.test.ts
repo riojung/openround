@@ -171,4 +171,54 @@ describe("production Question Health evaluator", () => {
     expect(result.findings).toHaveLength(QUESTION_HEALTH_MAX_FINDINGS);
     expect(result.findingsTruncated).toBe(true);
   });
+
+  it("keeps a saved finding in the bounded result after earlier questions are inserted", async () => {
+    const quizId = randomUUID();
+    const target: QuestionDraft = { ...question, id: randomUUID() };
+    const original = await evaluateQuestionHealth(
+      { title: "Saved finding", description: "", questions: [target] },
+      { quizId, draftRevision: 1 },
+    );
+    const saved = original.findings.find(
+      (finding) => finding.ruleId === "question.missing_citation",
+    )!;
+    const precedingQuestion: QuestionDraft = {
+      ...question,
+      choices: Array.from({ length: 6 }, (_, index) => ({
+        id: randomUUID(),
+        label: `Option ${index}`,
+        isCorrect: index === 0,
+      })),
+    };
+    const draft: QuizDraft = {
+      title: "Saved finding after insertion",
+      description: "",
+      questions: [
+        ...Array.from({ length: 145 }, (_, index) => ({
+          ...precedingQuestion,
+          id: randomUUID(),
+          prompt: `Earlier question ${index}`,
+        })),
+        target,
+      ],
+    };
+
+    const normal = await evaluateQuestionHealth(draft, { quizId, draftRevision: 2 });
+    const prioritized = await evaluateQuestionHealth(draft, {
+      quizId,
+      draftRevision: 2,
+      includeFindingIds: new Set([saved.id]),
+    });
+
+    expect(normal.findings).toHaveLength(QUESTION_HEALTH_MAX_FINDINGS);
+    expect(normal.findings.some((finding) => finding.id === saved.id)).toBe(false);
+    expect(prioritized.findings).toHaveLength(QUESTION_HEALTH_MAX_FINDINGS);
+    expect(prioritized.findingsTruncated).toBe(true);
+    expect(prioritized.findings[0]).toMatchObject({
+      id: saved.id,
+      contentHash: saved.contentHash,
+      fieldPath: "questions.145.sourceCitations",
+    });
+    expect(prioritized.findings[1]?.id).toBe(normal.findings[0]?.id);
+  });
 });

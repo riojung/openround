@@ -12,6 +12,7 @@ import type {
   InstitutionContractStatus,
   InteractionSettings,
   ProductEvent,
+  QuestionHealthDismissalReason,
   QuizDraft,
   Report,
   ResponsePayload,
@@ -262,6 +263,32 @@ export interface QuizDraftHistoryRecord {
   mutationId: string | null;
   createdAt: Date;
 }
+
+export interface QuestionHealthDismissalRecord {
+  workspaceId: string;
+  quizId: string;
+  findingId: string;
+  ruleVersion: number;
+  rulesetVersion: string;
+  contentHash: string;
+  reason: QuestionHealthDismissalReason;
+  createdAt: Date;
+}
+
+export interface QuestionHealthDismissalWrite {
+  actorId: string;
+  workspaceId: string;
+  quizId: string;
+  findingId: string;
+  ruleVersion: number;
+  rulesetVersion: string;
+  contentHash: string;
+  reason: QuestionHealthDismissalReason;
+  expectedDraftRevision: number;
+  requestId: string;
+}
+
+export type QuestionHealthDismissalIdentity = Omit<QuestionHealthDismissalWrite, "reason">;
 
 export interface QuizDraftUpdate {
   workspaceId: string;
@@ -987,6 +1014,22 @@ export interface Repository {
     editorId?: string,
   ): Promise<QuizRecord | null>;
   updateQuizDraft(input: QuizDraftUpdate): Promise<QuizRecord | null>;
+  listQuestionHealthDismissals(
+    workspaceId: string,
+    quizId: string,
+  ): Promise<QuestionHealthDismissalRecord[]>;
+  putQuestionHealthDismissal(
+    input: QuestionHealthDismissalWrite,
+  ): Promise<
+    | { status: "ok"; dismissal: QuestionHealthDismissalRecord }
+    | { status: "not_found" }
+    | { status: "revision_conflict" }
+  >;
+  deleteQuestionHealthDismissal(
+    input: QuestionHealthDismissalIdentity,
+  ): Promise<
+    { status: "ok"; removed: boolean } | { status: "not_found" } | { status: "revision_conflict" }
+  >;
   listQuizDraftHistory(
     workspaceId: string,
     quizId: string,

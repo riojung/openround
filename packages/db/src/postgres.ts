@@ -84,6 +84,9 @@ import type {
   ParticipantSignalRecord,
   Plan,
   ProductEventRecord,
+  QuestionHealthDismissalIdentity,
+  QuestionHealthDismissalRecord,
+  QuestionHealthDismissalWrite,
   QnaQuestionRecord,
   QnaReplyRecord,
   QnaSettingsRecord,
@@ -262,6 +265,19 @@ function mapQuizDraftHistory(row: QueryResultRow): QuizDraftHistoryRecord {
     draftSchemaVersion,
     savedBy: row.saved_by ? String(row.saved_by) : null,
     mutationId: row.mutation_id ? String(row.mutation_id) : null,
+    createdAt: date(row.created_at),
+  };
+}
+
+function mapQuestionHealthDismissal(row: QueryResultRow): QuestionHealthDismissalRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    quizId: String(row.quiz_id),
+    findingId: String(row.finding_id),
+    ruleVersion: Number(row.rule_version),
+    rulesetVersion: String(row.ruleset_version),
+    contentHash: String(row.content_hash).trim(),
+    reason: row.reason,
     createdAt: date(row.created_at),
   };
 }
@@ -1986,6 +2002,135 @@ export class PostgresRepository implements Repository {
         );
         await this.pruneQuizDraftHistory(client, input.workspaceId, input.quizId);
         return saved;
+      },
+      { workspaceId: input.workspaceId },
+    );
+  }
+
+  async listQuestionHealthDismissals(workspaceId: string, quizId: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT * FROM question_health_dismissals
+       WHERE workspace_id = $1 AND quiz_id = $2
+       ORDER BY created_at DESC, finding_id`,
+      [workspaceId, quizId],
+    );
+    return result.rows.map(mapQuestionHealthDismissal);
+  }
+
+  async putQuestionHealthDismissal(input: QuestionHealthDismissalWrite) {
+    return this.transaction(
+      async (client) => {
+        const quiz = await client.query(
+          `SELECT draft_revision FROM quizzes
+           WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+          [input.workspaceId, input.quizId],
+        );
+        if (!quiz.rows[0]) return { status: "not_found" as const };
+        if (Number(quiz.rows[0].draft_revision) !== input.expectedDraftRevision) {
+          return { status: "revision_conflict" as const };
+        }
+
+        await client.query(
+          `DELETE FROM question_health_dismissals
+           WHERE workspace_id = $1 AND quiz_id = $2 AND finding_id = $3`,
+          [input.workspaceId, input.quizId, input.findingId],
+        );
+        const result = await client.query(
+          `INSERT INTO question_health_dismissals
+             (workspace_id, quiz_id, finding_id, rule_version, ruleset_version,
+              content_hash, reason)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (workspace_id, quiz_id, finding_id, rule_version,
+                        ruleset_version, content_hash)
+           DO UPDATE SET reason = EXCLUDED.reason, created_at = now()
+           RETURNING *`,
+          [
+            input.workspaceId,
+            input.quizId,
+            input.findingId,
+            input.ruleVersion,
+            input.rulesetVersion,
+            input.contentHash,
+            input.reason,
+          ],
+        );
+        await client.query(
+          `INSERT INTO audit_events
+             (id, workspace_id, actor_id, action, target_type, target_id, request_id, metadata)
+           VALUES ($1, $2, $3, 'question_health.dismissal.create',
+                   'question_health_dismissal', $4, $5, $6::jsonb)`,
+          [
+            randomUUID(),
+            input.workspaceId,
+            input.actorId,
+            input.findingId,
+            input.requestId,
+            JSON.stringify({
+              quizId: input.quizId,
+              findingId: input.findingId,
+              ruleVersion: input.ruleVersion,
+              rulesetVersion: input.rulesetVersion,
+              contentHash: input.contentHash,
+              reason: input.reason,
+            }),
+          ],
+        );
+        return { status: "ok" as const, dismissal: mapQuestionHealthDismissal(result.rows[0]!) };
+      },
+      { workspaceId: input.workspaceId },
+    );
+  }
+
+  async deleteQuestionHealthDismissal(input: QuestionHealthDismissalIdentity) {
+    return this.transaction(
+      async (client) => {
+        const quiz = await client.query(
+          `SELECT draft_revision FROM quizzes
+           WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+          [input.workspaceId, input.quizId],
+        );
+        if (!quiz.rows[0]) return { status: "not_found" as const };
+        if (Number(quiz.rows[0].draft_revision) !== input.expectedDraftRevision) {
+          return { status: "revision_conflict" as const };
+        }
+        const deleted = await client.query(
+          `DELETE FROM question_health_dismissals
+           WHERE workspace_id = $1 AND quiz_id = $2 AND finding_id = $3
+             AND rule_version = $4 AND ruleset_version = $5 AND content_hash = $6
+           RETURNING finding_id`,
+          [
+            input.workspaceId,
+            input.quizId,
+            input.findingId,
+            input.ruleVersion,
+            input.rulesetVersion,
+            input.contentHash,
+          ],
+        );
+        if (deleted.rowCount) {
+          await client.query(
+            `INSERT INTO audit_events
+               (id, workspace_id, actor_id, action, target_type, target_id, request_id, metadata)
+             VALUES ($1, $2, $3, 'question_health.dismissal.delete',
+                     'question_health_dismissal', $4, $5, $6::jsonb)`,
+            [
+              randomUUID(),
+              input.workspaceId,
+              input.actorId,
+              input.findingId,
+              input.requestId,
+              JSON.stringify({
+                quizId: input.quizId,
+                findingId: input.findingId,
+                ruleVersion: input.ruleVersion,
+                rulesetVersion: input.rulesetVersion,
+                contentHash: input.contentHash,
+              }),
+            ],
+          );
+        }
+        return { status: "ok" as const, removed: Boolean(deleted.rowCount) };
       },
       { workspaceId: input.workspaceId },
     );
@@ -6306,6 +6451,12 @@ export class PostgresRepository implements Repository {
            FROM quiz_draft_history WHERE workspace_id = ANY($1::uuid[])
            ORDER BY quiz_id, revision`,
         );
+        const questionHealthDismissals = await queryWorkspaceData(
+          `SELECT workspace_id, quiz_id, finding_id, rule_version, ruleset_version,
+                  content_hash, reason, created_at
+           FROM question_health_dismissals WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY workspace_id, quiz_id, finding_id`,
+        );
         const folders = await queryWorkspaceData(
           `SELECT id, workspace_id, name, created_at, updated_at
            FROM folders WHERE workspace_id = ANY($1::uuid[]) ORDER BY workspace_id, lower(name), id`,
@@ -6594,6 +6745,7 @@ export class PostgresRepository implements Repository {
               Number(row.draft_schema_version ?? ROUND_DRAFT_SCHEMA_VERSION),
             ),
           })),
+          questionHealthDismissals: questionHealthDismissals.rows,
           quizVersions: quizVersions.rows.map((row) => ({
             ...row,
             content: upcastRoundContent(

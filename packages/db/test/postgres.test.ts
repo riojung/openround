@@ -199,7 +199,7 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
           verificationClient.query<{ count: string; maximum: number }>(
             "SELECT count(*) AS count, max(version) AS maximum FROM _openround_migrations",
           ),
-        ).resolves.toMatchObject({ rows: [{ count: "44", maximum: 44 }] });
+        ).resolves.toMatchObject({ rows: [{ count: "45", maximum: 45 }] });
 
         await expect(
           verificationClient.query(
@@ -725,6 +725,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 42, name: "workspace_deletion_cleanup" },
       { version: 43, name: "bounded_media_object_cleanup" },
       { version: 44, name: "round_flex_deadlines" },
+      { version: 45, name: "question_health_dismissals" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -734,7 +735,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("44");
+    expect(bootstrapped.rows[0]?.count).toBe("45");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -1610,6 +1611,62 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       profile: { locale: "zh-TW", localePreferenceSet: true },
     });
     await expect(repository.updateUserLocale(randomUUID(), "de-DE")).resolves.toBeNull();
+  });
+
+  it("persists tenant-scoped, revision-fenced Question Health dismissals in account exports", async () => {
+    const owner = await creator("question-health-dismissal");
+    const other = await creator("question-health-dismissal-other");
+    const now = new Date();
+    const draft = publishableRound("Dismissal persistence");
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const dismissalInput = {
+      actorId: owner.userId,
+      workspaceId: owner.workspaceId,
+      quizId: quiz.id,
+      findingId: "qh-1.0.0-question.missing_citation-question-field",
+      ruleVersion: 1,
+      rulesetVersion: "1.0.0",
+      contentHash: "a".repeat(64),
+      reason: "intentional_choice" as const,
+      expectedDraftRevision: 0,
+      requestId: randomUUID(),
+    };
+
+    const saved = await repository.putQuestionHealthDismissal(dismissalInput);
+    expect(saved.status).toBe("ok");
+    expect(await repository.listQuestionHealthDismissals(owner.workspaceId, quiz.id)).toHaveLength(
+      1,
+    );
+    expect(await repository.listQuestionHealthDismissals(other.workspaceId, quiz.id)).toEqual([]);
+    expect(
+      await repository.putQuestionHealthDismissal({
+        ...dismissalInput,
+        expectedDraftRevision: 1,
+      }),
+    ).toEqual({ status: "revision_conflict" });
+
+    const accountExport = (await repository.exportAccount(owner.userId)) as {
+      questionHealthDismissals?: Array<{ quiz_id: string; reason: string }>;
+    };
+    expect(accountExport.questionHealthDismissals).toEqual([
+      expect.objectContaining({ quiz_id: quiz.id, reason: "intentional_choice" }),
+    ]);
+
+    expect(await repository.deleteQuestionHealthDismissal(dismissalInput)).toEqual({
+      status: "ok",
+      removed: true,
+    });
+    expect(await repository.listQuestionHealthDismissals(owner.workspaceId, quiz.id)).toEqual([]);
   });
 
   it("atomically fences draft replacements and revision-bound publishing", async () => {

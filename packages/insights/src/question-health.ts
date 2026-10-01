@@ -344,7 +344,7 @@ function findingId(finding: FindingDraft) {
  */
 export async function evaluateQuestionHealth(
   quiz: QuizDraft,
-  options: { quizId: string; draftRevision: number },
+  options: { quizId: string; draftRevision: number; includeFindingIds?: ReadonlySet<string> },
 ): Promise<QuestionHealthResult> {
   const questionHashes = await Promise.all(
     quiz.questions.map((question) => sha256(questionContent(question))),
@@ -353,7 +353,18 @@ export async function evaluateQuestionHealth(
     ...quiz.questions.flatMap((question, index) => questionFindings(question, index)),
     ...recheckFindings(quiz),
   ];
-  const selected = drafts.slice(0, QUESTION_HEALTH_MAX_FINDINGS);
+  const included = options.includeFindingIds;
+  const selected = included?.size
+    ? drafts
+        .filter((draft) => included.has(findingId(draft)))
+        .slice(0, QUESTION_HEALTH_MAX_FINDINGS)
+    : drafts.slice(0, QUESTION_HEALTH_MAX_FINDINGS);
+  if (included?.size && selected.length < QUESTION_HEALTH_MAX_FINDINGS) {
+    for (const draft of drafts) {
+      if (selected.length === QUESTION_HEALTH_MAX_FINDINGS) break;
+      if (!included.has(findingId(draft))) selected.push(draft);
+    }
+  }
   const pairHashes = new Map<string, Promise<string>>();
   const findings: QuestionHealthFinding[] = await Promise.all(
     selected.map(async (draft) => {
@@ -393,5 +404,6 @@ export async function evaluateQuestionHealth(
     evaluatedQuestionCount: quiz.questions.length,
     findings,
     findingsTruncated: drafts.length > selected.length,
+    dismissals: [],
   };
 }

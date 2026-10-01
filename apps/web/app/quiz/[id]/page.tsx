@@ -1377,17 +1377,18 @@ export default function QuizEditorPage() {
                   issues={readinessIssues}
                   onSelectIssue={focusReadinessIssue}
                 />
-                {productFeatures?.questionHealth ? (
-                  <QuestionHealthPanel
-                    currentDraftRevision={serverRevision.current}
-                    draftSaved={
-                      saveState === "saved" &&
-                      !saveConflict &&
-                      JSON.stringify(draft) === lastSavedJson.current
-                    }
-                    quizId={id}
-                  />
-                ) : null}
+                <QuestionHealthPanel
+                  key={id}
+                  canEdit={canEdit}
+                  currentDraftRevision={serverRevision.current}
+                  draftSaved={
+                    saveState === "saved" &&
+                    !saveConflict &&
+                    JSON.stringify(draft) === lastSavedJson.current
+                  }
+                  featureEnabled={Boolean(productFeatures?.questionHealth)}
+                  quizId={id}
+                />
                 <section
                   aria-label={t("delivery.builder.question", { number: selectedIndex + 1 })}
                   className={builderStyles.canvas}

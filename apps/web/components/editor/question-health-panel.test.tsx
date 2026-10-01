@@ -5,7 +5,7 @@ import { QuestionHealthPanel } from "./question-health-panel";
 describe("Question Health panel", () => {
   it("explains its advisory, saved-draft-only behavior and disables stale analysis", () => {
     const markup = renderToStaticMarkup(
-      <QuestionHealthPanel quizId="round-id" currentDraftRevision={4} draftSaved={false} />,
+      <QuestionHealthPanel canEdit quizId="round-id" currentDraftRevision={4} draftSaved={false} />,
     );
 
     expect(markup).toContain("Question Health · advisory");

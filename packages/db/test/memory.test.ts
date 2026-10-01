@@ -963,6 +963,54 @@ describe("memory repository", () => {
     expect(await repository.consumeMagicToken(tokenHash, new Date())).toBeNull();
   });
 
+  it("exports and deletes content-addressed Question Health dismissals with the source workspace", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date();
+    const tokenHash = `question-health-export-${randomUUID()}`;
+    await repository.createMagicToken({
+      id: randomUUID(),
+      email: `question-health-export-${randomUUID()}@example.com`,
+      segment: "education",
+      tokenHash,
+      policyVersion: "test-v1",
+      expiresAt: new Date(now.getTime() + 60_000),
+      consumedAt: null,
+    });
+    const owner = await repository.consumeMagicToken(tokenHash, now);
+    expect(owner).not.toBeNull();
+    const draft = publishableRound("Question Health export");
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner!.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await repository.putQuestionHealthDismissal({
+      actorId: owner!.userId,
+      workspaceId: owner!.workspaceId,
+      quizId: quiz.id,
+      findingId: "qh-1.0.0-question.missing_citation-item-sourceCitations",
+      ruleVersion: 1,
+      rulesetVersion: "1.0.0",
+      contentHash: "b".repeat(64),
+      reason: "will_address_later",
+      expectedDraftRevision: 0,
+      requestId: randomUUID(),
+    });
+
+    const exported = await repository.exportAccount(owner!.userId);
+    expect(exported.questionHealthDismissals).toMatchObject([
+      expect.objectContaining({ quizId: quiz.id, reason: "will_address_later" }),
+    ]);
+    await repository.deleteAccount(owner!.userId);
+    expect(await repository.listQuestionHealthDismissals(owner!.workspaceId, quiz.id)).toEqual([]);
+  });
+
   it("defaults legacy report trust mode in account exports", async () => {
     const repository = new MemoryRepository();
     const now = new Date("2026-09-23T12:00:00.000Z");
