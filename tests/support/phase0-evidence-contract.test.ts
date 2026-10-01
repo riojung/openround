@@ -72,7 +72,9 @@ describe("Phase 0 evidence contract", () => {
       13,
     );
     expect(status).toMatch(/Phase 0 exit remains open with thirteen gates/);
-    expect(plan).toMatch(/thirteen gates remain, primarily awaiting external or human evidence/);
+    expect(plan).toMatch(
+      /thirteen release-readiness gates remain, primarily awaiting external or human evidence/,
+    );
     expect(decision).toMatch(
       /Selected Phase 1 branch \(access\/companion\/measured failure\/pending\): Pending/,
     );
