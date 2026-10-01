@@ -587,6 +587,35 @@ export const QuestionHealthFindingSchema = z.object({
 });
 export type QuestionHealthFinding = z.infer<typeof QuestionHealthFindingSchema>;
 
+export const QuestionHealthDismissalReasonSchema = z.enum([
+  "false_positive",
+  "intentional_choice",
+  "will_address_later",
+]);
+export type QuestionHealthDismissalReason = z.infer<typeof QuestionHealthDismissalReasonSchema>;
+
+export const QuestionHealthDismissalSchema = z.object({
+  findingId: z.string().min(1).max(500),
+  ruleVersion: z.number().int().positive().max(99),
+  rulesetVersion: z.string().min(1).max(32),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  reason: QuestionHealthDismissalReasonSchema,
+  createdAt: z.string().datetime(),
+});
+export type QuestionHealthDismissal = z.infer<typeof QuestionHealthDismissalSchema>;
+
+export const QuestionHealthDismissalInputSchema = QuestionHealthDismissalSchema.omit({
+  findingId: true,
+  createdAt: true,
+}).extend({ draftRevision: z.number().int().nonnegative() });
+export type QuestionHealthDismissalInput = z.infer<typeof QuestionHealthDismissalInputSchema>;
+
+export const QuestionHealthDismissalIdentitySchema = QuestionHealthDismissalSchema.omit({
+  reason: true,
+  createdAt: true,
+}).extend({ draftRevision: z.number().int().nonnegative() });
+export type QuestionHealthDismissalIdentity = z.infer<typeof QuestionHealthDismissalIdentitySchema>;
+
 export const QuestionHealthResultSchema = z.object({
   quizId: z.string().uuid(),
   draftRevision: z.number().int().nonnegative(),
@@ -594,6 +623,7 @@ export const QuestionHealthResultSchema = z.object({
   evaluatedQuestionCount: z.number().int().nonnegative().max(200),
   findings: z.array(QuestionHealthFindingSchema).max(1_000),
   findingsTruncated: z.boolean(),
+  dismissals: z.array(QuestionHealthDismissalSchema).max(1_000).default([]),
 });
 export type QuestionHealthResult = z.infer<typeof QuestionHealthResultSchema>;
 

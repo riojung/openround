@@ -58,6 +58,9 @@ import type {
   ParticipantSignalRecord,
   Plan,
   ProductEventRecord,
+  QuestionHealthDismissalIdentity,
+  QuestionHealthDismissalRecord,
+  QuestionHealthDismissalWrite,
   QnaQuestionRecord,
   QnaReplyRecord,
   QnaSettingsRecord,
@@ -169,6 +172,22 @@ function normalizeQuizHistory(
   };
 }
 
+function questionHealthDismissalKey(
+  input: Pick<
+    QuestionHealthDismissalRecord,
+    "workspaceId" | "quizId" | "findingId" | "ruleVersion" | "rulesetVersion" | "contentHash"
+  >,
+) {
+  return JSON.stringify([
+    input.workspaceId,
+    input.quizId,
+    input.findingId,
+    input.ruleVersion,
+    input.rulesetVersion,
+    input.contentHash,
+  ]);
+}
+
 export interface MemoryRepositoryLifecycleContext {
   userId: string;
   ownedWorkspaceIds: ReadonlySet<string>;
@@ -187,6 +206,7 @@ export interface MemoryAccountExport extends Record<string, unknown> {
   workspaces?: unknown[];
   quizzes?: QuizRecord[];
   quizDraftHistory?: QuizDraftHistoryRecord[];
+  questionHealthDismissals?: QuestionHealthDismissalRecord[];
   mediaAssets?: MediaAssetRecord[];
   mediaReferences?: MediaReferenceRecord[];
   consentRecords?: ConsentRecord[];
@@ -217,6 +237,7 @@ export class MemoryRepository implements Repository {
   readonly quizzes = new Map<string, QuizRecord>();
   readonly quizDraftHistory = new Map<string, QuizDraftHistoryRecord>();
   readonly quizDraftMutations = new Map<string, QuizDraftMutationReceipt>();
+  readonly questionHealthDismissals = new Map<string, QuestionHealthDismissalRecord>();
   readonly folders = new Map<string, FolderRecord>();
   readonly versions = new Map<string, QuizVersionRecord>();
   readonly sessions = new Map<string, StoredSession>();
@@ -926,6 +947,86 @@ export class MemoryRepository implements Repository {
     );
     await this.pruneQuizDraftHistory(input.quizId, updatedAt);
     return structuredClone(normalizeQuizRecord(quiz));
+  }
+
+  async listQuestionHealthDismissals(workspaceId: string, quizId: string) {
+    return [...this.questionHealthDismissals.values()]
+      .filter((dismissal) => dismissal.workspaceId === workspaceId && dismissal.quizId === quizId)
+      .map((dismissal) => structuredClone(dismissal));
+  }
+
+  async putQuestionHealthDismissal(input: QuestionHealthDismissalWrite) {
+    const quiz = this.quizzes.get(input.quizId);
+    if (!quiz || quiz.workspaceId !== input.workspaceId) return { status: "not_found" as const };
+    if ((quiz.draftRevision ?? 0) !== input.expectedDraftRevision) {
+      return { status: "revision_conflict" as const };
+    }
+
+    // A changed content hash invalidates a prior dismissal for this same finding.
+    for (const [key, dismissal] of this.questionHealthDismissals) {
+      if (
+        dismissal.workspaceId === input.workspaceId &&
+        dismissal.quizId === input.quizId &&
+        dismissal.findingId === input.findingId
+      ) {
+        this.questionHealthDismissals.delete(key);
+      }
+    }
+    const dismissal: QuestionHealthDismissalRecord = {
+      workspaceId: input.workspaceId,
+      quizId: input.quizId,
+      findingId: input.findingId,
+      ruleVersion: input.ruleVersion,
+      rulesetVersion: input.rulesetVersion,
+      contentHash: input.contentHash,
+      reason: input.reason,
+      createdAt: new Date(),
+    };
+    this.questionHealthDismissals.set(questionHealthDismissalKey(dismissal), dismissal);
+    await this.recordAudit({
+      workspaceId: input.workspaceId,
+      actorId: input.actorId,
+      action: "question_health.dismissal.create",
+      targetType: "question_health_dismissal",
+      targetId: input.findingId,
+      requestId: input.requestId,
+      metadata: {
+        quizId: input.quizId,
+        findingId: input.findingId,
+        ruleVersion: input.ruleVersion,
+        rulesetVersion: input.rulesetVersion,
+        contentHash: input.contentHash,
+        reason: input.reason,
+      },
+    });
+    return { status: "ok" as const, dismissal: structuredClone(dismissal) };
+  }
+
+  async deleteQuestionHealthDismissal(input: QuestionHealthDismissalIdentity) {
+    const quiz = this.quizzes.get(input.quizId);
+    if (!quiz || quiz.workspaceId !== input.workspaceId) return { status: "not_found" as const };
+    if ((quiz.draftRevision ?? 0) !== input.expectedDraftRevision) {
+      return { status: "revision_conflict" as const };
+    }
+    const removed = this.questionHealthDismissals.delete(questionHealthDismissalKey(input));
+    if (removed) {
+      await this.recordAudit({
+        workspaceId: input.workspaceId,
+        actorId: input.actorId,
+        action: "question_health.dismissal.delete",
+        targetType: "question_health_dismissal",
+        targetId: input.findingId,
+        requestId: input.requestId,
+        metadata: {
+          quizId: input.quizId,
+          findingId: input.findingId,
+          ruleVersion: input.ruleVersion,
+          rulesetVersion: input.rulesetVersion,
+          contentHash: input.contentHash,
+        },
+      });
+    }
+    return { status: "ok" as const, removed };
   }
 
   private replayQuizDraftMutation(
@@ -4037,6 +4138,9 @@ export class MemoryRepository implements Repository {
         quizDraftHistory: [...this.quizDraftHistory.values()]
           .filter((snapshot) => ownedWorkspaceIds.has(snapshot.workspaceId))
           .map((snapshot) => structuredClone(normalizeQuizHistory(snapshot))),
+        questionHealthDismissals: [...this.questionHealthDismissals.values()]
+          .filter((dismissal) => ownedWorkspaceIds.has(dismissal.workspaceId))
+          .map((dismissal) => structuredClone(dismissal)),
         quizVersions: [...this.versions.values()]
           .filter((version) => ownedWorkspaceIds.has(version.workspaceId))
           .map((version) => structuredClone(normalizeQuizVersion(version))),
@@ -4168,6 +4272,9 @@ export class MemoryRepository implements Repository {
     }
     for (const [key, mutation] of this.quizDraftMutations) {
       if (ownedWorkspaceIds.has(mutation.workspaceId)) this.quizDraftMutations.delete(key);
+    }
+    for (const [key, dismissal] of this.questionHealthDismissals) {
+      if (ownedWorkspaceIds.has(dismissal.workspaceId)) this.questionHealthDismissals.delete(key);
     }
     for (const [id, folder] of this.folders) {
       if (ownedWorkspaceIds.has(folder.workspaceId)) this.folders.delete(id);

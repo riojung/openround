@@ -8,6 +8,8 @@ import { MemorySessionCache } from "../src/cache.js";
 import { ConfigSchema } from "../src/config.js";
 
 let app: FastifyInstance | undefined;
+let repository: MemoryRepository | undefined;
+let workspaceId: string | undefined;
 
 async function signIn(target: FastifyInstance, email: string) {
   const magic = await target.inject({
@@ -21,9 +23,9 @@ async function signIn(target: FastifyInstance, email: string) {
   return (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(";")[0]!;
 }
 
-async function build(questionHealthEnabled: boolean) {
-  const workspaceId = randomUUID();
-  const repository = new MemoryRepository({ initialWorkspaceId: workspaceId });
+async function build(questionHealthEnabled: boolean, allowlisted = true) {
+  workspaceId ??= randomUUID();
+  repository ??= new MemoryRepository({ initialWorkspaceId: workspaceId });
   const built = await buildApp(
     ConfigSchema.parse({
       NODE_ENV: "test",
@@ -34,7 +36,7 @@ async function build(questionHealthEnabled: boolean) {
       LOG_LEVEL: "silent",
       TEST_INITIAL_WORKSPACE_ID: workspaceId,
       FEATURE_QUESTION_HEALTH: String(questionHealthEnabled),
-      EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: workspaceId,
+      EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: allowlisted ? workspaceId : "",
     }),
     { repository, cache: new MemorySessionCache() },
   );
@@ -45,6 +47,8 @@ async function build(questionHealthEnabled: boolean) {
 afterEach(async () => {
   if (app) await app.close();
   app = undefined;
+  repository = undefined;
+  workspaceId = undefined;
 });
 
 describe("Question Health draft route", () => {
@@ -140,6 +144,78 @@ describe("Question Health draft route", () => {
     );
     expect(repeated.json()).toEqual(first.json());
 
+    const citationFinding = result.findings.find(
+      (finding) => finding.ruleId === "question.missing_citation",
+    )!;
+    const dismissalUrl = `/v1/quizzes/${quizId}/question-health/dismissals/${encodeURIComponent(citationFinding.id)}`;
+    const dismissed = await target.inject({
+      method: "PUT",
+      url: dismissalUrl,
+      headers: { cookie },
+      payload: {
+        draftRevision: result.draftRevision,
+        ruleVersion: citationFinding.ruleVersion,
+        rulesetVersion: citationFinding.rulesetVersion,
+        contentHash: citationFinding.contentHash,
+        reason: "intentional_choice",
+      },
+    });
+    expect(dismissed.statusCode).toBe(200);
+    expect(repository?.audits).toContainEqual(
+      expect.objectContaining({
+        action: "question_health.dismissal.create",
+        targetType: "question_health_dismissal",
+        targetId: citationFinding.id,
+      }),
+    );
+    const afterDismissal = QuestionHealthResultSchema.parse(
+      (
+        await target.inject({
+          method: "GET",
+          url: `/v1/quizzes/${quizId}/question-health`,
+          headers: { cookie },
+        })
+      ).json(),
+    );
+    expect(afterDismissal.dismissals).toMatchObject([
+      { findingId: citationFinding.id, reason: "intentional_choice" },
+    ]);
+
+    const reopened = await target.inject({
+      method: "DELETE",
+      url: dismissalUrl,
+      headers: { cookie },
+      payload: {
+        draftRevision: result.draftRevision,
+        ruleVersion: citationFinding.ruleVersion,
+        rulesetVersion: citationFinding.rulesetVersion,
+        contentHash: citationFinding.contentHash,
+      },
+    });
+    expect(reopened.statusCode).toBe(200);
+    expect(reopened.json()).toEqual({ removed: true });
+    expect(repository?.audits).toContainEqual(
+      expect.objectContaining({
+        action: "question_health.dismissal.delete",
+        targetType: "question_health_dismissal",
+        targetId: citationFinding.id,
+      }),
+    );
+
+    const dismissedAgain = await target.inject({
+      method: "PUT",
+      url: dismissalUrl,
+      headers: { cookie },
+      payload: {
+        draftRevision: result.draftRevision,
+        ruleVersion: citationFinding.ruleVersion,
+        rulesetVersion: citationFinding.rulesetVersion,
+        contentHash: citationFinding.contentHash,
+        reason: "intentional_choice",
+      },
+    });
+    expect(dismissedAgain.statusCode).toBe(200);
+
     const edited = await target.inject({
       method: "PATCH",
       url: `/v1/quizzes/${quizId}`,
@@ -166,5 +242,144 @@ describe("Question Health draft route", () => {
     expect(afterEditResponse.headers.etag).toBe('"draft-2"');
     expect(newCitation?.id).toBe(oldCitation?.id);
     expect(newCitation?.contentHash).not.toBe(oldCitation?.contentHash);
+    expect(afterEdit.dismissals).toEqual([]);
+
+    const staleDismissal = await target.inject({
+      method: "DELETE",
+      url: dismissalUrl,
+      headers: { cookie },
+      payload: {
+        draftRevision: result.draftRevision,
+        ruleVersion: citationFinding.ruleVersion,
+        rulesetVersion: citationFinding.rulesetVersion,
+        contentHash: citationFinding.contentHash,
+      },
+    });
+    expect(staleDismissal.statusCode).toBe(409);
   });
+
+  it.each([
+    { switchName: "deployment flag", enabled: false, allowlisted: true },
+    { switchName: "workspace allowlist", enabled: true, allowlisted: false },
+  ])(
+    "keeps existing dismissals readable and reopenable after the $switchName is disabled",
+    async ({ enabled, allowlisted }) => {
+      const target = await build(true);
+      const email = `question-health-toggle-${enabled}-${allowlisted}@example.com`;
+      const cookie = await signIn(target, email);
+      const created = await target.inject({
+        method: "POST",
+        url: "/v1/quizzes",
+        headers: { cookie },
+        payload: { title: "Toggle test", description: "" },
+      });
+      const quizId = created.json<{ quiz: { id: string } }>().quiz.id;
+      const draft = {
+        title: "Toggle test",
+        description: "",
+        questions: [
+          {
+            id: randomUUID(),
+            type: "single_select",
+            prompt: "Which option should be chosen?",
+            purpose: "diagnostic",
+            confidence: "off",
+            delivery: "main",
+            conceptKeys: ["safe.choice"],
+            linkedRecheckQuestionId: null,
+            choices: [
+              { id: randomUUID(), label: "The correct answer", isCorrect: true },
+              { id: randomUUID(), label: "A distractor", isCorrect: false },
+            ],
+            timeLimitSeconds: 30,
+            basePoints: 1_000,
+            explanation: "",
+            mediaId: null,
+            mediaAlt: null,
+          },
+        ],
+      };
+      const saved = await target.inject({
+        method: "PATCH",
+        url: `/v1/quizzes/${quizId}`,
+        headers: { cookie },
+        payload: { draft, expectedDraftRevision: 0 },
+      });
+      expect(saved.statusCode).toBe(200);
+      const result = QuestionHealthResultSchema.parse(
+        (
+          await target.inject({
+            method: "GET",
+            url: `/v1/quizzes/${quizId}/question-health`,
+            headers: { cookie },
+          })
+        ).json(),
+      );
+      const finding = result.findings.find(
+        (candidate) => candidate.ruleId === "question.missing_citation",
+      )!;
+      const dismissalUrl = `/v1/quizzes/${quizId}/question-health/dismissals/${encodeURIComponent(finding.id)}`;
+      const identity = {
+        draftRevision: result.draftRevision,
+        ruleVersion: finding.ruleVersion,
+        rulesetVersion: finding.rulesetVersion,
+        contentHash: finding.contentHash,
+      };
+      const dismissed = await target.inject({
+        method: "PUT",
+        url: dismissalUrl,
+        headers: { cookie },
+        payload: { ...identity, reason: "intentional_choice" },
+      });
+      expect(dismissed.statusCode).toBe(200);
+
+      await target.close();
+      app = undefined;
+      const disabled = await build(enabled, allowlisted);
+      const disabledCookie = await signIn(disabled, email);
+      const getUrl = `/v1/quizzes/${quizId}/question-health`;
+      const afterDisable = await disabled.inject({
+        method: "GET",
+        url: getUrl,
+        headers: { cookie: disabledCookie },
+      });
+      expect(afterDisable.statusCode).toBe(200);
+      const preserved = QuestionHealthResultSchema.parse(afterDisable.json());
+      expect(preserved.findings.map((item) => item.id)).toEqual([finding.id]);
+      expect(preserved.dismissals).toMatchObject([
+        { findingId: finding.id, reason: "intentional_choice" },
+      ]);
+
+      const blockedCreation = await disabled.inject({
+        method: "PUT",
+        url: dismissalUrl,
+        headers: { cookie: disabledCookie },
+        payload: { ...identity, reason: "false_positive" },
+      });
+      expect(blockedCreation.statusCode).toBe(404);
+
+      const staleRemoval = await disabled.inject({
+        method: "DELETE",
+        url: dismissalUrl,
+        headers: { cookie: disabledCookie },
+        payload: { ...identity, draftRevision: identity.draftRevision + 1 },
+      });
+      expect(staleRemoval.statusCode).toBe(409);
+
+      const reopened = await disabled.inject({
+        method: "DELETE",
+        url: dismissalUrl,
+        headers: { cookie: disabledCookie },
+        payload: identity,
+      });
+      expect(reopened.statusCode).toBe(200);
+      expect(reopened.json()).toEqual({ removed: true });
+      const afterReopen = await disabled.inject({
+        method: "GET",
+        url: getUrl,
+        headers: { cookie: disabledCookie },
+      });
+      expect(afterReopen.statusCode).toBe(404);
+    },
+  );
 });

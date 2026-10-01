@@ -1,8 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { QuestionHealthResultSchema, type QuestionHealthFinding } from "@openround/contracts";
-import { apiFetch, humanError } from "../../lib/api";
+import { useEffect, useState } from "react";
+import {
+  QuestionHealthDismissalReasonSchema,
+  QuestionHealthResultSchema,
+  type QuestionHealthDismissal,
+  type QuestionHealthDismissalReason,
+  type QuestionHealthFinding,
+} from "@openround/contracts";
+import { ApiClientError, apiFetch, humanError } from "../../lib/api";
 import styles from "./question-health-panel.module.css";
 
 const ruleLabels: Record<QuestionHealthFinding["ruleId"], string> = {
@@ -18,28 +24,85 @@ const ruleLabels: Record<QuestionHealthFinding["ruleId"], string> = {
   "recheck.concept_mismatch": "Recheck concept mismatch",
 };
 
+const dismissalReasonLabels: Record<QuestionHealthDismissalReason, string> = {
+  false_positive: "This finding does not apply",
+  intentional_choice: "This is intentional for this question",
+  will_address_later: "I will address this later",
+};
+
 export function QuestionHealthPanel({
   quizId,
   currentDraftRevision,
   draftSaved,
+  featureEnabled = true,
 }: {
   quizId: string;
   currentDraftRevision: number;
   draftSaved: boolean;
+  featureEnabled?: boolean;
 }) {
   const [result, setResult] = useState<ReturnType<typeof QuestionHealthResultSchema.parse> | null>(
     null,
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [savingFindingId, setSavingFindingId] = useState("");
+  const [hasSavedDismissal, setHasSavedDismissal] = useState(false);
+  const [selectedReasons, setSelectedReasons] = useState<
+    Record<string, QuestionHealthDismissalReason | "">
+  >({});
   const stale = Boolean(result && (!draftSaved || result.draftRevision !== currentDraftRevision));
+  const dismissalByFindingId = new Map(
+    result?.dismissals.map((dismissal) => [dismissal.findingId, dismissal]) ?? [],
+  );
+  const activeFindings = (result?.findings ?? []).filter(
+    (finding) => !dismissalByFindingId.has(finding.id),
+  );
+  const dismissedFindings = (result?.findings ?? []).filter((finding) =>
+    dismissalByFindingId.has(finding.id),
+  );
+
+  useEffect(() => {
+    if (featureEnabled) return;
+    let active = true;
+    void apiFetch<unknown>(`/v1/quizzes/${quizId}/question-health`)
+      .then((response) => QuestionHealthResultSchema.parse(response))
+      .then((saved) => {
+        if (!active) return;
+        setResult(saved);
+        setHasSavedDismissal(saved.dismissals.length > 0);
+      })
+      .catch(() => {
+        if (!active) return;
+        setResult(null);
+        setHasSavedDismissal(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [featureEnabled, quizId]);
+
+  async function fetchResult() {
+    try {
+      const response = await apiFetch<unknown>(`/v1/quizzes/${quizId}/question-health`);
+      const next = QuestionHealthResultSchema.parse(response);
+      setResult(next);
+      if (!featureEnabled) setHasSavedDismissal(next.dismissals.length > 0);
+    } catch (caught) {
+      if (!featureEnabled && caught instanceof ApiClientError && caught.status === 404) {
+        setResult(null);
+        setHasSavedDismissal(false);
+        return;
+      }
+      throw caught;
+    }
+  }
 
   async function reviewSavedDraft() {
     setLoading(true);
     setError("");
     try {
-      const response = await apiFetch<unknown>(`/v1/quizzes/${quizId}/question-health`);
-      setResult(QuestionHealthResultSchema.parse(response));
+      await fetchResult();
     } catch (caught) {
       setError(humanError(caught));
     } finally {
@@ -47,21 +110,84 @@ export function QuestionHealthPanel({
     }
   }
 
+  async function dismissFinding(finding: QuestionHealthFinding) {
+    if (!featureEnabled) return;
+    const reason = selectedReasons[finding.id];
+    if (!reason) return;
+    setSavingFindingId(finding.id);
+    setError("");
+    try {
+      await apiFetch<unknown>(
+        `/v1/quizzes/${quizId}/question-health/dismissals/${encodeURIComponent(finding.id)}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            draftRevision: result?.draftRevision,
+            ruleVersion: finding.ruleVersion,
+            rulesetVersion: finding.rulesetVersion,
+            contentHash: finding.contentHash,
+            reason,
+          }),
+        },
+      );
+      await fetchResult();
+    } catch (caught) {
+      setError(humanError(caught));
+    } finally {
+      setSavingFindingId("");
+    }
+  }
+
+  async function reopenFinding(dismissal: QuestionHealthDismissal) {
+    setSavingFindingId(dismissal.findingId);
+    setError("");
+    try {
+      await apiFetch<{ removed: boolean }>(
+        `/v1/quizzes/${quizId}/question-health/dismissals/${encodeURIComponent(dismissal.findingId)}`,
+        {
+          method: "DELETE",
+          body: JSON.stringify({
+            draftRevision: result?.draftRevision,
+            ruleVersion: dismissal.ruleVersion,
+            rulesetVersion: dismissal.rulesetVersion,
+            contentHash: dismissal.contentHash,
+          }),
+        },
+      );
+      await fetchResult();
+    } catch (caught) {
+      setError(humanError(caught));
+    } finally {
+      setSavingFindingId("");
+    }
+  }
+
+  if (!featureEnabled && !hasSavedDismissal) return null;
+
   return (
     <details className={styles.panel} lang="en-CA">
-      <summary>Question Health · advisory</summary>
+      <summary>
+        {featureEnabled ? "Question Health · advisory" : "Saved Question Health decisions"}
+      </summary>
       <div className={styles.content}>
         <p className={styles.description}>
-          Review deterministic writing checks on the saved draft. These suggestions do not block
-          publishing and never change question content.
+          {featureEnabled
+            ? "Review deterministic writing checks on the saved draft. These suggestions do not block publishing and never change question content."
+            : "These saved dismissals remain available for review and reopening. New Question Health reviews are currently unavailable."}
         </p>
         <button
           className="button-secondary small-button"
-          disabled={loading || !draftSaved}
+          disabled={loading || Boolean(savingFindingId) || !draftSaved}
           onClick={() => void reviewSavedDraft()}
           type="button"
         >
-          {loading ? "Reviewing…" : result ? "Review saved draft again" : "Review saved draft"}
+          {loading
+            ? "Reviewing…"
+            : featureEnabled
+              ? result
+                ? "Review saved draft again"
+                : "Review saved draft"
+              : "Refresh saved decisions"}
         </button>
         {!draftSaved ? (
           <p className={styles.status} role="status">
@@ -77,8 +203,10 @@ export function QuestionHealthPanel({
           <div className={styles.results}>
             <p className={styles.status} role="status">
               {stale
-                ? `These findings are for saved draft revision ${result.draftRevision}; review the current saved draft again.`
-                : `Reviewed saved draft revision ${result.draftRevision}.`}
+                ? `These findings are for saved draft revision ${result.draftRevision}; refresh after saving the current draft.`
+                : featureEnabled
+                  ? `Reviewed saved draft revision ${result.draftRevision}.`
+                  : `Saved decisions for draft revision ${result.draftRevision}.`}
             </p>
             {result.findings.length === 0 ? (
               <p>
@@ -87,29 +215,100 @@ export function QuestionHealthPanel({
             ) : (
               <>
                 <p className={styles.count}>
-                  {result.findings.length > 20
-                    ? result.findingsTruncated
-                      ? `Showing 20 of at least ${result.findings.length} findings.`
-                      : `Showing 20 of ${result.findings.length} findings.`
-                    : `${result.findings.length} advisory finding${result.findings.length === 1 ? "" : "s"}.`}
+                  {featureEnabled
+                    ? `${activeFindings.length} active advisory finding${activeFindings.length === 1 ? "" : "s"}; ${dismissedFindings.length} dismissed.`
+                    : `${dismissedFindings.length} saved dismissal${dismissedFindings.length === 1 ? "" : "s"}.`}
+                  {featureEnabled && result.findingsTruncated
+                    ? " Additional findings may be omitted."
+                    : ""}
                 </p>
-                <ul className={styles.findings}>
-                  {result.findings.slice(0, 20).map((finding) => (
-                    <li className={styles.finding} key={finding.id}>
-                      <strong>{ruleLabels[finding.ruleId]}</strong>
-                      <p>{finding.reason}</p>
-                      <p>
-                        <span>Evidence: </span>
-                        {finding.evidence}
-                      </p>
-                      <p>
-                        <span>Suggested action: </span>
-                        {finding.recommendedAction}
-                      </p>
-                      <small>{finding.fieldPath}</small>
-                    </li>
-                  ))}
-                </ul>
+                {featureEnabled && activeFindings.length > 0 ? (
+                  <ul className={styles.findings} aria-label="Active Question Health findings">
+                    {activeFindings.slice(0, 20).map((finding) => (
+                      <li className={styles.finding} key={finding.id}>
+                        <strong>{ruleLabels[finding.ruleId]}</strong>
+                        <p>{finding.reason}</p>
+                        <p>
+                          <span>Evidence: </span>
+                          {finding.evidence}
+                        </p>
+                        <p>
+                          <span>Suggested action: </span>
+                          {finding.recommendedAction}
+                        </p>
+                        <small>{finding.fieldPath}</small>
+                        <div className={styles.dismissControls}>
+                          <label htmlFor={`dismiss-reason-${finding.id}`}>Dismiss reason</label>
+                          <select
+                            id={`dismiss-reason-${finding.id}`}
+                            value={selectedReasons[finding.id] ?? ""}
+                            disabled={stale || Boolean(savingFindingId)}
+                            onChange={(event) => {
+                              const parsed = QuestionHealthDismissalReasonSchema.safeParse(
+                                event.target.value,
+                              );
+                              setSelectedReasons((current) => ({
+                                ...current,
+                                [finding.id]: parsed.success ? parsed.data : "",
+                              }));
+                            }}
+                          >
+                            <option value="">Choose a reason</option>
+                            {QuestionHealthDismissalReasonSchema.options.map((reason) => (
+                              <option key={reason} value={reason}>
+                                {dismissalReasonLabels[reason]}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            className="button-secondary small-button"
+                            type="button"
+                            disabled={
+                              stale || Boolean(savingFindingId) || !selectedReasons[finding.id]
+                            }
+                            onClick={() => void dismissFinding(finding)}
+                          >
+                            {savingFindingId === finding.id ? "Saving…" : "Dismiss finding"}
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {featureEnabled && activeFindings.length > 20 ? (
+                  <p className={styles.status}>Showing the first 20 active findings.</p>
+                ) : null}
+                {dismissedFindings.length > 0 ? (
+                  <details className={styles.dismissedGroup}>
+                    <summary>Dismissed findings ({dismissedFindings.length})</summary>
+                    <ul className={styles.findings} aria-label="Dismissed Question Health findings">
+                      {dismissedFindings.slice(0, 20).map((finding) => {
+                        const dismissal = dismissalByFindingId.get(finding.id);
+                        if (!dismissal) return null;
+                        return (
+                          <li className={styles.dismissedFinding} key={finding.id}>
+                            <div>
+                              <strong>{ruleLabels[finding.ruleId]}</strong>
+                              <p>{finding.reason}</p>
+                              <small>{dismissalReasonLabels[dismissal.reason]}</small>
+                            </div>
+                            <button
+                              className="button-secondary small-button"
+                              type="button"
+                              disabled={stale || Boolean(savingFindingId)}
+                              onClick={() => void reopenFinding(dismissal)}
+                            >
+                              {savingFindingId === finding.id ? "Saving…" : "Reopen finding"}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    {dismissedFindings.length > 20 ? (
+                      <p className={styles.status}>Showing the first 20 dismissed findings.</p>
+                    ) : null}
+                  </details>
+                ) : null}
               </>
             )}
           </div>

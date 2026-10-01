@@ -144,4 +144,19 @@ describe("database migration discovery", () => {
     expect(migration?.sql).toContain("FORCE ROW LEVEL SECURITY");
     expect(migration?.sql).toContain("GRANT SELECT, INSERT, DELETE");
   });
+
+  it("stores Question Health dismissals as bounded, content-addressed workspace data", async () => {
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migrations = await discoverMigrations(migrationsDirectory);
+    const migration = migrations.find(({ version }) => version === 45);
+    expect(migration?.name).toBe("question_health_dismissals");
+    expect(migration?.sql).toContain("FOREIGN KEY (workspace_id, quiz_id)");
+    expect(migration?.sql).toContain(
+      "ALTER TABLE question_health_dismissals FORCE ROW LEVEL SECURITY",
+    );
+    expect(migration?.sql).toContain(
+      "'false_positive', 'intentional_choice', 'will_address_later'",
+    );
+    expect(migration?.sql).toContain("content_hash char(64) NOT NULL CHECK");
+  });
 });

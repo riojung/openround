@@ -393,5 +393,6 @@ export async function evaluateQuestionHealth(
     evaluatedQuestionCount: quiz.questions.length,
     findings,
     findingsTruncated: drafts.length > selected.length,
+    dismissals: [],
   };
 }

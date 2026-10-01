@@ -25,6 +25,7 @@ import {
   ProductEventNameSchema,
   PublicFeaturesSchema,
   PublishQuizRequestSchema,
+  QuestionHealthDismissalInputSchema,
   QuestionHealthResultSchema,
   QuizContentSchema,
   QuizDraftSchema,
@@ -63,11 +64,27 @@ describe("public contracts", () => {
       findingsTruncated: false,
     });
     expect(result.findings).toHaveLength(1);
+    expect(result.dismissals).toEqual([]);
     expect(
       QuestionHealthResultSchema.safeParse({
         ...result,
         findings: [{ ...result.findings[0], contentHash: "not-a-content-hash" }],
       }).success,
+    ).toBe(false);
+  });
+
+  it("limits Question Health dismissal feedback to bounded reason codes", () => {
+    const input = {
+      draftRevision: 3,
+      ruleVersion: 1,
+      rulesetVersion: "1.0.0",
+      contentHash: "b".repeat(64),
+      reason: "intentional_choice",
+    };
+    expect(QuestionHealthDismissalInputSchema.parse(input)).toEqual(input);
+    expect(
+      QuestionHealthDismissalInputSchema.safeParse({ ...input, reason: "freeform explanation" })
+        .success,
     ).toBe(false);
   });
 
