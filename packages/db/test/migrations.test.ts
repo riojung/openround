@@ -167,4 +167,18 @@ describe("database migration discovery", () => {
     expect(dropPolicy).toBeGreaterThan(-1);
     expect(createPolicy).toBeGreaterThan(dropPolicy);
   });
+
+  it("stores Question Health application provenance with forced tenant RLS and source cascade", async () => {
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migrations = await discoverMigrations(migrationsDirectory);
+    const migration = migrations.find(({ version }) => version === 46);
+    expect(migration?.name).toBe("question_health_applications");
+    expect(migration?.sql).toContain("FOREIGN KEY (workspace_id, quiz_id)");
+    expect(migration?.sql).toContain("REFERENCES quizzes(workspace_id, id) ON DELETE CASCADE");
+    expect(migration?.sql).toContain(
+      "ALTER TABLE question_health_applications FORCE ROW LEVEL SECURITY",
+    );
+    expect(migration?.sql).toContain("question_health_applications_workspace_isolation");
+    expect(migration?.sql).toContain("request_hash char(64)");
+  });
 });

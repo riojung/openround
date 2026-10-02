@@ -87,6 +87,7 @@ import type {
   QuestionHealthDismissalIdentity,
   QuestionHealthDismissalRecord,
   QuestionHealthDismissalWrite,
+  QuestionHealthApplicationRecord,
   QnaQuestionRecord,
   QnaReplyRecord,
   QnaSettingsRecord,
@@ -278,6 +279,23 @@ function mapQuestionHealthDismissal(row: QueryResultRow): QuestionHealthDismissa
     rulesetVersion: String(row.ruleset_version),
     contentHash: String(row.content_hash).trim(),
     reason: row.reason,
+    createdAt: date(row.created_at),
+  };
+}
+
+function mapQuestionHealthApplication(row: QueryResultRow): QuestionHealthApplicationRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    quizId: String(row.quiz_id),
+    applicationId: String(row.application_id),
+    findingId: String(row.finding_id),
+    ruleVersion: Number(row.rule_version),
+    rulesetVersion: String(row.ruleset_version),
+    contentHash: String(row.content_hash).trim(),
+    sourceRevision: Number(row.source_revision),
+    appliedRevision: Number(row.applied_revision),
+    requestHash: String(row.request_hash).trim(),
+    changes: row.changes,
     createdAt: date(row.created_at),
   };
 }
@@ -1896,7 +1914,8 @@ export class PostgresRepository implements Repository {
           `${input.workspaceId}:${input.mutationId}`,
         ]);
         const prior = await client.query(
-          `SELECT quiz_id, expected_revision, resulting_revision, draft_hash
+          `SELECT quiz_id, expected_revision, resulting_revision, draft_hash,
+                  question_health_undo_application_id
            FROM quiz_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2`,
           [input.workspaceId, input.mutationId],
         );
@@ -1905,9 +1924,25 @@ export class PostgresRepository implements Repository {
           if (
             String(receipt.quiz_id) !== input.quizId ||
             Number(receipt.expected_revision) !== input.expectedRevision ||
-            String(receipt.draft_hash) !== input.draftHash
+            String(receipt.draft_hash) !== input.draftHash ||
+            (receipt.question_health_undo_application_id == null
+              ? null
+              : String(receipt.question_health_undo_application_id)) !==
+              (input.questionHealthUndo?.applicationId ?? null)
           ) {
             throw new QuizDraftMutationConflictError(input.mutationId);
+          }
+          if (input.questionHealthApplication) {
+            const application = await client.query(
+              `SELECT request_hash FROM question_health_applications
+               WHERE workspace_id = $1 AND quiz_id = $2 AND application_id = $3`,
+              [input.workspaceId, input.quizId, input.mutationId],
+            );
+            if (
+              String(application.rows[0]?.request_hash ?? "").trim() !==
+              input.questionHealthApplication.requestHash
+            )
+              throw new QuizDraftMutationConflictError(input.mutationId);
           }
           return this.replayQuizDraftMutation(client, input, receipt);
         }
@@ -1920,7 +1955,8 @@ export class PostgresRepository implements Repository {
         // A duplicate request may have committed while this transaction waited on
         // the Round row lock, so check the receipt again before evaluating CAS.
         const raced = await client.query(
-          `SELECT quiz_id, expected_revision, resulting_revision, draft_hash
+          `SELECT quiz_id, expected_revision, resulting_revision, draft_hash,
+                  question_health_undo_application_id
            FROM quiz_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2`,
           [input.workspaceId, input.mutationId],
         );
@@ -1929,9 +1965,25 @@ export class PostgresRepository implements Repository {
           if (
             String(receipt.quiz_id) !== input.quizId ||
             Number(receipt.expected_revision) !== input.expectedRevision ||
-            String(receipt.draft_hash) !== input.draftHash
+            String(receipt.draft_hash) !== input.draftHash ||
+            (receipt.question_health_undo_application_id == null
+              ? null
+              : String(receipt.question_health_undo_application_id)) !==
+              (input.questionHealthUndo?.applicationId ?? null)
           ) {
             throw new QuizDraftMutationConflictError(input.mutationId);
+          }
+          if (input.questionHealthApplication) {
+            const application = await client.query(
+              `SELECT request_hash FROM question_health_applications
+               WHERE workspace_id = $1 AND quiz_id = $2 AND application_id = $3`,
+              [input.workspaceId, input.quizId, input.mutationId],
+            );
+            if (
+              String(application.rows[0]?.request_hash ?? "").trim() !==
+              input.questionHealthApplication.requestHash
+            )
+              throw new QuizDraftMutationConflictError(input.mutationId);
           }
           return this.replayQuizDraftMutation(client, input, receipt, current.rows[0]);
         }
@@ -1950,11 +2002,15 @@ export class PostgresRepository implements Repository {
           [JSON.stringify(quiz.draft), JSON.stringify(draft)],
         );
         const meaningful = comparison.rows[0]?.meaningful ?? true;
+        if (input.questionHealthApplication && !meaningful) {
+          throw new QuizDraftMutationConflictError(input.mutationId);
+        }
         const resultingRevision = meaningful ? currentRevision + 1 : currentRevision;
         await client.query(
           `INSERT INTO quiz_draft_mutations
-             (mutation_id, workspace_id, quiz_id, expected_revision, resulting_revision, draft_hash)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
+             (mutation_id, workspace_id, quiz_id, expected_revision, resulting_revision,
+              draft_hash, question_health_undo_application_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
             input.mutationId,
             input.workspaceId,
@@ -1962,6 +2018,7 @@ export class PostgresRepository implements Repository {
             input.expectedRevision,
             resultingRevision,
             input.draftHash,
+            input.questionHealthUndo?.applicationId ?? null,
           ],
         );
         if (!meaningful) return quiz;
@@ -2000,6 +2057,69 @@ export class PostgresRepository implements Repository {
             saved.updatedAt,
           ],
         );
+        if (input.questionHealthApplication) {
+          const application = input.questionHealthApplication;
+          await client.query(
+            `INSERT INTO question_health_applications
+               (workspace_id, quiz_id, application_id, finding_id, rule_version,
+                ruleset_version, content_hash, source_revision, applied_revision,
+                request_hash, changes, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)`,
+            [
+              input.workspaceId,
+              input.quizId,
+              application.applicationId,
+              application.findingId,
+              application.ruleVersion,
+              application.rulesetVersion,
+              application.contentHash,
+              application.sourceRevision,
+              resultingRevision,
+              application.requestHash,
+              JSON.stringify(application.changes),
+              saved.updatedAt,
+            ],
+          );
+          await client.query(
+            `INSERT INTO audit_events
+               (id, workspace_id, actor_id, action, target_type, target_id, request_id, metadata)
+             VALUES ($1, $2, $3, 'question_health.application.apply',
+                     'question_health_application', $4, $5, $6::jsonb)`,
+            [
+              randomUUID(),
+              input.workspaceId,
+              input.editorId,
+              input.mutationId,
+              application.requestId,
+              JSON.stringify({
+                quizId: input.quizId,
+                findingId: application.findingId,
+                sourceRevision: application.sourceRevision,
+                appliedRevision: resultingRevision,
+              }),
+            ],
+          );
+        }
+        if (input.questionHealthUndo) {
+          await client.query(
+            `INSERT INTO audit_events
+               (id, workspace_id, actor_id, action, target_type, target_id, request_id, metadata)
+             VALUES ($1, $2, $3, 'question_health.application.undo',
+                     'question_health_application', $4, $5, $6::jsonb)`,
+            [
+              randomUUID(),
+              input.workspaceId,
+              input.editorId,
+              input.questionHealthUndo.applicationId,
+              input.questionHealthUndo.requestId,
+              JSON.stringify({
+                quizId: input.quizId,
+                sourceRevision: input.expectedRevision - 1,
+                resultingRevision,
+              }),
+            ],
+          );
+        }
         await this.pruneQuizDraftHistory(client, input.workspaceId, input.quizId);
         return saved;
       },
@@ -2016,6 +2136,16 @@ export class PostgresRepository implements Repository {
       [workspaceId, quizId],
     );
     return result.rows.map(mapQuestionHealthDismissal);
+  }
+
+  async getQuestionHealthApplication(workspaceId: string, quizId: string, applicationId: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT * FROM question_health_applications
+       WHERE workspace_id = $1 AND quiz_id = $2 AND application_id = $3`,
+      [workspaceId, quizId, applicationId],
+    );
+    return result.rows[0] ? mapQuestionHealthApplication(result.rows[0]) : null;
   }
 
   async putQuestionHealthDismissal(input: QuestionHealthDismissalWrite) {
@@ -2144,7 +2274,16 @@ export class PostgresRepository implements Repository {
            SELECT kept.id FROM quiz_draft_history kept
            WHERE kept.workspace_id = $1 AND kept.quiz_id = $2
            ORDER BY kept.revision DESC LIMIT 20
-         ))`,
+         ))
+         AND NOT EXISTS (
+           SELECT 1 FROM question_health_applications application
+           JOIN quizzes quiz ON quiz.workspace_id = application.workspace_id
+                            AND quiz.id = application.quiz_id
+           WHERE application.workspace_id = history.workspace_id
+             AND application.quiz_id = history.quiz_id
+             AND application.source_revision = history.revision
+             AND application.applied_revision = quiz.draft_revision
+         )`,
       [workspaceId, quizId],
     );
     await client.query(
@@ -2173,13 +2312,15 @@ export class PostgresRepository implements Repository {
     expectedRevision: number;
     mutationId: string;
     editorId: string;
+    questionHealthUndo?: { applicationId: string; requestId: string };
   }) {
     const draftHash = `restore:${input.historyRevision}`;
     const replayReceipt = () =>
       this.transaction(
         async (client) => {
           const prior = await client.query(
-            `SELECT quiz_id, expected_revision, resulting_revision, draft_hash
+            `SELECT quiz_id, expected_revision, resulting_revision, draft_hash,
+                    question_health_undo_application_id
              FROM quiz_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2`,
             [input.workspaceId, input.mutationId],
           );
@@ -2188,7 +2329,11 @@ export class PostgresRepository implements Repository {
           if (
             String(receipt.quiz_id) !== input.quizId ||
             Number(receipt.expected_revision) !== input.expectedRevision ||
-            String(receipt.draft_hash) !== draftHash
+            String(receipt.draft_hash) !== draftHash ||
+            (receipt.question_health_undo_application_id == null
+              ? null
+              : String(receipt.question_health_undo_application_id)) !==
+              (input.questionHealthUndo?.applicationId ?? null)
           ) {
             throw new QuizDraftMutationConflictError(input.mutationId);
           }
@@ -2222,6 +2367,7 @@ export class PostgresRepository implements Repository {
       editorId: input.editorId,
       schemaVersion: history.draftSchemaVersion ?? ROUND_DRAFT_SCHEMA_VERSION,
       draftHash,
+      questionHealthUndo: input.questionHealthUndo,
     });
   }
 
@@ -6457,6 +6603,13 @@ export class PostgresRepository implements Repository {
            FROM question_health_dismissals WHERE workspace_id = ANY($1::uuid[])
            ORDER BY workspace_id, quiz_id, finding_id`,
         );
+        const questionHealthApplications = await queryWorkspaceData(
+          `SELECT workspace_id, quiz_id, application_id, finding_id, rule_version,
+                  ruleset_version, content_hash, source_revision, applied_revision,
+                  request_hash, changes, created_at
+           FROM question_health_applications WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY workspace_id, quiz_id, created_at, application_id`,
+        );
         const folders = await queryWorkspaceData(
           `SELECT id, workspace_id, name, created_at, updated_at
            FROM folders WHERE workspace_id = ANY($1::uuid[]) ORDER BY workspace_id, lower(name), id`,
@@ -6746,6 +6899,7 @@ export class PostgresRepository implements Repository {
             ),
           })),
           questionHealthDismissals: questionHealthDismissals.rows,
+          questionHealthApplications: questionHealthApplications.rows,
           quizVersions: quizVersions.rows.map((row) => ({
             ...row,
             content: upcastRoundContent(

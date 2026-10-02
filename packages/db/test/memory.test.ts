@@ -1011,6 +1011,113 @@ describe("memory repository", () => {
     expect(await repository.listQuestionHealthDismissals(owner!.workspaceId, quiz.id)).toEqual([]);
   });
 
+  it("keeps Question Health draft application and undo receipts tenant-scoped and idempotent", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date();
+    const tokenHash = `question-health-application-${randomUUID()}`;
+    await repository.createMagicToken({
+      id: randomUUID(),
+      email: `application-${randomUUID()}@example.com`,
+      segment: "education",
+      tokenHash,
+      policyVersion: "test-v1",
+      expiresAt: new Date(now.getTime() + 60_000),
+      consumedAt: null,
+    });
+    const owner = await repository.consumeMagicToken(tokenHash, now);
+    expect(owner).not.toBeNull();
+    const draft = publishableRound("Question Health application");
+    const old = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1_000);
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner!.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: old,
+      updatedAt: old,
+    });
+    const applicationId = randomUUID();
+    const changed = {
+      ...draft,
+      questions: [{ ...draft.questions[0]!, explanation: "Reviewed wording." }],
+    };
+    const mutation = {
+      workspaceId: owner!.workspaceId,
+      quizId: quiz.id,
+      draft: changed,
+      expectedRevision: 0,
+      mutationId: applicationId,
+      editorId: owner!.userId,
+      schemaVersion: 1,
+      draftHash: "application-draft",
+      questionHealthApplication: {
+        workspaceId: owner!.workspaceId,
+        quizId: quiz.id,
+        applicationId,
+        findingId: "qh-test-missing-explanation",
+        ruleVersion: 1,
+        rulesetVersion: "1.0.0",
+        contentHash: "a".repeat(64),
+        sourceRevision: 0,
+        requestHash: "b".repeat(64),
+        changes: [
+          {
+            fieldPath: "questions.0.explanation",
+            before: "One plus one is two.",
+            after: "Reviewed wording.",
+          },
+        ],
+        requestId: randomUUID(),
+      },
+    };
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({ draftRevision: 1 });
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({ draftRevision: 1 });
+    expect(
+      await repository.getQuestionHealthApplication(owner!.workspaceId, quiz.id, applicationId),
+    ).toMatchObject({ sourceRevision: 0, appliedRevision: 1, requestHash: "b".repeat(64) });
+    expect(
+      await repository.getQuestionHealthApplication(randomUUID(), quiz.id, applicationId),
+    ).toBeNull();
+    expect(
+      (await repository.listQuizDraftHistory(owner!.workspaceId, quiz.id)).map(
+        (snapshot) => snapshot.revision,
+      ),
+    ).toContain(0);
+
+    const undo = {
+      workspaceId: owner!.workspaceId,
+      quizId: quiz.id,
+      historyRevision: 0,
+      expectedRevision: 1,
+      mutationId: randomUUID(),
+      editorId: owner!.userId,
+      questionHealthUndo: { applicationId, requestId: randomUUID() },
+    };
+    await expect(repository.restoreQuizDraftHistory(undo)).resolves.toMatchObject({
+      draftRevision: 2,
+    });
+    await expect(repository.restoreQuizDraftHistory(undo)).resolves.toMatchObject({
+      draftRevision: 2,
+    });
+    expect(
+      (await repository.listAuditEvents(owner!.workspaceId, null, 100)).filter(
+        (event) => event.action === "question_health.application.undo",
+      ),
+    ).toHaveLength(1);
+
+    const exported = await repository.exportAccount(owner!.userId);
+    expect(exported.questionHealthApplications).toMatchObject([
+      expect.objectContaining({ quizId: quiz.id, applicationId }),
+    ]);
+    await repository.deleteAccount(owner!.userId);
+    expect(
+      await repository.getQuestionHealthApplication(owner!.workspaceId, quiz.id, applicationId),
+    ).toBeNull();
+  });
+
   it("defaults legacy report trust mode in account exports", async () => {
     const repository = new MemoryRepository();
     const now = new Date("2026-09-23T12:00:00.000Z");

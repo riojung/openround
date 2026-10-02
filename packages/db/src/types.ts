@@ -13,6 +13,7 @@ import type {
   InteractionSettings,
   ProductEvent,
   QuestionHealthDismissalReason,
+  QuestionHealthRevisionChange,
   QuizDraft,
   Report,
   ResponsePayload,
@@ -290,6 +291,27 @@ export interface QuestionHealthDismissalWrite {
 
 export type QuestionHealthDismissalIdentity = Omit<QuestionHealthDismissalWrite, "reason">;
 
+/** Durable provenance for a facilitator-approved, draft-only Question Health edit. */
+export interface QuestionHealthApplicationRecord {
+  workspaceId: string;
+  quizId: string;
+  applicationId: string;
+  findingId: string;
+  ruleVersion: number;
+  rulesetVersion: string;
+  contentHash: string;
+  sourceRevision: number;
+  appliedRevision: number;
+  requestHash: string;
+  changes: QuestionHealthRevisionChange[];
+  createdAt: Date;
+}
+
+export type QuestionHealthApplicationWrite = Omit<
+  QuestionHealthApplicationRecord,
+  "appliedRevision" | "createdAt"
+> & { requestId: string };
+
 export interface QuizDraftUpdate {
   workspaceId: string;
   quizId: string;
@@ -299,6 +321,8 @@ export interface QuizDraftUpdate {
   editorId: string;
   schemaVersion: number;
   draftHash: string;
+  questionHealthApplication?: QuestionHealthApplicationWrite;
+  questionHealthUndo?: { applicationId: string; requestId: string };
 }
 
 export interface StoredSession {
@@ -1014,6 +1038,11 @@ export interface Repository {
     editorId?: string,
   ): Promise<QuizRecord | null>;
   updateQuizDraft(input: QuizDraftUpdate): Promise<QuizRecord | null>;
+  getQuestionHealthApplication(
+    workspaceId: string,
+    quizId: string,
+    applicationId: string,
+  ): Promise<QuestionHealthApplicationRecord | null>;
   listQuestionHealthDismissals(
     workspaceId: string,
     quizId: string,
@@ -1042,6 +1071,7 @@ export interface Repository {
     expectedRevision: number;
     mutationId: string;
     editorId: string;
+    questionHealthUndo?: { applicationId: string; requestId: string };
   }): Promise<QuizRecord | null>;
   archiveQuiz(
     workspaceId: string,
