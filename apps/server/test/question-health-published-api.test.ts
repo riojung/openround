@@ -1,11 +1,18 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
-import { QuestionHealthPublishedResultSchema } from "@openround/contracts";
+import {
+  QuestionHealthPostUseResultSchema,
+  QuestionHealthPublishedResultSchema,
+  QuizDraftSchema,
+  type QuizDraft,
+} from "@openround/contracts";
 import { MemoryRepository } from "@openround/db";
+import { createGameState } from "@openround/game-engine";
 import { buildApp } from "../src/app.js";
 import { MemorySessionCache } from "../src/cache.js";
 import { ConfigSchema } from "../src/config.js";
+import { generateReport } from "../src/reporting.js";
 
 let app: FastifyInstance | undefined;
 let repository: MemoryRepository | undefined;
@@ -47,7 +54,20 @@ async function signIn(target: FastifyInstance, email: string) {
   return (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(";")[0]!;
 }
 
-async function createPublishedRound(target: FastifyInstance, cookie: string) {
+async function createPublishedRound(
+  target: FastifyInstance,
+  cookie: string,
+): Promise<{
+  quizId: string;
+  draft: QuizDraft;
+  version: {
+    id: string;
+    version: number;
+    contentHash: string;
+    publishedAt: string;
+    sourceDraftRevision: number;
+  };
+}> {
   const created = await target.inject({
     method: "POST",
     url: "/v1/quizzes",
@@ -56,7 +76,7 @@ async function createPublishedRound(target: FastifyInstance, cookie: string) {
   });
   expect(created.statusCode).toBe(201);
   const quizId = created.json<{ quiz: { id: string } }>().quiz.id;
-  const draft = {
+  const draft = QuizDraftSchema.parse({
     title: "Immutable Question Health",
     description: "",
     questions: [
@@ -80,7 +100,7 @@ async function createPublishedRound(target: FastifyInstance, cookie: string) {
         mediaAlt: null,
       },
     ],
-  };
+  });
   const saved = await target.inject({
     method: "PATCH",
     url: `/v1/quizzes/${quizId}`,
@@ -111,6 +131,82 @@ function publishedHealthUrl(quizId: string, versionId: string) {
   return `/v1/quizzes/${quizId}/versions/${versionId}/question-health`;
 }
 
+function postUseObservationsUrl(quizId: string, versionId: string) {
+  return `${publishedHealthUrl(quizId, versionId)}/observations`;
+}
+
+async function addAggregateReport(
+  versionId: string,
+  draft: Awaited<ReturnType<typeof createPublishedRound>>["draft"],
+  correct: number,
+) {
+  if (!repository || !ownerWorkspaceId)
+    throw new Error("The API test repository was not initialized");
+  const now = new Date();
+  const sessionId = randomUUID();
+  const retentionExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
+  const state = createGameState({
+    sessionId,
+    code: "1234567",
+    quiz: draft,
+    settings: {
+      audienceLimit: 50,
+      timeMode: "timed",
+      scoringMode: "accuracy",
+      resultVisibility: "private",
+      allowLateJoin: true,
+      nicknamePolicy: "custom",
+      trustMode: "learning",
+    },
+  });
+  const firstQuestion = draft.questions[0];
+  if (!firstQuestion || !("choices" in firstQuestion)) {
+    throw new Error("Expected a choice question in this test fixture");
+  }
+  await repository.createSession({
+    id: sessionId,
+    workspaceId: ownerWorkspaceId,
+    quizVersionId: versionId,
+    hostId: randomUUID(),
+    hostTokenHash: randomUUID(),
+    trustMode: "learning",
+    state,
+    expiresAt: new Date(now.getTime() + 60 * 60_000),
+    retentionExpiresAt,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const generated = generateReport(state, retentionExpiresAt, { generatedAt: now });
+  generated.questions = generated.questions.map((question) => ({
+    ...question,
+    responses: 20,
+    correct,
+    accuracyPercent: correct * 5,
+    difficult: false,
+    responseDistribution: {
+      kind: "choice",
+      respondents: 20,
+      totalSelections: 20,
+      percentBasis: "responses",
+      buckets: [
+        {
+          value: firstQuestion.choices[0]!.id,
+          label: "Correct",
+          count: correct,
+          percent: correct * 5,
+        },
+        {
+          value: firstQuestion.choices[1]!.id,
+          label: "Distractor",
+          count: 0,
+          percent: 0,
+        },
+      ],
+    },
+  }));
+  repository.reports.set(generated.id, generated);
+}
+
 afterEach(async () => {
   if (app) await app.close();
   app = undefined;
@@ -119,6 +215,47 @@ afterEach(async () => {
 });
 
 describe("Question Health published-version analysis", () => {
+  it("returns only aggregate observations for eligible sessions of the exact version", async () => {
+    const target = await build(true);
+    const cookie = await signIn(target, "question-health-post-use@example.com");
+    const { quizId, draft, version } = await createPublishedRound(target, cookie);
+    await addAggregateReport(version.id, draft, 14);
+
+    const response = await target.inject({
+      method: "GET",
+      url: postUseObservationsUrl(quizId, version.id),
+      headers: { cookie },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("private, no-store");
+    const result = QuestionHealthPostUseResultSchema.parse(response.json());
+    expect(result).toMatchObject({
+      quizId,
+      source: "published",
+      rulesetVersion: "post-use-1.0.0",
+      version: { id: version.id, contentHash: version.contentHash },
+      cohorts: [
+        {
+          trustMode: "learning",
+          timeMode: "timed",
+          scoringMode: "accuracy",
+          questions: [
+            {
+              questionPosition: 1,
+              sample: { sessions: 1, responses: 20 },
+              correct: 14,
+              accuracyPercent: 70,
+              signals: [{ ruleId: "choice.unused_after_use" }],
+            },
+          ],
+        },
+      ],
+    });
+    expect(response.body).not.toContain("participantId");
+    expect(response.body).not.toContain("sessionId");
+    expect(response.body).not.toContain("participants");
+  });
+
   it("analyzes the selected immutable version, not later draft edits or publications", async () => {
     const target = await build(true);
     const cookie = await signIn(target, "question-health-published@example.com");
@@ -284,6 +421,12 @@ describe("Question Health published-version analysis", () => {
       headers: { cookie },
     });
     expect(disabled.statusCode).toBe(404);
+    const disabledObservations = await target.inject({
+      method: "GET",
+      url: postUseObservationsUrl(quizId, version.id),
+      headers: { cookie },
+    });
+    expect(disabledObservations.statusCode).toBe(404);
     const round = await target.inject({
       method: "GET",
       url: `/v1/quizzes/${quizId}`,

@@ -3415,6 +3415,56 @@ export class MemoryRepository implements Repository {
     return report ? structuredClone(report) : null;
   }
 
+  async listQuestionHealthObservationReports(
+    workspaceId: string,
+    quizId: string,
+    quizVersionId: string,
+    now: Date,
+  ) {
+    return [...this.reports.values()].flatMap((report) => {
+      if (report.status !== "ready" || !report.generatedAt) return [];
+      const session = this.sessions.get(report.sessionId);
+      if (
+        !session ||
+        session.workspaceId !== workspaceId ||
+        session.quizVersionId !== quizVersionId ||
+        session.retentionExpiresAt <= now
+      ) {
+        return [];
+      }
+      const version = this.versions.get(session.quizVersionId);
+      if (!version || version.workspaceId !== workspaceId || version.quizId !== quizId) return [];
+      const questions = report.questions.map((question) => {
+        const distribution = question.responseDistribution;
+        return {
+          questionId: question.questionId,
+          responses: question.responses,
+          correct: question.correct,
+          ...(distribution?.kind === "choice"
+            ? {
+                responseDistribution: {
+                  kind: "choice" as const,
+                  buckets: distribution.buckets.flatMap((bucket) =>
+                    typeof bucket.value === "string"
+                      ? [{ value: bucket.value, count: bucket.count }]
+                      : [],
+                  ),
+                },
+              }
+            : {}),
+        };
+      });
+      return [
+        {
+          trustMode: session.trustMode ?? report.trustMode ?? "learning",
+          timeMode: report.timeMode ?? session.state.settings.timeMode ?? "timed",
+          scoringMode: session.state.settings.scoringMode,
+          questions,
+        },
+      ];
+    });
+  }
+
   async listReportHistory(
     workspaceId: string,
     options: {

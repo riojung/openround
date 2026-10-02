@@ -84,6 +84,7 @@ import type {
   ParticipantSignalRecord,
   Plan,
   ProductEventRecord,
+  QuestionHealthObservationReport,
   QuestionHealthDismissalIdentity,
   QuestionHealthDismissalRecord,
   QuestionHealthDismissalWrite,
@@ -5478,6 +5479,94 @@ export class PostgresRepository implements Repository {
       [workspaceId, sessionId],
     );
     return result.rows[0] ? this.mapReport(result.rows[0]) : null;
+  }
+
+  async listQuestionHealthObservationReports(
+    workspaceId: string,
+    quizId: string,
+    quizVersionId: string,
+    now: Date,
+  ): Promise<QuestionHealthObservationReport[]> {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT game_sessions.trust_mode,
+              COALESCE(reports.metrics->>'timeMode',
+                       game_sessions.state_snapshot->'settings'->>'timeMode', 'timed') AS time_mode,
+              COALESCE(game_sessions.state_snapshot->'settings'->>'scoringMode',
+                       game_sessions.settings->>'scoringMode', 'accuracy') AS scoring_mode,
+              reports.metrics->'questions' AS questions
+       FROM reports
+       JOIN game_sessions ON game_sessions.workspace_id = reports.workspace_id
+                         AND game_sessions.id = reports.session_id
+       JOIN quiz_versions ON quiz_versions.id = game_sessions.quiz_version_id
+       WHERE reports.workspace_id = $1
+         AND quiz_versions.workspace_id = $1
+         AND quiz_versions.quiz_id = $2
+         AND game_sessions.quiz_version_id = $3
+         AND reports.status = 'ready'
+         AND reports.generated_at IS NOT NULL
+         AND game_sessions.retention_expires_at > $4
+       ORDER BY reports.generated_at DESC, reports.id DESC`,
+      [workspaceId, quizId, quizVersionId, now],
+    );
+    return result.rows.flatMap((row): QuestionHealthObservationReport[] => {
+      const questions = Array.isArray(row.questions) ? row.questions : [];
+      const parsedTrustMode = TrustModeSchema.safeParse(row.trust_mode);
+      return [
+        {
+          trustMode: parsedTrustMode.success ? parsedTrustMode.data : "learning",
+          timeMode: row.time_mode === "flex" ? "flex" : "timed",
+          scoringMode: row.scoring_mode === "speed" ? "speed" : "accuracy",
+          questions: questions.flatMap((candidate: unknown) => {
+            if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+            const question = candidate as Record<string, unknown>;
+            if (
+              typeof question.questionId !== "string" ||
+              !Number.isSafeInteger(question.responses) ||
+              !Number.isSafeInteger(question.correct) ||
+              Number(question.responses) < 0 ||
+              Number(question.correct) < 0 ||
+              Number(question.correct) > Number(question.responses)
+            ) {
+              return [];
+            }
+            const rawDistribution = question.responseDistribution;
+            const distribution =
+              rawDistribution &&
+              typeof rawDistribution === "object" &&
+              !Array.isArray(rawDistribution) &&
+              (rawDistribution as Record<string, unknown>).kind === "choice" &&
+              Array.isArray((rawDistribution as Record<string, unknown>).buckets)
+                ? {
+                    kind: "choice" as const,
+                    buckets: (
+                      (rawDistribution as Record<string, unknown>).buckets as unknown[]
+                    ).flatMap((bucket) => {
+                      if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) {
+                        return [];
+                      }
+                      const value = (bucket as Record<string, unknown>).value;
+                      const count = (bucket as Record<string, unknown>).count;
+                      return typeof value === "string" &&
+                        Number.isInteger(count) &&
+                        Number(count) >= 0
+                        ? [{ value, count: Number(count) }]
+                        : [];
+                    }),
+                  }
+                : undefined;
+            return [
+              {
+                questionId: question.questionId,
+                responses: Number(question.responses),
+                correct: Number(question.correct),
+                ...(distribution ? { responseDistribution: distribution } : {}),
+              },
+            ];
+          }),
+        },
+      ];
+    });
   }
 
   async listReportHistory(

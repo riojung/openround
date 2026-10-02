@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  QuestionHealthPostUseResultSchema,
   QuestionHealthPublishedResultSchema,
   type QuestionHealthFinding,
+  type QuestionHealthPostUseResult,
   type QuestionHealthPublishedResult,
 } from "@openround/contracts";
 import { apiFetch, humanError } from "../../lib/api";
@@ -98,6 +100,97 @@ export function PublishedQuestionHealthResults({
   );
 }
 
+export function PublishedQuestionHealthObservations({
+  result,
+  canEdit,
+  draftQuestionIds,
+  onOpenDraftQuestion,
+}: {
+  result: QuestionHealthPostUseResult;
+  canEdit: boolean;
+  draftQuestionIds: ReadonlySet<string>;
+  onOpenDraftQuestion: (questionId: string) => void;
+}) {
+  return (
+    <div className={styles.results}>
+      <p className={styles.status} role="status">
+        Aggregate observations for published v{result.version.number}. Each included session has at
+        least {result.eligibility.minimumResponsesPerSession} responses to the question. Cohorts are
+        kept separate; these patterns do not establish cause or durable learning.
+      </p>
+      {result.cohorts.length === 0 ? (
+        <p>No retained session report meets the minimum response threshold yet.</p>
+      ) : (
+        result.cohorts.map((cohort) => (
+          <section key={`${cohort.trustMode}:${cohort.timeMode}:${cohort.scoringMode}`}>
+            <h3>
+              {cohort.trustMode === "learning" ? "Learning" : "Verified"} ·{" "}
+              {cohort.timeMode === "flex" ? "Flexible timing" : "Timed"} ·{" "}
+              {cohort.scoringMode === "speed" ? "Speed scoring" : "Accuracy scoring"}
+            </h3>
+            <ul className={styles.findings}>
+              {cohort.questions.map((question) => (
+                <li className={styles.finding} key={question.questionId}>
+                  <strong>Question {question.questionPosition}</strong>
+                  <p>
+                    {question.sample.responses} responses across {question.sample.sessions} session
+                    {question.sample.sessions === 1 ? "" : "s"}; {question.accuracyPercent}%
+                    correct.
+                    {question.sessionAccuracyRange ? (
+                      <>
+                        {" "}
+                        Observed session accuracy ranged from{" "}
+                        {question.sessionAccuracyRange.minPercent}% to{" "}
+                        {question.sessionAccuracyRange.maxPercent}%.
+                      </>
+                    ) : null}
+                  </p>
+                  {question.sample.sessions < result.eligibility.instabilityMinimumSessions ? (
+                    <p>
+                      Cross-session instability is not assessed until at least{" "}
+                      {result.eligibility.instabilityMinimumSessions} compatible sessions meet the
+                      response threshold.
+                    </p>
+                  ) : null}
+                  {question.signals.length > 0 ? (
+                    <ul>
+                      {question.signals.map((signal) => (
+                        <li key={signal.id}>
+                          <strong>
+                            {signal.ruleId === "choice.unused_after_use"
+                              ? "Distractor not selected"
+                              : "Accuracy varied across sessions"}
+                          </strong>
+                          <p>{signal.evidence}</p>
+                          <p>{signal.recommendedAction}</p>
+                          {canEdit && draftQuestionIds.has(question.questionId) ? (
+                            <button
+                              className="button-secondary small-button"
+                              onClick={() => onOpenDraftQuestion(question.questionId)}
+                              type="button"
+                            >
+                              Review matching question in current draft
+                            </button>
+                          ) : canEdit ? (
+                            <p>This published question is no longer in the current draft.</p>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>No post-use advisory flags at this sample size.</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))
+      )}
+      <p>{result.evidenceNote}</p>
+    </div>
+  );
+}
+
 export function PublishedQuestionHealthPanel({
   quizId,
   versionId,
@@ -114,15 +207,23 @@ export function PublishedQuestionHealthPanel({
   onOpenDraftQuestion: (questionId: string) => void;
 }) {
   const [result, setResult] = useState<QuestionHealthPublishedResult | null>(null);
+  const [observations, setObservations] = useState<QuestionHealthPostUseResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [observationsLoading, setObservationsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [observationsError, setObservationsError] = useState("");
   const requestId = useRef(0);
+  const observationsRequestId = useRef(0);
 
   useEffect(() => {
     requestId.current += 1;
+    observationsRequestId.current += 1;
     setResult(null);
+    setObservations(null);
     setError("");
+    setObservationsError("");
     setLoading(false);
+    setObservationsLoading(false);
   }, [quizId, versionId]);
 
   if (!featureEnabled || !versionId) return null;
@@ -132,9 +233,13 @@ export function PublishedQuestionHealthPanel({
   async function reviewPublishedVersion() {
     if (!versionId) return;
     const currentRequest = ++requestId.current;
+    observationsRequestId.current += 1;
     setLoading(true);
     setError("");
     setResult(null);
+    setObservations(null);
+    setObservationsError("");
+    setObservationsLoading(false);
     try {
       const response = await apiFetch<unknown>(
         `/v1/quizzes/${quizId}/versions/${encodeURIComponent(versionId)}/question-health`,
@@ -149,6 +254,31 @@ export function PublishedQuestionHealthPanel({
       if (currentRequest === requestId.current) setError(humanError(caught));
     } finally {
       if (currentRequest === requestId.current) setLoading(false);
+    }
+  }
+
+  async function loadPostUseObservations() {
+    if (!versionId) return;
+    const currentRequest = ++observationsRequestId.current;
+    setObservationsLoading(true);
+    setObservationsError("");
+    setObservations(null);
+    try {
+      const response = await apiFetch<unknown>(
+        `/v1/quizzes/${quizId}/versions/${encodeURIComponent(versionId)}/question-health/observations`,
+      );
+      if (currentRequest !== observationsRequestId.current) return;
+      const next = QuestionHealthPostUseResultSchema.parse(response);
+      if (next.quizId !== quizId || next.version.id !== versionId) {
+        throw new Error("The published version changed. Reload this Round and try again.");
+      }
+      setObservations(next);
+    } catch (caught) {
+      if (currentRequest === observationsRequestId.current) {
+        setObservationsError(humanError(caught));
+      }
+    } finally {
+      if (currentRequest === observationsRequestId.current) setObservationsLoading(false);
     }
   }
 
@@ -179,12 +309,46 @@ export function PublishedQuestionHealthPanel({
           </p>
         ) : null}
         {displayedResult ? (
-          <PublishedQuestionHealthResults
-            canEdit={canEdit}
-            draftQuestionIds={draftQuestionIds}
-            onOpenDraftQuestion={onOpenDraftQuestion}
-            result={displayedResult}
-          />
+          <>
+            <PublishedQuestionHealthResults
+              canEdit={canEdit}
+              draftQuestionIds={draftQuestionIds}
+              onOpenDraftQuestion={onOpenDraftQuestion}
+              result={displayedResult}
+            />
+            <section aria-label="Question Health post-use observations">
+              <h3>Post-use observations</h3>
+              <p className={styles.description}>
+                Uses aggregate reports for this exact published version. Only compatible trust,
+                timing, and scoring cohorts are compared; participant-level answers are not shown.
+              </p>
+              <button
+                className="button-secondary small-button"
+                disabled={observationsLoading}
+                onClick={() => void loadPostUseObservations()}
+                type="button"
+              >
+                {observationsLoading
+                  ? "Loading observations…"
+                  : observations
+                    ? "Refresh post-use observations"
+                    : "Review post-use observations"}
+              </button>
+              {observationsError ? (
+                <p className="error" role="alert">
+                  {observationsError}
+                </p>
+              ) : null}
+              {observations ? (
+                <PublishedQuestionHealthObservations
+                  canEdit={canEdit}
+                  draftQuestionIds={draftQuestionIds}
+                  onOpenDraftQuestion={onOpenDraftQuestion}
+                  result={observations}
+                />
+              ) : null}
+            </section>
+          </>
         ) : null}
       </div>
     </details>

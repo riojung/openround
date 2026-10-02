@@ -1670,6 +1670,83 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     expect(await repository.listQuestionHealthDismissals(owner.workspaceId, quiz.id)).toEqual([]);
   });
 
+  it("projects only retained aggregate reports for the exact Question Health version and workspace", async () => {
+    const owner = await creator("question-health-observation");
+    const other = await creator("question-health-observation-other");
+    const fixture = await createPublishedRoundFixture(owner, "Question Health observation");
+    const { id: sessionId, state } = await createRoundSessionFixture(
+      owner,
+      fixture,
+      String(randomInt(1_000_000, 9_999_999)),
+    );
+    const now = new Date();
+    const question = fixture.content.questions[0]!;
+    const session = await repository.getSessionById(sessionId);
+    if (!session) throw new Error("Expected the observation fixture session");
+    const report: Report = {
+      id: randomUUID(),
+      sessionId,
+      schemaVersion: 1,
+      trustMode: "learning",
+      timeMode: "timed",
+      status: "ready",
+      generatedAt: now.toISOString(),
+      expiresAt: session.retentionExpiresAt.toISOString(),
+      metrics: {
+        participantCount: 20,
+        completedCount: 20,
+        answerCount: 20,
+        accuracyPercent: 60,
+      },
+      questions: [
+        {
+          questionId: question.id,
+          prompt: question.prompt,
+          responses: 20,
+          correct: 12,
+          accuracyPercent: 60,
+          difficult: false,
+        },
+      ],
+      participants: [],
+    };
+    expect(state.sessionId).toBe(sessionId);
+    await repository.saveReport(owner.workspaceId, report);
+
+    const observations = await repository.listQuestionHealthObservationReports(
+      owner.workspaceId,
+      fixture.version.quizId,
+      fixture.version.id,
+      now,
+    );
+    expect(observations).toEqual([
+      {
+        trustMode: "learning",
+        timeMode: "timed",
+        scoringMode: "accuracy",
+        questions: [{ questionId: question.id, responses: 20, correct: 12 }],
+      },
+    ]);
+    expect(JSON.stringify(observations)).not.toContain(question.prompt);
+    expect(JSON.stringify(observations)).not.toContain("sessionId");
+    await expect(
+      repository.listQuestionHealthObservationReports(
+        owner.workspaceId,
+        fixture.version.quizId,
+        randomUUID(),
+        now,
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      repository.listQuestionHealthObservationReports(
+        other.workspaceId,
+        fixture.version.quizId,
+        fixture.version.id,
+        now,
+      ),
+    ).resolves.toEqual([]);
+  });
+
   it("atomically stores tenant-scoped Question Health application provenance with a draft revision", async () => {
     const owner = await creator("question-health-application");
     const other = await creator("question-health-application-other");

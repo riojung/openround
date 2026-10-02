@@ -643,6 +643,76 @@ export const QuestionHealthPublishedResultSchema = QuestionHealthResultSchema.om
 });
 export type QuestionHealthPublishedResult = z.infer<typeof QuestionHealthPublishedResultSchema>;
 
+/** Aggregate-only post-use evidence for one exact published Round version. */
+export const QuestionHealthPostUseSignalSchema = z.discriminatedUnion("ruleId", [
+  z.object({
+    id: z.string().min(1).max(500),
+    ruleId: z.literal("choice.unused_after_use"),
+    ruleVersion: z.literal(1),
+    severity: z.literal("advisory"),
+    questionId: z.string().uuid(),
+    choiceId: z.string().uuid(),
+    evidence: z.string().min(1).max(1_000),
+    recommendedAction: z.string().min(1).max(1_000),
+  }),
+  z.object({
+    id: z.string().min(1).max(500),
+    ruleId: z.literal("question.session_instability"),
+    ruleVersion: z.literal(1),
+    severity: z.literal("advisory"),
+    questionId: z.string().uuid(),
+    evidence: z.string().min(1).max(1_000),
+    recommendedAction: z.string().min(1).max(1_000),
+  }),
+]);
+export type QuestionHealthPostUseSignal = z.infer<typeof QuestionHealthPostUseSignalSchema>;
+
+export const QuestionHealthPostUseObservationSchema = z.object({
+  questionId: z.string().uuid(),
+  questionPosition: z.number().int().positive(),
+  sample: z.object({
+    sessions: z.number().int().positive(),
+    responses: z.number().int().min(20),
+    minimumResponsesPerSession: z.literal(20),
+  }),
+  correct: z.number().int().nonnegative(),
+  accuracyPercent: z.number().min(0).max(100),
+  sessionAccuracyRange: z
+    .object({
+      minPercent: z.number().min(0).max(100),
+      maxPercent: z.number().min(0).max(100),
+    })
+    .nullable(),
+  signals: z.array(QuestionHealthPostUseSignalSchema).max(200),
+});
+export type QuestionHealthPostUseObservation = z.infer<
+  typeof QuestionHealthPostUseObservationSchema
+>;
+
+export const QuestionHealthPostUseResultSchema = z.object({
+  quizId: z.string().uuid(),
+  source: z.literal("published"),
+  rulesetVersion: z.literal("post-use-1.0.0"),
+  version: QuestionHealthPublishedResultSchema.shape.version,
+  eligibility: z.object({
+    minimumResponsesPerSession: z.literal(20),
+    instabilityMinimumSessions: z.literal(3),
+    instabilityThresholdPercentagePoints: z.literal(30),
+  }),
+  cohorts: z
+    .array(
+      z.object({
+        trustMode: z.enum(["learning", "verified"]),
+        timeMode: z.enum(["timed", "flex"]),
+        scoringMode: z.enum(["accuracy", "speed"]),
+        questions: z.array(QuestionHealthPostUseObservationSchema).max(200),
+      }),
+    )
+    .max(100),
+  evidenceNote: z.string().min(1).max(1_000),
+});
+export type QuestionHealthPostUseResult = z.infer<typeof QuestionHealthPostUseResultSchema>;
+
 /** Only narrowly-scoped, facilitator-reviewed edits may be applied from a health finding. */
 export const QuestionHealthRevisionActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("align_opinion_settings") }),
