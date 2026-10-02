@@ -123,16 +123,24 @@ source Round and included in account export and deletion. Unsupported findings r
 Published-content analysis now evaluates an exact immutable Round version through a separate
 creator-authenticated, allowlisted, read-only API and builder panel. It includes stored version
 provenance, does not inherit draft dismissals or mutation controls, and stays pinned when the draft
-changes or a newer version is published. Post-use observations remain incomplete. Partner
-usefulness/retained-revision thresholds remain unmeasured; neither the provisional implementation
-nor local tests close Phase 1/2 or release-readiness gates.
+changes or a newer version is published. The active `codex/question-health-post-use-observations`
+branch adds a read-only aggregate endpoint and builder view for retained reports of that exact
+published version, bounded to the 250 most recent retained reports with an explicit omitted-history
+indicator. It separates Learning/Verified, timed/flex, and accuracy/speed-scoring cohorts, suppresses question
+observations until a session has at least 20 responses, and flags an unused distractor or large
+accuracy range only under the versioned rules and sample gates. It adds no learner-level persistence,
+exposes only aggregate projections, calls no AI provider, and does not edit/publish content. This is an
+implementation slice, not the 20-question/70%-usefulness study or a production rollout; partner
+usefulness/retained-revision thresholds remain unmeasured, and local tests do not close Phase 1/2
+or release-readiness gates.
 
 As of the merged `main` snapshot on 2026-10-01, all repository-side functionality committed for
 Phase 0 is implemented. The open Phase 0 items are evidence and release-readiness gates, not an
 unfinished feature backlog. The market-plan baseline is reconciled to this status; production
 Companion, first-class Recovery Packs, Question Health post-use observations, Delayed Recovery
-Trail, Decision Replay, and Concept Health are not yet complete and must not be described as
-delivered. The published-content Question Health slice above is provisional and uncommitted.
+Trail, Decision Replay, and Concept Health are not yet complete on `main` and must not be described
+as delivered. The Question Health post-use implementation is being developed provisionally on the
+active branch; partner-evidence decisions remain explicitly deferred.
 
 An Access/resilience implementation slice is complete in the repository provisionally, without
 claiming that Phase 1's branch-selection gate passed. Gated whole-room flex mode is available for

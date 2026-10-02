@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
-const betaEmail = "question-health-beta-e2e@example.com";
+// Use the account that receives the beta suite's explicitly allowlisted workspace.
+const betaEmail = "ux-beta-e2e@example.com";
 
 async function signIn(page: Page) {
   await page.goto("/signin");
@@ -69,6 +70,7 @@ test("Question Health previews a draft diff, applies one revision, and undoes it
   const panel = page.locator("details").filter({
     has: page.locator("summary", { hasText: "Question Health · advisory" }),
   });
+  await expect(panel).toBeVisible();
   await panel.locator("summary").first().click();
   const review = panel.getByRole("button", { name: "Review saved draft" });
   await expect(review).toBeEnabled();
@@ -172,6 +174,7 @@ test("Question Health reviews the immutable published version after draft edits 
   }
 
   await page.goto(`/quiz/${quiz.id}`);
+  await expect(publishedPanel()).toBeVisible();
   await reviewPublishedVersion();
   await expect(publishedPanel()).toContainText("published v1");
   await expect(publishedPanel()).toContainText("Explanation missing");

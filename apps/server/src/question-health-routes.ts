@@ -11,6 +11,7 @@ import {
   QuestionHealthRevisionUndoInputSchema,
   QuestionHealthRevisionUndoneSchema,
   QuestionHealthPublishedResultSchema,
+  QuestionHealthPostUseResultSchema,
   QuestionHealthResultSchema,
   QuizDraftSchema,
 } from "@openround/contracts";
@@ -18,6 +19,7 @@ import type { QuestionHealthFinding } from "@openround/contracts";
 import type { Repository } from "@openround/db";
 import { evaluateQuestionHealth } from "@openround/insights";
 import { proposeQuestionHealthRevision } from "./question-health-revisions.js";
+import { buildQuestionHealthPostUseResult } from "./question-health-post-use.js";
 import type { AuthService } from "./auth.js";
 import type { AppConfig } from "./config.js";
 import { evidenceWorkspaceFeatureEnabled } from "./workspace-rollout.js";
@@ -211,6 +213,44 @@ export async function registerQuestionHealthRoutes(
       },
     });
   });
+
+  app.get(
+    "/v1/quizzes/:id/versions/:versionId/question-health/observations",
+    async (request, reply) => {
+      reply.header("cache-control", "private, no-store").header("pragma", "no-cache");
+      const creator = await auth.requireCreator(request, reply);
+      if (!creator) return;
+      if (!evidenceWorkspaceFeatureEnabled(config, creator.workspaceId, "questionHealth")) {
+        return apiError(reply, 404, "NOT_FOUND", "Question Health is not available", request.id);
+      }
+
+      const { id, versionId } = VersionParamsSchema.parse(request.params);
+      const version = await repository.getQuizVersion(creator.workspaceId, versionId);
+      if (!version || version.quizId !== id) {
+        return apiError(reply, 404, "NOT_FOUND", "Published Round version not found", request.id);
+      }
+      const reportPage = await repository.listQuestionHealthObservationReports(
+        creator.workspaceId,
+        id,
+        versionId,
+        new Date(),
+      );
+      const result = buildQuestionHealthPostUseResult({
+        quizId: id,
+        content: version.content,
+        reports: reportPage.reports,
+        hasMoreReports: reportPage.hasMoreReports,
+        version: {
+          id: version.id,
+          number: version.version,
+          contentHash: version.contentHash,
+          publishedAt: version.publishedAt.toISOString(),
+          sourceDraftRevision: version.sourceDraftRevision ?? null,
+        },
+      });
+      return QuestionHealthPostUseResultSchema.parse(result);
+    },
+  );
 
   app.put("/v1/quizzes/:id/question-health/dismissals/:findingId", async (request, reply) => {
     reply.header("cache-control", "private, no-store").header("pragma", "no-cache");

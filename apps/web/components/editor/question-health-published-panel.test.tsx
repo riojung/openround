@@ -1,8 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { QuestionHealthPublishedResultSchema } from "@openround/contracts";
+import {
+  QuestionHealthPostUseResultSchema,
+  QuestionHealthPublishedResultSchema,
+} from "@openround/contracts";
 import {
   PublishedQuestionHealthPanel,
+  PublishedQuestionHealthObservations,
   PublishedQuestionHealthResults,
 } from "./question-health-published-panel";
 
@@ -52,6 +56,50 @@ const result = QuestionHealthPublishedResultSchema.parse({
     },
   ],
   findingsTruncated: false,
+});
+
+const postUseResult = QuestionHealthPostUseResultSchema.parse({
+  quizId,
+  source: "published",
+  rulesetVersion: "post-use-1.0.0",
+  version: result.version,
+  eligibility: {
+    minimumResponsesPerSession: 20,
+    instabilityMinimumSessions: 3,
+    instabilityThresholdPercentagePoints: 30,
+  },
+  history: { maxReports: 250, reportsIncluded: 250, hasMoreReports: true },
+  cohorts: [
+    {
+      trustMode: "learning",
+      timeMode: "timed",
+      scoringMode: "accuracy",
+      questions: [
+        {
+          questionId,
+          questionPosition: 1,
+          sample: { sessions: 1, responses: 20, minimumResponsesPerSession: 20 },
+          correct: 14,
+          accuracyPercent: 70,
+          sessionAccuracyRange: { minPercent: 70, maxPercent: 70 },
+          signals: [
+            {
+              id: "choice.unused_after_use:question:choice",
+              ruleId: "choice.unused_after_use",
+              ruleVersion: 1,
+              severity: "advisory",
+              questionId,
+              choiceId: removedQuestionId,
+              evidence: "Not selected in this aggregate sample.",
+              recommendedAction: "Review whether this is a plausible distractor.",
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  evidenceNote:
+    "Aggregate observations use the 250 most recent retained reports; older reports are omitted and results do not establish cause.",
 });
 
 describe("published Question Health", () => {
@@ -133,5 +181,24 @@ describe("published Question Health", () => {
     expect(after).toContain("This question has no citation.");
     expect(after).toContain(`Published content hash: <code>${"a".repeat(64)}</code>`);
     expect(after).not.toContain("Edit matching question in current draft");
+  });
+
+  it("labels aggregate evidence, sample limits, and draft review actions", () => {
+    const markup = renderToStaticMarkup(
+      <PublishedQuestionHealthObservations
+        canEdit
+        draftQuestionIds={new Set([questionId])}
+        onOpenDraftQuestion={() => undefined}
+        result={postUseResult}
+      />,
+    );
+
+    expect(markup).toContain("Aggregate observations for published v3");
+    expect(markup).toContain("at least 20 responses");
+    expect(markup).toContain("Cross-session instability is not assessed");
+    expect(markup).toContain("Distractor not selected");
+    expect(markup).toContain("Review matching question in current draft");
+    expect(markup).toContain("older reports are omitted");
+    expect(markup).toContain("do not establish cause");
   });
 });

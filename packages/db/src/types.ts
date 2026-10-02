@@ -388,6 +388,27 @@ export interface ReportJob {
   expiresAt: Date;
 }
 
+/** Narrow, aggregate-only projection for Question Health. Never contains prompts or participants. */
+export interface QuestionHealthObservationReport {
+  trustMode: TrustMode;
+  timeMode: "timed" | "flex";
+  scoringMode: "accuracy" | "speed";
+  questions: Array<{
+    questionId: string;
+    responses: number;
+    correct: number;
+    responseDistribution?: {
+      kind: "choice";
+      buckets: Array<{ value: string; count: number }>;
+    };
+  }>;
+}
+
+export interface QuestionHealthObservationReportPage {
+  reports: QuestionHealthObservationReport[];
+  hasMoreReports: boolean;
+}
+
 interface FollowupRecordBase {
   id: string;
   workspaceId: string;
@@ -1420,6 +1441,12 @@ export interface Repository {
   retryReportJob(job: ReportJob, error: string, availableAt: Date, failed: boolean): Promise<void>;
   getReport(workspaceId: string, reportId: string): Promise<Report | null>;
   getReportBySession(workspaceId: string, sessionId: string): Promise<Report | null>;
+  listQuestionHealthObservationReports(
+    workspaceId: string,
+    quizId: string,
+    quizVersionId: string,
+    now: Date,
+  ): Promise<QuestionHealthObservationReportPage>;
   listReportHistory(
     workspaceId: string,
     options: {
