@@ -229,7 +229,7 @@ export async function registerQuestionHealthRoutes(
       if (!version || version.quizId !== id) {
         return apiError(reply, 404, "NOT_FOUND", "Published Round version not found", request.id);
       }
-      const reports = await repository.listQuestionHealthObservationReports(
+      const reportPage = await repository.listQuestionHealthObservationReports(
         creator.workspaceId,
         id,
         versionId,
@@ -238,7 +238,8 @@ export async function registerQuestionHealthRoutes(
       const result = buildQuestionHealthPostUseResult({
         quizId: id,
         content: version.content,
-        reports,
+        reports: reportPage.reports,
+        hasMoreReports: reportPage.hasMoreReports,
         version: {
           id: version.id,
           number: version.version,

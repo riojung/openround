@@ -404,6 +404,11 @@ export interface QuestionHealthObservationReport {
   }>;
 }
 
+export interface QuestionHealthObservationReportPage {
+  reports: QuestionHealthObservationReport[];
+  hasMoreReports: boolean;
+}
+
 interface FollowupRecordBase {
   id: string;
   workspaceId: string;
@@ -1441,7 +1446,7 @@ export interface Repository {
     quizId: string,
     quizVersionId: string,
     now: Date,
-  ): Promise<QuestionHealthObservationReport[]>;
+  ): Promise<QuestionHealthObservationReportPage>;
   listReportHistory(
     workspaceId: string,
     options: {

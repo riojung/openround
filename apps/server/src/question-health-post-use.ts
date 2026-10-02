@@ -1,4 +1,5 @@
 import {
+  QUESTION_HEALTH_POST_USE_MAX_REPORTS,
   QuestionHealthPostUseResultSchema,
   questionDelivery,
   questionPurpose,
@@ -28,6 +29,7 @@ export function buildQuestionHealthPostUseResult(input: {
   content: QuizDraft;
   version: QuestionHealthPostUseResult["version"];
   reports: QuestionHealthObservationReport[];
+  hasMoreReports: boolean;
 }): QuestionHealthPostUseResult {
   const mainQuestions = input.content.questions.flatMap((question, questionIndex) =>
     questionDelivery(question) === "main" && scorable(question)
@@ -40,7 +42,9 @@ export function buildQuestionHealthPostUseResult(input: {
       trustMode: QuestionHealthObservationReport["trustMode"];
       timeMode: QuestionHealthObservationReport["timeMode"];
       scoringMode: QuestionHealthObservationReport["scoringMode"];
-      reports: QuestionHealthObservationReport[];
+      reports: Array<{
+        questionsById: Map<string, QuestionHealthObservationReport["questions"][number]>;
+      }>;
     }
   >();
 
@@ -52,7 +56,9 @@ export function buildQuestionHealthPostUseResult(input: {
       scoringMode: report.scoringMode,
       reports: [],
     };
-    cohort.reports.push(report);
+    cohort.reports.push({
+      questionsById: new Map(report.questions.map((question) => [question.questionId, question])),
+    });
     cohorts.set(key, cohort);
   }
 
@@ -66,12 +72,17 @@ export function buildQuestionHealthPostUseResult(input: {
       instabilityMinimumSessions: INSTABILITY_MINIMUM_SESSIONS,
       instabilityThresholdPercentagePoints: INSTABILITY_THRESHOLD_PERCENTAGE_POINTS,
     },
+    history: {
+      maxReports: QUESTION_HEALTH_POST_USE_MAX_REPORTS,
+      reportsIncluded: input.reports.length,
+      hasMoreReports: input.hasMoreReports,
+    },
     cohorts: [...cohorts.values()].flatMap((cohort) => {
       const questions = mainQuestions.flatMap(({ question, questionIndex }) => {
-        const samples = cohort.reports.flatMap((report) => {
-          const observed = report.questions.find((item) => item.questionId === question.id);
+        const samples = cohort.reports.flatMap(({ questionsById }) => {
+          const observed = questionsById.get(question.id);
           return observed && observed.responses >= MINIMUM_RESPONSES_PER_SESSION
-            ? [{ report, observed }]
+            ? [{ observed }]
             : [];
         });
         if (samples.length === 0) return [];
@@ -167,8 +178,9 @@ export function buildQuestionHealthPostUseResult(input: {
         },
       ];
     }),
-    evidenceNote:
-      "These descriptive aggregates include only retained reports for this exact published version and matching trust, timing, and scoring settings. They are not learner profiles, causal evidence, or proof of durable learning.",
+    evidenceNote: input.hasMoreReports
+      ? `These descriptive aggregates use the ${input.reports.length} most recent retained reports for this exact published version; older reports are omitted. Matching trust, timing, and scoring settings remain separate. They are not learner profiles, causal evidence, or proof of durable learning.`
+      : "These descriptive aggregates include all retained reports for this exact published version and matching trust, timing, and scoring settings. They are not learner profiles, causal evidence, or proof of durable learning.",
   });
   return result;
 }

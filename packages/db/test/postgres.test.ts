@@ -199,7 +199,14 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
           verificationClient.query<{ count: string; maximum: number }>(
             "SELECT count(*) AS count, max(version) AS maximum FROM _openround_migrations",
           ),
-        ).resolves.toMatchObject({ rows: [{ count: "45", maximum: 45 }] });
+        ).resolves.toMatchObject({
+          rows: [
+            {
+              count: String(migrations.length),
+              maximum: migrations.at(-1)!.version,
+            },
+          ],
+        });
 
         await expect(
           verificationClient.query(
@@ -1719,14 +1726,17 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       fixture.version.id,
       now,
     );
-    expect(observations).toEqual([
-      {
-        trustMode: "learning",
-        timeMode: "timed",
-        scoringMode: "accuracy",
-        questions: [{ questionId: question.id, responses: 20, correct: 12 }],
-      },
-    ]);
+    expect(observations).toEqual({
+      hasMoreReports: false,
+      reports: [
+        {
+          trustMode: "learning",
+          timeMode: "timed",
+          scoringMode: "accuracy",
+          questions: [{ questionId: question.id, responses: 20, correct: 12 }],
+        },
+      ],
+    });
     expect(JSON.stringify(observations)).not.toContain(question.prompt);
     expect(JSON.stringify(observations)).not.toContain("sessionId");
     await expect(
@@ -1736,7 +1746,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         randomUUID(),
         now,
       ),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ reports: [], hasMoreReports: false });
     await expect(
       repository.listQuestionHealthObservationReports(
         other.workspaceId,
@@ -1744,7 +1754,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         fixture.version.id,
         now,
       ),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ reports: [], hasMoreReports: false });
   });
 
   it("atomically stores tenant-scoped Question Health application provenance with a draft revision", async () => {

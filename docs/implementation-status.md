@@ -125,7 +125,8 @@ creator-authenticated, allowlisted, read-only API and builder panel. It includes
 provenance, does not inherit draft dismissals or mutation controls, and stays pinned when the draft
 changes or a newer version is published. The active `codex/question-health-post-use-observations`
 branch adds a read-only aggregate endpoint and builder view for retained reports of that exact
-published version. It separates Learning/Verified, timed/flex, and accuracy/speed-scoring cohorts, suppresses question
+published version, bounded to the 250 most recent retained reports with an explicit omitted-history
+indicator. It separates Learning/Verified, timed/flex, and accuracy/speed-scoring cohorts, suppresses question
 observations until a session has at least 20 responses, and flags an unused distractor or large
 accuracy range only under the versioned rules and sample gates. It adds no learner-level persistence,
 exposes only aggregate projections, calls no AI provider, and does not edit/publish content. This is an

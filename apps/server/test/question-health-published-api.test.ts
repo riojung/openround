@@ -142,12 +142,13 @@ async function addAggregateReport(
 ) {
   if (!repository || !ownerWorkspaceId)
     throw new Error("The API test repository was not initialized");
-  const now = new Date();
+  const reportIndex = repository.reports.size;
+  const now = new Date(Date.now() + reportIndex);
   const sessionId = randomUUID();
   const retentionExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
   const state = createGameState({
     sessionId,
-    code: "1234567",
+    code: String(1_000_000 + reportIndex),
     quiz: draft,
     settings: {
       audienceLimit: 50,
@@ -234,6 +235,7 @@ describe("Question Health published-version analysis", () => {
       source: "published",
       rulesetVersion: "post-use-1.0.0",
       version: { id: version.id, contentHash: version.contentHash },
+      history: { maxReports: 250, reportsIncluded: 1, hasMoreReports: false },
       cohorts: [
         {
           trustMode: "learning",
@@ -254,6 +256,35 @@ describe("Question Health published-version analysis", () => {
     expect(response.body).not.toContain("participantId");
     expect(response.body).not.toContain("sessionId");
     expect(response.body).not.toContain("participants");
+  });
+
+  it("bounds the analysis to the latest reports and exposes omitted history", async () => {
+    const target = await build(true);
+    const cookie = await signIn(target, "question-health-observation-window@example.com");
+    const { quizId, draft, version } = await createPublishedRound(target, cookie);
+    for (let index = 0; index < 251; index += 1) {
+      await addAggregateReport(version.id, draft, index === 0 ? 0 : 20);
+    }
+
+    const response = await target.inject({
+      method: "GET",
+      url: postUseObservationsUrl(quizId, version.id),
+      headers: { cookie },
+    });
+    expect(response.statusCode).toBe(200);
+    const result = QuestionHealthPostUseResultSchema.parse(response.json());
+    expect(result.history).toEqual({
+      maxReports: 250,
+      reportsIncluded: 250,
+      hasMoreReports: true,
+    });
+    expect(result.cohorts[0]?.questions[0]?.sample).toEqual({
+      sessions: 250,
+      responses: 5_000,
+      minimumResponsesPerSession: 20,
+    });
+    expect(result.cohorts[0]?.questions[0]?.accuracyPercent).toBe(100);
+    expect(result.evidenceNote).toContain("older reports are omitted");
   });
 
   it("analyzes the selected immutable version, not later draft edits or publications", async () => {

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { upgradeGameState, type EngineAnswer, type GameState } from "@openround/game-engine";
 import {
+  QUESTION_HEALTH_POST_USE_MAX_REPORTS,
   ReportSchema,
   ResponsePayloadSchema,
   SupportedLocaleSchema,
@@ -85,6 +86,7 @@ import type {
   Plan,
   ProductEventRecord,
   QuestionHealthObservationReport,
+  QuestionHealthObservationReportPage,
   QuestionHealthDismissalIdentity,
   QuestionHealthDismissalRecord,
   QuestionHealthDismissalWrite,
@@ -5486,7 +5488,8 @@ export class PostgresRepository implements Repository {
     quizId: string,
     quizVersionId: string,
     now: Date,
-  ): Promise<QuestionHealthObservationReport[]> {
+  ): Promise<QuestionHealthObservationReportPage> {
+    const limit = QUESTION_HEALTH_POST_USE_MAX_REPORTS;
     const result = await this.workspaceQuery(
       workspaceId,
       `SELECT game_sessions.trust_mode,
@@ -5506,67 +5509,72 @@ export class PostgresRepository implements Repository {
          AND reports.status = 'ready'
          AND reports.generated_at IS NOT NULL
          AND game_sessions.retention_expires_at > $4
-       ORDER BY reports.generated_at DESC, reports.id DESC`,
-      [workspaceId, quizId, quizVersionId, now],
+       ORDER BY reports.generated_at DESC, reports.id DESC
+       LIMIT $5`,
+      [workspaceId, quizId, quizVersionId, now, limit + 1],
     );
-    return result.rows.flatMap((row): QuestionHealthObservationReport[] => {
-      const questions = Array.isArray(row.questions) ? row.questions : [];
-      const parsedTrustMode = TrustModeSchema.safeParse(row.trust_mode);
-      return [
-        {
-          trustMode: parsedTrustMode.success ? parsedTrustMode.data : "learning",
-          timeMode: row.time_mode === "flex" ? "flex" : "timed",
-          scoringMode: row.scoring_mode === "speed" ? "speed" : "accuracy",
-          questions: questions.flatMap((candidate: unknown) => {
-            if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
-            const question = candidate as Record<string, unknown>;
-            if (
-              typeof question.questionId !== "string" ||
-              !Number.isSafeInteger(question.responses) ||
-              !Number.isSafeInteger(question.correct) ||
-              Number(question.responses) < 0 ||
-              Number(question.correct) < 0 ||
-              Number(question.correct) > Number(question.responses)
-            ) {
-              return [];
-            }
-            const rawDistribution = question.responseDistribution;
-            const distribution =
-              rawDistribution &&
-              typeof rawDistribution === "object" &&
-              !Array.isArray(rawDistribution) &&
-              (rawDistribution as Record<string, unknown>).kind === "choice" &&
-              Array.isArray((rawDistribution as Record<string, unknown>).buckets)
-                ? {
-                    kind: "choice" as const,
-                    buckets: (
-                      (rawDistribution as Record<string, unknown>).buckets as unknown[]
-                    ).flatMap((bucket) => {
-                      if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) {
-                        return [];
-                      }
-                      const value = (bucket as Record<string, unknown>).value;
-                      const count = (bucket as Record<string, unknown>).count;
-                      return typeof value === "string" &&
-                        Number.isInteger(count) &&
-                        Number(count) >= 0
-                        ? [{ value, count: Number(count) }]
-                        : [];
-                    }),
-                  }
-                : undefined;
-            return [
-              {
-                questionId: question.questionId,
-                responses: Number(question.responses),
-                correct: Number(question.correct),
-                ...(distribution ? { responseDistribution: distribution } : {}),
-              },
-            ];
-          }),
-        },
-      ];
-    });
+    const reports = result.rows
+      .slice(0, limit)
+      .flatMap((row): QuestionHealthObservationReport[] => {
+        const questions = Array.isArray(row.questions) ? row.questions : [];
+        const parsedTrustMode = TrustModeSchema.safeParse(row.trust_mode);
+        return [
+          {
+            trustMode: parsedTrustMode.success ? parsedTrustMode.data : "learning",
+            timeMode: row.time_mode === "flex" ? "flex" : "timed",
+            scoringMode: row.scoring_mode === "speed" ? "speed" : "accuracy",
+            questions: questions.flatMap((candidate: unknown) => {
+              if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+                return [];
+              const question = candidate as Record<string, unknown>;
+              if (
+                typeof question.questionId !== "string" ||
+                !Number.isSafeInteger(question.responses) ||
+                !Number.isSafeInteger(question.correct) ||
+                Number(question.responses) < 0 ||
+                Number(question.correct) < 0 ||
+                Number(question.correct) > Number(question.responses)
+              ) {
+                return [];
+              }
+              const rawDistribution = question.responseDistribution;
+              const distribution =
+                rawDistribution &&
+                typeof rawDistribution === "object" &&
+                !Array.isArray(rawDistribution) &&
+                (rawDistribution as Record<string, unknown>).kind === "choice" &&
+                Array.isArray((rawDistribution as Record<string, unknown>).buckets)
+                  ? {
+                      kind: "choice" as const,
+                      buckets: (
+                        (rawDistribution as Record<string, unknown>).buckets as unknown[]
+                      ).flatMap((bucket) => {
+                        if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) {
+                          return [];
+                        }
+                        const value = (bucket as Record<string, unknown>).value;
+                        const count = (bucket as Record<string, unknown>).count;
+                        return typeof value === "string" &&
+                          Number.isInteger(count) &&
+                          Number(count) >= 0
+                          ? [{ value, count: Number(count) }]
+                          : [];
+                      }),
+                    }
+                  : undefined;
+              return [
+                {
+                  questionId: question.questionId,
+                  responses: Number(question.responses),
+                  correct: Number(question.correct),
+                  ...(distribution ? { responseDistribution: distribution } : {}),
+                },
+              ];
+            }),
+          },
+        ];
+      });
+    return { reports, hasMoreReports: result.rows.length > limit };
   }
 
   async listReportHistory(

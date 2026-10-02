@@ -68,6 +68,7 @@ const postUseResult = QuestionHealthPostUseResultSchema.parse({
     instabilityMinimumSessions: 3,
     instabilityThresholdPercentagePoints: 30,
   },
+  history: { maxReports: 250, reportsIncluded: 250, hasMoreReports: true },
   cohorts: [
     {
       trustMode: "learning",
@@ -97,7 +98,8 @@ const postUseResult = QuestionHealthPostUseResultSchema.parse({
       ],
     },
   ],
-  evidenceNote: "Aggregate observations do not establish cause.",
+  evidenceNote:
+    "Aggregate observations use the 250 most recent retained reports; older reports are omitted and results do not establish cause.",
 });
 
 describe("published Question Health", () => {
@@ -196,6 +198,7 @@ describe("published Question Health", () => {
     expect(markup).toContain("Cross-session instability is not assessed");
     expect(markup).toContain("Distractor not selected");
     expect(markup).toContain("Review matching question in current draft");
+    expect(markup).toContain("older reports are omitted");
     expect(markup).toContain("do not establish cause");
   });
 });

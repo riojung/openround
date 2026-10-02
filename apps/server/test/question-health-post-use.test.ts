@@ -61,11 +61,12 @@ function report(
   };
 }
 
-function build(reports: QuestionHealthObservationReport[]) {
+function build(reports: QuestionHealthObservationReport[], hasMoreReports = false) {
   return buildQuestionHealthPostUseResult({
     quizId: randomUUID(),
     content,
     reports,
+    hasMoreReports,
     version: {
       id: randomUUID(),
       number: 1,
@@ -119,5 +120,19 @@ describe("Question Health post-use observations", () => {
     expect(
       result.cohorts.flatMap((cohort) => cohort.questions.flatMap((question) => question.signals)),
     ).not.toContainEqual(expect.objectContaining({ ruleId: "question.session_instability" }));
+  });
+
+  it("declares when the retained-report window omits older reports", () => {
+    const result = build(
+      Array.from({ length: 250 }, () => report(14)),
+      true,
+    );
+    expect(result.history).toEqual({
+      maxReports: 250,
+      reportsIncluded: 250,
+      hasMoreReports: true,
+    });
+    expect(result.evidenceNote).toContain("250 most recent retained reports");
+    expect(result.evidenceNote).toContain("older reports are omitted");
   });
 });

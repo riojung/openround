@@ -644,6 +644,8 @@ export const QuestionHealthPublishedResultSchema = QuestionHealthResultSchema.om
 export type QuestionHealthPublishedResult = z.infer<typeof QuestionHealthPublishedResultSchema>;
 
 /** Aggregate-only post-use evidence for one exact published Round version. */
+export const QUESTION_HEALTH_POST_USE_MAX_REPORTS = 250;
+
 export const QuestionHealthPostUseSignalSchema = z.discriminatedUnion("ruleId", [
   z.object({
     id: z.string().min(1).max(500),
@@ -698,6 +700,11 @@ export const QuestionHealthPostUseResultSchema = z.object({
     minimumResponsesPerSession: z.literal(20),
     instabilityMinimumSessions: z.literal(3),
     instabilityThresholdPercentagePoints: z.literal(30),
+  }),
+  history: z.object({
+    maxReports: z.literal(QUESTION_HEALTH_POST_USE_MAX_REPORTS),
+    reportsIncluded: z.number().int().min(0).max(QUESTION_HEALTH_POST_USE_MAX_REPORTS),
+    hasMoreReports: z.boolean(),
   }),
   cohorts: z
     .array(

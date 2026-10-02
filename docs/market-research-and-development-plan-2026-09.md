@@ -432,7 +432,8 @@ undo; it never rewrites a published version. Read-only published-version analysi
 immutable content with stored version provenance in a separate API and Round Builder panel, without
 draft dismissal or apply controls. The active `codex/question-health-post-use-observations` branch
 implements a separate read-only post-use endpoint and panel for the exact published version. It
-uses only existing aggregate report counts and choice distributions, separates trust/time/scoring cohorts,
+uses only the 250 most recent retained aggregate reports and exposes when older history is omitted;
+it separates trust/time/scoring cohorts,
 requires at least 20 responses within each included session, reports accuracy across sessions, and
 flags a distractor selected zero times or a 30-point accuracy range only under explicit sample
 rules. The feature adds no participant-level answer storage or AI transmission, and changes no

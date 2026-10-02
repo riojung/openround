@@ -90,6 +90,7 @@ import {
   upcastRoundDraft,
 } from "./artifact-schemas.js";
 import {
+  QUESTION_HEALTH_POST_USE_MAX_REPORTS,
   ReportSchema,
   questionDelivery,
   type BrandTheme,
@@ -3421,8 +3422,13 @@ export class MemoryRepository implements Repository {
     quizVersionId: string,
     now: Date,
   ) {
-    return [...this.reports.values()].flatMap((report) => {
-      if (report.status !== "ready" || !report.generatedAt) return [];
+    const limit = QUESTION_HEALTH_POST_USE_MAX_REPORTS;
+    const newest: Array<{ report: Report; session: StoredSession }> = [];
+    const retainedReportLimit = limit + 1;
+    let retainedReportCount = 0;
+
+    for (const report of this.reports.values()) {
+      if (report.status !== "ready" || !report.generatedAt) continue;
       const session = this.sessions.get(report.sessionId);
       if (
         !session ||
@@ -3430,39 +3436,54 @@ export class MemoryRepository implements Repository {
         session.quizVersionId !== quizVersionId ||
         session.retentionExpiresAt <= now
       ) {
-        return [];
+        continue;
       }
       const version = this.versions.get(session.quizVersionId);
-      if (!version || version.workspaceId !== workspaceId || version.quizId !== quizId) return [];
-      const questions = report.questions.map((question) => {
-        const distribution = question.responseDistribution;
-        return {
-          questionId: question.questionId,
-          responses: question.responses,
-          correct: question.correct,
-          ...(distribution?.kind === "choice"
-            ? {
-                responseDistribution: {
-                  kind: "choice" as const,
-                  buckets: distribution.buckets.flatMap((bucket) =>
-                    typeof bucket.value === "string"
-                      ? [{ value: bucket.value, count: bucket.count }]
-                      : [],
-                  ),
-                },
-              }
-            : {}),
-        };
+      if (!version || version.workspaceId !== workspaceId || version.quizId !== quizId) continue;
+
+      retainedReportCount += 1;
+      const candidate = { report, session };
+      const insertAt = newest.findIndex((existing) => {
+        const dateOrder =
+          Date.parse(report.generatedAt!) - Date.parse(existing.report.generatedAt!);
+        return dateOrder > 0 || (dateOrder === 0 && report.id > existing.report.id);
       });
-      return [
-        {
-          trustMode: session.trustMode ?? report.trustMode ?? "learning",
-          timeMode: report.timeMode ?? session.state.settings.timeMode ?? "timed",
-          scoringMode: session.state.settings.scoringMode,
-          questions,
-        },
-      ];
-    });
+      if (insertAt < 0) {
+        if (newest.length < retainedReportLimit) newest.push(candidate);
+      } else {
+        newest.splice(insertAt, 0, candidate);
+        if (newest.length > retainedReportLimit) newest.pop();
+      }
+    }
+
+    return {
+      hasMoreReports: retainedReportCount > limit,
+      reports: newest.slice(0, limit).map(({ report, session }) => ({
+        trustMode: session.trustMode ?? report.trustMode ?? "learning",
+        timeMode: report.timeMode ?? session.state.settings.timeMode ?? "timed",
+        scoringMode: session.state.settings.scoringMode,
+        questions: report.questions.map((question) => {
+          const distribution = question.responseDistribution;
+          return {
+            questionId: question.questionId,
+            responses: question.responses,
+            correct: question.correct,
+            ...(distribution?.kind === "choice"
+              ? {
+                  responseDistribution: {
+                    kind: "choice" as const,
+                    buckets: distribution.buckets.flatMap((bucket) =>
+                      typeof bucket.value === "string"
+                        ? [{ value: bucket.value, count: bucket.count }]
+                        : [],
+                    ),
+                  },
+                }
+              : {}),
+          };
+        }),
+      })),
+    };
   }
 
   async listReportHistory(
