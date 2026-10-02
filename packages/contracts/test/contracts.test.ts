@@ -26,6 +26,7 @@ import {
   PublicFeaturesSchema,
   PublishQuizRequestSchema,
   QuestionHealthDismissalInputSchema,
+  QuestionHealthPublishedResultSchema,
   QuestionHealthResultSchema,
   QuizContentSchema,
   QuizDraftSchema,
@@ -85,6 +86,31 @@ describe("public contracts", () => {
     expect(
       QuestionHealthDismissalInputSchema.safeParse({ ...input, reason: "freeform explanation" })
         .success,
+    ).toBe(false);
+  });
+
+  it("binds published Question Health findings to immutable version provenance", () => {
+    const result = QuestionHealthPublishedResultSchema.parse({
+      quizId: randomUUID(),
+      rulesetVersion: "1.0.0",
+      evaluatedQuestionCount: 1,
+      findings: [],
+      findingsTruncated: false,
+      source: "published",
+      version: {
+        id: randomUUID(),
+        number: 2,
+        contentHash: "a".repeat(64),
+        publishedAt: new Date().toISOString(),
+        sourceDraftRevision: null,
+      },
+    });
+    expect(result.version.number).toBe(2);
+    expect(
+      QuestionHealthPublishedResultSchema.safeParse({
+        ...result,
+        version: { ...result.version, contentHash: "not-a-hash" },
+      }).success,
     ).toBe(false);
   });
 

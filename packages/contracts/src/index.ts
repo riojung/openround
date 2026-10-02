@@ -627,6 +627,90 @@ export const QuestionHealthResultSchema = z.object({
 });
 export type QuestionHealthResult = z.infer<typeof QuestionHealthResultSchema>;
 
+/** Findings for one immutable published Round version; draft dismissals never apply here. */
+export const QuestionHealthPublishedResultSchema = QuestionHealthResultSchema.omit({
+  draftRevision: true,
+  dismissals: true,
+}).extend({
+  source: z.literal("published"),
+  version: z.object({
+    id: z.string().uuid(),
+    number: z.number().int().positive(),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    publishedAt: z.string().datetime(),
+    sourceDraftRevision: z.number().int().nonnegative().nullable(),
+  }),
+});
+export type QuestionHealthPublishedResult = z.infer<typeof QuestionHealthPublishedResultSchema>;
+
+/** Only narrowly-scoped, facilitator-reviewed edits may be applied from a health finding. */
+export const QuestionHealthRevisionActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("align_opinion_settings") }),
+  z.object({ kind: z.literal("set_explanation"), value: z.string().trim().min(1).max(1_000) }),
+  z.object({ kind: z.literal("set_choice_feedback"), value: z.string().trim().min(1).max(500) }),
+  z.object({ kind: z.literal("set_choice_label"), value: z.string().trim().min(1).max(180) }),
+  z.object({ kind: z.literal("set_prompt"), value: z.string().trim().min(1).max(500) }),
+  z.object({ kind: z.literal("set_recheck_prompt"), value: z.string().trim().min(1).max(500) }),
+]);
+export type QuestionHealthRevisionAction = z.infer<typeof QuestionHealthRevisionActionSchema>;
+
+export const QuestionHealthRevisionPreviewInputSchema = QuestionHealthDismissalInputSchema.omit({
+  reason: true,
+}).extend({ action: QuestionHealthRevisionActionSchema });
+export type QuestionHealthRevisionPreviewInput = z.infer<
+  typeof QuestionHealthRevisionPreviewInputSchema
+>;
+
+export const QuestionHealthRevisionApplyInputSchema =
+  QuestionHealthRevisionPreviewInputSchema.extend({ mutationId: z.string().uuid() });
+export type QuestionHealthRevisionApplyInput = z.infer<
+  typeof QuestionHealthRevisionApplyInputSchema
+>;
+
+export const QuestionHealthRevisionUndoInputSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  mutationId: z.string().uuid(),
+});
+export type QuestionHealthRevisionUndoInput = z.infer<typeof QuestionHealthRevisionUndoInputSchema>;
+
+export const QuestionHealthRevisionChangeSchema = z.object({
+  fieldPath: z.string().min(1).max(500),
+  before: z.union([z.string(), z.number(), z.null()]),
+  after: z.union([z.string(), z.number(), z.null()]),
+});
+export type QuestionHealthRevisionChange = z.infer<typeof QuestionHealthRevisionChangeSchema>;
+
+export const QuestionHealthRevisionPreviewSchema = z.object({
+  findingId: z.string().min(1).max(500),
+  draftRevision: z.number().int().nonnegative(),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  changes: z.array(QuestionHealthRevisionChangeSchema).min(1).max(2),
+});
+export type QuestionHealthRevisionPreview = z.infer<typeof QuestionHealthRevisionPreviewSchema>;
+
+/** The API returns the complete QuizRecord; this schema checks the fields needed by the editor. */
+const QuestionHealthRevisionQuizSchema = z
+  .object({
+    id: z.string().uuid(),
+    draft: z.lazy(() => QuizDraftSchema),
+    draftRevision: z.number().int().nonnegative(),
+  })
+  .passthrough();
+
+export const QuestionHealthRevisionAppliedSchema = z.object({
+  quiz: QuestionHealthRevisionQuizSchema,
+  applicationId: z.string().uuid(),
+  appliedRevision: z.number().int().nonnegative(),
+  changes: z.array(QuestionHealthRevisionChangeSchema).min(1).max(2),
+});
+export type QuestionHealthRevisionApplied = z.infer<typeof QuestionHealthRevisionAppliedSchema>;
+
+export const QuestionHealthRevisionUndoneSchema = z.object({
+  quiz: QuestionHealthRevisionQuizSchema,
+  applicationId: z.string().uuid(),
+});
+export type QuestionHealthRevisionUndone = z.infer<typeof QuestionHealthRevisionUndoneSchema>;
+
 const CommonQuestionSchema = CommonQuestionDraftSchema.extend({
   prompt: z.string().trim().min(1, "Enter the checkpoint prompt").max(500),
 });

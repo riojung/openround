@@ -7,6 +7,38 @@
   box-shadow: var(--ui-shadow-sm);
 }
 
+.publishedPanel {
+  border-inline-start: 4px solid var(--ui-accent);
+}
+
+.publishedPanel .finding button {
+  justify-self: start;
+  margin-top: 5px;
+}
+
+.publishedPanel .finding button:focus-visible {
+  outline: 3px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.provenance {
+  color: var(--ui-text-subtle);
+  font-size: 0.8rem;
+}
+
+.provenance summary {
+  min-height: 38px;
+  font-size: 0.8rem;
+}
+
+.provenance p {
+  margin: 4px 0;
+}
+
+.provenance code {
+  overflow-wrap: anywhere;
+}
+
 .panel summary {
   min-height: 44px;
   cursor: pointer;
@@ -92,6 +124,131 @@
   margin-top: 5px;
 }
 
+.undoNotice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-surface-soft);
+  padding: 10px;
+  color: var(--ui-text-strong);
+  font-size: 0.84rem;
+}
+
+.revisionControls,
+.revisionEditor,
+.revisionDiff {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.revisionControls {
+  margin-block: 5px;
+  border-top: 1px solid var(--ui-border);
+  padding-top: 9px;
+}
+
+.revisionControls > button,
+.revisionEditor > button,
+.revisionDiff > button {
+  justify-self: start;
+}
+
+.revisionEditor label {
+  display: grid;
+  gap: 5px;
+  color: var(--ui-text-strong);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.revisionEditor textarea {
+  min-height: 88px;
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  background: var(--ui-surface-raised);
+  color: var(--ui-text-strong);
+  padding: 8px;
+  font: inherit;
+  font-weight: 400;
+}
+
+.revisionDiff {
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-surface-raised);
+  padding: 10px;
+}
+
+.revisionDiff > strong {
+  font-size: 0.85rem;
+}
+
+.revisionDiff ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.revisionDiff li > span {
+  overflow-wrap: anywhere;
+  color: var(--ui-text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+}
+
+.diffValues {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.diffValues del,
+.diffValues ins {
+  min-height: 42px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  padding: 7px;
+  color: var(--ui-text-strong);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  text-decoration: none;
+  white-space: pre-wrap;
+}
+
+.diffValues del {
+  border-inline-start: 3px solid var(--ui-warning-text);
+}
+
+.diffValues ins {
+  border-inline-start: 3px solid var(--ui-accent);
+}
+
+.diffHeading {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ui-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.revisionControls button:focus-visible,
+.revisionEditor textarea:focus-visible,
+.undoNotice button:focus-visible {
+  outline: 3px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
 .dismissControls label {
   grid-column: 1 / -1;
   color: var(--ui-text-strong);
@@ -168,5 +325,9 @@
 
   .dismissControls label {
     grid-column: 1;
+  }
+
+  .diffValues {
+    grid-template-columns: 1fr;
   }
 }

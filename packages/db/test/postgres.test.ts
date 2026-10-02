@@ -726,6 +726,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 43, name: "bounded_media_object_cleanup" },
       { version: 44, name: "round_flex_deadlines" },
       { version: 45, name: "question_health_dismissals" },
+      { version: 46, name: "question_health_applications" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -735,7 +736,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("45");
+    expect(bootstrapped.rows[0]?.count).toBe("46");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -1667,6 +1668,87 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       removed: true,
     });
     expect(await repository.listQuestionHealthDismissals(owner.workspaceId, quiz.id)).toEqual([]);
+  });
+
+  it("atomically stores tenant-scoped Question Health application provenance with a draft revision", async () => {
+    const owner = await creator("question-health-application");
+    const other = await creator("question-health-application-other");
+    const now = new Date();
+    const old = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1_000);
+    const draft = publishableRound("Application persistence");
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: old,
+      updatedAt: old,
+    });
+    const applicationId = randomUUID();
+    const changed = {
+      ...draft,
+      questions: [{ ...draft.questions[0]!, explanation: "A reviewed explanation." }],
+    } as QuizDraft;
+    const mutation = {
+      workspaceId: owner.workspaceId,
+      quizId: quiz.id,
+      draft: changed,
+      expectedRevision: 0,
+      mutationId: applicationId,
+      editorId: owner.userId,
+      schemaVersion: 1,
+      draftHash: createHash("sha256").update(JSON.stringify(changed)).digest("hex"),
+      questionHealthApplication: {
+        workspaceId: owner.workspaceId,
+        quizId: quiz.id,
+        applicationId,
+        findingId: "qh-test-missing-explanation",
+        ruleVersion: 1,
+        rulesetVersion: "1.0.0",
+        contentHash: "a".repeat(64),
+        sourceRevision: 0,
+        requestHash: "b".repeat(64),
+        changes: [
+          {
+            fieldPath: "questions.0.explanation",
+            before: "One plus one is two.",
+            after: "A reviewed explanation.",
+          },
+        ],
+        requestId: randomUUID(),
+      },
+    };
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({ draftRevision: 1 });
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({ draftRevision: 1 });
+    expect(
+      await repository.getQuestionHealthApplication(owner.workspaceId, quiz.id, applicationId),
+    ).toMatchObject({ sourceRevision: 0, appliedRevision: 1, requestHash: "b".repeat(64) });
+    expect(
+      await repository.getQuestionHealthApplication(other.workspaceId, quiz.id, applicationId),
+    ).toBeNull();
+    expect(
+      (await repository.listQuizDraftHistory(owner.workspaceId, quiz.id)).map(
+        (snapshot) => snapshot.revision,
+      ),
+    ).toContain(0);
+    await expect(
+      repository.updateQuizDraft({
+        ...mutation,
+        questionHealthApplication: {
+          ...mutation.questionHealthApplication,
+          requestHash: "c".repeat(64),
+        },
+      }),
+    ).rejects.toThrow();
+    const accountExport = (await repository.exportAccount(owner.userId)) as {
+      questionHealthApplications?: Array<{ application_id: string }>;
+    };
+    expect(accountExport.questionHealthApplications).toMatchObject([
+      { application_id: applicationId },
+    ]);
   });
 
   it("atomically fences draft replacements and revision-bound publishing", async () => {

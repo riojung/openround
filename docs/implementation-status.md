@@ -106,23 +106,33 @@ evaluator, versioned advisory contract, authenticated draft-only API, and read-o
 panel behind `FEATURE_QUESTION_HEALTH` plus the evidence workspace allowlist. The evaluator is capped
 at 1,000 findings and marks truncated output. The flag remains off by default.
 
-This follow-up implementation slice adds persistent, content-addressed facilitator dismissals with
+PR #62 merged persistent, content-addressed facilitator dismissals with
 three bounded reasons and a reopen action. Dismissals are scoped to the workspace/Round, fenced by
 the current draft revision, hidden when the matching finding's rule version or content hash changes,
 included in account export and source-deletion cleanup, and logged using the
 `question_health.dismissal.create` / `question_health.dismissal.delete` audit vocabulary without
 storing question text in audit metadata. Turning off the rollout blocks new dismissals while keeping
 currently matching saved decisions readable and reopenable. This remains advisory: no draft is
-rewritten or published automatically. Revision apply/undo, published-content analysis, and post-use observations remain
-incomplete. Partner usefulness/retained-revision thresholds remain unmeasured; neither the
-provisional implementation nor local tests close Phase 1/2 or release-readiness gates.
+rewritten or published automatically.
+
+Current provisional work adds a facilitator-approved draft revision flow for supported findings:
+strict rule/field-specific edits, a server-validated before/after preview, one idempotent saved
+revision, and undo while that revision is still current. Published versions are not changed. The
+builder preserves unsaved local work during conflicts, and application provenance is scoped to the
+source Round and included in account export and deletion. Unsupported findings remain advisory.
+Published-content analysis now evaluates an exact immutable Round version through a separate
+creator-authenticated, allowlisted, read-only API and builder panel. It includes stored version
+provenance, does not inherit draft dismissals or mutation controls, and stays pinned when the draft
+changes or a newer version is published. Post-use observations remain incomplete. Partner
+usefulness/retained-revision thresholds remain unmeasured; neither the provisional implementation
+nor local tests close Phase 1/2 or release-readiness gates.
 
 As of the merged `main` snapshot on 2026-10-01, all repository-side functionality committed for
 Phase 0 is implemented. The open Phase 0 items are evidence and release-readiness gates, not an
 unfinished feature backlog. The market-plan baseline is reconciled to this status; production
-Companion, first-class Recovery Packs, the remaining Question Health workflow (revision apply/undo,
-published-content analysis, and post-use observations), Delayed Recovery Trail, Decision Replay, and
-Concept Health are not yet complete and must not be described as delivered.
+Companion, first-class Recovery Packs, Question Health post-use observations, Delayed Recovery
+Trail, Decision Replay, and Concept Health are not yet complete and must not be described as
+delivered. The published-content Question Health slice above is provisional and uncommitted.
 
 An Access/resilience implementation slice is complete in the repository provisionally, without
 claiming that Phase 1's branch-selection gate passed. Gated whole-room flex mode is available for

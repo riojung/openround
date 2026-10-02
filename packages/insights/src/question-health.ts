@@ -344,7 +344,12 @@ function findingId(finding: FindingDraft) {
  */
 export async function evaluateQuestionHealth(
   quiz: QuizDraft,
-  options: { quizId: string; draftRevision: number; includeFindingIds?: ReadonlySet<string> },
+  options: {
+    quizId: string;
+    draftRevision: number;
+    includeFindingIds?: ReadonlySet<string>;
+    includeQuestionIds?: ReadonlySet<string>;
+  },
 ): Promise<QuestionHealthResult> {
   const questionHashes = await Promise.all(
     quiz.questions.map((question) => sha256(questionContent(question))),
@@ -354,15 +359,20 @@ export async function evaluateQuestionHealth(
     ...recheckFindings(quiz),
   ];
   const included = options.includeFindingIds;
-  const selected = included?.size
+  const includedQuestions = options.includeQuestionIds;
+  const prioritize = Boolean(included?.size || includedQuestions?.size);
+  const selected = prioritize
     ? drafts
-        .filter((draft) => included.has(findingId(draft)))
+        .filter(
+          (draft) => included?.has(findingId(draft)) || includedQuestions?.has(draft.question.id),
+        )
         .slice(0, QUESTION_HEALTH_MAX_FINDINGS)
     : drafts.slice(0, QUESTION_HEALTH_MAX_FINDINGS);
-  if (included?.size && selected.length < QUESTION_HEALTH_MAX_FINDINGS) {
+  if (prioritize && selected.length < QUESTION_HEALTH_MAX_FINDINGS) {
     for (const draft of drafts) {
       if (selected.length === QUESTION_HEALTH_MAX_FINDINGS) break;
-      if (!included.has(findingId(draft))) selected.push(draft);
+      if (!included?.has(findingId(draft)) && !includedQuestions?.has(draft.question.id))
+        selected.push(draft);
     }
   }
   const pairHashes = new Map<string, Promise<string>>();

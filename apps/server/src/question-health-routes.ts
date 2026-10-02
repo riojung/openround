@@ -1,22 +1,33 @@
+import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import {
   QuestionHealthDismissalInputSchema,
   QuestionHealthDismissalSchema,
+  QuestionHealthRevisionAppliedSchema,
+  QuestionHealthRevisionApplyInputSchema,
+  QuestionHealthRevisionPreviewInputSchema,
+  QuestionHealthRevisionPreviewSchema,
+  QuestionHealthRevisionUndoInputSchema,
+  QuestionHealthRevisionUndoneSchema,
+  QuestionHealthPublishedResultSchema,
   QuestionHealthResultSchema,
   QuizDraftSchema,
 } from "@openround/contracts";
 import type { QuestionHealthFinding } from "@openround/contracts";
 import type { Repository } from "@openround/db";
 import { evaluateQuestionHealth } from "@openround/insights";
+import { proposeQuestionHealthRevision } from "./question-health-revisions.js";
 import type { AuthService } from "./auth.js";
 import type { AppConfig } from "./config.js";
 import { evidenceWorkspaceFeatureEnabled } from "./workspace-rollout.js";
 
 const IdParamsSchema = z.object({ id: z.string().uuid() });
+const VersionParamsSchema = IdParamsSchema.extend({ versionId: z.string().uuid() });
 const DismissalParamsSchema = IdParamsSchema.extend({
   findingId: z.string().min(1).max(500),
 });
+const ApplicationParamsSchema = IdParamsSchema.extend({ applicationId: z.string().uuid() });
 const DismissalRemovalBodySchema = QuestionHealthDismissalInputSchema.omit({ reason: true });
 
 function apiError(
@@ -38,6 +49,7 @@ async function currentQuestionHealth(
   | {
       status: "ok";
       draftRevision: number;
+      draft: ReturnType<typeof QuizDraftSchema.parse>;
       result: Awaited<ReturnType<typeof evaluateQuestionHealth>>;
     }
   | { status: "not_found" }
@@ -53,7 +65,27 @@ async function currentQuestionHealth(
     draftRevision,
     includeFindingIds,
   });
-  return { status: "ok", draftRevision, result };
+  return { status: "ok", draftRevision, draft: draft.data, result };
+}
+
+function applicationRequestHash(
+  quizId: string,
+  findingId: string,
+  input: z.infer<typeof QuestionHealthRevisionPreviewInputSchema>,
+) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        quizId,
+        findingId,
+        draftRevision: input.draftRevision,
+        ruleVersion: input.ruleVersion,
+        rulesetVersion: input.rulesetVersion,
+        contentHash: input.contentHash,
+        action: input.action,
+      }),
+    )
+    .digest("hex");
 }
 
 function dismissalMatchesFinding(
@@ -143,6 +175,40 @@ export async function registerQuestionHealthRoutes(
       ...current.result,
       findings: visibleFindings,
       dismissals,
+    });
+  });
+
+  app.get("/v1/quizzes/:id/versions/:versionId/question-health", async (request, reply) => {
+    reply.header("cache-control", "private, no-store").header("pragma", "no-cache");
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (!evidenceWorkspaceFeatureEnabled(config, creator.workspaceId, "questionHealth")) {
+      return apiError(reply, 404, "NOT_FOUND", "Question Health is not available", request.id);
+    }
+
+    const { id, versionId } = VersionParamsSchema.parse(request.params);
+    const version = await repository.getQuizVersion(creator.workspaceId, versionId);
+    // The version lookup is workspace-scoped, but the URL must also identify its source Round.
+    if (!version || version.quizId !== id) {
+      return apiError(reply, 404, "NOT_FOUND", "Published Round version not found", request.id);
+    }
+
+    // Repository reads upcast legacy published content using its recorded schema version.
+    // Evaluate that immutable snapshot, never the editable draft or its dismissals.
+    const result = await evaluateQuestionHealth(version.content, {
+      quizId: id,
+      draftRevision: version.sourceDraftRevision ?? 0,
+    });
+    return QuestionHealthPublishedResultSchema.parse({
+      ...result,
+      source: "published",
+      version: {
+        id: version.id,
+        number: version.version,
+        contentHash: version.contentHash,
+        publishedAt: version.publishedAt.toISOString(),
+        sourceDraftRevision: version.sourceDraftRevision ?? null,
+      },
     });
   });
 
@@ -303,4 +369,231 @@ export async function registerQuestionHealthRoutes(
     }
     return { removed: removed.removed };
   });
+
+  async function proposedRevision(
+    workspaceId: string,
+    quizId: string,
+    findingId: string,
+    input: z.infer<typeof QuestionHealthRevisionPreviewInputSchema>,
+  ) {
+    const current = await currentQuestionHealth(repository, workspaceId, quizId);
+    if (current.status !== "ok") return { status: current.status } as const;
+    const finding = current.result.findings.find(
+      (candidate) =>
+        candidate.id === findingId &&
+        candidate.ruleVersion === input.ruleVersion &&
+        candidate.rulesetVersion === input.rulesetVersion &&
+        candidate.contentHash === input.contentHash,
+    );
+    if (current.draftRevision !== input.draftRevision || !finding) {
+      return { status: "stale" } as const;
+    }
+    const proposal = proposeQuestionHealthRevision(current.draft, finding, input.action);
+    if (!proposal) return { status: "unsupported" } as const;
+    const after = await evaluateQuestionHealth(proposal.draft, {
+      quizId,
+      draftRevision: current.draftRevision + 1,
+      includeFindingIds: new Set([finding.id]),
+      includeQuestionIds: new Set([finding.questionId]),
+    });
+    if (
+      after.findings.some(
+        (candidate) =>
+          candidate.ruleId === finding.ruleId && candidate.fieldPath === finding.fieldPath,
+      )
+    ) {
+      return { status: "unresolved" } as const;
+    }
+    return { status: "ok", finding, proposal, draftRevision: current.draftRevision } as const;
+  }
+
+  function proposalError(reply: FastifyReply, status: string, requestId: string) {
+    if (status === "not_found") {
+      return apiError(reply, 404, "NOT_FOUND", "Round not found", requestId);
+    }
+    if (status === "invalid_draft") {
+      return apiError(reply, 422, "VALIDATION_ERROR", "The Round draft is invalid", requestId);
+    }
+    if (status === "stale") {
+      return apiError(reply, 409, "CONFLICT", "This finding or draft revision is stale", requestId);
+    }
+    return apiError(
+      reply,
+      422,
+      "VALIDATION_ERROR",
+      status === "unresolved"
+        ? "The proposed edit does not resolve this finding"
+        : "This finding does not support the requested edit",
+      requestId,
+    );
+  }
+
+  app.post(
+    "/v1/quizzes/:id/question-health/findings/:findingId/preview",
+    async (request, reply) => {
+      reply.header("cache-control", "private, no-store").header("pragma", "no-cache");
+      const creator = await auth.requireCreator(request, reply);
+      if (!creator) return;
+      if (creator.role === "viewer") {
+        return apiError(reply, 403, "FORBIDDEN", "An editor role is required", request.id);
+      }
+      if (!evidenceWorkspaceFeatureEnabled(config, creator.workspaceId, "questionHealth")) {
+        return apiError(reply, 404, "NOT_FOUND", "Question Health is not available", request.id);
+      }
+      const { id, findingId } = DismissalParamsSchema.parse(request.params);
+      const input = QuestionHealthRevisionPreviewInputSchema.parse(request.body);
+      const proposal = await proposedRevision(creator.workspaceId, id, findingId, input);
+      if (proposal.status !== "ok") return proposalError(reply, proposal.status, request.id);
+      return QuestionHealthRevisionPreviewSchema.parse({
+        findingId,
+        draftRevision: proposal.draftRevision,
+        contentHash: proposal.finding.contentHash,
+        changes: proposal.proposal.changes,
+      });
+    },
+  );
+
+  app.post("/v1/quizzes/:id/question-health/findings/:findingId/apply", async (request, reply) => {
+    reply.header("cache-control", "private, no-store").header("pragma", "no-cache");
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (creator.role === "viewer") {
+      return apiError(reply, 403, "FORBIDDEN", "An editor role is required", request.id);
+    }
+    const { id, findingId } = DismissalParamsSchema.parse(request.params);
+    const input = QuestionHealthRevisionApplyInputSchema.parse(request.body);
+    const requestHash = applicationRequestHash(id, findingId, input);
+
+    // Resolve a committed request before checking current findings or feature rollout. A retry
+    // must not be rejected merely because its own accepted edit removed the original finding.
+    const prior = await repository.getQuestionHealthApplication(
+      creator.workspaceId,
+      id,
+      input.mutationId,
+    );
+    if (prior) {
+      if (prior.requestHash !== requestHash) {
+        return apiError(
+          reply,
+          409,
+          "CONFLICT",
+          "Mutation ID was reused for a different edit",
+          request.id,
+        );
+      }
+      const quiz = await repository.getQuiz(creator.workspaceId, id);
+      if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Round not found", request.id);
+      reply.header("etag", `"draft-${quiz.draftRevision ?? 0}"`);
+      return QuestionHealthRevisionAppliedSchema.parse({
+        quiz,
+        applicationId: prior.applicationId,
+        appliedRevision: prior.appliedRevision,
+        changes: prior.changes,
+      });
+    }
+    if (!evidenceWorkspaceFeatureEnabled(config, creator.workspaceId, "questionHealth")) {
+      return apiError(reply, 404, "NOT_FOUND", "Question Health is not available", request.id);
+    }
+    const proposal = await proposedRevision(creator.workspaceId, id, findingId, input);
+    if (proposal.status !== "ok") return proposalError(reply, proposal.status, request.id);
+    const quiz = await repository.updateQuizDraft({
+      workspaceId: creator.workspaceId,
+      quizId: id,
+      draft: proposal.proposal.draft,
+      expectedRevision: input.draftRevision,
+      mutationId: input.mutationId,
+      editorId: creator.userId,
+      schemaVersion: 1,
+      draftHash: createHash("sha256").update(JSON.stringify(proposal.proposal.draft)).digest("hex"),
+      questionHealthApplication: {
+        workspaceId: creator.workspaceId,
+        quizId: id,
+        applicationId: input.mutationId,
+        findingId,
+        ruleVersion: input.ruleVersion,
+        rulesetVersion: input.rulesetVersion,
+        contentHash: input.contentHash,
+        sourceRevision: input.draftRevision,
+        requestHash,
+        changes: proposal.proposal.changes,
+        requestId: request.id,
+      },
+    });
+    if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Round not found", request.id);
+    const application = await repository.getQuestionHealthApplication(
+      creator.workspaceId,
+      id,
+      input.mutationId,
+    );
+    if (!application)
+      throw new Error("Accepted Question Health edit has no application provenance");
+    reply.header("etag", `"draft-${quiz.draftRevision ?? 0}"`);
+    return QuestionHealthRevisionAppliedSchema.parse({
+      quiz,
+      applicationId: application.applicationId,
+      appliedRevision: application.appliedRevision,
+      changes: application.changes,
+    });
+  });
+
+  app.post(
+    "/v1/quizzes/:id/question-health/applications/:applicationId/undo",
+    async (request, reply) => {
+      reply.header("cache-control", "private, no-store").header("pragma", "no-cache");
+      const creator = await auth.requireCreator(request, reply);
+      if (!creator) return;
+      if (creator.role === "viewer") {
+        return apiError(reply, 403, "FORBIDDEN", "An editor role is required", request.id);
+      }
+      const { id, applicationId } = ApplicationParamsSchema.parse(request.params);
+      const input = QuestionHealthRevisionUndoInputSchema.parse(request.body);
+      const application = await repository.getQuestionHealthApplication(
+        creator.workspaceId,
+        id,
+        applicationId,
+      );
+      if (!application) {
+        return apiError(
+          reply,
+          404,
+          "NOT_FOUND",
+          "Question Health application not found",
+          request.id,
+        );
+      }
+      if (input.expectedRevision !== application.appliedRevision) {
+        return apiError(
+          reply,
+          409,
+          "CONFLICT",
+          "Undo must target the applied revision",
+          request.id,
+        );
+      }
+      const restored = await repository.restoreQuizDraftHistory({
+        workspaceId: creator.workspaceId,
+        quizId: id,
+        historyRevision: application.sourceRevision,
+        expectedRevision: application.appliedRevision,
+        mutationId: input.mutationId,
+        editorId: creator.userId,
+        questionHealthUndo: { applicationId, requestId: request.id },
+      });
+      if (!restored) {
+        return apiError(
+          reply,
+          404,
+          "NOT_FOUND",
+          "The original draft snapshot is no longer available",
+          request.id,
+        );
+      }
+      // A receipt replay can return its historical snapshot even after another editor has saved
+      // a newer draft. Never present that old state as the authoritative current Round.
+      const quiz = await repository.getQuiz(creator.workspaceId, id);
+      if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Round not found", request.id);
+      reply.header("etag", `"draft-${quiz.draftRevision ?? 0}"`);
+      return QuestionHealthRevisionUndoneSchema.parse({ quiz, applicationId });
+    },
+  );
 }

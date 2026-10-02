@@ -61,6 +61,7 @@ import type {
   QuestionHealthDismissalIdentity,
   QuestionHealthDismissalRecord,
   QuestionHealthDismissalWrite,
+  QuestionHealthApplicationRecord,
   QnaQuestionRecord,
   QnaReplyRecord,
   QnaSettingsRecord,
@@ -114,6 +115,7 @@ interface QuizDraftMutationReceipt {
   expectedRevision: number;
   resultingRevision: number;
   draftHash: string;
+  questionHealthUndoApplicationId?: string | null;
   createdAt: Date;
 }
 
@@ -207,6 +209,7 @@ export interface MemoryAccountExport extends Record<string, unknown> {
   quizzes?: QuizRecord[];
   quizDraftHistory?: QuizDraftHistoryRecord[];
   questionHealthDismissals?: QuestionHealthDismissalRecord[];
+  questionHealthApplications?: QuestionHealthApplicationRecord[];
   mediaAssets?: MediaAssetRecord[];
   mediaReferences?: MediaReferenceRecord[];
   consentRecords?: ConsentRecord[];
@@ -238,6 +241,7 @@ export class MemoryRepository implements Repository {
   readonly quizDraftHistory = new Map<string, QuizDraftHistoryRecord>();
   readonly quizDraftMutations = new Map<string, QuizDraftMutationReceipt>();
   readonly questionHealthDismissals = new Map<string, QuestionHealthDismissalRecord>();
+  readonly questionHealthApplications = new Map<string, QuestionHealthApplicationRecord>();
   readonly folders = new Map<string, FolderRecord>();
   readonly versions = new Map<string, QuizVersionRecord>();
   readonly sessions = new Map<string, StoredSession>();
@@ -877,7 +881,16 @@ export class MemoryRepository implements Repository {
       if (
         retry.quizId !== input.quizId ||
         retry.expectedRevision !== input.expectedRevision ||
-        retry.draftHash !== input.draftHash
+        retry.draftHash !== input.draftHash ||
+        (retry.questionHealthUndoApplicationId ?? null) !==
+          (input.questionHealthUndo?.applicationId ?? null)
+      ) {
+        throw new QuizDraftMutationConflictError(input.mutationId);
+      }
+      if (
+        input.questionHealthApplication &&
+        this.questionHealthApplications.get(mutationKey)?.requestHash !==
+          input.questionHealthApplication.requestHash
       ) {
         throw new QuizDraftMutationConflictError(input.mutationId);
       }
@@ -895,6 +908,9 @@ export class MemoryRepository implements Repository {
     }
 
     const meaningful = JSON.stringify(normalizeQuizRecord(quiz).draft) !== JSON.stringify(draft);
+    if (input.questionHealthApplication && !meaningful) {
+      throw new QuizDraftMutationConflictError(input.mutationId);
+    }
     const updatedAt = new Date();
     const resultingRevision = meaningful ? currentRevision + 1 : currentRevision;
     if (meaningful) {
@@ -906,6 +922,7 @@ export class MemoryRepository implements Repository {
       expectedRevision: input.expectedRevision,
       resultingRevision,
       draftHash: input.draftHash,
+      questionHealthUndoApplicationId: input.questionHealthUndo?.applicationId ?? null,
       createdAt: updatedAt,
     });
     if (!meaningful) return structuredClone(normalizeQuizRecord(quiz));
@@ -931,6 +948,43 @@ export class MemoryRepository implements Repository {
       mutationId: input.mutationId,
       createdAt: updatedAt,
     });
+    if (input.questionHealthApplication) {
+      const { requestId, ...application } = input.questionHealthApplication;
+      this.questionHealthApplications.set(mutationKey, {
+        ...structuredClone(application),
+        appliedRevision: resultingRevision,
+        createdAt: updatedAt,
+      });
+      await this.recordAudit({
+        workspaceId: input.workspaceId,
+        actorId: input.editorId,
+        action: "question_health.application.apply",
+        targetType: "question_health_application",
+        targetId: input.mutationId,
+        requestId,
+        metadata: {
+          quizId: input.quizId,
+          findingId: application.findingId,
+          sourceRevision: application.sourceRevision,
+          appliedRevision: resultingRevision,
+        },
+      });
+    }
+    if (input.questionHealthUndo) {
+      await this.recordAudit({
+        workspaceId: input.workspaceId,
+        actorId: input.editorId,
+        action: "question_health.application.undo",
+        targetType: "question_health_application",
+        targetId: input.questionHealthUndo.applicationId,
+        requestId: input.questionHealthUndo.requestId,
+        metadata: {
+          quizId: input.quizId,
+          sourceRevision: input.expectedRevision - 1,
+          resultingRevision,
+        },
+      });
+    }
     await this.replaceMediaReferences(
       input.workspaceId,
       "quiz_draft",
@@ -953,6 +1007,11 @@ export class MemoryRepository implements Repository {
     return [...this.questionHealthDismissals.values()]
       .filter((dismissal) => dismissal.workspaceId === workspaceId && dismissal.quizId === quizId)
       .map((dismissal) => structuredClone(dismissal));
+  }
+
+  async getQuestionHealthApplication(workspaceId: string, quizId: string, applicationId: string) {
+    const record = this.questionHealthApplications.get(`${workspaceId}:${applicationId}`);
+    return record?.quizId === quizId ? structuredClone(record) : null;
   }
 
   async putQuestionHealthDismissal(input: QuestionHealthDismissalWrite) {
@@ -1050,11 +1109,21 @@ export class MemoryRepository implements Repository {
   }
 
   private async pruneQuizDraftHistory(quizId: string, now: Date) {
+    const currentRevision = this.quizzes.get(quizId)?.draftRevision ?? 0;
+    const protectedSourceRevisions = new Set(
+      [...this.questionHealthApplications.values()]
+        .filter(
+          (application) =>
+            application.quizId === quizId && application.appliedRevision === currentRevision,
+        )
+        .map((application) => application.sourceRevision),
+    );
     const snapshots = [...this.quizDraftHistory.entries()]
       .filter(([, snapshot]) => snapshot.quizId === quizId)
       .sort((left, right) => right[1].revision - left[1].revision);
     const cutoff = now.getTime() - 30 * 24 * 60 * 60 * 1_000;
     for (const [index, [key, snapshot]] of snapshots.entries()) {
+      if (protectedSourceRevisions.has(snapshot.revision)) continue;
       if (index >= 20 || snapshot.createdAt.getTime() < cutoff) {
         this.quizDraftHistory.delete(key);
         await this.replaceMediaReferences(
@@ -1088,6 +1157,7 @@ export class MemoryRepository implements Repository {
     expectedRevision: number;
     mutationId: string;
     editorId: string;
+    questionHealthUndo?: { applicationId: string; requestId: string };
   }) {
     const quiz = this.quizzes.get(input.quizId);
     if (!quiz || quiz.workspaceId !== input.workspaceId) return null;
@@ -1096,7 +1166,9 @@ export class MemoryRepository implements Repository {
       if (
         retry.quizId !== input.quizId ||
         retry.expectedRevision !== input.expectedRevision ||
-        retry.draftHash !== `restore:${input.historyRevision}`
+        retry.draftHash !== `restore:${input.historyRevision}` ||
+        (retry.questionHealthUndoApplicationId ?? null) !==
+          (input.questionHealthUndo?.applicationId ?? null)
       ) {
         throw new QuizDraftMutationConflictError(input.mutationId);
       }
@@ -1113,6 +1185,7 @@ export class MemoryRepository implements Repository {
       editorId: input.editorId,
       schemaVersion: snapshot.draftSchemaVersion ?? ROUND_DRAFT_SCHEMA_VERSION,
       draftHash: `restore:${input.historyRevision}`,
+      questionHealthUndo: input.questionHealthUndo,
     });
   }
 
@@ -4141,6 +4214,9 @@ export class MemoryRepository implements Repository {
         questionHealthDismissals: [...this.questionHealthDismissals.values()]
           .filter((dismissal) => ownedWorkspaceIds.has(dismissal.workspaceId))
           .map((dismissal) => structuredClone(dismissal)),
+        questionHealthApplications: [...this.questionHealthApplications.values()]
+          .filter((application) => ownedWorkspaceIds.has(application.workspaceId))
+          .map((application) => structuredClone(application)),
         quizVersions: [...this.versions.values()]
           .filter((version) => ownedWorkspaceIds.has(version.workspaceId))
           .map((version) => structuredClone(normalizeQuizVersion(version))),
@@ -4275,6 +4351,10 @@ export class MemoryRepository implements Repository {
     }
     for (const [key, dismissal] of this.questionHealthDismissals) {
       if (ownedWorkspaceIds.has(dismissal.workspaceId)) this.questionHealthDismissals.delete(key);
+    }
+    for (const [key, application] of this.questionHealthApplications) {
+      if (ownedWorkspaceIds.has(application.workspaceId))
+        this.questionHealthApplications.delete(key);
     }
     for (const [id, folder] of this.folders) {
       if (ownedWorkspaceIds.has(folder.workspaceId)) this.folders.delete(id);
