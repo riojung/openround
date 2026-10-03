@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { upgradeGameState, type EngineAnswer, type GameState } from "@openround/game-engine";
 import {
+  MAX_SESSION_DECISION_EVENTS,
   QUESTION_HEALTH_POST_USE_MAX_REPORTS,
   ReportSchema,
   ResponsePayloadSchema,
+  SessionDecisionEventSchema,
   SupportedLocaleSchema,
   TrustModeSchema,
   questionDelivery,
@@ -106,6 +108,7 @@ import type {
   Segment,
   SessionStaffCredentialRecord,
   SessionStaffCredentialInput,
+  SessionDecisionEventWrite,
   SessionHistoryRecord,
   SessionInvalidationTarget,
   StoredSession,
@@ -498,6 +501,7 @@ function mapSession(row: QueryResultRow): StoredSession {
     hostId: row.host_id,
     hostTokenHash: row.host_token_hash,
     trustMode: TrustModeSchema.parse(row.trust_mode ?? state.settings.trustMode ?? "learning"),
+    decisionReplayEnabled: row.decision_replay_enabled === true,
     state,
     expiresAt: date(row.expires_at),
     retentionExpiresAt: date(row.retention_expires_at),
@@ -3048,9 +3052,9 @@ export class PostgresRepository implements Repository {
            INSERT INTO game_sessions
              (id, workspace_id, quiz_version_id, host_id, code, state, version, seq, deadline,
               settings, state_snapshot, state_schema_version, host_token_hash, trust_mode,
-              expires_at, retention_expires_at, created_at, updated_at)
+              decision_replay_enabled, expires_at, retention_expires_at, created_at, updated_at)
            SELECT $1, eligible_workspace.id, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-                  $16,$17,$18
+                  $16,$17,$18,$19
            FROM eligible_workspace
            RETURNING id, workspace_id
          )
@@ -3072,6 +3076,7 @@ export class PostgresRepository implements Repository {
           state.stateSchemaVersion,
           input.hostTokenHash,
           input.trustMode ?? state.settings.trustMode ?? "learning",
+          input.decisionReplayEnabled ?? false,
           input.expiresAt,
           input.retentionExpiresAt,
           input.createdAt,
@@ -3226,9 +3231,39 @@ export class PostgresRepository implements Repository {
     };
   }
 
-  async saveSession(input: StoredSession, expectedVersion: number, report?: Report) {
+  async saveSession(
+    input: StoredSession,
+    expectedVersion: number,
+    report?: Report,
+    decisionEvents: SessionDecisionEventWrite[] = [],
+  ) {
     const state = input.state;
     const trustMode = input.trustMode ?? state.settings.trustMode ?? "learning";
+    const decisionReplayEnabled = input.decisionReplayEnabled ?? false;
+    const validatedDecisionEvents = decisionEvents.map((write) => ({
+      ...write,
+      event: SessionDecisionEventSchema.parse(write.event),
+    }));
+    if (validatedDecisionEvents.length > 0 && !decisionReplayEnabled) {
+      throw new Error("Decision events cannot be written for a session without replay enabled");
+    }
+    if (
+      validatedDecisionEvents.some(
+        (write) =>
+          typeof write.commandId !== "string" ||
+          write.commandId.length === 0 ||
+          write.commandId.length > 160 ||
+          !Number.isSafeInteger(write.eventOrdinal) ||
+          write.eventOrdinal < 0,
+      ) ||
+      new Set(validatedDecisionEvents.map((write) => write.event.seq)).size !==
+        validatedDecisionEvents.length ||
+      new Set(
+        validatedDecisionEvents.map((write) => `${write.commandId}\u0000${write.eventOrdinal}`),
+      ).size !== validatedDecisionEvents.length
+    ) {
+      throw new Error("Duplicate or invalid session decision event sequence/ordinal");
+    }
     if ((state.settings.trustMode ?? "learning") !== trustMode) {
       throw new Error("Session state trust mode must match its immutable session trust mode");
     }
@@ -3249,7 +3284,8 @@ export class PostgresRepository implements Repository {
            state_snapshot = $6, state_schema_version = $7,
            ended_at = CASE WHEN $2 = 'finished' THEN COALESCE(ended_at, now()) ELSE ended_at END,
            retention_expires_at = $8, updated_at = now()
-           WHERE id = $1 AND version = $9 AND trust_mode = $10`,
+           WHERE id = $1 AND version = $9 AND trust_mode = $10
+             AND decision_replay_enabled = $11`,
           [
             input.id,
             state.phase,
@@ -3261,10 +3297,68 @@ export class PostgresRepository implements Repository {
             input.retentionExpiresAt,
             expectedVersion,
             trustMode,
+            decisionReplayEnabled,
           ],
         );
         if (result.rowCount !== 1) {
           throw new SessionVersionConflictError(input.id, expectedVersion);
+        }
+        if (validatedDecisionEvents.length > 0) {
+          if (!decisionReplayEnabled) {
+            throw new Error(
+              "Decision events cannot be written for a session without replay enabled",
+            );
+          }
+          const capture = await client.query<{
+            captured_count: number;
+            truncated: boolean | null;
+          }>(
+            `SELECT count(*) FILTER (WHERE type <> 'decision.capture_truncated')::integer
+               AS captured_count,
+                    bool_or(type = 'decision.capture_truncated') AS truncated
+             FROM session_events
+             WHERE workspace_id = $1 AND session_id = $2 AND type LIKE 'decision.%'`,
+            [input.workspaceId, input.id],
+          );
+          const captureRow = capture.rows[0];
+          if (!captureRow?.truncated) {
+            const remaining = Math.max(
+              0,
+              MAX_SESSION_DECISION_EVENTS - Number(captureRow?.captured_count ?? 0),
+            );
+            const writes = validatedDecisionEvents.slice(0, remaining);
+            const overflow = validatedDecisionEvents[remaining];
+            if (overflow) {
+              writes.push({
+                ...overflow,
+                event: {
+                  type: "capture_truncated",
+                  seq: overflow.event.seq,
+                  occurredAt: overflow.event.occurredAt,
+                  reason: "event_limit",
+                },
+              });
+            }
+            for (const write of writes) {
+              await client.query(
+                `INSERT INTO session_events
+                   (id, workspace_id, session_id, seq, type, payload, command_id,
+                    event_ordinal, expires_at)
+                 VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)`,
+                [
+                  randomUUID(),
+                  input.workspaceId,
+                  input.id,
+                  write.event.seq,
+                  `decision.${write.event.type}`,
+                  JSON.stringify(write.event),
+                  write.commandId,
+                  write.eventOrdinal,
+                  input.retentionExpiresAt,
+                ],
+              );
+            }
+          }
         }
         if (state.phase === "finished") {
           await client.query(
@@ -4598,6 +4692,24 @@ export class PostgresRepository implements Repository {
           "SELECT * FROM answers WHERE workspace_id = $1 AND session_id = $2 ORDER BY accepted_at, id",
           [workspaceId, sessionId],
         );
+        const sessionResult = await client.query<{ decision_replay_enabled: boolean }>(
+          `SELECT decision_replay_enabled FROM game_sessions
+           WHERE workspace_id = $1 AND id = $2`,
+          [workspaceId, sessionId],
+        );
+        const decisionResult = await client.query<{ type: string; payload: unknown }>(
+          `SELECT type, payload FROM session_events
+           WHERE workspace_id = $1 AND session_id = $2 AND type LIKE 'decision.%'
+           ORDER BY seq ASC LIMIT $3`,
+          [workspaceId, sessionId, MAX_SESSION_DECISION_EVENTS + 1],
+        );
+        const decisionEvents = decisionResult.rows.map((row) => {
+          const event = SessionDecisionEventSchema.parse(row.payload);
+          if (row.type !== `decision.${event.type}`) {
+            throw new Error("Stored decision event type does not match its payload");
+          }
+          return event;
+        });
         const roundResult = await client.query(
           `SELECT * FROM question_rounds WHERE session_id = $1 ORDER BY opened_at, id`,
           [sessionId],
@@ -4641,6 +4753,12 @@ export class PostgresRepository implements Repository {
           [workspaceId, sessionId],
         );
         return {
+          decisionReplayEnabled: sessionResult.rows[0]?.decision_replay_enabled === true,
+          decisionEvents,
+          decisionEventsComplete:
+            sessionResult.rows[0]?.decision_replay_enabled === true &&
+            decisionEvents.some((event) => event.type !== "capture_truncated") &&
+            !decisionEvents.some((event) => event.type === "capture_truncated"),
           answers: answerResult.rows.map(mapAnswer),
           rounds: roundResult.rows.map((row) => ({
             id: String(row.id),

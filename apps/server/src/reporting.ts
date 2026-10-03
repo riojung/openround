@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import {
   questionDelivery,
   questionPurpose,
+  ReportV4Schema,
   type Report,
   type ReportV3,
+  type ReportV4,
 } from "@openround/contracts";
 import type { SessionEvidence } from "@openround/db";
 import { avatarIdForSeed, responseDistributionFor, type GameState } from "@openround/game-engine";
@@ -23,6 +25,9 @@ function percentile(values: number[], fraction: number) {
 
 function stateEvidence(state: GameState): SessionEvidence {
   return {
+    decisionReplayEnabled: false,
+    decisionEvents: [],
+    decisionEventsComplete: false,
     answers: Object.values(state.answers),
     rounds: Object.entries(state.rounds).map(([id, round]) => ({ id, ...round })),
     interventions: Object.values(state.interventions),
@@ -98,8 +103,12 @@ function emptyReportFields(state: GameState) {
   >;
 }
 
-export function createPendingReport(state: GameState, expiresAt: Date): ReportV3 {
-  return {
+export function createPendingReport(
+  state: GameState,
+  expiresAt: Date,
+  decisionReplayEnabled = false,
+): ReportV3 | ReportV4 {
+  const report: ReportV3 = {
     id: randomUUID(),
     sessionId: state.sessionId,
     schemaVersion: 3,
@@ -108,13 +117,22 @@ export function createPendingReport(state: GameState, expiresAt: Date): ReportV3
     expiresAt: expiresAt.toISOString(),
     ...emptyReportFields(state),
   };
+  return decisionReplayEnabled
+    ? ReportV4Schema.parse({
+        ...report,
+        schemaVersion: 4,
+        decisionReplayAvailable: false,
+        decisionReplayComplete: false,
+        decisionTimeline: [],
+      })
+    : report;
 }
 
 export function generateReport(
   state: GameState,
   expiresAt: Date,
   options: { id?: string; evidence?: SessionEvidence; generatedAt?: Date } = {},
-): ReportV3 {
+): ReportV3 | ReportV4 {
   const evidence = options.evidence ?? stateEvidence(state);
   const interactions = evidence.interactions ?? {
     signalEvents: [],
@@ -340,7 +358,7 @@ export function generateReport(
     const minute = message.createdAt.toISOString().slice(0, 16);
     messagesPerMinute.set(minute, (messagesPerMinute.get(minute) ?? 0) + 1);
   }
-  return {
+  const report: ReportV3 = {
     id: options.id ?? randomUUID(),
     sessionId: state.sessionId,
     trustMode: state.settings.trustMode ?? "learning",
@@ -428,6 +446,17 @@ export function generateReport(
       transcriptAvailable: interactions.chatMessages.length > 0,
     },
   };
+  if (!evidence.decisionReplayEnabled) return report;
+  const hasReplayEvents = evidence.decisionEvents.some(
+    (event) => event.type !== "capture_truncated",
+  );
+  return ReportV4Schema.parse({
+    ...report,
+    schemaVersion: 4,
+    decisionReplayAvailable: hasReplayEvents,
+    decisionReplayComplete: hasReplayEvents && evidence.decisionEventsComplete,
+    decisionTimeline: evidence.decisionEvents,
+  });
 }
 
 function csvCell(value: string | number): string {
@@ -449,7 +478,7 @@ export function reportCsv(report: Report): string {
     [],
     ["time_mode", report.timeMode ?? "timed"],
   ];
-  if (report.schemaVersion === 2 || report.schemaVersion === 3) {
+  if (report.schemaVersion === 2 || report.schemaVersion === 3 || report.schemaVersion === 4) {
     rows.push(
       [],
       ["report_schema_version", report.schemaVersion],
@@ -487,7 +516,7 @@ export function reportCsv(report: Report): string {
       ["evidence_note", report.evidenceNote],
     );
   }
-  if (report.schemaVersion === 3) {
+  if (report.schemaVersion === 3 || report.schemaVersion === 4) {
     rows.push(
       [],
       ["experience_category", report.experience.category],
@@ -516,6 +545,26 @@ export function reportCsv(report: Report): string {
         context.bySignal.too_fast,
       ]),
     );
+  }
+  if (report.schemaVersion === 4) {
+    rows.push(
+      [],
+      ["decision_replay_available", String(report.decisionReplayAvailable)],
+      ["decision_replay_complete", String(report.decisionReplayComplete)],
+    );
+    if (report.decisionReplayAvailable) {
+      rows.push(
+        ["decision_event_type", "sequence", "occurred_at", "round_id", "question_id", "event_json"],
+        ...report.decisionTimeline.map((event) => [
+          event.type,
+          event.seq,
+          event.occurredAt,
+          "roundId" in event ? event.roundId : "",
+          "questionId" in event ? event.questionId : "",
+          JSON.stringify(event),
+        ]),
+      );
+    }
   }
   return `\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
 }

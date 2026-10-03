@@ -62,6 +62,85 @@ async function finalizedMediaForCleanup(
 }
 
 describe("memory repository", () => {
+  it("persists replay events atomically and freezes the session capture setting", async () => {
+    const repository = new MemoryRepository();
+    const sessionId = randomUUID();
+    const workspaceId = randomUUID();
+    let state = createGameState({
+      sessionId,
+      code: "2233445",
+      quiz: publishableRound("Decision replay"),
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    const now = new Date();
+    const stored = {
+      id: sessionId,
+      workspaceId,
+      quizVersionId: randomUUID(),
+      hostId: randomUUID(),
+      hostTokenHash: randomUUID(),
+      decisionReplayEnabled: true,
+      state,
+      expiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await repository.createSession(stored);
+
+    const started = applyHostCommand(state, {
+      commandId: randomUUID(),
+      expectedVersion: state.version,
+      action: "start",
+      nowMs: now.getTime(),
+      newRoundId: randomUUID,
+    });
+    await repository.saveSession({ ...stored, state: started.state }, state.version);
+    state = started.state;
+
+    const locked = applyHostCommand(state, {
+      commandId: randomUUID(),
+      expectedVersion: state.version,
+      action: "lock",
+      nowMs: now.getTime() + 1_000,
+      newRoundId: randomUUID,
+    });
+    const insightSeq = locked.events.find((event) => event.type === "checkpoint.insight")?.seq;
+    if (!insightSeq || !locked.state.roundId) throw new Error("Expected a locked question insight");
+    const captured = {
+      seq: insightSeq,
+      occurredAt: new Date(now.getTime() + 1_000).toISOString(),
+      type: "insight_shown" as const,
+      roundId: locked.state.roundId,
+      questionId: locked.state.quiz.questions[locked.state.questionIndex!]!.id,
+      sampleSize: 0,
+      activeParticipantCount: 0,
+      recommendationCode: "insufficient_sample" as const,
+      ruleSetVersion: "checkpoint-insight-v1",
+    };
+    await repository.saveSession({ ...stored, state: locked.state }, state.version, undefined, [
+      { event: captured, commandId: "lock-command-01", eventOrdinal: 0 },
+    ]);
+
+    expect(await repository.getSessionEvidence(workspaceId, sessionId)).toMatchObject({
+      decisionReplayEnabled: true,
+      decisionEvents: [captured],
+      decisionEventsComplete: true,
+    });
+    await expect(
+      repository.saveSession(
+        { ...stored, state: locked.state, decisionReplayEnabled: false },
+        locked.state.version,
+      ),
+    ).rejects.toThrow("immutable");
+  });
+
   it("preserves a flex Round's missing deadline in durable evidence", async () => {
     const repository = new MemoryRepository();
     const sessionId = randomUUID();

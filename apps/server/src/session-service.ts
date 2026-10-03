@@ -64,6 +64,7 @@ import type { MetricsService } from "./metrics.js";
 import { entitlementsFor, retentionExpiry } from "./entitlements.js";
 import { ProductEventDispatcher, type ProductEventInput } from "./product-events.js";
 import { evidenceWorkspaceFeatureEnabled } from "./workspace-rollout.js";
+import { decisionEventsForTransition } from "./session-decision-replay.js";
 
 export interface SessionMutation {
   state: GameState;
@@ -651,9 +652,10 @@ export class SessionService {
     events: EngineEvent[],
     expectedVersion: number,
     report?: Report,
+    decisionEvents: Parameters<Repository["saveSession"]>[3] = [],
   ) {
     session.updatedAt = new Date();
-    await this.repository.saveSession(session, expectedVersion, report);
+    await this.repository.saveSession(session, expectedVersion, report, decisionEvents);
     this.active.set(session.id, session);
     this.metrics.setActiveSessions(this.active.size);
     await Promise.allSettled([
@@ -719,15 +721,40 @@ export class SessionService {
           this.scheduleDeadline(session);
           return;
         }
+        const priorState = session.state;
+        const lockTimeMs = Date.now();
         const result = applyHostCommand(session.state, {
           action: "lock",
           commandId: `deadline:${session.state.roundId}`,
           expectedVersion: session.state.version,
-          nowMs: Date.now(),
+          nowMs: lockTimeMs,
           newRoundId: randomUUID,
         });
         session.state = result.state;
-        await this.save(session, result.events, result.state.version - 1);
+        const decisionEvents = session.decisionReplayEnabled
+          ? decisionEventsForTransition({
+              before: priorState,
+              after: result.state,
+              engineEvents: result.events,
+              action: "deadline",
+              commandId: `deadline:${priorState.roundId}`,
+              occurredAt: new Date(lockTimeMs),
+            })
+          : [];
+        try {
+          await this.save(
+            session,
+            result.events,
+            result.state.version - 1,
+            undefined,
+            decisionEvents,
+          );
+        } catch (error) {
+          session.state = priorState;
+          this.active.delete(session.id);
+          this.metrics.setActiveSessions(this.active.size);
+          throw error;
+        }
         this.recordSessionProductEvents(
           session.workspaceId,
           this.lifecycleProductEvents(result.events, new Date(deadlineMs)),
@@ -826,6 +853,11 @@ export class SessionService {
           hostId: creator.userId,
           hostTokenHash: hashToken(hostToken),
           trustMode: settings.trustMode ?? "learning",
+          decisionReplayEnabled: evidenceWorkspaceFeatureEnabled(
+            this.config,
+            creator.workspaceId,
+            "decisionReplay",
+          ),
           state: createGameState({
             sessionId,
             code,
@@ -1628,10 +1660,24 @@ export class SessionService {
                 }
                 const report =
                   session.state.phase === "finished"
-                    ? createPendingReport(session.state, session.retentionExpiresAt)
+                    ? createPendingReport(
+                        session.state,
+                        session.retentionExpiresAt,
+                        session.decisionReplayEnabled ?? false,
+                      )
                     : undefined;
+                const decisionEvents = session.decisionReplayEnabled
+                  ? decisionEventsForTransition({
+                      before: priorState,
+                      after: session.state,
+                      engineEvents: result.events,
+                      action: input.action,
+                      commandId: input.commandId,
+                      occurredAt: commandTime,
+                    })
+                  : [];
                 try {
-                  await this.save(session, result.events, expectedVersion, report);
+                  await this.save(session, result.events, expectedVersion, report, decisionEvents);
                 } catch (error) {
                   session.state = priorState;
                   session.retentionExpiresAt = priorRetentionExpiresAt;

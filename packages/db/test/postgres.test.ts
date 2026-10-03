@@ -734,6 +734,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 44, name: "round_flex_deadlines" },
       { version: 45, name: "question_health_dismissals" },
       { version: 46, name: "question_health_applications" },
+      { version: 47, name: "session_decision_replay" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -743,7 +744,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("46");
+    expect(bootstrapped.rows[0]?.count).toBe("47");
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -822,6 +823,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     fixture: Awaited<ReturnType<typeof createPublishedRoundFixture>>,
     code: string,
     trustMode: "learning" | "verified" = "learning",
+    decisionReplayEnabled = false,
   ) {
     const now = new Date();
     const id = randomUUID();
@@ -845,6 +847,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       hostId: owner.userId,
       hostTokenHash: randomUUID(),
       trustMode,
+      decisionReplayEnabled,
       state,
       expiresAt: new Date(now.getTime() + 60_000),
       retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
@@ -1571,6 +1574,97 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     } finally {
       secondClient.release();
     }
+  });
+
+  it("commits decision events with the matching Round state and rolls both back on conflict", async () => {
+    const owner = await creator("decision-replay-postgres");
+    const round = await createPublishedRoundFixture(owner, "Decision replay transaction");
+    const session = await createRoundSessionFixture(
+      owner,
+      round,
+      String(randomInt(1_000_000, 10_000_000)),
+      "learning",
+      true,
+    );
+    const storedSession = await repository.getSessionById(session.id);
+    if (!storedSession) throw new Error("Expected a stored replay session");
+    const now = new Date();
+    const started = applyHostCommand(session.state, {
+      commandId: randomUUID(),
+      expectedVersion: session.state.version,
+      action: "start",
+      nowMs: now.getTime(),
+      newRoundId: randomUUID,
+    });
+    await repository.saveSession(
+      { ...storedSession, state: started.state, decisionReplayEnabled: true },
+      session.state.version,
+    );
+    const locked = applyHostCommand(started.state, {
+      commandId: randomUUID(),
+      expectedVersion: started.state.version,
+      action: "lock",
+      nowMs: now.getTime() + 1_000,
+      newRoundId: randomUUID,
+    });
+    const seq = locked.events.find((event) => event.type === "checkpoint.insight")?.seq;
+    if (!seq || !locked.state.roundId) throw new Error("Expected the checkpoint insight event");
+    const insight = {
+      seq,
+      occurredAt: new Date(now.getTime() + 1_000).toISOString(),
+      type: "insight_shown" as const,
+      roundId: locked.state.roundId,
+      questionId: locked.state.quiz.questions[locked.state.questionIndex!]!.id,
+      sampleSize: 0,
+      activeParticipantCount: 0,
+      recommendationCode: "insufficient_sample" as const,
+      ruleSetVersion: "checkpoint-insight-v1",
+    };
+    await repository.saveSession(
+      { ...storedSession, state: locked.state, decisionReplayEnabled: true },
+      started.state.version,
+      undefined,
+      [{ event: insight, commandId: "decision-lock-command", eventOrdinal: 0 }],
+    );
+    expect(await repository.getSessionEvidence(owner.workspaceId, session.id)).toMatchObject({
+      decisionReplayEnabled: true,
+      decisionEvents: [insight],
+      decisionEventsComplete: true,
+    });
+
+    const revealed = applyHostCommand(locked.state, {
+      commandId: randomUUID(),
+      expectedVersion: locked.state.version,
+      action: "reveal",
+      nowMs: now.getTime() + 2_000,
+      newRoundId: randomUUID,
+    });
+    await expect(
+      repository.saveSession(
+        { ...storedSession, state: revealed.state, decisionReplayEnabled: true },
+        locked.state.version,
+        undefined,
+        [
+          {
+            event: {
+              seq: insight.seq,
+              occurredAt: new Date(now.getTime() + 2_000).toISOString(),
+              type: "answer_revealed",
+              roundId: insight.roundId,
+              questionId: insight.questionId,
+            },
+            commandId: "decision-reveal-command",
+            eventOrdinal: 0,
+          },
+        ],
+      ),
+    ).rejects.toMatchObject({ code: "23505" });
+    await expect(repository.getSessionById(session.id)).resolves.toMatchObject({
+      state: { version: locked.state.version, phase: "question_locked" },
+    });
+    expect(
+      (await repository.getSessionEvidence(owner.workspaceId, session.id)).decisionEvents,
+    ).toEqual([insight]);
   });
 
   it("persists an idempotent locale preference for only the selected user", async () => {
