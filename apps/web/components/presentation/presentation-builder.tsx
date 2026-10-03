@@ -39,6 +39,7 @@ import {
   duplicatePresentationBlock,
   movePresentationBlock,
   moveContentTextElement,
+  normalizePresentationRecoveryDraft,
   presentationReadiness,
   removeContentTextElement,
   reorderContentTextElement,
@@ -352,7 +353,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
     let active = true;
     void Promise.all([
       apiFetch<{ presentation: PresentationRecord }>(`/v1/presentations/${presentationId}`),
-      loadBuilderRecovery<PresentationDraft>(recoveryKey),
+      loadBuilderRecovery<unknown>(recoveryKey),
     ])
       .then(([response, local]) => {
         if (!active) return;
@@ -364,7 +365,18 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
         revisionRef.current = response.presentation.draftRevision;
         lastSavedJson.current = JSON.stringify(response.presentation.draft);
         latestDraftJson.current = lastSavedJson.current;
-        if (local && JSON.stringify(local.draft) !== lastSavedJson.current) setRecovery(local);
+        if (local) {
+          try {
+            const localDraft = normalizePresentationRecoveryDraft(local.draft);
+            if (JSON.stringify(localDraft) !== lastSavedJson.current) {
+              setRecovery({ ...local, draft: localDraft });
+            }
+          } catch {
+            setError(
+              "The saved local copy could not be restored. Your saved presentation is available.",
+            );
+          }
+        }
         setLoaded(true);
       })
       .catch((caught) => {

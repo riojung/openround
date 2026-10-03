@@ -3,6 +3,7 @@ import {
   PresentationDraftSchema,
   QuizContentSchema,
   QuizDraftSchema,
+  migratePresentationV1,
   type PresentationContent,
   type PresentationDraft,
   type QuizDraft,
@@ -86,71 +87,6 @@ const presentationContentUpcasters = new Map<number, Upcaster<PresentationConten
 function withPresentationSchemaVersion(value: unknown, version: number): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   return { ...value, schemaVersion: version };
-}
-
-const legacyRegionByLayout = {
-  title: "middle_center",
-  title_body: "middle_center",
-  media: "top_center",
-  quote: "middle_center",
-  section: "middle_center",
-  callout: "top_center",
-} as const;
-
-/** Deterministically upgrades the original title/body fields into stable v2 text elements. */
-function migratePresentationV1(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const presentation = value as { blocks?: unknown; [key: string]: unknown };
-  if (!Array.isArray(presentation.blocks)) return withPresentationSchemaVersion(value, 2);
-  return {
-    ...presentation,
-    schemaVersion: 2,
-    blocks: presentation.blocks.map((rawBlock) => {
-      if (!rawBlock || typeof rawBlock !== "object" || Array.isArray(rawBlock)) return rawBlock;
-      const block = rawBlock as {
-        id?: unknown;
-        kind?: unknown;
-        layout?: unknown;
-        title?: unknown;
-        body?: unknown;
-        [key: string]: unknown;
-      };
-      if (block.kind !== "content" || "textElements" in block) return rawBlock;
-      const layout =
-        typeof block.layout === "string" && block.layout in legacyRegionByLayout
-          ? (block.layout as keyof typeof legacyRegionByLayout)
-          : "title_body";
-      const blockId = typeof block.id === "string" ? block.id : "legacy-slide";
-      const title = typeof block.title === "string" ? block.title : "";
-      const body = typeof block.body === "string" ? block.body : "";
-      const retained = { ...block };
-      delete retained.title;
-      delete retained.body;
-      const bodyRegion =
-        layout === "title_body" || layout === "media" || layout === "callout"
-          ? "middle_center"
-          : "bottom_center";
-      return {
-        ...retained,
-        textElements: [
-          {
-            id: `${blockId}:title`,
-            role: "title",
-            text: title,
-            region: legacyRegionByLayout[layout],
-            order: 0,
-          },
-          {
-            id: `${blockId}:body`,
-            role: "body",
-            text: body,
-            region: bodyRegion,
-            order: bodyRegion === legacyRegionByLayout[layout] ? 1 : 0,
-          },
-        ],
-      };
-    }),
-  };
 }
 
 export function upcastRoundDraft(value: unknown, schemaVersion?: unknown): QuizDraft {

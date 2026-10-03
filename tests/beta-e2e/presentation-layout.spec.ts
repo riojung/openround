@@ -170,3 +170,95 @@ test("slide regions reflow into one reading column on narrow screens @mobile", a
     true,
   );
 });
+
+test("cached v1 recovery slides restore and autosave as v2", async ({ page }) => {
+  await signIn(page);
+  const presentationId = await createPresentation(page);
+  const initial = await page.request.get(`${apiUrl}/v1/presentations/${presentationId}`);
+  expect(initial.ok()).toBeTruthy();
+  const record = (await initial.json()).presentation;
+  const slideId = record.draft.blocks[0].id;
+  const legacyDraft = {
+    ...record.draft,
+    schemaVersion: 1,
+    blocks: [
+      {
+        id: slideId,
+        kind: "content",
+        layout: "quote",
+        title: "Recovered local title",
+        body: "These edits were saved locally before the layout upgrade.",
+        mediaId: null,
+        mediaAlt: null,
+        speakerNotes: "Preserve the local facilitator note.",
+        citations: [{ locator: "Page 2", excerpt: "Source excerpt" }],
+      },
+    ],
+  };
+  await page.evaluate(
+    (snapshot) =>
+      new Promise<void>((resolve, reject) => {
+        const request = indexedDB.open("openround-builder-recovery", 1);
+        request.onupgradeneeded = () => {
+          if (!request.result.objectStoreNames.contains("drafts")) {
+            request.result.createObjectStore("drafts", { keyPath: "key" });
+          }
+        };
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const database = request.result;
+          const transaction = database.transaction("drafts", "readwrite");
+          transaction.objectStore("drafts").put(snapshot);
+          transaction.oncomplete = () => {
+            database.close();
+            resolve();
+          };
+          transaction.onerror = () => {
+            database.close();
+            reject(transaction.error);
+          };
+        };
+      }),
+    {
+      key: `presentation:${presentationId}`,
+      revision: record.draftRevision,
+      savedAt: new Date().toISOString(),
+      draft: legacyDraft,
+    },
+  );
+
+  await page.goto(`/presentation/${presentationId}`);
+  const savedResponse = page.waitForResponse(
+    (response) =>
+      response.url() === `${apiUrl}/v1/presentations/${presentationId}/draft` &&
+      response.request().method() === "PUT",
+  );
+  await page.getByRole("button", { name: "Restore local copy", exact: true }).click();
+  const canvas = page.locator("#presentation-canvas");
+  await expect(canvas.getByLabel("Slide title", { exact: true })).toHaveValue(
+    legacyDraft.blocks[0]!.title,
+  );
+  await expect(canvas.getByLabel("Text box 1", { exact: true })).toHaveValue(
+    legacyDraft.blocks[0]!.body,
+  );
+  const saved = await savedResponse;
+  expect(saved.status()).toBe(200);
+  expect((await saved.json()).presentation.draft).toMatchObject({
+    schemaVersion: 2,
+    blocks: [
+      {
+        id: slideId,
+        layout: "quote",
+        speakerNotes: legacyDraft.blocks[0]!.speakerNotes,
+        citations: legacyDraft.blocks[0]!.citations,
+        textElements: [
+          { id: `${slideId}:title`, role: "title", text: legacyDraft.blocks[0]!.title },
+          { id: `${slideId}:body`, role: "body", text: legacyDraft.blocks[0]!.body },
+        ],
+      },
+    ],
+  });
+  await expect(page.getByRole("button", { name: "Restore local copy", exact: true })).toHaveCount(
+    0,
+  );
+});

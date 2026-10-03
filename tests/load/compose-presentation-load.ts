@@ -623,7 +623,7 @@ async function main() {
         title: "Presentation production-path load",
         description: "Disposable diagnostic and linked-recheck capacity evidence.",
         experiencePreset: { id: "focus", version: 1 },
-        schemaVersion: 1,
+        schemaVersion: 2,
         blocks: [
           {
             id: diagnosticBlockId,
@@ -653,7 +653,7 @@ async function main() {
       },
       expectedRevision: 0,
       mutationId: randomUUID(),
-      schemaVersion: 1,
+      schemaVersion: 2,
     }),
   });
   await api(`/v1/presentations/${presentation.presentation.id}/publish`, {

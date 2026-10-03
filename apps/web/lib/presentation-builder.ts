@@ -1,5 +1,7 @@
 import {
   PresentationContentSchema,
+  PresentationDraftSchema,
+  migratePresentationV1,
   type ContentSlideDraft,
   type ContentSlideLayout,
   type ContentSlideRegion,
@@ -16,6 +18,12 @@ export interface PresentationIssue {
   blockId: string | null;
   field: string;
   message: string;
+}
+
+export function normalizePresentationRecoveryDraft(value: unknown): PresentationDraft {
+  const schemaVersion =
+    value && typeof value === "object" && "schemaVersion" in value ? (value.schemaVersion ?? 1) : 1;
+  return PresentationDraftSchema.parse(schemaVersion === 1 ? migratePresentationV1(value) : value);
 }
 
 function choiceSet(

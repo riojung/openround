@@ -11,6 +11,7 @@ import {
   duplicatePresentationBlock,
   movePresentationBlock,
   moveContentTextElement,
+  normalizePresentationRecoveryDraft,
   presentationReadiness,
   removeContentTextElement,
   reorderContentTextElement,
@@ -42,6 +43,73 @@ function draft(): PresentationDraft {
 }
 
 describe("presentation builder model", () => {
+  it("upcasts cached v1 slide content before it can be restored", () => {
+    const slide = createContentBlock("quote");
+    const legacy = {
+      title: "Recovered presentation",
+      description: "Unsaved local changes",
+      schemaVersion: 1,
+      blocks: [
+        {
+          id: slide.id,
+          kind: "content",
+          layout: "quote",
+          title: "Recovered title",
+          body: "Recovered body",
+          mediaId: slide.id,
+          mediaAlt: "Source image",
+          speakerNotes: "Unsaved notes",
+          citations: [{ locator: "Page 2", excerpt: "Source excerpt" }],
+        },
+      ],
+    };
+    const recovered = normalizePresentationRecoveryDraft(legacy);
+
+    expect(recovered.schemaVersion).toBe(2);
+    expect(recovered.blocks[0]).toMatchObject({
+      id: slide.id,
+      layout: "quote",
+      mediaId: slide.id,
+      mediaAlt: "Source image",
+      speakerNotes: "Unsaved notes",
+      citations: legacy.blocks[0]!.citations,
+      textElements: [
+        {
+          id: `${slide.id}:title`,
+          role: "title",
+          text: "Recovered title",
+          region: "middle_center",
+          order: 0,
+        },
+        {
+          id: `${slide.id}:body`,
+          role: "body",
+          text: "Recovered body",
+          region: "bottom_center",
+          order: 0,
+        },
+      ],
+    });
+    expect(normalizePresentationRecoveryDraft(legacy)).toEqual(recovered);
+    const { schemaVersion, ...unversioned } = legacy;
+    expect(schemaVersion).toBe(1);
+    expect(normalizePresentationRecoveryDraft(unversioned)).toEqual(recovered);
+    expect(legacy.blocks[0]).not.toHaveProperty("textElements");
+  });
+
+  it("preserves v2 recovery placement and rejects unsupported or invalid cached drafts", () => {
+    const current = draft();
+    const slide = current.blocks[0]!;
+    if (slide.kind !== "content") throw new Error("Expected a content slide");
+    slide.textElements[0]!.region = "bottom_left";
+
+    expect(normalizePresentationRecoveryDraft(current)).toEqual(current);
+    expect(() => normalizePresentationRecoveryDraft({ ...current, schemaVersion: 3 })).toThrow();
+    expect(() =>
+      normalizePresentationRecoveryDraft({ schemaVersion: 1, blocks: "invalid" }),
+    ).toThrow();
+  });
+
   it("creates response-specific defaults without conflating opinion and diagnostic blocks", () => {
     const poll = createPresentationQuestion("poll");
     const numeric = createPresentationQuestion("numeric");
