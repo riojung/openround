@@ -1232,6 +1232,21 @@ export const InsightActionSchema = z.enum([
 ]);
 export type InsightAction = z.infer<typeof InsightActionSchema>;
 
+export const CheckpointInsightRecommendationCodeSchema = z.enum([
+  "insufficient_sample",
+  "low_participation",
+  "high_confidence_error",
+  "dominant_misconception",
+  "low_correctness",
+  "split_understanding",
+  "correct_but_uncertain",
+  "continue",
+  "opinion_result",
+]);
+export type CheckpointInsightRecommendationCode = z.infer<
+  typeof CheckpointInsightRecommendationCodeSchema
+>;
+
 export const CheckpointInsightSchema = z.object({
   sampleSize: z.number().int().nonnegative(),
   activeParticipantCount: z.number().int().nonnegative(),
@@ -1248,7 +1263,7 @@ export const CheckpointInsightSchema = z.object({
     })
     .nullable(),
   recommendation: z.object({
-    code: z.string(),
+    code: CheckpointInsightRecommendationCodeSchema,
     action: InsightActionSchema,
     title: z.string(),
     reason: z.string(),
@@ -2508,11 +2523,91 @@ const ReportParticipantSchema = z.object({
   answerCount: z.number().int().nonnegative(),
 });
 
+const SessionDecisionEventBaseShape = {
+  seq: z.number().int().positive(),
+  occurredAt: z.string().datetime(),
+};
+
+export const SessionDecisionEventSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("insight_shown"),
+      roundId: z.string().uuid(),
+      questionId: z.string().uuid(),
+      sampleSize: z.number().int().nonnegative(),
+      activeParticipantCount: z.number().int().nonnegative(),
+      recommendationCode: CheckpointInsightRecommendationCodeSchema,
+      ruleSetVersion: z.string().regex(/^checkpoint-insight-v[1-9][0-9]*$/),
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("answer_revealed"),
+      roundId: z.string().uuid(),
+      questionId: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("intervention_started"),
+      roundId: z.string().uuid(),
+      interventionType: InterventionTypeSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("intervention_finished"),
+      roundId: z.string().uuid(),
+      interventionType: InterventionTypeSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("recheck_opened"),
+      sourceRoundId: z.string().uuid(),
+      roundId: z.string().uuid(),
+      questionId: z.string().uuid(),
+      kind: z.enum(["linked_recheck", "revote"]),
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("question_advanced"),
+      fromRoundId: z.string().uuid(),
+      toRoundId: z.string().uuid(),
+      questionId: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("session_finished"),
+      reason: z.enum(["host_ended", "completed"]),
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("capture_truncated"),
+      reason: z.literal("event_limit"),
+    })
+    .strict(),
+]);
+export type SessionDecisionEvent = z.infer<typeof SessionDecisionEventSchema>;
+export const MAX_SESSION_DECISION_EVENTS = 5_000;
+
 const ReportBaseShape = {
   id: z.string().uuid(),
   sessionId: z.string().uuid(),
   trustMode: TrustModeSchema.default("learning"),
   timeMode: RoundTimeModeSchema.default("timed"),
+  decisionReplayAvailable: z.boolean().default(false),
   status: z.enum(["pending", "ready", "failed"]),
   generatedAt: z.string().datetime().nullable(),
   expiresAt: z.string().datetime(),
@@ -2638,14 +2733,28 @@ export const ReportV3Schema = ReportV2Schema.extend({
   }),
 });
 
-export const ReportSchema = z.union([ReportV3Schema, ReportV2Schema, LegacyReportSchema]);
+export const ReportV4Schema = ReportV3Schema.extend({
+  schemaVersion: z.literal(4),
+  decisionReplayAvailable: z.boolean(),
+  decisionReplayComplete: z.boolean(),
+  decisionTimeline: z.array(SessionDecisionEventSchema).max(MAX_SESSION_DECISION_EVENTS + 1),
+});
+
+export const ReportSchema = z.union([
+  ReportV4Schema,
+  ReportV3Schema,
+  ReportV2Schema,
+  LegacyReportSchema,
+]);
 /** Input aliases preserve compatibility while schema parsing resolves the trust-mode default. */
 export type Report = z.input<typeof ReportSchema>;
 export type ReportV2 = z.input<typeof ReportV2Schema>;
 export type ReportV3 = z.input<typeof ReportV3Schema>;
+export type ReportV4 = z.input<typeof ReportV4Schema>;
 export type ResolvedReport = z.output<typeof ReportSchema>;
 export type ResolvedReportV2 = z.output<typeof ReportV2Schema>;
 export type ResolvedReportV3 = z.output<typeof ReportV3Schema>;
+export type ResolvedReportV4 = z.output<typeof ReportV4Schema>;
 
 export const FollowupTimeModeSchema = z.enum(["timed", "flex"]);
 export type FollowupTimeMode = z.infer<typeof FollowupTimeModeSchema>;

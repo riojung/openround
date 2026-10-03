@@ -35,6 +35,8 @@ import {
   RoundFilterOptionsResponseSchema,
   SessionSettingsSchema,
   SessionSnapshotSchema,
+  SessionDecisionEventSchema,
+  ReportV3Schema,
   SyncRequestSchema,
   UpdateQuizRequestSchema,
   WorkspaceProductFeaturesSchema,
@@ -131,7 +133,75 @@ describe("public contracts", () => {
         questions: [],
         participants: [],
       }),
-    ).toMatchObject({ trustMode: "learning", timeMode: "timed" });
+    ).toMatchObject({
+      trustMode: "learning",
+      timeMode: "timed",
+      decisionReplayAvailable: false,
+    });
+  });
+
+  it("keeps decision replay aggregate-only and old report schemas explicitly unavailable", () => {
+    const legacyV3 = ReportV3Schema.parse({
+      id: randomUUID(),
+      sessionId: randomUUID(),
+      schemaVersion: 3,
+      status: "ready",
+      generatedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      metrics: {
+        participantCount: 0,
+        completedCount: 0,
+        answerCount: 0,
+        accuracyPercent: 0,
+      },
+      questions: [],
+      participants: [],
+      initialAccuracy: { correct: 0, responses: 0, percent: 0 },
+      confidenceMatrix: [],
+      misconceptions: [],
+      interventions: [],
+      recovery: [],
+      unresolvedConcepts: [],
+      participation: { participants: 0, respondents: 0, percent: 0 },
+      responseTime: { responses: 0, medianMs: null, p95Ms: null },
+      qna: { questions: 0, answered: 0, unresolved: 0 },
+      participantFeedback: [],
+      evidenceNote: "Session evidence only.",
+      experience: { category: "general", preset: { id: "focus", version: 1 } },
+      audiencePulse: {
+        uniqueParticipants: 0,
+        events: 0,
+        bySignal: { got_it: 0, unsure: 0, need_example: 0, too_fast: 0 },
+        contexts: [],
+      },
+      conversation: {
+        messages: 0,
+        uniqueContributors: 0,
+        reactions: 0,
+        reports: 0,
+        removed: 0,
+        moderationActions: 0,
+        peakMessagesPerMinute: 0,
+        transcriptAvailable: false,
+      },
+    });
+    expect(legacyV3.decisionReplayAvailable).toBe(false);
+
+    const event = {
+      seq: 1,
+      occurredAt: new Date().toISOString(),
+      type: "insight_shown",
+      roundId: randomUUID(),
+      questionId: randomUUID(),
+      sampleSize: 3,
+      activeParticipantCount: 5,
+      recommendationCode: "low_participation",
+      ruleSetVersion: "checkpoint-insight-v1",
+    } as const;
+    expect(SessionDecisionEventSchema.parse(event)).toEqual(event);
+    expect(
+      SessionDecisionEventSchema.safeParse({ ...event, participantId: randomUUID() }).success,
+    ).toBe(false);
   });
 
   it("defaults existing live Round settings to timed mode", () => {

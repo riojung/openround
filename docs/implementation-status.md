@@ -134,13 +134,17 @@ implementation slice, not the 20-question/70%-usefulness study or a production r
 usefulness/retained-revision thresholds remain unmeasured, and local tests do not close Phase 1/2
 or release-readiness gates.
 
-As of the merged `main` snapshot on 2026-10-01, all repository-side functionality committed for
+As of the merged `main` snapshot on 2026-10-02, all repository-side functionality committed for
 Phase 0 is implemented. The open Phase 0 items are evidence and release-readiness gates, not an
-unfinished feature backlog. The market-plan baseline is reconciled to this status; production
-Companion, first-class Recovery Packs, Question Health post-use observations, Delayed Recovery
-Trail, Decision Replay, and Concept Health are not yet complete on `main` and must not be described
-as delivered. The Question Health post-use implementation is being developed provisionally on the
-active branch; partner-evidence decisions remain explicitly deferred.
+unfinished feature backlog. PR #64 merged exact-version aggregate Question Health post-use
+observations; its partner usefulness and retained-revision thresholds remain unmeasured. First-class
+Recovery Packs, Delayed Recovery Trail, Session Decision Replay, and Concept Health remain future
+capabilities on `main`. The active `codex/session-decision-replay` branch contains the next
+provisional slice: a strict aggregate-only event journal, Report V4 compatibility, and a read-only
+decision timeline. Existing reports are not backfilled or reconstructed. The PostgreSQL integration
+tests are present but have not run here because no test database is configured. Partner-evidence
+decisions remain explicitly deferred, and this branch does not claim any external research or release
+gate has passed.
 
 An Access/resilience implementation slice is complete in the repository provisionally, without
 claiming that Phase 1's branch-selection gate passed. Gated whole-room flex mode is available for

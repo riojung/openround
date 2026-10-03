@@ -74,6 +74,7 @@ import type {
   Repository,
   SessionStaffCredentialRecord,
   SessionStaffCredentialInput,
+  SessionDecisionEventWrite,
   SessionHistoryRecord,
   SessionInvalidationTarget,
   StoredSession,
@@ -90,8 +91,10 @@ import {
   upcastRoundDraft,
 } from "./artifact-schemas.js";
 import {
+  MAX_SESSION_DECISION_EVENTS,
   QUESTION_HEALTH_POST_USE_MAX_REPORTS,
   ReportSchema,
+  SessionDecisionEventSchema,
   questionDelivery,
   type BrandTheme,
   type QuizDraft,
@@ -246,6 +249,7 @@ export class MemoryRepository implements Repository {
   readonly folders = new Map<string, FolderRecord>();
   readonly versions = new Map<string, QuizVersionRecord>();
   readonly sessions = new Map<string, StoredSession>();
+  readonly sessionDecisionEvents = new Map<string, SessionDecisionEventWrite[]>();
   readonly liveRoomCodes = new Map<string, LiveRoomCodeRecord>();
   readonly participants = new Map<string, ParticipantRecord>();
   readonly sessionStaff = new Map<string, SessionStaffCredentialRecord>();
@@ -1766,7 +1770,12 @@ export class MemoryRepository implements Repository {
     };
   }
 
-  async saveSession(input: StoredSession, expectedVersion: number, report?: Report) {
+  async saveSession(
+    input: StoredSession,
+    expectedVersion: number,
+    report?: Report,
+    decisionEvents: SessionDecisionEventWrite[] = [],
+  ) {
     if (this.workspaceMediaDeletionClaims.has(input.workspaceId)) {
       throw new WorkspaceDeletionInProgressError(input.workspaceId);
     }
@@ -1777,15 +1786,82 @@ export class MemoryRepository implements Repository {
     if (report && report.sessionId !== input.id) throw new Error("Report session does not match");
     const currentTrustMode = current.trustMode ?? current.state.settings.trustMode ?? "learning";
     const nextTrustMode = input.trustMode ?? input.state.settings.trustMode ?? "learning";
+    const currentDecisionReplayEnabled = current.decisionReplayEnabled ?? false;
+    const nextDecisionReplayEnabled = input.decisionReplayEnabled ?? false;
     if (
       currentTrustMode !== nextTrustMode ||
-      (input.state.settings.trustMode ?? "learning") !== nextTrustMode
+      (input.state.settings.trustMode ?? "learning") !== nextTrustMode ||
+      currentDecisionReplayEnabled !== nextDecisionReplayEnabled
     ) {
-      throw new Error("Session trust mode is immutable");
+      throw new Error("Session trust and decision replay settings are immutable");
+    }
+    if (decisionEvents.length > 0 && !nextDecisionReplayEnabled) {
+      throw new Error("Decision events cannot be written for a session without replay enabled");
+    }
+    const currentDecisionEvents = this.sessionDecisionEvents.get(input.id) ?? [];
+    const nextDecisionEvents = decisionEvents.map((write) => ({
+      ...write,
+      event: SessionDecisionEventSchema.parse(write.event),
+    }));
+    if (
+      nextDecisionEvents.some(
+        (write) =>
+          typeof write.commandId !== "string" ||
+          write.commandId.length === 0 ||
+          write.commandId.length > 160 ||
+          !Number.isSafeInteger(write.eventOrdinal) ||
+          write.eventOrdinal < 0,
+      )
+    ) {
+      throw new Error("Invalid session decision event command or ordinal");
+    }
+    for (let index = 0; index < nextDecisionEvents.length; index += 1) {
+      const write = nextDecisionEvents[index]!;
+      const priorEvents = [...currentDecisionEvents, ...nextDecisionEvents.slice(0, index)];
+      if (
+        priorEvents.some(
+          (prior) =>
+            prior.event.seq === write.event.seq ||
+            (prior.commandId === write.commandId && prior.eventOrdinal === write.eventOrdinal),
+        )
+      ) {
+        throw new Error("Duplicate session decision event sequence or command ordinal");
+      }
+    }
+    const hasDecisionEventLimitMarker = currentDecisionEvents.some(
+      (write) => write.event.type === "capture_truncated",
+    );
+    const capturedDecisionEventCount = currentDecisionEvents.filter(
+      (write) => write.event.type !== "capture_truncated",
+    ).length;
+    const decisionEventSlots = Math.max(
+      0,
+      MAX_SESSION_DECISION_EVENTS - capturedDecisionEventCount,
+    );
+    const eventsToPersist = hasDecisionEventLimitMarker
+      ? []
+      : nextDecisionEvents.slice(0, decisionEventSlots);
+    const firstOmittedDecisionEvent = nextDecisionEvents[decisionEventSlots];
+    if (!hasDecisionEventLimitMarker && firstOmittedDecisionEvent) {
+      eventsToPersist.push({
+        ...firstOmittedDecisionEvent,
+        event: {
+          type: "capture_truncated",
+          seq: firstOmittedDecisionEvent.event.seq,
+          occurredAt: firstOmittedDecisionEvent.event.occurredAt,
+          reason: "event_limit",
+        },
+      });
     }
     const storedSession = structuredClone({ ...input, updatedAt: new Date() });
     const storedReport = report ? structuredClone(report) : undefined;
     this.sessions.set(input.id, storedSession);
+    if (eventsToPersist.length > 0) {
+      this.sessionDecisionEvents.set(input.id, [
+        ...currentDecisionEvents,
+        ...structuredClone(eventsToPersist),
+      ]);
+    }
     if (storedSession.state.phase === "finished") {
       await this.releaseLiveRoomCode("round", storedSession.id, storedSession.updatedAt);
       const settings = this.interactionSettings.get(input.id);
@@ -1836,6 +1912,7 @@ export class MemoryRepository implements Repository {
       if (followup.sourceSessionId === sessionId) this.deleteFollowupTree(followupId);
     }
     this.sessions.delete(sessionId);
+    this.sessionDecisionEvents.delete(sessionId);
     this.expiredLiveSessions.delete(sessionId);
     for (const [key, participant] of this.participants) {
       if (participant.sessionId === sessionId) this.participants.delete(key);
@@ -2759,6 +2836,9 @@ export class MemoryRepository implements Repository {
     const session = this.sessions.get(sessionId);
     if (!session || session.workspaceId !== workspaceId) {
       return {
+        decisionReplayEnabled: false,
+        decisionEvents: [],
+        decisionEventsComplete: false,
         answers: [],
         rounds: [],
         interventions: [],
@@ -2775,7 +2855,21 @@ export class MemoryRepository implements Repository {
     const qnaQuestions = [...this.qnaQuestions.values()].filter(
       (question) => question.workspaceId === workspaceId && question.sessionId === sessionId,
     );
+    const decisionWrites = this.sessionDecisionEvents.get(sessionId) ?? [];
+    const decisionEvents = decisionWrites.map((write) => structuredClone(write.event));
+    const hasCapturedDecisionEvents = decisionEvents.some(
+      (event) => event.type !== "capture_truncated",
+    );
+    const decisionEventsTruncated = decisionEvents.some(
+      (event) => event.type === "capture_truncated",
+    );
     return {
+      decisionReplayEnabled: session.decisionReplayEnabled ?? false,
+      decisionEvents,
+      decisionEventsComplete:
+        (session.decisionReplayEnabled ?? false) &&
+        hasCapturedDecisionEvents &&
+        !decisionEventsTruncated,
       answers: [...this.answers.entries()]
         .filter(([key]) => key.startsWith(`${sessionId}:`))
         .map(([, answer]) => structuredClone(answer)),
@@ -3404,7 +3498,9 @@ export class MemoryRepository implements Repository {
   async getReport(workspaceId: string, reportId: string) {
     const report = this.reports.get(reportId);
     const session = report ? this.sessions.get(report.sessionId) : undefined;
-    return report && session?.workspaceId === workspaceId ? structuredClone(report) : null;
+    return report && session?.workspaceId === workspaceId
+      ? ReportSchema.parse(structuredClone(report))
+      : null;
   }
 
   async getReportBySession(workspaceId: string, sessionId: string) {
@@ -3413,7 +3509,7 @@ export class MemoryRepository implements Repository {
     const report = [...this.reports.values()].find(
       (candidate) => candidate.sessionId === sessionId,
     );
-    return report ? structuredClone(report) : null;
+    return report ? ReportSchema.parse(structuredClone(report)) : null;
   }
 
   async listQuestionHealthObservationReports(

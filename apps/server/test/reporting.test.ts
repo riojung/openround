@@ -28,6 +28,71 @@ describe("report CSV", () => {
     expect(reportCsv(ready)).toContain("time_mode,flex");
   });
 
+  it("emits a V4 timeline only from explicitly captured session evidence", () => {
+    const state = createGameState({
+      sessionId: randomUUID(),
+      code: "7654321",
+      quiz: { title: "Replay evidence", description: "", questions: [] },
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    const expiresAt = new Date("2026-10-01T00:00:00.000Z");
+    const pending = createPendingReport(state, expiresAt, true);
+    expect(pending).toMatchObject({
+      schemaVersion: 4,
+      decisionReplayAvailable: false,
+      decisionReplayComplete: false,
+      decisionTimeline: [],
+    });
+    const finishedEvent = {
+      seq: 1,
+      occurredAt: "2026-09-30T12:00:00.000Z",
+      type: "session_finished" as const,
+      reason: "completed" as const,
+    };
+    const ready = generateReport(state, expiresAt, {
+      evidence: {
+        decisionReplayEnabled: true,
+        decisionEvents: [finishedEvent],
+        decisionEventsComplete: true,
+        answers: [],
+        rounds: [],
+        interventions: [],
+        qna: { questions: 0, answered: 0, unresolved: 0 },
+      },
+    });
+    expect(ready).toMatchObject({
+      schemaVersion: 4,
+      decisionReplayAvailable: true,
+      decisionReplayComplete: true,
+      decisionTimeline: [finishedEvent],
+    });
+    expect(reportCsv(ready)).toContain("session_finished,1,2026-09-30T12:00:00.000Z");
+
+    const noCapture = generateReport(state, expiresAt, {
+      evidence: {
+        decisionReplayEnabled: true,
+        decisionEvents: [],
+        decisionEventsComplete: false,
+        answers: [],
+        rounds: [],
+        interventions: [],
+        qna: { questions: 0, answered: 0, unresolved: 0 },
+      },
+    });
+    expect(noCapture).toMatchObject({
+      schemaVersion: 4,
+      decisionReplayAvailable: false,
+      decisionReplayComplete: false,
+      decisionTimeline: [],
+    });
+  });
+
   it("neutralizes spreadsheet formulas in participant-controlled nicknames", () => {
     const dangerousNicknames = ["=1+1", "+SUM(A1:A2)", "-2+3", "@IMPORTDATA(A1)", "\t=1+1"];
     const report: Report = {
@@ -178,6 +243,9 @@ describe("report CSV", () => {
     const generated = generateReport(state, new Date("2026-10-01T00:00:00.000Z"), {
       generatedAt: new Date("2026-09-01T00:00:00.000Z"),
       evidence: {
+        decisionReplayEnabled: false,
+        decisionEvents: [],
+        decisionEventsComplete: false,
         answers: [
           answer(firstParticipantId, sourceRoundId, misconceptionChoiceId, false, 3, 2_000),
           answer(secondParticipantId, sourceRoundId, correctChoiceId, true, 1, 2_100),
@@ -371,6 +439,9 @@ describe("report CSV", () => {
       idempotencyKey: randomUUID(),
     }));
     const evidence = (selectedAnswers: EngineAnswer[]) => ({
+      decisionReplayEnabled: false,
+      decisionEvents: [],
+      decisionEventsComplete: false,
       answers: selectedAnswers,
       rounds: [
         {

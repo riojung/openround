@@ -17,6 +17,7 @@ import type {
   QuizDraft,
   Report,
   ResponsePayload,
+  SessionDecisionEvent,
   SupportedLocale,
   TimeMultiplier,
   TrustMode,
@@ -333,6 +334,8 @@ export interface StoredSession {
   hostTokenHash: string;
   /** Frozen identity/privacy promise for this session. */
   trustMode?: TrustMode;
+  /** Whether the optional decision timeline was enabled when the session was created. */
+  decisionReplayEnabled?: boolean;
   state: GameState;
   /** Last instant at which host and participant credentials may use the live session. */
   expiresAt: Date;
@@ -358,6 +361,9 @@ export interface LiveRoomCodeRecord {
 export type LiveRoomCodeClaim = Omit<LiveRoomCodeRecord, "releasedAt">;
 
 export interface SessionEvidence {
+  decisionReplayEnabled: boolean;
+  decisionEvents: SessionDecisionEvent[];
+  decisionEventsComplete: boolean;
   answers: EngineAnswer[];
   rounds: Array<EngineRound & { id: string }>;
   interventions: EngineIntervention[];
@@ -378,6 +384,12 @@ export interface SessionEvidence {
     reports: number;
     moderationActions: number;
   };
+}
+
+export interface SessionDecisionEventWrite {
+  event: SessionDecisionEvent;
+  commandId: string;
+  eventOrdinal: number;
 }
 
 export interface ReportJob {
@@ -1188,7 +1200,12 @@ export interface Repository {
       now: Date;
     },
   ): Promise<HistoryPage<SessionHistoryRecord>>;
-  saveSession(input: StoredSession, expectedVersion: number, report?: Report): Promise<void>;
+  saveSession(
+    input: StoredSession,
+    expectedVersion: number,
+    report?: Report,
+    decisionEvents?: SessionDecisionEventWrite[],
+  ): Promise<void>;
   deleteSession(workspaceId: string, sessionId: string): Promise<boolean>;
   createParticipant(input: ParticipantRecord): Promise<void>;
   commitParticipants(
