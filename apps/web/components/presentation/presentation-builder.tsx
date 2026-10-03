@@ -14,6 +14,7 @@ import {
 } from "react";
 import type {
   ContentSlideLayout,
+  ContentSlideRegion,
   PresentationBlockDraft,
   PresentationDraft,
   QuestionDraft,
@@ -28,19 +29,28 @@ import {
 } from "../../lib/builder-recovery";
 import { formatDateTime } from "../../lib/i18n/format";
 import {
+  addContentTextElement,
+  applyContentSlideLayout,
   changePresentationQuestionType,
+  contentSlideTitle,
   createContentBlock,
+  createContentTextElement,
   createQuestionBlock,
   duplicatePresentationBlock,
   movePresentationBlock,
+  moveContentTextElement,
   presentationReadiness,
+  removeContentTextElement,
+  reorderContentTextElement,
   removePresentationBlock,
+  updateContentTextElement,
 } from "../../lib/presentation-builder";
 import { RecoverableOperationQueue } from "../../lib/recoverable-operation-queue";
 import { retryWithBackoff } from "../../lib/retry";
 import { AuthoringAssistant } from "../authoring-assistant";
 import { ResponseEditor } from "../editor/response-editor";
 import { MediaEditor } from "../editor/media-editor";
+import { ContentSlideView, contentSlideRegionLabels } from "./content-slide-view";
 import { isChoiceQuestion } from "../editor/types";
 import { useLocale } from "../locale-provider";
 import { questionTypeOptions, responseTypeLabel } from "../workspace/workspace-model";
@@ -208,14 +218,15 @@ function PresentationPreview({
           {!block ? (
             <p>Add a slide to preview this presentation.</p>
           ) : block.kind === "content" ? (
-            <article className={`${styles.previewContent} ${styles[`layout_${block.layout}`]}`}>
-              <span className={styles.previewEyebrow}>{block.layout.replace("_", " ")}</span>
-              <h1 lang={block.title ? "" : "en-CA"}>{block.title || "Untitled slide"}</h1>
-              {block.body ? <p lang="">{block.body}</p> : null}
-              {block.mediaId ? (
-                <AuthenticatedMedia altText={block.mediaAlt} mediaId={block.mediaId} />
-              ) : null}
-            </article>
+            <ContentSlideView
+              block={block}
+              media={
+                block.mediaId ? (
+                  <AuthenticatedMedia altText={block.mediaAlt} mediaId={block.mediaId} />
+                ) : undefined
+              }
+              variant="preview"
+            />
           ) : (
             <article className={styles.previewQuestion}>
               <span className={styles.previewEyebrow}>Audience question</span>
@@ -271,6 +282,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
   const [record, setRecord] = useState<PresentationRecord | null>(null);
   const [draft, setDraft] = useState<PresentationDraft | null>(null);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [selectedTextElementId, setSelectedTextElementId] = useState<string | null>(null);
   const [mapOpen, setMapOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("build");
@@ -302,6 +314,10 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
   const previousBlockCount = useRef<number | null>(null);
 
   const selectedBlock = draft?.blocks.find((block) => block.id === selectedBlockId) ?? null;
+  const selectedTextElement =
+    selectedBlock?.kind === "content"
+      ? (selectedBlock.textElements.find((element) => element.id === selectedTextElementId) ?? null)
+      : null;
   const selectedMediaId =
     selectedBlock?.kind === "content"
       ? selectedBlock.mediaId
@@ -316,6 +332,19 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
     }
     return map;
   }, [issues]);
+
+  useEffect(() => {
+    if (selectedBlock?.kind !== "content") {
+      if (selectedTextElementId !== null) setSelectedTextElementId(null);
+      return;
+    }
+    if (selectedBlock.textElements.some((element) => element.id === selectedTextElementId)) return;
+    setSelectedTextElementId(
+      selectedBlock.textElements.find((element) => element.role === "title")?.id ??
+        selectedBlock.textElements[0]?.id ??
+        null,
+    );
+  }, [selectedBlock, selectedTextElementId]);
 
   useEffect(() => {
     firstBlockTracked.current = false;
@@ -487,7 +516,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                 draft: candidate,
                 expectedRevision: revisionRef.current,
                 mutationId,
-                schemaVersion: 1,
+                schemaVersion: 2,
               }),
             },
           ),
@@ -601,6 +630,48 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
     );
   }
 
+  function addTextBox() {
+    if (selectedBlock?.kind !== "content" || selectedBlock.textElements.length >= 8) return;
+    const element = createContentTextElement();
+    updateSelected((block) =>
+      block.kind === "content" ? addContentTextElement(block, element) : block,
+    );
+    setSelectedTextElementId(element.id);
+    setInspectorTab("content");
+  }
+
+  function changeTextElement(elementId: string, text: string) {
+    updateSelected(
+      (block) =>
+        block.kind === "content"
+          ? updateContentTextElement(block, elementId, (element) => ({ ...element, text }))
+          : block,
+      `text:${elementId}`,
+    );
+  }
+
+  function moveTextElement(elementId: string, region: ContentSlideRegion) {
+    updateSelected((block) =>
+      block.kind === "content" ? moveContentTextElement(block, elementId, region) : block,
+    );
+    setSelectedTextElementId(elementId);
+  }
+
+  function deleteSelectedTextBox() {
+    if (selectedBlock?.kind !== "content" || !selectedTextElement) return;
+    if (selectedTextElement.role === "title") return;
+    const remaining = selectedBlock.textElements.filter(
+      (element) => element.id !== selectedTextElement.id,
+    );
+    const index = selectedBlock.textElements.findIndex(
+      (element) => element.id === selectedTextElement.id,
+    );
+    updateSelected((block) =>
+      block.kind === "content" ? removeContentTextElement(block, selectedTextElement.id) : block,
+    );
+    setSelectedTextElementId(remaining[Math.min(index, remaining.length - 1)]?.id ?? null);
+  }
+
   function addBlock(block: PresentationBlockDraft) {
     commit((current) => {
       const selectedIndex = current.blocks.findIndex((item) => item.id === selectedBlockId);
@@ -696,7 +767,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
             draft: { ...draft, title },
             expectedRevision: created.presentation.draftRevision,
             mutationId: crypto.randomUUID(),
-            schemaVersion: 1,
+            schemaVersion: 2,
           }),
         },
       );
@@ -1139,12 +1210,18 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                     </small>
                     <strong
                       lang={
-                        (block.kind === "content" ? block.title : block.question.prompt).trim()
+                        (block.kind === "content"
+                          ? contentSlideTitle(block)
+                          : block.question.prompt
+                        ).trim()
                           ? ""
                           : undefined
                       }
                     >
-                      {(block.kind === "content" ? block.title : block.question.prompt).trim() ||
+                      {(block.kind === "content"
+                        ? contentSlideTitle(block)
+                        : block.question.prompt
+                      ).trim() ||
                         t(
                           block.kind === "content"
                             ? "delivery.builder.slide"
@@ -1231,48 +1308,27 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
               lang="en-CA"
             >
               <span className={styles.canvasEyebrow}>{selectedBlock.layout.replace("_", " ")}</span>
-              <input
-                aria-label="Slide title"
-                className={styles.canvasTitle}
-                lang={selectedBlock.title.trim() ? "" : "en-CA"}
-                maxLength={160}
-                onChange={(event) =>
-                  updateSelected(
-                    (block) =>
-                      block.kind === "content" ? { ...block, title: event.target.value } : block,
-                    "title",
-                  )
-                }
-                placeholder="Give this moment a clear title"
-                value={selectedBlock.title}
-              />
-              <textarea
-                aria-label="Slide body"
-                className={styles.canvasBody}
-                lang={selectedBlock.body.trim() ? "" : "en-CA"}
-                maxLength={4000}
-                onChange={(event) =>
-                  updateSelected(
-                    (block) =>
-                      block.kind === "content" ? { ...block, body: event.target.value } : block,
-                    "body",
-                  )
-                }
-                placeholder={
+              <ContentSlideView
+                block={selectedBlock}
+                bodyPlaceholder={
                   selectedBlock.layout === "quote"
                     ? "Add the quote or reflection prompt"
                     : "Add the context your audience needs"
                 }
-                value={selectedBlock.body}
+                media={
+                  selectedBlock.mediaId ? (
+                    <AuthenticatedMedia
+                      altText={selectedBlock.mediaAlt}
+                      mediaId={selectedBlock.mediaId}
+                    />
+                  ) : undefined
+                }
+                onChangeElement={changeTextElement}
+                onMoveElement={moveTextElement}
+                onSelectElement={setSelectedTextElementId}
+                selectedElementId={selectedTextElementId}
+                variant="editor"
               />
-              {selectedBlock.mediaId ? (
-                <div className={styles.canvasMedia}>
-                  <AuthenticatedMedia
-                    altText={selectedBlock.mediaAlt}
-                    mediaId={selectedBlock.mediaId}
-                  />
-                </div>
-              ) : null}
             </section>
           ) : (
             <section className={styles.questionCanvas}>
@@ -1320,6 +1376,53 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
           )}
           {selectedBlock ? (
             <div className={styles.canvasToolbar} aria-label="Selected block actions" lang="en-CA">
+              {selectedBlock.kind === "content" ? (
+                <>
+                  <button
+                    disabled={selectedBlock.textElements.length >= 8}
+                    onClick={addTextBox}
+                    type="button"
+                  >
+                    Add text box
+                  </button>
+                  <button
+                    disabled={!selectedTextElement}
+                    onClick={() => {
+                      if (!selectedTextElement) return;
+                      updateSelected((block) =>
+                        block.kind === "content"
+                          ? reorderContentTextElement(block, selectedTextElement.id, -1)
+                          : block,
+                      );
+                    }}
+                    type="button"
+                  >
+                    Move text earlier
+                  </button>
+                  <button
+                    disabled={!selectedTextElement}
+                    onClick={() => {
+                      if (!selectedTextElement) return;
+                      updateSelected((block) =>
+                        block.kind === "content"
+                          ? reorderContentTextElement(block, selectedTextElement.id, 1)
+                          : block,
+                      );
+                    }}
+                    type="button"
+                  >
+                    Move text later
+                  </button>
+                  <button
+                    className={styles.dangerButton}
+                    disabled={!selectedTextElement || selectedTextElement.role === "title"}
+                    onClick={deleteSelectedTextBox}
+                    type="button"
+                  >
+                    Delete text box
+                  </button>
+                </>
+              ) : null}
               <button
                 disabled={draft.blocks[0]?.id === selectedBlock.id}
                 onClick={() =>
@@ -1454,40 +1557,43 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                 <h2>{inspectorTabs.find((tab) => tab.id === inspectorTab)?.label}</h2>
                 {inspectorTab === "content" ? (
                   <>
-                    <label className={styles.field}>
-                      <span lang="en-CA">Slide title</span>
-                      <input
-                        lang={selectedBlock.title.trim() ? "" : "en-CA"}
-                        maxLength={160}
-                        onChange={(event) =>
-                          updateSelected(
-                            (block) =>
-                              block.kind === "content"
-                                ? { ...block, title: event.target.value }
-                                : block,
-                            "title",
-                          )
-                        }
-                        value={selectedBlock.title}
-                      />
-                    </label>
-                    <label className={styles.field}>
-                      <span lang="en-CA">Body</span>
-                      <textarea
-                        lang={selectedBlock.body.trim() ? "" : "en-CA"}
-                        maxLength={4000}
-                        onChange={(event) =>
-                          updateSelected(
-                            (block) =>
-                              block.kind === "content"
-                                ? { ...block, body: event.target.value }
-                                : block,
-                            "body",
-                          )
-                        }
-                        value={selectedBlock.body}
-                      />
-                    </label>
+                    {selectedBlock.textElements.map((element) => (
+                      <label className={styles.field} key={element.id}>
+                        <span lang="en-CA">
+                          {element.role === "title"
+                            ? "Slide title"
+                            : `Text box ${
+                                selectedBlock.textElements
+                                  .filter((candidate) => candidate.role === "body")
+                                  .findIndex((candidate) => candidate.id === element.id) + 1
+                              }`}
+                        </span>
+                        {element.role === "title" ? (
+                          <input
+                            lang={element.text.trim() ? "" : "en-CA"}
+                            maxLength={160}
+                            onChange={(event) => changeTextElement(element.id, event.target.value)}
+                            onFocus={() => setSelectedTextElementId(element.id)}
+                            value={element.text}
+                          />
+                        ) : (
+                          <textarea
+                            lang={element.text.trim() ? "" : "en-CA"}
+                            maxLength={4000}
+                            onChange={(event) => changeTextElement(element.id, event.target.value)}
+                            onFocus={() => setSelectedTextElementId(element.id)}
+                            value={element.text}
+                          />
+                        )}
+                      </label>
+                    ))}
+                    <button
+                      disabled={selectedBlock.textElements.length >= 8}
+                      onClick={addTextBox}
+                      type="button"
+                    >
+                      Add text box
+                    </button>
                   </>
                 ) : inspectorTab === "layout" ? (
                   <>
@@ -1498,7 +1604,10 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                         onChange={(event) =>
                           updateSelected((block) =>
                             block.kind === "content"
-                              ? { ...block, layout: event.target.value as ContentSlideLayout }
+                              ? applyContentSlideLayout(
+                                  block,
+                                  event.target.value as ContentSlideLayout,
+                                )
                               : block,
                           )
                         }
@@ -1511,8 +1620,80 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                         ))}
                       </select>
                     </label>
+                    <label className={styles.field}>
+                      <span lang="en-CA">Selected text element</span>
+                      <select
+                        lang="en-CA"
+                        onChange={(event) => setSelectedTextElementId(event.target.value)}
+                        value={selectedTextElement?.id ?? ""}
+                      >
+                        {selectedBlock.textElements.map((element) => (
+                          <option key={element.id} value={element.id}>
+                            {element.role === "title"
+                              ? "Slide title"
+                              : `Text box ${
+                                  selectedBlock.textElements
+                                    .filter((candidate) => candidate.role === "body")
+                                    .findIndex((candidate) => candidate.id === element.id) + 1
+                                }`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {selectedTextElement ? (
+                      <label className={styles.field}>
+                        <span lang="en-CA">Position on slide</span>
+                        <select
+                          lang="en-CA"
+                          onChange={(event) =>
+                            moveTextElement(
+                              selectedTextElement.id,
+                              event.target.value as ContentSlideRegion,
+                            )
+                          }
+                          value={selectedTextElement.region}
+                        >
+                          {Object.entries(contentSlideRegionLabels).map(([region, label]) => (
+                            <option key={region} value={region}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    <div className={styles.positionActions}>
+                      <button
+                        disabled={!selectedTextElement}
+                        onClick={() => {
+                          if (!selectedTextElement) return;
+                          updateSelected((block) =>
+                            block.kind === "content"
+                              ? reorderContentTextElement(block, selectedTextElement.id, -1)
+                              : block,
+                          );
+                        }}
+                        type="button"
+                      >
+                        Move up
+                      </button>
+                      <button
+                        disabled={!selectedTextElement}
+                        onClick={() => {
+                          if (!selectedTextElement) return;
+                          updateSelected((block) =>
+                            block.kind === "content"
+                              ? reorderContentTextElement(block, selectedTextElement.id, 1)
+                              : block,
+                          );
+                        }}
+                        type="button"
+                      >
+                        Move down
+                      </button>
+                    </div>
                     <p className={styles.helpText} lang="en-CA">
-                      Layouts adapt automatically for the host, audience, and mobile screens.
+                      Layouts set a starting arrangement. Move text by dragging its handle or choose
+                      a position here. Text stacks within each region and reflows on small screens.
                     </p>
                   </>
                 ) : inspectorTab === "media" ? (

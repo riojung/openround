@@ -12,6 +12,7 @@ import type {
 import { Brand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import { PresentationMedia } from "../../../../components/presentation-live/presentation-media";
+import { ContentSlideView } from "../../../../components/presentation/content-slide-view";
 import styles from "../../../../components/presentation-live/presentation-live.module.css";
 import { apiFetch, humanError } from "../../../../lib/api";
 import { formatNumber } from "../../../../lib/i18n/format";
@@ -247,13 +248,17 @@ export default function PresentationParticipantPage() {
             {block?.kind === "content" ? (
               <>
                 <span className={styles.statusPill}>{t("live.presentationPlay.content")}</span>
-                <h1 lang="">{block.title}</h1>
-                <p lang="">{block.body}</p>
-                <PresentationMedia
-                  altText={block.mediaAlt}
-                  mediaId={block.mediaId}
-                  participant
-                  sessionId={id}
+                <ContentSlideView
+                  block={block}
+                  media={
+                    <PresentationMedia
+                      altText={block.mediaAlt}
+                      mediaId={block.mediaId}
+                      participant
+                      sessionId={id}
+                    />
+                  }
+                  variant="live"
                 />
                 <p className="muted">{t("live.presentationPlay.noResponse")}</p>
               </>

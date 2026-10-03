@@ -1,19 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
+  addContentTextElement,
+  applyContentSlideLayout,
   changePresentationQuestionType,
+  contentSlideTitle,
   createContentBlock,
+  createContentTextElement,
   createPresentationQuestion,
   createQuestionBlock,
   duplicatePresentationBlock,
   movePresentationBlock,
+  moveContentTextElement,
   presentationReadiness,
+  removeContentTextElement,
+  reorderContentTextElement,
   removePresentationBlock,
 } from "./presentation-builder";
 import type { PresentationDraft } from "@openround/contracts";
 
 function draft(): PresentationDraft {
   const content = createContentBlock();
-  content.title = "Welcome";
+  content.textElements[0] = { ...content.textElements[0]!, text: "Welcome" };
   const question = createQuestionBlock();
   if (question.kind === "question") {
     question.question.prompt = "Which signal matters?";
@@ -29,7 +36,7 @@ function draft(): PresentationDraft {
     title: "Facilitator deck",
     description: "",
     experiencePreset: { id: "focus", version: 1 },
-    schemaVersion: 1,
+    schemaVersion: 2,
     blocks: [content, question],
   };
 }
@@ -64,7 +71,7 @@ describe("presentation builder model", () => {
       title: "",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [content, question],
     };
 
@@ -104,7 +111,7 @@ describe("presentation builder model", () => {
       title: "Recovery pair",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [main, recheck],
     };
 
@@ -132,12 +139,72 @@ describe("presentation builder model", () => {
 
   it("duplicates content without sharing its block identity", () => {
     const source = createContentBlock("callout");
-    source.title = "Remember";
-    source.body = "Use the evidence before choosing an intervention.";
+    source.textElements[0] = { ...source.textElements[0]!, text: "Remember" };
+    source.textElements[1] = {
+      ...source.textElements[1]!,
+      text: "Use the evidence before choosing an intervention.",
+    };
     const copy = duplicatePresentationBlock(source);
 
-    expect(copy).toEqual({ ...source, id: expect.any(String) });
+    expect(copy).toEqual({
+      ...source,
+      id: expect.any(String),
+      textElements: source.textElements.map((element) => ({ ...element, id: expect.any(String) })),
+    });
     expect(copy.id).not.toBe(source.id);
+    if (copy.kind === "content") {
+      expect(copy.textElements.map((element) => element.id)).not.toEqual(
+        source.textElements.map((element) => element.id),
+      );
+    }
+  });
+
+  it("adds, moves, reorders, removes, and lays out text elements without overlap", () => {
+    const original = createContentBlock("title_body");
+    const title = original.textElements.find((element) => element.role === "title")!;
+    const firstBody = original.textElements.find((element) => element.role === "body")!;
+    const secondBody = createContentTextElement();
+    const withSecond = addContentTextElement(original, secondBody);
+
+    expect(withSecond.textElements).toHaveLength(3);
+    expect(withSecond.textElements.map((element) => element.id)).toEqual([
+      ...original.textElements.map((element) => element.id),
+      secondBody.id,
+    ]);
+    let atLimit = withSecond;
+    while (atLimit.textElements.length < 8) {
+      atLimit = addContentTextElement(atLimit, createContentTextElement());
+    }
+    expect(atLimit.textElements).toHaveLength(8);
+    expect(addContentTextElement(atLimit, createContentTextElement()).textElements).toHaveLength(8);
+
+    const moved = moveContentTextElement(withSecond, title.id, "bottom_left");
+    expect(moved.textElements.find((element) => element.id === title.id)?.region).toBe(
+      "bottom_left",
+    );
+    const stacked = moveContentTextElement(moved, secondBody.id, "middle_center");
+    expect(
+      stacked.textElements
+        .filter((element) => element.region === "middle_center")
+        .map((element) => element.order)
+        .sort(),
+    ).toEqual([0, 1]);
+
+    const reordered = reorderContentTextElement(stacked, secondBody.id, -1);
+    expect(reordered.textElements.find((element) => element.id === secondBody.id)?.order).toBe(0);
+    expect(removeContentTextElement(reordered, secondBody.id).textElements).toHaveLength(2);
+    expect(removeContentTextElement(original, title.id)).toBe(original);
+
+    const section = applyContentSlideLayout(withSecond, "section");
+    expect(section.layout).toBe("section");
+    expect(section.textElements.find((element) => element.role === "title")?.region).toBe(
+      "middle_center",
+    );
+    expect(section.textElements.find((element) => element.role === "body")?.region).toBe(
+      "bottom_center",
+    );
+    expect(contentSlideTitle(section)).toBe("");
+    expect(firstBody.role).toBe("body");
   });
 
   it("preserves question identity when changing response type", () => {
@@ -164,7 +231,7 @@ describe("presentation builder model", () => {
       title: "Recovery pair",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [main, recheck],
     };
 
@@ -191,7 +258,7 @@ describe("presentation builder model", () => {
       title: "Recovery pair",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [main, recheck],
     };
 

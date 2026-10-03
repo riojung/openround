@@ -91,8 +91,7 @@ export function presentationParticipantBlock(block: PresentationBlock | null) {
       id: block.id,
       kind: block.kind,
       layout: block.layout,
-      title: block.title,
-      body: block.body,
+      textElements: block.textElements.map((element) => ({ ...element })),
       mediaId: block.mediaId,
       mediaAlt: block.mediaAlt,
     };
@@ -199,8 +198,7 @@ function presentationRealtimeBlock(
       id: block.id,
       kind: block.kind,
       layout: block.layout,
-      title: block.title,
-      body: block.body,
+      textElements: block.textElements.map((element) => ({ ...element })),
       mediaId: block.mediaId,
       mediaAlt: block.mediaAlt,
     };

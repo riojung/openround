@@ -293,7 +293,7 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
             },
           },
         ],
-      } satisfies PresentationDraft;
+      } as unknown as PresentationDraft;
       const fixtures = [
         {
           sessionId: randomUUID(),
@@ -866,7 +866,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       title: label,
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: randomUUID(),
@@ -896,7 +896,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "draft",
       draft: content,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -2156,14 +2156,16 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       title: "Secure presentation",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: randomUUID(),
           kind: "content",
           layout: "title_body",
-          title: "Opening",
-          body: "",
+          textElements: [
+            { id: "opening:title", role: "title", text: "Opening", region: "top_center", order: 0 },
+            { id: "opening:body", role: "body", text: "", region: "middle_center", order: 0 },
+          ],
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "",
@@ -2178,7 +2180,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "draft",
       draft,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -2517,7 +2519,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       title: "Legacy realtime compatibility",
       description: "Migration compatibility coverage",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: questionBlockId,
@@ -2546,7 +2548,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "draft",
       draft,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -2880,14 +2882,28 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       title: "Portable briefing",
       description: "Lifecycle coverage",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: blockId,
           kind: "content",
           layout: "title_body",
-          title: "Opening",
-          body: "Review together.",
+          textElements: [
+            {
+              id: `${blockId}:title`,
+              role: "title",
+              text: "Opening",
+              region: "top_center",
+              order: 0,
+            },
+            {
+              id: `${blockId}:body`,
+              role: "body",
+              text: "Review together.",
+              region: "middle_center",
+              order: 0,
+            },
+          ],
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "Private facilitator note",
@@ -2919,7 +2935,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "draft",
       draft,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
