@@ -1137,18 +1137,33 @@ describe("public contracts", () => {
 
   it("keeps presentation drafts autosaveable while enforcing publish accessibility", () => {
     const mediaId = randomUUID();
+    const slideId = randomUUID();
     const draft = {
       title: "Accessible presentation",
       description: "",
       experiencePreset: { id: "focus" as const, version: 1 as const },
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       blocks: [
         {
-          id: randomUUID(),
+          id: slideId,
           kind: "content" as const,
           layout: "media" as const,
-          title: "Evidence",
-          body: "",
+          textElements: [
+            {
+              id: `${slideId}:title`,
+              role: "title" as const,
+              text: "Evidence",
+              region: "top_center" as const,
+              order: 0,
+            },
+            {
+              id: `${slideId}:body`,
+              role: "body" as const,
+              text: "",
+              region: "middle_center" as const,
+              order: 0,
+            },
+          ],
           mediaId,
           mediaAlt: null,
           speakerNotes: "",

@@ -12,14 +12,16 @@ function presentationDraft(title: string): PresentationDraft {
     title,
     description: "",
     experiencePreset: { id: "focus", version: 1 },
-    schemaVersion: 1,
+    schemaVersion: 2,
     blocks: [
       {
         id: randomUUID(),
         kind: "content",
         layout: "title_body",
-        title: "Opening",
-        body: "",
+        textElements: [
+          { id: "opening:title", role: "title", text: "Opening", region: "top_center", order: 0 },
+          { id: "opening:body", role: "body", text: "", region: "middle_center", order: 0 },
+        ],
         mediaId: null,
         mediaAlt: null,
         speakerNotes: "",
@@ -127,7 +129,7 @@ describe("draft mutation replay", () => {
       status: "draft",
       draft: original,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,

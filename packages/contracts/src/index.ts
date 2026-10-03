@@ -2930,6 +2930,41 @@ export const ContentSlideLayoutSchema = z.enum([
 ]);
 export type ContentSlideLayout = z.infer<typeof ContentSlideLayoutSchema>;
 
+export const ContentSlideRegionSchema = z.enum([
+  "top_left",
+  "top_center",
+  "top_right",
+  "middle_left",
+  "middle_center",
+  "middle_right",
+  "bottom_left",
+  "bottom_center",
+  "bottom_right",
+]);
+export type ContentSlideRegion = z.infer<typeof ContentSlideRegionSchema>;
+
+const ContentSlideTitleElementSchema = z.object({
+  id: z.string().trim().min(1).max(200),
+  role: z.literal("title"),
+  text: z.string().trim().max(160),
+  region: ContentSlideRegionSchema,
+  order: z.number().int().min(0).max(7),
+});
+
+const ContentSlideBodyElementSchema = z.object({
+  id: z.string().trim().min(1).max(200),
+  role: z.literal("body"),
+  text: z.string().trim().max(4_000),
+  region: ContentSlideRegionSchema,
+  order: z.number().int().min(0).max(7),
+});
+
+export const ContentSlideTextElementSchema = z.discriminatedUnion("role", [
+  ContentSlideTitleElementSchema,
+  ContentSlideBodyElementSchema,
+]);
+export type ContentSlideTextElement = z.infer<typeof ContentSlideTextElementSchema>;
+
 const PastedAuthoringSourceSchema = z.object({
   sourceType: z.literal("pasted_text"),
   sourceName: z.string().trim().min(1).max(200).default("Pasted source"),
@@ -3096,8 +3131,7 @@ const ContentSlideDraftFields = {
   id: z.string().uuid(),
   kind: z.literal("content"),
   layout: ContentSlideLayoutSchema,
-  title: z.string().trim().max(160),
-  body: z.string().trim().max(4_000),
+  textElements: z.array(ContentSlideTextElementSchema).min(1).max(8),
   mediaId: z.string().uuid().nullable(),
   mediaAlt: z.string().trim().max(300).nullable(),
   speakerNotes: z.string().trim().max(2_000),
@@ -3106,15 +3140,54 @@ const ContentSlideDraftFields = {
 };
 
 /** Draft slides retain bounded storage shape while allowing incomplete accessibility metadata. */
-export const ContentSlideDraftSchema = z.object(ContentSlideDraftFields);
+export const ContentSlideDraftSchema = z
+  .object(ContentSlideDraftFields)
+  .superRefine((slide, ctx) => {
+    const titles = slide.textElements.filter((element) => element.role === "title");
+    if (titles.length !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Every content slide must have exactly one title element",
+        path: ["textElements"],
+      });
+    }
+    const ids = new Set<string>();
+    const locations = new Set<string>();
+    for (const [index, element] of slide.textElements.entries()) {
+      if (ids.has(element.id)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Every text element needs a unique ID",
+          path: ["textElements", index, "id"],
+        });
+      }
+      ids.add(element.id);
+      const location = `${element.region}:${element.order}`;
+      if (locations.has(location)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Text elements in the same region need a unique order",
+          path: ["textElements", index, "order"],
+        });
+      }
+      locations.add(location);
+    }
+  });
 export type ContentSlideDraft = z.infer<typeof ContentSlideDraftSchema>;
 
 export const ContentSlideSchema = z.object(ContentSlideDraftFields).superRefine((slide, ctx) => {
-  if (!slide.title && !slide.body && !slide.mediaId) {
+  if (!slide.textElements.some((element) => element.text.trim()) && !slide.mediaId) {
     ctx.addIssue({
       code: "custom",
       message: "Add a title, body, or image to this slide",
-      path: ["title"],
+      path: ["textElements"],
+    });
+  }
+  if (!ContentSlideDraftSchema.safeParse(slide).success) {
+    ctx.addIssue({
+      code: "custom",
+      message: "This slide has invalid text elements",
+      path: ["textElements"],
     });
   }
   if (slide.mediaId && !slide.mediaAlt?.trim()) {
@@ -3267,7 +3340,7 @@ export const PresentationDraftSchema = z
     title: z.string().trim().max(160),
     description: z.string().trim().max(1_000).default(""),
     experiencePreset: ExperiencePresetRefSchema.default({ id: "focus", version: 1 }),
-    schemaVersion: z.literal(1).default(1),
+    schemaVersion: z.literal(2).default(2),
     sourceDisclosure: PresentationSourceDisclosureSchema.optional(),
     blocks: z.array(PresentationBlockDraftSchema).max(200),
   })
@@ -3279,7 +3352,7 @@ export const PresentationContentSchema = z
     title: z.string().trim().min(1, "Enter a presentation title").max(160),
     description: z.string().trim().max(1_000).default(""),
     experiencePreset: ExperiencePresetRefSchema.default({ id: "focus", version: 1 }),
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     sourceDisclosure: PresentationSourceDisclosureSchema.optional(),
     blocks: z.array(PresentationBlockSchema).min(1).max(200),
   })
@@ -3306,6 +3379,71 @@ export const PresentationContentSchema = z
   });
 export type PresentationContent = z.infer<typeof PresentationContentSchema>;
 
+const legacyRegionByLayout = {
+  title: "middle_center",
+  title_body: "middle_center",
+  media: "top_center",
+  quote: "middle_center",
+  section: "middle_center",
+  callout: "top_center",
+} as const;
+
+/** Shared by persisted artifacts and browser recovery before validating the v2 contract. */
+export function migratePresentationV1(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const presentation = value as { blocks?: unknown; [key: string]: unknown };
+  if (!Array.isArray(presentation.blocks)) return { ...presentation, schemaVersion: 2 };
+  return {
+    ...presentation,
+    schemaVersion: 2,
+    blocks: presentation.blocks.map((rawBlock) => {
+      if (!rawBlock || typeof rawBlock !== "object" || Array.isArray(rawBlock)) return rawBlock;
+      const block = rawBlock as {
+        id?: unknown;
+        kind?: unknown;
+        layout?: unknown;
+        title?: unknown;
+        body?: unknown;
+        [key: string]: unknown;
+      };
+      if (block.kind !== "content" || "textElements" in block) return rawBlock;
+      const layout =
+        typeof block.layout === "string" && block.layout in legacyRegionByLayout
+          ? (block.layout as keyof typeof legacyRegionByLayout)
+          : "title_body";
+      const blockId = typeof block.id === "string" ? block.id : "legacy-slide";
+      const title = typeof block.title === "string" ? block.title : "";
+      const body = typeof block.body === "string" ? block.body : "";
+      const retained = { ...block };
+      delete retained.title;
+      delete retained.body;
+      const bodyRegion =
+        layout === "title_body" || layout === "media" || layout === "callout"
+          ? "middle_center"
+          : "bottom_center";
+      return {
+        ...retained,
+        textElements: [
+          {
+            id: `${blockId}:title`,
+            role: "title",
+            text: title,
+            region: legacyRegionByLayout[layout],
+            order: 0,
+          },
+          {
+            id: `${blockId}:body`,
+            role: "body",
+            text: body,
+            region: bodyRegion,
+            order: bodyRegion === legacyRegionByLayout[layout] ? 1 : 0,
+          },
+        ],
+      };
+    }),
+  };
+}
+
 export const CreatePresentationSchema = z.object({
   title: z.string().trim().min(1).max(160),
   description: z.string().trim().max(1_000).default(""),
@@ -3315,7 +3453,7 @@ export const PresentationDraftMutationSchema = z.object({
   draft: PresentationDraftSchema,
   expectedRevision: z.number().int().nonnegative(),
   mutationId: z.string().uuid(),
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
 });
 export type PresentationDraftMutation = z.infer<typeof PresentationDraftMutationSchema>;
 
@@ -3383,10 +3521,19 @@ export const PresentationLiveContentBlockSchema = z
     id: z.string().uuid(),
     kind: z.literal("content"),
     layout: ContentSlideLayoutSchema,
-    title: z.string().max(160),
-    body: z.string().max(4_000),
+    textElements: z.array(ContentSlideTextElementSchema).min(1).max(8),
     mediaId: z.string().uuid().nullable(),
     mediaAlt: z.string().max(300).nullable(),
+  })
+  .superRefine((block, ctx) => {
+    const parsed = ContentSlideDraftSchema.safeParse({ ...block, speakerNotes: "" });
+    if (!parsed.success) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Live content slides must contain valid text element positions",
+        path: ["textElements"],
+      });
+    }
   })
   .strict();
 export type PresentationLiveContentBlock = z.infer<typeof PresentationLiveContentBlockSchema>;

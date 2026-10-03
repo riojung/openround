@@ -21,7 +21,7 @@ describe("Presentation report worker", () => {
       title: "Durable evidence",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: blockId,

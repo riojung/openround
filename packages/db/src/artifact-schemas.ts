@@ -3,6 +3,7 @@ import {
   PresentationDraftSchema,
   QuizContentSchema,
   QuizDraftSchema,
+  migratePresentationV1,
   type PresentationContent,
   type PresentationDraft,
   type QuizDraft,
@@ -10,8 +11,8 @@ import {
 
 export const ROUND_DRAFT_SCHEMA_VERSION = 1;
 export const ROUND_CONTENT_SCHEMA_VERSION = 1;
-export const PRESENTATION_DRAFT_SCHEMA_VERSION = 1;
-export const PRESENTATION_CONTENT_SCHEMA_VERSION = 1;
+export const PRESENTATION_DRAFT_SCHEMA_VERSION = 2;
+export const PRESENTATION_CONTENT_SCHEMA_VERSION = 2;
 
 export type PersistedArtifactType = "round" | "presentation";
 export type PersistedArtifactDocument = "draft" | "content";
@@ -68,23 +69,24 @@ const roundContentUpcasters = new Map<number, Upcaster<QuizDraft>>([
 ]);
 
 const presentationDraftUpcasters = new Map<number, Upcaster<PresentationDraft>>([
+  [1, (value) => PresentationDraftSchema.parse(migratePresentationV1(value))],
   [
     PRESENTATION_DRAFT_SCHEMA_VERSION,
-    (value) => PresentationDraftSchema.parse(withPresentationSchemaVersion(value)),
+    (value) => PresentationDraftSchema.parse(withPresentationSchemaVersion(value, 2)),
   ],
 ]);
 
 const presentationContentUpcasters = new Map<number, Upcaster<PresentationContent>>([
+  [1, (value) => PresentationContentSchema.parse(migratePresentationV1(value))],
   [
     PRESENTATION_CONTENT_SCHEMA_VERSION,
-    (value) => PresentationContentSchema.parse(withPresentationSchemaVersion(value)),
+    (value) => PresentationContentSchema.parse(withPresentationSchemaVersion(value, 2)),
   ],
 ]);
 
-function withPresentationSchemaVersion(value: unknown): unknown {
+function withPresentationSchemaVersion(value: unknown, version: number): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  if ("schemaVersion" in value) return value;
-  return { ...value, schemaVersion: PRESENTATION_DRAFT_SCHEMA_VERSION };
+  return { ...value, schemaVersion: version };
 }
 
 export function upcastRoundDraft(value: unknown, schemaVersion?: unknown): QuizDraft {

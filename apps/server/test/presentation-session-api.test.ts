@@ -105,14 +105,28 @@ describe("live Presentation sessions", () => {
       title: "Evidence review",
       description: "A mixed session",
       experiencePreset: { id: "focus" as const, version: 1 as const },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: presentation.draft.blocks[0]!.id,
           kind: "content",
           layout: "title_body",
-          title: "Review the source",
-          body: "Observe first, then respond.",
+          textElements: [
+            {
+              id: `${presentation.draft.blocks[0]!.id}:title`,
+              role: "title",
+              text: "Review the source",
+              region: "top_center",
+              order: 0,
+            },
+            {
+              id: `${presentation.draft.blocks[0]!.id}:body`,
+              role: "body",
+              text: "Observe first, then respond.",
+              region: "middle_center",
+              order: 0,
+            },
+          ],
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "Facilitator-only cue",
@@ -187,7 +201,7 @@ describe("live Presentation sessions", () => {
       method: "PUT",
       url: `/v1/presentations/${presentation.id}/draft`,
       headers: { cookie },
-      payload: { draft, expectedRevision: 0, mutationId: randomUUID(), schemaVersion: 1 },
+      payload: { draft, expectedRevision: 0, mutationId: randomUUID(), schemaVersion: 2 },
     });
     expect(saved.statusCode).toBe(200);
     const published = await app.inject({
@@ -328,7 +342,14 @@ describe("live Presentation sessions", () => {
     });
     const contentBody = PresentationRestV1HostSnapshotResponseSchema.parse(content.json());
     expect(contentBody).toMatchObject({
-      snapshot: { phase: "content", currentBlock: { title: "Review the source" } },
+      snapshot: {
+        phase: "content",
+        currentBlock: {
+          textElements: expect.arrayContaining([
+            expect.objectContaining({ role: "title", text: "Review the source" }),
+          ]),
+        },
+      },
     });
     expect(contentBody.snapshot.leaderboard).toEqual(
       expect.arrayContaining([
@@ -816,6 +837,8 @@ describe("live Presentation sessions", () => {
       mediaId: null,
       mediaAlt: null,
     };
+    const firstContentBlock = presentation.draft.blocks.find((block) => block.kind === "content");
+    if (!firstContentBlock) throw new Error("Expected the starter content slide");
     const saved = await app.inject({
       method: "PUT",
       url: `/v1/presentations/${presentation.id}/draft`,
@@ -824,13 +847,19 @@ describe("live Presentation sessions", () => {
         draft: {
           ...presentation.draft,
           blocks: [
-            { ...presentation.draft.blocks[0]!, title: "Flex learning", body: "Read then answer" },
+            {
+              ...firstContentBlock,
+              textElements: firstContentBlock.textElements.map((element) => ({
+                ...element,
+                text: element.role === "title" ? "Flex learning" : "Read then answer",
+              })),
+            },
             { id: blockId, kind: "question", question },
           ],
         },
         expectedRevision: 0,
         mutationId: randomUUID(),
-        schemaVersion: 1,
+        schemaVersion: 2,
       },
     });
     expect(saved.statusCode, JSON.stringify(saved.json())).toBe(200);
@@ -1080,7 +1109,7 @@ describe("live Presentation sessions", () => {
           title: "Fenced responses",
           description: "",
           experiencePreset: { id: "focus", version: 1 },
-          schemaVersion: 1,
+          schemaVersion: 2,
           blocks: [
             { id: oldBlockId, kind: "question", question: example.oldQuestion },
             {
@@ -1180,14 +1209,22 @@ describe("live Presentation sessions", () => {
       title: "Capacity briefing",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: randomUUID(),
           kind: "content" as const,
           layout: "title_body" as const,
-          title: "Welcome",
-          body: "Review together.",
+          textElements: [
+            { id: "welcome:title", role: "title", text: "Welcome", region: "top_center", order: 0 },
+            {
+              id: "welcome:body",
+              role: "body",
+              text: "Review together.",
+              region: "middle_center",
+              order: 0,
+            },
+          ],
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "",

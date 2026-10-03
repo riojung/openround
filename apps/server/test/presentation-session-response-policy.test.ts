@@ -46,7 +46,7 @@ function sessionFor(question: QuestionDraft, timeMode: "timed" | "flex") {
   const now = new Date("2026-09-25T12:00:00.000Z");
   const content = PresentationContentSchema.parse({
     title: "Response policy",
-    schemaVersion: 1,
+    schemaVersion: 2,
     blocks: [{ id: randomUUID(), kind: "question", question }],
   });
   return {

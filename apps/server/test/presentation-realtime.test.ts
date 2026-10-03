@@ -611,7 +611,7 @@ function mixedTransportContent(): PresentationContent {
     title: "Mixed transport presence",
     description: "",
     experiencePreset: { id: "focus", version: 1 },
-    schemaVersion: 1,
+    schemaVersion: 2,
     blocks: [
       {
         id: crypto.randomUUID(),

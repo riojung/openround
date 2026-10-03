@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createPresentationRepository,
+  MemoryPresentationRepository,
   MemoryRepository,
   UnsupportedArtifactSchemaVersionError,
   upcastPresentationContent,
@@ -45,8 +46,55 @@ describe("persisted artifact schema upcasters", () => {
       title: "Deck",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [],
+    });
+  });
+
+  it("upcasts legacy Presentation title/body fields deterministically", () => {
+    const legacySlideId = "00000000-0000-4000-8000-000000000099";
+    const legacy = {
+      title: "Deck",
+      description: "",
+      schemaVersion: 1,
+      blocks: [
+        {
+          id: legacySlideId,
+          kind: "content",
+          layout: "quote",
+          title: "A quote",
+          body: "A response",
+          mediaId: "00000000-0000-4000-8000-000000000098",
+          mediaAlt: "A helpful image",
+          speakerNotes: "Facilitator note",
+          citations: [{ locator: "Page 4", excerpt: "Source excerpt" }],
+        },
+      ],
+    };
+    const first = upcastPresentationDraft(legacy, 1);
+    const second = upcastPresentationDraft(legacy, 1);
+    expect(first).toEqual(second);
+    expect(first.blocks[0]).toMatchObject({
+      id: legacySlideId,
+      layout: "quote",
+      textElements: [
+        {
+          id: `${legacySlideId}:title`,
+          role: "title",
+          text: "A quote",
+          region: "middle_center",
+        },
+        {
+          id: `${legacySlideId}:body`,
+          role: "body",
+          text: "A response",
+          region: "bottom_center",
+        },
+      ],
+      mediaId: "00000000-0000-4000-8000-000000000098",
+      mediaAlt: "A helpful image",
+      speakerNotes: "Facilitator note",
+      citations: [{ locator: "Page 4", excerpt: "Source excerpt" }],
     });
   });
 
@@ -69,17 +117,129 @@ describe("persisted artifact schema upcasters", () => {
       ),
     ).toMatchObject({
       title: "Published deck",
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [{ id: blockId, kind: "question" }],
     });
     expect(() => upcastRoundContent({ title: "Incomplete", questions: [] }, 1)).toThrow();
   });
 
+  it("upcasts stored v1 drafts, history, and published versions when read", async () => {
+    const workspaceId = "00000000-0000-4000-8000-000000000021";
+    const presentationId = "00000000-0000-4000-8000-000000000022";
+    const versionId = "00000000-0000-4000-8000-000000000023";
+    const legacySlide = {
+      id: blockId,
+      kind: "content",
+      layout: "quote",
+      title: "A source-backed quote",
+      body: "A sentence to discuss",
+      mediaId: "00000000-0000-4000-8000-000000000024",
+      mediaAlt: "A page excerpt",
+      speakerNotes: "Ask what the sentence implies.",
+      citations: [{ locator: "Page 4", excerpt: "Source excerpt" }],
+    };
+    const legacyDraft = {
+      title: "Legacy deck",
+      description: "",
+      experiencePreset: { id: "focus", version: 1 },
+      schemaVersion: 1,
+      blocks: [legacySlide],
+    };
+    const legacyContent = {
+      ...legacyDraft,
+      blocks: [legacySlide, { id: questionId, kind: "question", question: validQuestion() }],
+    };
+    const repository = new MemoryPresentationRepository();
+    const now = new Date("2026-09-20T12:00:00.000Z");
+    repository.presentations.set(presentationId, {
+      id: presentationId,
+      workspaceId,
+      title: "Legacy deck",
+      description: "",
+      status: "published",
+      draft: legacyDraft as never,
+      draftRevision: 1,
+      draftSchemaVersion: 1,
+      currentVersionId: versionId,
+      folderId: null,
+      publishedDraftRevision: 1,
+      lastEditedBy: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    repository.history.set(`${presentationId}:1`, {
+      id: "00000000-0000-4000-8000-000000000025",
+      workspaceId,
+      presentationId,
+      revision: 1,
+      draft: legacyDraft as never,
+      draftSchemaVersion: 1,
+      savedBy: null,
+      mutationId: null,
+      createdAt: now,
+    });
+    repository.versions.set(versionId, {
+      id: versionId,
+      workspaceId,
+      presentationId,
+      version: 1,
+      content: legacyContent as never,
+      contentSchemaVersion: 1,
+      contentHash: "legacy-content-hash",
+      sourceDraftRevision: 1,
+      publishedAt: now,
+    });
+
+    const presentations = repository;
+    const expectedText = expect.arrayContaining([
+      expect.objectContaining({
+        id: `${blockId}:title`,
+        role: "title",
+        text: "A source-backed quote",
+        region: "middle_center",
+      }),
+      expect.objectContaining({
+        id: `${blockId}:body`,
+        role: "body",
+        text: "A sentence to discuss",
+        region: "bottom_center",
+      }),
+    ]);
+    await expect(presentations.getPresentation(workspaceId, presentationId)).resolves.toMatchObject(
+      {
+        draft: {
+          schemaVersion: 2,
+          blocks: [{ textElements: expectedText, speakerNotes: legacySlide.speakerNotes }],
+        },
+      },
+    );
+    await expect(
+      presentations.listPresentationHistory(workspaceId, presentationId),
+    ).resolves.toMatchObject([
+      { draft: { schemaVersion: 2, blocks: [{ textElements: expectedText }] } },
+    ]);
+    await expect(
+      presentations.getPresentationVersion(workspaceId, versionId),
+    ).resolves.toMatchObject({
+      content: {
+        schemaVersion: 2,
+        blocks: [
+          {
+            textElements: expectedText,
+            citations: legacySlide.citations,
+            mediaId: legacySlide.mediaId,
+          },
+          { id: questionId, kind: "question" },
+        ],
+      },
+    });
+  });
+
   it.each([
     ["Round draft", () => upcastRoundDraft({}, 2)],
     ["Round content", () => upcastRoundContent({}, 2)],
-    ["Presentation draft", () => upcastPresentationDraft({}, 2)],
-    ["Presentation content", () => upcastPresentationContent({}, 2)],
+    ["Presentation draft", () => upcastPresentationDraft({}, 3)],
+    ["Presentation content", () => upcastPresentationContent({}, 3)],
   ])("rejects an unknown schema version for %s", (_label, parse) => {
     expect(parse).toThrow(UnsupportedArtifactSchemaVersionError);
     try {
@@ -87,8 +247,8 @@ describe("persisted artifact schema upcasters", () => {
     } catch (error) {
       expect(error).toMatchObject({
         code: "UNSUPPORTED_ARTIFACT_SCHEMA_VERSION",
-        schemaVersion: 2,
-        supportedVersions: [1],
+        schemaVersion: _label.startsWith("Presentation") ? 3 : 2,
+        supportedVersions: _label.startsWith("Presentation") ? [1, 2] : [1],
       });
     }
   });
@@ -152,7 +312,7 @@ describe("persisted artifact schema upcasters", () => {
       status: "draft",
       draft: presentationDraft,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -175,7 +335,7 @@ describe("persisted artifact schema upcasters", () => {
             },
             1,
           ),
-          contentSchemaVersion: 2,
+          contentSchemaVersion: 3,
           contentHash: "unknown-version",
           sourceDraftRevision: 0,
           publishedAt: now,
