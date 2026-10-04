@@ -1709,7 +1709,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                               lang="en-CA"
                               type="number"
                               min={min}
-                              max={max}
+                              max={Math.ceil(max * 100) / 100}
                               step={0.01}
                               value={Math.round(selectedTextFrame[field] * 100) / 100}
                               onChange={(event) => {

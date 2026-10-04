@@ -205,6 +205,11 @@ test("authors can edit, save, publish, and deliver the same slide arrangement", 
   await page.mouse.move(resizeBounds.x + 35, resizeBounds.y + 20, { steps: 5 });
   await page.mouse.up();
   expect(Number(await widthField.inputValue())).toBeGreaterThan(beforeWidth + 1);
+  await widthField.fill("999");
+  expect(await widthField.evaluate((input) => (input as HTMLInputElement).validity.valid)).toBe(
+    true,
+  );
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(page.getByLabel("Show layout guides")).toBeChecked();
   await page.getByLabel("Show layout guides").uncheck();
   await page.getByLabel("Show layout guides").check();
