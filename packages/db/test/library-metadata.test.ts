@@ -103,7 +103,7 @@ describe("Library metadata", () => {
         title: "Operations review",
         description: "",
         experiencePreset: { id: "focus", version: 1 },
-        schemaVersion: 1,
+        schemaVersion: 2,
         blocks: [],
       },
       draftRevision: 0,

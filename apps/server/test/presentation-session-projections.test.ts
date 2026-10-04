@@ -14,12 +14,82 @@ import {
   buildPresentationProjectionData,
   buildTargetedPresentationParticipantSnapshot,
   presentationAcceptingResponses,
+  presentationParticipantBlock,
 } from "../src/presentation-session-projections.js";
 
 const NOW = new Date("2026-09-24T18:00:30.000Z");
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+it("keeps snap-region text in the same role-safe live content block", () => {
+  const content = PresentationContentSchema.parse({
+    title: "Slide layout",
+    description: "",
+    schemaVersion: 2,
+    blocks: [
+      {
+        id: randomUUID(),
+        kind: "content",
+        layout: "title_body",
+        textElements: [
+          {
+            id: "title-element",
+            role: "title",
+            text: "Audience takeaway",
+            region: "top_right",
+            order: 0,
+          },
+          {
+            id: "body-element",
+            role: "body",
+            text: "Review the evidence.",
+            region: "bottom_left",
+            order: 0,
+          },
+        ],
+        mediaId: null,
+        mediaAlt: null,
+        speakerNotes: "Facilitator-only cue",
+        citations: [{ locator: "Private page", excerpt: "Private excerpt" }],
+      },
+      {
+        id: randomUUID(),
+        kind: "question",
+        question: {
+          id: randomUUID(),
+          type: "single_select",
+          prompt: "Which point is supported?",
+          choices: [
+            { id: randomUUID(), label: "The evidence", isCorrect: true },
+            { id: randomUUID(), label: "The assumption", isCorrect: false },
+          ],
+          purpose: "diagnostic",
+          confidence: "off",
+          delivery: "main",
+          conceptKeys: [],
+          linkedRecheckQuestionId: null,
+          timeLimitSeconds: 30,
+          basePoints: 1_000,
+          explanation: "The evidence supports this point.",
+          mediaId: null,
+          mediaAlt: null,
+        },
+      },
+    ],
+  });
+  const projected = presentationParticipantBlock(content.blocks[0]!);
+
+  expect(projected).toMatchObject({
+    kind: "content",
+    textElements: [
+      { id: "title-element", role: "title", region: "top_right", order: 0 },
+      { id: "body-element", role: "body", region: "bottom_left", order: 0 },
+    ],
+  });
+  expect(JSON.stringify(projected)).not.toContain("Facilitator-only cue");
+  expect(JSON.stringify(projected)).not.toContain("Private excerpt");
 });
 
 function fixture() {
@@ -38,7 +108,7 @@ function fixture() {
     title: "Projection boundaries",
     description: "Role-safe Presentation snapshots",
     experiencePreset: { id: "focus", version: 1 },
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceDisclosure: {
       sourceName: "private source disclosure",
       sourceDigest: "a".repeat(64),

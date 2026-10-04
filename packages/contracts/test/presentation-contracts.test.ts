@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { PresentationContentSchema, PresentationDraftSchema } from "../src/index";
+import {
+  ContentSlideDraftSchema,
+  PresentationContentSchema,
+  PresentationDraftSchema,
+  type ContentSlideDraft,
+} from "../src/index";
 
 function questionBlock() {
   return {
@@ -28,25 +33,70 @@ function questionBlock() {
   };
 }
 
+function contentBlock(title = "", body = ""): ContentSlideDraft {
+  const id = randomUUID();
+  return {
+    id,
+    kind: "content" as const,
+    layout: "title_body" as const,
+    textElements: [
+      {
+        id: `${id}:title`,
+        role: "title" as const,
+        text: title,
+        region: "top_center" as const,
+        order: 0,
+      },
+      {
+        id: `${id}:body`,
+        role: "body" as const,
+        text: body,
+        region: "middle_center" as const,
+        order: 0,
+      },
+    ],
+    mediaId: null,
+    mediaAlt: null,
+    speakerNotes: "",
+  };
+}
+
 describe("presentation contracts", () => {
+  it("bounds text elements and requires unique IDs and positions", () => {
+    const block = contentBlock("Title", "Body");
+    const duplicateId = structuredClone(block);
+    duplicateId.textElements[1]!.id = duplicateId.textElements[0]!.id;
+    expect(ContentSlideDraftSchema.safeParse(duplicateId).success).toBe(false);
+
+    const duplicatePosition = structuredClone(block);
+    duplicatePosition.textElements[1]!.region = "top_center";
+    expect(ContentSlideDraftSchema.safeParse(duplicatePosition).success).toBe(false);
+
+    const invalidRegion = structuredClone(block);
+    invalidRegion.textElements[0]!.region = "outside" as never;
+    expect(ContentSlideDraftSchema.safeParse(invalidRegion).success).toBe(false);
+
+    const tooMany = structuredClone(block);
+    tooMany.textElements = [
+      ...tooMany.textElements,
+      ...Array.from({ length: 7 }, (_, index) => ({
+        id: `${block.id}:extra-${index}`,
+        role: "body" as const,
+        text: "",
+        region: "bottom_center" as const,
+        order: index,
+      })),
+    ];
+    expect(ContentSlideDraftSchema.safeParse(tooMany).success).toBe(false);
+  });
+
   it("stores incomplete structured authoring states", () => {
     expect(
       PresentationDraftSchema.safeParse({
         title: "",
         description: "",
-        schemaVersion: 1,
-        blocks: [
-          {
-            id: randomUUID(),
-            kind: "content",
-            layout: "title_body",
-            title: "",
-            body: "",
-            mediaId: null,
-            mediaAlt: null,
-            speakerNotes: "",
-          },
-        ],
+        schemaVersion: 2,
+        blocks: [contentBlock()],
       }).success,
     ).toBe(true);
   });
@@ -56,19 +106,8 @@ describe("presentation contracts", () => {
       title: "Content only",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
-      blocks: [
-        {
-          id: randomUUID(),
-          kind: "content",
-          layout: "title_body",
-          title: "Context",
-          body: "Read this before the activity.",
-          mediaId: null,
-          mediaAlt: null,
-          speakerNotes: "",
-        },
-      ],
+      schemaVersion: 2,
+      blocks: [contentBlock("Context", "Read this before the activity.")],
     });
     expect(contentOnly.success).toBe(false);
 
@@ -76,7 +115,7 @@ describe("presentation contracts", () => {
       title: "Mixed deck",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [questionBlock()],
     });
     expect(mixed.success).toBe(true);
@@ -91,7 +130,7 @@ describe("presentation contracts", () => {
       title: "Broken IDs",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [first, second],
     });
     expect(parsed.success).toBe(false);
@@ -114,7 +153,7 @@ describe("presentation contracts", () => {
       title: "Shared recovery",
       description: "",
       experiencePreset: { id: "focus" as const, version: 1 as const },
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       blocks: [first, second, recheck],
     };
     const sharedResult = PresentationContentSchema.safeParse(shared);

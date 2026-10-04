@@ -233,7 +233,12 @@ describe("authoring assistant API", () => {
           blocks: [
             {
               kind: "content",
-              title: "Lockout physically isolates hazardous energy before maintenance.",
+              textElements: expect.arrayContaining([
+                expect.objectContaining({
+                  role: "title",
+                  text: "Lockout physically isolates hazardous energy before maintenance.",
+                }),
+              ]),
               citations: [{ locator: "paragraph 1" }],
             },
             { kind: "question", citations: [{ locator: "paragraph 1" }] },

@@ -66,7 +66,7 @@ async function fixture(options: { failCreateAudit?: boolean } = {}) {
     title: "Realtime service integration",
     description: "Exercises durable role-safe synchronization.",
     experiencePreset: { id: "focus", version: 1 },
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceDisclosure: {
       sourceName: AUTHORING_SECRETS[6],
       sourceDigest: "a".repeat(64),
@@ -78,8 +78,22 @@ async function fixture(options: { failCreateAudit?: boolean } = {}) {
         id: contentBlockId,
         kind: "content",
         layout: "title_body",
-        title: "Safe live title",
-        body: "Safe live body",
+        textElements: [
+          {
+            id: `${contentBlockId}:title`,
+            role: "title",
+            text: "Safe live title",
+            region: "top_center",
+            order: 0,
+          },
+          {
+            id: `${contentBlockId}:body`,
+            role: "body",
+            text: "Safe live body",
+            region: "middle_center",
+            order: 0,
+          },
+        ],
         mediaId: null,
         mediaAlt: null,
         speakerNotes: AUTHORING_SECRETS[0],
@@ -138,7 +152,7 @@ async function fixture(options: { failCreateAudit?: boolean } = {}) {
     status: "draft",
     draft,
     draftRevision: 0,
-    draftSchemaVersion: 1,
+    draftSchemaVersion: 2,
     currentVersionId: null,
     folderId: null,
     publishedDraftRevision: null,
@@ -268,7 +282,12 @@ describe("PresentationSessionService realtime integration", () => {
     expect(content).toMatchObject({
       projection: "host",
       phase: "content",
-      currentBlock: { kind: "content", title: "Safe live title" },
+      currentBlock: {
+        kind: "content",
+        textElements: expect.arrayContaining([
+          expect.objectContaining({ role: "title", text: "Safe live title" }),
+        ]),
+      },
       settings: { timeMode: "timed", trustMode: "learning" },
     });
     expectNoAuthoringSecrets(content);

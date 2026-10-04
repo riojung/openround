@@ -7,6 +7,7 @@ import type {
   PresentationSessionResponseRecord,
   PresentationSessionTimelineRecord,
 } from "./presentation-session-types.js";
+import { upcastPresentationDraft } from "./artifact-schemas.js";
 
 // Revision and live child rows are monotonic for the lifetime of a Presentation session. Their
 // sum plus the immutable compatibility offset is therefore a commit-visible, per-session fence:
@@ -32,7 +33,10 @@ export function mapSession(row: QueryResultRow): PresentationSessionRecord {
     presentationId: String(row.presentation_id),
     presentationVersionId: String(row.presentation_version_id),
     title: String(row.title),
-    content: row.content_snapshot,
+    content: upcastPresentationDraft(
+      row.content_snapshot,
+      row.content_snapshot?.schemaVersion,
+    ) as PresentationSessionRecord["content"],
     code: String(row.join_code),
     status: row.status,
     phase: row.phase,

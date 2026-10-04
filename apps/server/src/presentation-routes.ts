@@ -11,6 +11,7 @@ import {
   PresentationDraftMutationSchema,
   PublishPresentationSchema,
   type AuthoringDraft,
+  type ContentSlideRegion,
   type PresentationBlockDraft,
   type PresentationDraft,
   type QuestionDraft,
@@ -51,6 +52,29 @@ function apiError(
   requestId: string,
 ) {
   return reply.code(status).send({ error: { code, message, requestId } });
+}
+
+function initialTextElements(id: string, layout: string, title: string, body: string) {
+  const titleRegion: ContentSlideRegion =
+    layout === "title" || layout === "quote" || layout === "section"
+      ? "middle_center"
+      : layout === "title_body"
+        ? "middle_center"
+        : "top_center";
+  const bodyRegion: ContentSlideRegion =
+    layout === "quote" || layout === "section" || layout === "title"
+      ? "bottom_center"
+      : "middle_center";
+  return [
+    { id: `${id}:title`, role: "title" as const, text: title, region: titleRegion, order: 0 },
+    {
+      id: `${id}:body`,
+      role: "body" as const,
+      text: body,
+      region: bodyRegion,
+      order: titleRegion === bodyRegion ? 1 : 0,
+    },
+  ];
 }
 
 interface PresentationPublishIssue {
@@ -281,18 +305,20 @@ function sourceProposalBlocks(
     deterministic
       ? deterministicUuid(`${mutationId}:source-block:${kind}:${sourceId}`)
       : randomUUID();
-  const contentBlocks: PresentationBlockDraft[] = selection.contentSlides.map((proposal) => ({
-    id: blockId("content", proposal.id),
-    kind: "content",
-    layout: proposal.layout,
-    title: proposal.title,
-    body: proposal.body,
-    mediaId: null,
-    mediaAlt: null,
-    speakerNotes: "",
-    citations: proposal.citations.map((citation) => ({ ...citation })),
-    sourceDisclosure: disclosure,
-  }));
+  const contentBlocks: PresentationBlockDraft[] = selection.contentSlides.map((proposal) => {
+    const id = blockId("content", proposal.id);
+    return {
+      id,
+      kind: "content",
+      layout: proposal.layout,
+      textElements: initialTextElements(id, proposal.layout, proposal.title, proposal.body),
+      mediaId: null,
+      mediaAlt: null,
+      speakerNotes: "",
+      citations: proposal.citations.map((citation) => ({ ...citation })),
+      sourceDisclosure: disclosure,
+    };
+  });
   const questionIdMap = new Map(
     selection.questions.map((question) => [
       question.id,
@@ -334,8 +360,12 @@ function legacyIntroductionBlock(
     id,
     kind: "content",
     layout: "title_body",
-    title: output.checkpointSet.title,
-    body: output.checkpointSet.description,
+    textElements: initialTextElements(
+      id,
+      "title_body",
+      output.checkpointSet.title,
+      output.checkpointSet.description,
+    ),
     mediaId: null,
     mediaAlt: null,
     speakerNotes: "",
@@ -385,18 +415,18 @@ export async function registerPresentationRoutes(
     if (requireEditor(creator, reply, request.id) !== true) return;
     const input = CreatePresentationSchema.parse(request.body);
     const now = new Date();
+    const firstBlockId = randomUUID();
     const draft: PresentationDraft = {
       title: input.title,
       description: input.description,
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
-          id: randomUUID(),
+          id: firstBlockId,
           kind: "content",
           layout: "title_body",
-          title: "",
-          body: "",
+          textElements: initialTextElements(firstBlockId, "title_body", "", ""),
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "",
@@ -411,7 +441,7 @@ export async function registerPresentationRoutes(
       status: "draft",
       draft,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -939,7 +969,7 @@ export async function registerPresentationRoutes(
       title,
       description: job.output.checkpointSet.description,
       experiencePreset: job.output.checkpointSet.experiencePreset ?? { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       sourceDisclosure: sourceDisclosure(job.output),
       blocks,
     });
@@ -952,7 +982,7 @@ export async function registerPresentationRoutes(
       status: "draft",
       draft,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,

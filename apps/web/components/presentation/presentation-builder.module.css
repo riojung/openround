@@ -361,6 +361,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  grid-column: 2;
   min-width: 0;
   padding: clamp(18px, 4vw, 54px);
   overflow: auto;
@@ -588,6 +589,11 @@
   gap: 8px;
   justify-content: center;
   margin: 20px auto 0;
+}
+
+.positionActions {
+  display: flex;
+  gap: 8px;
 }
 
 .dangerButton {
