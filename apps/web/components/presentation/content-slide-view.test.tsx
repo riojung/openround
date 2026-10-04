@@ -33,6 +33,16 @@ function slideFixture() {
 }
 
 describe("ContentSlideView", () => {
+  it.each(["constructor", "toString", "__proto__"])(
+    "resolves opaque element ID %s without reading inherited transient properties",
+    (id) => {
+      const block = slideFixture();
+      block.textElements[0]!.id = id;
+      const markup = renderToStaticMarkup(<ContentSlideView block={block} variant="editor" />);
+      expect(markup).not.toContain("undefined%");
+      expect(markup).toContain('style="left:2%;top:70%;width:28%;height:20%"');
+    },
+  );
   it.each(["editor", "preview", "live"] as const)(
     "renders %s text in the shared top-to-bottom, left-to-right region order",
     (variant) => {

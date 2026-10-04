@@ -289,7 +289,9 @@ export function ContentSlideView({
   }
 
   const currentFrame = (elementId: string) =>
-    transientFrames[elementId] ?? frames[elementId] ?? { x: 8, y: 20, width: 84, height: 22 };
+    (Object.hasOwn(transientFrames, elementId)
+      ? transientFrames[elementId]
+      : frames[elementId]) ?? { x: 8, y: 20, width: 84, height: 22 };
 
   useLayoutEffect(() => {
     const pendingId = pendingMoveFocusId.current;
@@ -342,7 +344,7 @@ export function ContentSlideView({
 
   function clearTransientFrame(elementId: string) {
     setTransientFrames((current) => {
-      if (!(elementId in current)) return current;
+      if (!Object.hasOwn(current, elementId)) return current;
       const next = { ...current };
       delete next[elementId];
       return next;
