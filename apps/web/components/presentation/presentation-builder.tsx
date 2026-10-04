@@ -1710,7 +1710,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                               type="number"
                               min={min}
                               max={max}
-                              step={1}
+                              step={0.01}
                               value={Math.round(selectedTextFrame[field] * 100) / 100}
                               onChange={(event) => {
                                 const value = event.target.valueAsNumber;

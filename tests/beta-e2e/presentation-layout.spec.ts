@@ -156,10 +156,14 @@ test("authors can edit, save, publish, and deliver the same slide arrangement", 
   await page
     .getByRole("combobox", { name: "Selected text element" })
     .selectOption({ label: "Slide title" });
+  await page.getByRole("combobox", { name: "Position on slide" }).selectOption("middle_center");
   const xField = page.getByLabel("Horizontal position (%)", { exact: true });
   const yField = page.getByLabel("Vertical position (%)", { exact: true });
   const widthField = page.getByLabel("Text box width (%)", { exact: true });
   const heightField = page.getByLabel("Text box height (%)", { exact: true });
+  for (const field of [xField, yField, widthField, heightField]) {
+    expect(await field.evaluate((input) => (input as HTMLInputElement).validity.valid)).toBe(true);
+  }
   const beforeX = Number(await xField.inputValue());
   await titleHandle.focus();
   await page.keyboard.press("ArrowRight");
@@ -207,11 +211,13 @@ test("authors can edit, save, publish, and deliver the same slide arrangement", 
 
   async function setFrame(label: string, frame: [number, number, number, number]) {
     await page.getByRole("combobox", { name: "Selected text element" }).selectOption({ label });
-    // Shrink first, then place, so each intermediate edit remains within bounds.
-    await widthField.fill(String(frame[2]));
-    await heightField.fill(String(frame[3]));
+    // Shrink first, then place and grow, so every intermediate edit stays within bounds.
+    await widthField.fill("12");
+    await heightField.fill("6");
     await xField.fill(String(frame[0]));
     await yField.fill(String(frame[1]));
+    await widthField.fill(String(frame[2]));
+    await heightField.fill(String(frame[3]));
   }
   await setFrame("Slide title", [8, 10, 84, 24]);
   await setFrame("Text box 1", [8, 44, 40, 32]);
