@@ -304,6 +304,33 @@ export async function registerPresentationSessionRoutes(
     }
   });
 
+  app.delete("/v1/presentation-sessions/:id", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requirePresentationWorkspace(creator.workspaceId, reply, request.id) !== true) return;
+    if (creator.role !== "owner") {
+      return apiError(
+        reply,
+        403,
+        "UNAUTHORIZED",
+        "Your workspace role does not allow this action",
+        request.id,
+      );
+    }
+    const { id } = IdParamsSchema.parse(request.params);
+    try {
+      await service.deleteSession({
+        workspaceId: creator.workspaceId,
+        userId: creator.userId,
+        sessionId: id,
+        requestId: request.id,
+      });
+      return reply.code(204).send();
+    } catch (error) {
+      return sendServiceError(error, reply, request.id);
+    }
+  });
+
   app.post("/v1/presentation-sessions/:id/advance", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;

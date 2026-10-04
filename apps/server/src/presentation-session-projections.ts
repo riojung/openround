@@ -492,5 +492,6 @@ export function buildPresentationListSnapshot(
     createdAt: session.createdAt.toISOString(),
     updatedAt: session.updatedAt.toISOString(),
     finishedAt: session.finishedAt?.toISOString() ?? null,
+    liveExpiresAt: session.liveExpiresAt.toISOString(),
   };
 }

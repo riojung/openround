@@ -1008,6 +1008,8 @@ export type OperationalFeaturesUpdate = Partial<
   >
 >;
 
+export type LibraryArtifactDeletionResult = "deleted" | "not_found" | "not_archived" | "in_use";
+
 export interface Repository {
   initialize(): Promise<void>;
   close(): Promise<void>;
@@ -1112,6 +1114,7 @@ export interface Repository {
     archived: boolean,
     maxPublishedQuizzes?: number | null,
   ): Promise<QuizRecord | null>;
+  deleteQuiz(workspaceId: string, quizId: string): Promise<LibraryArtifactDeletionResult>;
   duplicateQuiz(input: QuizRecord): Promise<QuizRecord>;
   publishQuiz(
     input: QuizVersionRecord,

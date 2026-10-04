@@ -144,6 +144,26 @@ types and omitted media are reported.
 Export a checkpoint set as OpenRound JSON, formula-safe UTF-8 CSV, or QTI ZIP. Hosted portability
 exports require Pro; community deployments do not impose an application paywall.
 
+### Delete archived content and session history
+
+Workspace owners can permanently delete archived Rounds and Presentations in **Library**.
+Filter by **Archived**, open an item's **More** menu, and choose **Delete permanently**.
+To delete several archived items, select them and choose **Delete (N)** in the selection bar.
+With a mixed selection, only the archived items are included. Confirm before deletion; canceling
+keeps every item. Deletion removes all drafts, published versions, recovery history, favorites,
+and group links for the item and cannot be undone. **Restore** remains available while an item
+is archived.
+
+An item with retained sessions or practice assignments cannot be deleted. Delete its associated
+sessions first; content used by retained practice assignments must stay archived until those
+assignments are removed by retention cleanup.
+
+In **Sessions**, owners can choose **Delete session** for a finished or expired Round or
+Presentation session. Confirmation permanently removes that session's responses, report, and
+linked follow-ups. The source Round or Presentation remains in the Library. Active rooms must
+finish or expire before the session list offers deletion. Editors and viewers cannot permanently
+delete content or sessions.
+
 ### Choose a Round Experience
 
 Every checkpoint set has one category and a versioned experience preset. The category recommends

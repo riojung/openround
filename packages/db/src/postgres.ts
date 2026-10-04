@@ -73,6 +73,7 @@ import type {
   LtiLoginTransactionRecord,
   LtiRegistrationRecord,
   LiveRoomArtifactType,
+  LibraryArtifactDeletionResult,
   LiveRoomCodeClaim,
   LiveRoomCodeRecord,
   MagicTokenRecord,
@@ -2415,6 +2416,44 @@ export class PostgresRepository implements Repository {
       },
       { workspaceId },
     );
+  }
+
+  async deleteQuiz(workspaceId: string, quizId: string): Promise<LibraryArtifactDeletionResult> {
+    try {
+      return await this.transaction(
+        async (client) => {
+          const current = await client.query(
+            "SELECT status FROM quizzes WHERE workspace_id = $1 AND id = $2 FOR UPDATE",
+            [workspaceId, quizId],
+          );
+          if (!current.rows[0]) return "not_found";
+          if (current.rows[0].status !== "archived") return "not_archived";
+          const referenced = await client.query(
+            `SELECT 1 FROM quiz_versions AS version
+             WHERE version.workspace_id = $1 AND version.quiz_id = $2
+               AND (EXISTS (
+                 SELECT 1 FROM game_sessions AS session
+                 WHERE session.workspace_id = $1 AND session.quiz_version_id = version.id
+               ) OR EXISTS (
+                 SELECT 1 FROM followups AS followup
+                 WHERE followup.workspace_id = $1 AND followup.source_quiz_version_id = version.id
+               )) LIMIT 1`,
+            [workspaceId, quizId],
+          );
+          if (referenced.rows[0]) return "in_use";
+          // Parent cascades remove versions/history; their FKs reject newly committed dependents.
+          await client.query("DELETE FROM quizzes WHERE workspace_id = $1 AND id = $2", [
+            workspaceId,
+            quizId,
+          ]);
+          return "deleted";
+        },
+        { workspaceId },
+      );
+    } catch (error) {
+      if ((error as { code?: string }).code === "23503") return "in_use";
+      throw error;
+    }
   }
 
   async duplicateQuiz(input: QuizRecord) {

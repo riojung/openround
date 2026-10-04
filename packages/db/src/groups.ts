@@ -89,6 +89,31 @@ export class MemoryCollaborationGroupRepository
   private readonly messages = new Map<string, CollaborationGroupMessageRecord>();
   private readonly schedule = new Map<string, CollaborationGroupScheduleRecord>();
 
+  constructor(private readonly repository?: Pick<MemoryRepository, "isLibraryArtifactDeleted">) {}
+
+  deleteLibraryArtifactMetadata(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    for (const [id, artifact] of this.artifacts) {
+      if (
+        artifact.workspaceId === workspaceId &&
+        artifact.artifactType === artifactType &&
+        artifact.artifactId === artifactId
+      )
+        this.artifacts.delete(id);
+    }
+    for (const [id, item] of this.schedule) {
+      if (
+        item.workspaceId === workspaceId &&
+        item.artifactType === artifactType &&
+        item.artifactId === artifactId
+      )
+        this.schedule.delete(id);
+    }
+  }
+
   exportAccount({ userId, ownedWorkspaceIds }: MemoryRepositoryLifecycleContext) {
     return {
       collaborationGroups: [...this.groups.values()]
@@ -208,6 +233,14 @@ export class MemoryCollaborationGroupRepository
         candidate.artifactId === artifact.artifactId,
     );
     if (existing) return clone(existing);
+    if (
+      this.repository?.isLibraryArtifactDeleted(
+        artifact.workspaceId,
+        artifact.artifactType,
+        artifact.artifactId,
+      )
+    )
+      throw new Error("Library item not found");
     this.artifacts.set(artifact.id, clone(artifact));
     return clone(artifact);
   }
@@ -240,6 +273,14 @@ export class MemoryCollaborationGroupRepository
   }
 
   async addSchedule(item: CollaborationGroupScheduleRecord) {
+    if (
+      this.repository?.isLibraryArtifactDeleted(
+        item.workspaceId,
+        item.artifactType,
+        item.artifactId,
+      )
+    )
+      throw new Error("Library item not found");
     this.schedule.set(item.id, clone(item));
     return clone(item);
   }
@@ -460,7 +501,7 @@ export function createCollaborationGroupRepository(
   if (repository instanceof MemoryRepository) {
     return repository.getOrCreateLifecycleExtension(
       "collaboration-groups",
-      () => new MemoryCollaborationGroupRepository(),
+      () => new MemoryCollaborationGroupRepository(repository),
     );
   }
   return new MemoryCollaborationGroupRepository();

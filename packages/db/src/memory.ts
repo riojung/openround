@@ -44,6 +44,7 @@ import type {
   LtiLoginTransactionRecord,
   LtiRegistrationRecord,
   LiveRoomArtifactType,
+  LibraryArtifactDeletionResult,
   LiveRoomCodeClaim,
   LiveRoomCodeRecord,
   MagicTokenRecord,
@@ -205,6 +206,21 @@ export interface MemoryRepositoryLifecycleExtension {
   ): Promise<Record<string, unknown>> | Record<string, unknown>;
   deleteAccount(context: MemoryRepositoryLifecycleContext): Promise<void> | void;
   purgeExpired?(now: Date): Promise<string[]> | string[];
+  hasLibraryArtifact?(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ): boolean;
+  isLibraryArtifactReferenced?(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ): boolean;
+  deleteLibraryArtifactMetadata?(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ): void;
 }
 
 export interface MemoryAccountExport extends Record<string, unknown> {
@@ -316,6 +332,9 @@ export class MemoryRepository implements Repository {
     string,
     { instance: unknown; lifecycle: MemoryRepositoryLifecycleExtension }
   >();
+  private readonly deletedLibraryArtifacts = new Set<string>();
+  private readonly deletedQuizVersions = new Set<string>();
+  private readonly deletedMediaReferenceOwners = new Set<string>();
   readonly operationalFeatures: OperationalFeaturesRecord = {
     signups: true,
     sessionCreation: true,
@@ -340,6 +359,53 @@ export class MemoryRepository implements Repository {
     const instance = create();
     this.lifecycleExtensions.set(name, { instance, lifecycle: instance });
     return instance;
+  }
+
+  hasLibraryArtifact(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    if (artifactType === "round") return this.quizzes.get(artifactId)?.workspaceId === workspaceId;
+    return [...this.lifecycleExtensions.values()].some(({ lifecycle }) =>
+      lifecycle.hasLibraryArtifact?.(workspaceId, artifactType, artifactId),
+    );
+  }
+
+  isLibraryArtifactReferenced(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    return [...this.lifecycleExtensions.values()].some(({ lifecycle }) =>
+      lifecycle.isLibraryArtifactReferenced?.(workspaceId, artifactType, artifactId),
+    );
+  }
+
+  isLibraryArtifactDeleted(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    return this.deletedLibraryArtifacts.has(`${workspaceId}:${artifactType}:${artifactId}`);
+  }
+
+  markLibraryArtifactDeleted(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    this.deletedLibraryArtifacts.add(`${workspaceId}:${artifactType}:${artifactId}`);
+  }
+
+  deleteLibraryArtifactMetadata(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    for (const { lifecycle } of this.lifecycleExtensions.values()) {
+      lifecycle.deleteLibraryArtifactMetadata?.(workspaceId, artifactType, artifactId);
+    }
   }
 
   async initialize() {}
@@ -1218,6 +1284,62 @@ export class MemoryRepository implements Repository {
     return structuredClone(normalizeQuizRecord(quiz));
   }
 
+  async deleteQuiz(workspaceId: string, quizId: string): Promise<LibraryArtifactDeletionResult> {
+    const quiz = this.quizzes.get(quizId);
+    if (!quiz || quiz.workspaceId !== workspaceId) return "not_found";
+    if (quiz.status !== "archived") return "not_archived";
+    const versionIds = new Set(
+      [...this.versions.values()]
+        .filter((version) => version.workspaceId === workspaceId && version.quizId === quizId)
+        .map((version) => version.id),
+    );
+    if (
+      [...this.sessions.values()].some(
+        (session) => session.workspaceId === workspaceId && versionIds.has(session.quizVersionId),
+      ) ||
+      [...this.followups.values()].some(
+        (followup) =>
+          followup.workspaceId === workspaceId && versionIds.has(followup.sourceQuizVersionId),
+      ) ||
+      this.isLibraryArtifactReferenced(workspaceId, "round", quizId)
+    )
+      return "in_use";
+
+    // Keep the check and every removal synchronous so a restore or new dependent cannot interleave.
+    const historyIds = new Set<string>();
+    for (const [key, snapshot] of this.quizDraftHistory) {
+      if (snapshot.workspaceId === workspaceId && snapshot.quizId === quizId) {
+        historyIds.add(snapshot.id);
+        this.quizDraftHistory.delete(key);
+      }
+    }
+    for (const [key, mutation] of this.quizDraftMutations) {
+      if (mutation.workspaceId === workspaceId && mutation.quizId === quizId)
+        this.quizDraftMutations.delete(key);
+    }
+    for (const [key, dismissal] of this.questionHealthDismissals) {
+      if (dismissal.workspaceId === workspaceId && dismissal.quizId === quizId)
+        this.questionHealthDismissals.delete(key);
+    }
+    for (const [key, application] of this.questionHealthApplications) {
+      if (application.workspaceId === workspaceId && application.quizId === quizId)
+        this.questionHealthApplications.delete(key);
+    }
+    for (const id of versionIds) {
+      this.versions.delete(id);
+      this.deletedQuizVersions.add(`${workspaceId}:${id}`);
+    }
+    this.removeMediaReferencesForOwners(workspaceId, [
+      { ownerType: "quiz_draft", ownerId: quizId },
+      ...[...versionIds].map((ownerId) => ({ ownerType: "quiz_version" as const, ownerId })),
+      ...[...historyIds].map((ownerId) => ({ ownerType: "quiz_history" as const, ownerId })),
+    ]);
+    this.quizzes.delete(quizId);
+    this.markLibraryArtifactDeleted(workspaceId, "round", quizId);
+    this.deleteLibraryArtifactMetadata(workspaceId, "round", quizId);
+    return "deleted";
+  }
+
   async duplicateQuiz(input: QuizRecord) {
     return this.createQuiz(input);
   }
@@ -1622,6 +1744,9 @@ export class MemoryRepository implements Repository {
       // `claimLiveRoomCode` is awaited by callers, so account deletion can start between the
       // reservation and this write. Recheck synchronously before publishing any session state.
       this.assertWorkspaceLiveSessionCreationAllowed(input.workspaceId);
+      if (this.deletedQuizVersions.has(`${input.workspaceId}:${input.quizVersionId}`)) {
+        throw new Error("Quiz version not found");
+      }
       this.sessions.set(
         input.id,
         structuredClone({
@@ -2994,6 +3119,20 @@ export class MemoryRepository implements Repository {
       .map((reference) => structuredClone(reference));
   }
 
+  removeMediaReferencesForOwners(
+    workspaceId: string,
+    owners: Array<{ ownerType: MediaReferenceOwnerType; ownerId: string }>,
+  ) {
+    const ownerKeys = new Set(
+      owners.map(({ ownerType, ownerId }) => `${workspaceId}:${ownerType}:${ownerId}`),
+    );
+    for (const key of ownerKeys) this.deletedMediaReferenceOwners.add(key);
+    for (const [key, reference] of this.mediaReferences) {
+      if (ownerKeys.has(`${reference.workspaceId}:${reference.ownerType}:${reference.ownerId}`))
+        this.mediaReferences.delete(key);
+    }
+  }
+
   async replaceMediaReferences(
     workspaceId: string,
     ownerType: MediaReferenceOwnerType,
@@ -3001,6 +3140,8 @@ export class MemoryRepository implements Repository {
     mediaIds: string[],
     createdAt = new Date(),
   ) {
+    // A pending authoring save may resume after permanent deletion removed its owner.
+    if (this.deletedMediaReferenceOwners.has(`${workspaceId}:${ownerType}:${ownerId}`)) return [];
     const uniqueMediaIds = [...new Set(mediaIds)];
     this.validateMediaReferences(workspaceId, uniqueMediaIds);
     for (const [key, reference] of this.mediaReferences) {
@@ -4497,6 +4638,16 @@ export class MemoryRepository implements Repository {
         lifecycle.deleteAccount({ userId, ownedWorkspaceIds }),
       ),
     );
+    for (const key of this.deletedLibraryArtifacts) {
+      if (ownedWorkspaceIds.has(key.split(":", 1)[0]!)) this.deletedLibraryArtifacts.delete(key);
+    }
+    for (const key of this.deletedQuizVersions) {
+      if (ownedWorkspaceIds.has(key.split(":", 1)[0]!)) this.deletedQuizVersions.delete(key);
+    }
+    for (const key of this.deletedMediaReferenceOwners) {
+      if (ownedWorkspaceIds.has(key.split(":", 1)[0]!))
+        this.deletedMediaReferenceOwners.delete(key);
+    }
     user.deletedAt = new Date();
     user.email = `deleted-${userId.slice(0, 8)}@invalid.local`;
     user.locale = "en-CA";

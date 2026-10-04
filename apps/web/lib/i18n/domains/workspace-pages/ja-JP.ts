@@ -306,6 +306,7 @@ const messages = {
   "pages.home.sessions.empty": "ホストされたセッションはまだありません。",
   "pages.home.sessions.eyebrow": "配送",
   "pages.library.action.archive": "アーカイブ",
+  "pages.library.action.delete": "削除済み",
   "pages.library.action.duplicate": "重複",
   "pages.library.action.restore": "復元",
   "pages.library.actionComplete": "{count} {type} {action}。",
@@ -319,6 +320,12 @@ const messages = {
   "pages.library.clear": "クリア",
   "pages.library.createPresentation": "プレゼンテーションの作成",
   "pages.library.createRound": "ラウンドの作成",
+  "pages.library.delete": "完全に削除",
+  "pages.library.deleteConfirm":
+    "「{title}」とすべての下書き・公開済みバージョンを完全に削除しますか？この操作は取り消せません。",
+  "pages.library.deleteCount": "削除 ({count})",
+  "pages.library.deleteManyConfirm":
+    "選択したアーカイブ済みアイテム {count} 件とすべての下書き・公開済みバージョンを完全に削除しますか？この操作は取り消せません。",
   "pages.library.deselectResults": "結果の選択を解除する",
   "pages.library.destinationFolder": "保存先フォルダー",
   "pages.library.duplicate": "重複",
@@ -433,6 +440,10 @@ const messages = {
   "pages.sessions.artifactType": "アーティファクトの種類",
   "pages.sessions.blockProgress": "ブロックの進行状況",
   "pages.sessions.currentResponses": "現在の対応",
+  "pages.sessions.delete": "セッションを削除",
+  "pages.sessions.deleteConfirm":
+    "セッション「{title}」とその回答、レポート、関連するフォローアップを完全に削除しますか？この操作は取り消せません。",
+  "pages.sessions.deleting": "削除中…",
   "pages.sessions.emptyDescription":
     "公開されたラウンドまたはプレゼンテーションを主催すると、そのライブ セッションがここに表示されます。",
   "pages.sessions.emptyFiltered": "このワークスペースには {status} セッションがありません。",
