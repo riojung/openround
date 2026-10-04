@@ -17,10 +17,14 @@ import {
   reorderContentTextElement,
   removePresentationBlock,
   setContentTextElementFrame,
+  setContentSlideMedia,
 } from "./presentation-builder";
 import {
   resolveContentSlideFrames,
   regionForContentSlideFrame,
+  contentSlideMediaFrame,
+  type ContentSlideFrame,
+  type ContentSlideLayout,
   type PresentationDraft,
 } from "@openround/contracts";
 
@@ -48,6 +52,74 @@ function draft(): PresentationDraft {
 }
 
 describe("presentation builder model", () => {
+  function expectClearOfImage(frame: ContentSlideFrame) {
+    expect(
+      frame.x + frame.width <= contentSlideMediaFrame.x ||
+        frame.x >= contentSlideMediaFrame.x + contentSlideMediaFrame.width ||
+        frame.y + frame.height <= contentSlideMediaFrame.y ||
+        frame.y >= contentSlideMediaFrame.y + contentSlideMediaFrame.height,
+    ).toBe(true);
+  }
+
+  it.each<ContentSlideLayout>(["title", "title_body", "media", "quote", "section", "callout"])(
+    "reserves image space when attaching, adding text, resetting, and removing media in %s",
+    (layout) => {
+      const original = createContentBlock(layout);
+      const attached = setContentSlideMedia(original, original.id, "Evidence diagram");
+      expect(attached.layout).toBe(layout);
+      expect(attached.mediaId).toBe(original.id);
+      expect(
+        attached.textElements.map(({ frame, ...element }) => {
+          expect(frame).toBeDefined();
+          return element;
+        }),
+      ).toEqual(
+        original.textElements.map(({ frame, ...element }) => {
+          expect(frame).toBeDefined();
+          return element;
+        }),
+      );
+      expect(attached.textElements[1]!.frame!.height).toBe(22);
+      attached.textElements.forEach((element) => expectClearOfImage(element.frame!));
+      const added = addContentTextElement(attached, createContentTextElement());
+      expect(added.textElements[2]!.frame!.width).toBe(84);
+      added.textElements.forEach((element) => expectClearOfImage(element.frame!));
+      const reset = applyContentSlideLayout(added, layout);
+      reset.textElements.forEach((element) => expectClearOfImage(element.frame!));
+      expect(setContentSlideMedia(attached, null, null)).toEqual(original);
+      // Attaching and its reflow are a single immutable model change for Undo/Redo.
+      expect(original.mediaId).toBeNull();
+      expect(original.textElements[1]!.frame!.height).toBe(layout === "media" ? 22 : 40);
+    },
+  );
+
+  it("preserves safe custom text and fits colliding text for attachment, movement, and resizing", () => {
+    const original = createContentBlock();
+    const titleId = original.textElements[0]!.id;
+    const bodyId = original.textElements[1]!.id;
+    const customized = setContentTextElementFrame(
+      setContentTextElementFrame(original, titleId, { x: 4, y: 4, width: 80, height: 20 }),
+      bodyId,
+      { x: 55, y: 76, width: 40, height: 20 },
+    );
+    const attached = setContentSlideMedia(customized, original.id, "Evidence diagram");
+    expect(attached.textElements[0]).toEqual(customized.textElements[0]);
+    expect(attached.textElements[1]!.frame).toEqual({ x: 55, y: 52, width: 40, height: 20 });
+    const resized = setContentTextElementFrame(attached, bodyId, {
+      x: 52,
+      y: 50,
+      width: 40,
+      height: 45,
+    });
+    expect(resized.textElements[1]!.frame).toEqual({ x: 52, y: 50, width: 40, height: 22 });
+    const moved = moveContentTextElement(resized, bodyId, "bottom_right");
+    moved.textElements.forEach((element) => expectClearOfImage(element.frame!));
+    const removed = setContentSlideMedia(attached, null, null);
+    expect(removed.textElements).toEqual(attached.textElements);
+    expect(removed.mediaId).toBeNull();
+    expect(removed.mediaAlt).toBeNull();
+  });
+
   it("keeps region shortcuts in their requested cell even when it is a starter's metadata region", () => {
     const original = createContentBlock();
     const bodyId = original.textElements[1]!.id;

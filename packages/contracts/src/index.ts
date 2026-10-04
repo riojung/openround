@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export {
   clampContentSlideFrame,
+  contentSlideMediaFrame,
+  fitContentSlideFrameAroundMedia,
   regionContentSlideFrames,
   regionForContentSlideFrame,
   resolveContentSlideFrames,

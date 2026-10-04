@@ -1,7 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   ContentSlideFrameSchema,
+  PresentationDraftSchema,
   clampContentSlideFrame,
+  contentSlideMediaFrame,
+  fitContentSlideFrameAroundMedia,
+  migratePresentationV1,
   regionContentSlideFrames,
   regionForContentSlideFrame,
   resolveContentSlideFrames,
@@ -38,6 +43,165 @@ function overlaps(left: ContentSlideFrame, right: ContentSlideFrame) {
 }
 
 describe("slide geometry", () => {
+  it.each([
+    [
+      { x: 8, y: 20, width: 84, height: 22 },
+      { x: 8, y: 20, width: 84, height: 22 },
+    ],
+    [
+      { x: 2, y: 80, width: 40, height: 16 },
+      { x: 2, y: 80, width: 40, height: 16 },
+    ],
+    [
+      { x: 48, y: 80, width: 12, height: 12 },
+      { x: 48, y: 80, width: 12, height: 12 },
+    ],
+    [
+      { x: 60, y: 69, width: 30, height: 6 },
+      { x: 60, y: 69, width: 30, height: 6 },
+    ],
+    [
+      { x: 8, y: 48, width: 84, height: 40 },
+      { x: 8, y: 48, width: 84, height: 24 },
+    ],
+    [
+      { x: 60, y: 66, width: 30, height: 12 },
+      { x: 60, y: 66, width: 30, height: 6 },
+    ],
+    [
+      { x: 40, y: 80, width: 44, height: 12 },
+      { x: 40, y: 80, width: 16, height: 12 },
+    ],
+    [
+      { x: 44, y: 80, width: 40, height: 12 },
+      { x: 44, y: 80, width: 12, height: 12 },
+    ],
+    [
+      { x: 60, y: 90, width: 30, height: 6 },
+      { x: 60, y: 66, width: 30, height: 6 },
+    ],
+    [
+      { x: 72, y: 74, width: 20, height: 18 },
+      { x: 72, y: 54, width: 20, height: 18 },
+    ],
+    [
+      { x: 0, y: 0, width: 100, height: 100 },
+      { x: 0, y: 0, width: 100, height: 72 },
+    ],
+    [
+      { x: Number.NaN, y: Number.POSITIVE_INFINITY, width: -1, height: Number.NaN },
+      { x: 0, y: 0, width: 12, height: 6 },
+    ],
+  ])(
+    "keeps text frame %j outside the image bay with bounded minimum dimensions",
+    (frame, expected) => {
+      const before = structuredClone(frame);
+      const fitted = fitContentSlideFrameAroundMedia(frame);
+      expect(fitted).toEqual(expected);
+      expect(ContentSlideFrameSchema.safeParse(fitted).success).toBe(true);
+      expect(overlaps(fitted, contentSlideMediaFrame)).toBe(false);
+      expect(fitContentSlideFrameAroundMedia(fitted)).toEqual(fitted);
+      expect(frame).toEqual(before);
+    },
+  );
+
+  it.each([
+    ["title", "middle_center", "bottom_center"],
+    ["title_body", "middle_center", "middle_center"],
+    ["quote", "middle_center", "bottom_center"],
+    ["section", "middle_center", "bottom_center"],
+    ["callout", "top_center", "middle_center"],
+    ["media", "top_center", "middle_center"],
+  ] as const)(
+    "reserves the image bay for two through eight default %s text elements",
+    (layout, titleRegion, bodyRegion) => {
+      for (let bodyCount = 1; bodyCount <= 7; bodyCount += 1) {
+        const base = elements(titleRegion, bodyRegion);
+        const input = [
+          base[0]!,
+          ...Array.from({ length: bodyCount }, (_, index) => ({
+            ...base[1]!,
+            id: `body-${index}`,
+            order: index + (titleRegion === bodyRegion ? 1 : 0),
+          })),
+        ];
+        const before = structuredClone(input);
+        const starter = starterContentSlideFrames(layout, input, true);
+        expect(resolveContentSlideFrames({ layout, textElements: input, hasMedia: true })).toEqual(
+          starter,
+        );
+        expect(
+          resolveContentSlideFrames({ layout, textElements: input, mediaId: "attached-image" }),
+        ).toEqual(starter);
+        const frames = Object.values(starter);
+        expect(frames).toHaveLength(bodyCount + 1);
+        for (const [index, frame] of frames.entries()) {
+          expect(ContentSlideFrameSchema.safeParse(frame).success).toBe(true);
+          expect(overlaps(frame, contentSlideMediaFrame)).toBe(false);
+          for (const other of frames.slice(index + 1)) expect(overlaps(frame, other)).toBe(false);
+        }
+        expect(input).toEqual(before);
+      }
+    },
+  );
+
+  it.each(["title", "title_body", "quote", "section", "callout", "media"] as const)(
+    "fits explicit and custom regional %s frames only when an image is present",
+    (layout) => {
+      const input = elements("bottom_right", "bottom_left");
+      input[0]!.frame = { x: 72, y: 74, width: 20, height: 18 };
+      const before = structuredClone(input);
+      const unreserved = resolveContentSlideFrames({ layout, textElements: input, mediaId: null });
+      expect(unreserved.title).toEqual(input[0]!.frame);
+      const reserved = resolveContentSlideFrames({ layout, textElements: input, hasMedia: true });
+      expect(reserved.title).toEqual({ x: 72, y: 54, width: 20, height: 18 });
+      expect(reserved.body).toEqual(unreserved.body);
+      for (const frame of Object.values(reserved)) {
+        expect(ContentSlideFrameSchema.safeParse(frame).success).toBe(true);
+        expect(overlaps(frame, contentSlideMediaFrame)).toBe(false);
+      }
+      const regional = regionContentSlideFrames(input);
+      expect(overlaps(regional.title!, contentSlideMediaFrame)).toBe(true);
+      const starter = starterContentSlideFrames(layout, input, true);
+      expect(overlaps(starter.title!, contentSlideMediaFrame)).toBe(false);
+      expect(ContentSlideFrameSchema.safeParse(starter.title).success).toBe(true);
+      expect(input).toEqual(before);
+    },
+  );
+
+  it("preserves legacy media-slide defaults while reserving images in other legacy layouts", () => {
+    for (const layout of ["media", "title_body"] as const) {
+      const mediaId = randomUUID();
+      const draft = PresentationDraftSchema.parse(
+        migratePresentationV1({
+          title: "Legacy image slide",
+          schemaVersion: 1,
+          blocks: [
+            {
+              id: randomUUID(),
+              kind: "content",
+              layout,
+              title: "Legacy title",
+              body: "Legacy body",
+              mediaId,
+              mediaAlt: "Attached image",
+              speakerNotes: "",
+            },
+          ],
+        }),
+      );
+      const slide = draft.blocks[0];
+      if (slide?.kind !== "content") throw new Error("Expected the legacy content slide");
+      expect(slide.textElements.every((element) => !element.frame)).toBe(true);
+      const frames = resolveContentSlideFrames(slide);
+      expect(frames[slide.textElements[0]!.id]).toEqual({ x: 8, y: 20, width: 84, height: 22 });
+      expect(frames[slide.textElements[1]!.id]).toEqual({ x: 8, y: 48, width: 84, height: 22 });
+      expect(Object.values(frames).every((frame) => !overlaps(frame, contentSlideMediaFrame))).toBe(
+        true,
+      );
+    }
+  });
+
   it.each([
     ["title", "middle_center", "bottom_center"],
     ["title_body", "middle_center", "middle_center"],

@@ -3,6 +3,7 @@ import {
   PresentationDraftSchema,
   migratePresentationV1,
   clampContentSlideFrame,
+  fitContentSlideFrameAroundMedia,
   regionForContentSlideFrame,
   regionContentSlideFrames,
   resolveContentSlideFrames,
@@ -142,26 +143,54 @@ export function createContentTextElement(): ContentSlideTextElement {
   };
 }
 
-export function addContentTextElement(
-  block: ContentSlideDraft,
-  element: ContentSlideTextElement,
-): ContentSlideDraft {
-  if (block.textElements.length >= 8 || element.role !== "body") return block;
+function usesStarterFrames(block: ContentSlideDraft) {
   const frames = resolveContentSlideFrames(block);
   const { titleRegion, bodyRegion } = defaultRegions(block.layout);
-  const starterFrames = starterContentSlideFrames(block.layout, block.textElements);
-  const usesStarter = block.textElements.every((item) => {
-    const actual = frames[item.id]!;
-    const starter = starterFrames[item.id]!;
+  const starterFrames = starterContentSlideFrames(
+    block.layout,
+    block.textElements,
+    Boolean(block.mediaId),
+  );
+  return block.textElements.every((element) => {
+    const actual = frames[element.id]!;
+    const starter = starterFrames[element.id]!;
     return (
-      item.region === (item.role === "title" ? titleRegion : bodyRegion) &&
+      element.region === (element.role === "title" ? titleRegion : bodyRegion) &&
       actual.x === starter.x &&
       actual.y === starter.y &&
       actual.width === starter.width &&
       actual.height === starter.height
     );
   });
-  if (usesStarter && !element.frame) {
+}
+
+/** Attach/remove an image and materialize its text reflow in the same undoable change. */
+export function setContentSlideMedia(
+  block: ContentSlideDraft,
+  mediaId: string | null,
+  mediaAlt: string | null,
+): ContentSlideDraft {
+  const next = { ...block, mediaId, mediaAlt };
+  const frames = usesStarterFrames(block)
+    ? starterContentSlideFrames(block.layout, block.textElements, Boolean(mediaId))
+    : resolveContentSlideFrames(block);
+  return {
+    ...next,
+    textElements: block.textElements.map((element) => ({
+      ...element,
+      frame: mediaId ? fitContentSlideFrameAroundMedia(frames[element.id]!) : frames[element.id]!,
+    })),
+  };
+}
+
+export function addContentTextElement(
+  block: ContentSlideDraft,
+  element: ContentSlideTextElement,
+): ContentSlideDraft {
+  if (block.textElements.length >= 8 || element.role !== "body") return block;
+  const frames = resolveContentSlideFrames(block);
+  const { bodyRegion } = defaultRegions(block.layout);
+  if (usesStarterFrames(block) && !element.frame) {
     const textElements = normalizeRegionOrders([
       ...block.textElements,
       {
@@ -170,7 +199,11 @@ export function addContentTextElement(
         order: block.textElements.filter((item) => item.region === bodyRegion).length,
       },
     ]);
-    const nextFrames = starterContentSlideFrames(block.layout, textElements);
+    const nextFrames = starterContentSlideFrames(
+      block.layout,
+      textElements,
+      Boolean(block.mediaId),
+    );
     return {
       ...block,
       textElements: textElements.map((item) => ({ ...item, frame: nextFrames[item.id]! })),
@@ -179,6 +212,7 @@ export function addContentTextElement(
   const existing = block.textElements.map((item) => ({ ...item, frame: frames[item.id]! }));
   // Prefer an empty part of the slide without changing the author's existing arrangement.
   let frame = clampContentSlideFrame(element.frame ?? { x: 8, y: 2, width: 40, height: 16 });
+  if (block.mediaId) frame = fitContentSlideFrameAroundMedia(frame);
   search: for (const [width, height] of [
     [40, 16],
     [24, 12],
@@ -224,7 +258,9 @@ export function setContentTextElementFrame(
 ): ContentSlideDraft {
   const selected = block.textElements.find((element) => element.id === elementId);
   if (!selected) return block;
-  const frame = clampContentSlideFrame(requested);
+  const frame = block.mediaId
+    ? fitContentSlideFrameAroundMedia(requested)
+    : clampContentSlideFrame(requested);
   const frames = resolveContentSlideFrames(block);
   if (JSON.stringify(frames[elementId]) === JSON.stringify(frame)) return block;
   const region = regionForContentSlideFrame(frame);
@@ -286,7 +322,12 @@ export function moveContentTextElement(
     ...block,
     textElements: elements.map((element) => ({
       ...element,
-      frame: element.region === region ? regionFrames[element.id]! : element.frame!,
+      frame:
+        element.region === region
+          ? block.mediaId
+            ? fitContentSlideFrameAroundMedia(regionFrames[element.id]!)
+            : regionFrames[element.id]!
+          : element.frame!,
     })),
   };
 }
@@ -350,7 +391,7 @@ export function applyContentSlideLayout(
       return { ...element, frame: undefined, region: titleRegion, order: 0 };
     return { ...element, frame: undefined, region: bodyRegion, order: bodyOrder++ };
   });
-  const frames = starterContentSlideFrames(layout, textElements);
+  const frames = starterContentSlideFrames(layout, textElements, Boolean(block.mediaId));
   return {
     ...block,
     layout,

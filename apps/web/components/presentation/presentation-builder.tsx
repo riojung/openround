@@ -47,6 +47,7 @@ import {
   removeContentTextElement,
   reorderContentTextElement,
   setContentTextElementFrame,
+  setContentSlideMedia,
   removePresentationBlock,
   updateContentTextElement,
 } from "../../lib/presentation-builder";
@@ -852,7 +853,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
       commit((current) =>
         updateBlock(current, blockId, (block) =>
           block.kind === "content"
-            ? { ...block, mediaId: ticket.mediaId, mediaAlt: altText }
+            ? setContentSlideMedia(block, ticket.mediaId, altText)
             : {
                 ...block,
                 question: { ...block.question, mediaId: ticket.mediaId, mediaAlt: altText },
@@ -871,7 +872,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
     if (!selectedBlock) return;
     updateSelected((block) =>
       block.kind === "content"
-        ? { ...block, mediaId: null, mediaAlt: null }
+        ? setContentSlideMedia(block, null, null)
         : { ...block, question: { ...block.question, mediaId: null, mediaAlt: null } },
     );
     setMediaPreviewUrl("");
@@ -1772,6 +1773,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                       Arrow keys adjust by 1%; hold Shift for 5%. Guides mark the grid and safe
                       margins. Region shortcuts arrange text in stacked slots. Narrow screens show
                       the full text in reading order. Applying a starter layout resets placement.
+                      {selectedBlock.mediaId
+                        ? " Text stays clear of the reserved image area when moved or resized."
+                        : ""}
                     </p>
                   </>
                 ) : inspectorTab === "media" ? (
@@ -1809,7 +1813,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                     <p className={styles.helpText} lang="en-CA">
                       {mediaUploadsEnabled
                         ? "JPEG, PNG, or WebP up to 10 MB. Uploads are quarantined and scanned."
-                        : "Uploads are unavailable until malware scanning is configured."}
+                        : "Uploads are unavailable until malware scanning is configured."}{" "}
+                      Attaching an image reserves space and adjusts text boxes that intersect its
+                      area.
                     </p>
                     {mediaState !== "idle" ? (
                       <p className={styles.helpText} lang="en-CA" role="status">

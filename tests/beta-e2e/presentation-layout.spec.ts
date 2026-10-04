@@ -98,6 +98,150 @@ async function expectAccessibleSlide(page: Page) {
   ).toEqual([]);
 }
 
+test("images stay clear of text in every starter layout and after text positioning", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await signIn(page);
+  const presentationId = await createPresentation(page);
+  const initial = await page.request.get(`${apiUrl}/v1/presentations/${presentationId}`);
+  expect(initial.ok()).toBeTruthy();
+  let record = (await initial.json()).presentation;
+  const mediaId = randomUUID();
+  const imageUrl = new URL("/layout-fixture.svg", page.url()).href;
+  const uploadUrl = new URL("/layout-fixture-upload", page.url()).href;
+  // Exercise the real upload/editor flow with deterministic storage/scanner responses.
+  // The beta browser server intentionally has no external object store or malware scanner.
+  await page.route(`${apiUrl}/v1/features`, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), mediaUploads: true } });
+  });
+  await page.route(`${apiUrl}/v1/presentations/${presentationId}`, (route) =>
+    route.fulfill({ json: { presentation: record } }),
+  );
+  await page.route(`${apiUrl}/v1/presentations/${presentationId}/draft`, async (route) => {
+    const { draft } = route.request().postDataJSON();
+    record = { ...record, draft, draftRevision: record.draftRevision + 1 };
+    await route.fulfill({ json: { presentation: record } });
+  });
+  await page.route(`${apiUrl}/v1/media`, (route) =>
+    route.fulfill({ json: { mediaId, uploadUrl } }),
+  );
+  await page.route(uploadUrl, (route) => route.fulfill({ status: 204 }));
+  await page.route(`${apiUrl}/v1/media/${mediaId}/complete`, (route) =>
+    route.fulfill({ json: { media: { id: mediaId, scanStatus: "clean" }, downloadUrl: imageUrl } }),
+  );
+  await page.route(`${apiUrl}/v1/media/${mediaId}`, (route) =>
+    route.fulfill({ json: { downloadUrl: imageUrl } }),
+  );
+  await page.route(imageUrl, (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><rect width="400" height="200" fill="#087f8c"/><circle cx="200" cy="100" r="60" fill="#fff"/></svg>',
+    }),
+  );
+  await page.goto(`/presentation/${presentationId}`);
+  const canvas = page.locator("#presentation-canvas");
+  const slide = canvas.locator("article[data-layout]");
+  await canvas.getByLabel("Slide title", { exact: true }).fill("Evidence diagram");
+  await canvas
+    .getByLabel("Text box 1", { exact: true })
+    .fill(
+      "Review the evidence, identify the main signal, and explain how it informs the next decision.",
+    );
+  await page.getByRole("tab", { name: "Media", exact: true }).click();
+  await page.getByLabel("Image alternative text", { exact: true }).fill("Evidence diagram");
+  await page.getByLabel("Instructional image", { exact: true }).setInputFiles({
+    name: "evidence.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  });
+  await expect(slide.getByRole("img", { name: "Evidence diagram" })).toBeVisible();
+
+  async function expectImageClear(target: Locator) {
+    await expect(target.getByRole("img", { name: "Evidence diagram" })).toBeVisible();
+    const clear = await target.evaluate((article) => {
+      const img = article.querySelector("img")!;
+      const image = img.parentElement!.getBoundingClientRect();
+      const actualImage = img.getBoundingClientRect();
+      const bounds = article.getBoundingClientRect();
+      const contained =
+        actualImage.x >= image.x - 1 &&
+        actualImage.right <= image.right + 1 &&
+        actualImage.y >= image.y - 1 &&
+        actualImage.bottom <= image.bottom + 1 &&
+        actualImage.bottom <= bounds.bottom + 1;
+      return (
+        contained &&
+        Array.from(article.querySelectorAll("[data-region] > div")).every((element) => {
+          const text = element.getBoundingClientRect();
+          return (
+            text.right <= image.left + 1 ||
+            text.left >= image.right - 1 ||
+            text.bottom <= image.top + 1 ||
+            text.top >= image.bottom - 1
+          );
+        })
+      );
+    });
+    expect(clear, "text rectangles stay clear of the reserved image area").toBe(true);
+  }
+
+  await expectImageClear(slide);
+  await page.getByRole("tab", { name: "Layout", exact: true }).click();
+  for (const layout of ["title", "title_body", "media", "quote", "section", "callout"]) {
+    await page.getByRole("combobox", { name: "Structured layout" }).selectOption(layout);
+    await expectImageClear(slide);
+    await expect(slide.getByText("Image area", { exact: true })).toBeVisible();
+    const arrangement = await renderedArrangement(slide);
+    await page.getByRole("button", { name: "Preview", exact: true }).click();
+    const preview = page.getByRole("dialog", { name: "Presentation preview" });
+    const previewSlide = preview.locator("article[data-layout]");
+    await expectImageClear(previewSlide);
+    expect(await renderedArrangement(previewSlide)).toEqual(arrangement);
+    await page.getByRole("button", { name: "Close preview", exact: true }).click();
+  }
+  await page
+    .getByRole("combobox", { name: "Selected text element" })
+    .selectOption({ label: "Text box 1" });
+  await page.getByRole("combobox", { name: "Position on slide" }).selectOption("bottom_right");
+  await expectImageClear(slide);
+  const height = page.getByLabel("Text box height (%)", { exact: true });
+  await height.fill("100");
+  await expectImageClear(slide);
+  const resize = canvas.getByRole("button", { name: /Resize Text box 1/ });
+  await resize.focus();
+  await page.keyboard.press("Shift+ArrowDown");
+  await expectImageClear(slide);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expectImageClear(slide);
+  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await expectImageClear(slide);
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  await page.reload();
+  await expectImageClear(slide);
+
+  // Removing a newly attached image restores the wide starter; Undo restores both together.
+  await page.getByRole("tab", { name: "Layout", exact: true }).click();
+  await page.getByRole("combobox", { name: "Structured layout" }).selectOption("title_body");
+  await page.getByRole("tab", { name: "Media", exact: true }).click();
+  await page.getByRole("button", { name: "Remove image", exact: true }).click();
+  await expect(slide.getByRole("img")).toHaveCount(0);
+  expect(
+    (await renderedArrangement(slide)).find((element) => element.text?.startsWith("Review"))?.frame,
+  ).toBe(JSON.stringify({ x: 8, y: 48, width: 84, height: 40 }));
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expectImageClear(slide);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Hide inspector" }).click();
+  await page.getByRole("button", { name: "Collapse map" }).click();
+  await expectImageClear(slide);
+  await expectReadableSlide(slide, true);
+});
+
 test("authors can edit, save, publish, and deliver the same slide arrangement", async ({
   page,
   browser,

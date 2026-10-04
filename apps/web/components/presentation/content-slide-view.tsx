@@ -14,6 +14,8 @@ import {
 } from "react";
 import {
   clampContentSlideFrame,
+  contentSlideMediaFrame,
+  fitContentSlideFrameAroundMedia,
   regionForContentSlideFrame,
   resolveContentSlideFrames,
   type ContentSlideFrame,
@@ -51,6 +53,7 @@ type ContentSlideViewBlock = {
   id?: string;
   layout: ContentSlideLayout;
   textElements: ContentSlideTextElement[];
+  mediaId?: string | null;
 };
 
 interface ContentSlideViewProps {
@@ -236,8 +239,8 @@ function alignMoveFrame(
   };
 }
 
-function frameBlockSignature(block: ContentSlideViewBlock) {
-  return `${block.id ?? ""}|${block.layout}|${block.textElements
+function frameBlockSignature(block: ContentSlideViewBlock, hasMedia: boolean) {
+  return `${block.id ?? ""}|${block.layout}|${hasMedia}|${block.textElements
     .map((element) => {
       const frame = element.frame;
       return [
@@ -269,6 +272,7 @@ export function ContentSlideView({
 }: ContentSlideViewProps) {
   const editing = variant === "editor";
   const showGuides = editing && showGuidesProp;
+  const hasMedia = Boolean(media || block.mediaId);
   const pendingMoveFocusId = useRef<string | null>(null);
   const pendingMoveFocusKind = useRef<GestureKind>("move");
   const moveHandleRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -278,8 +282,8 @@ export function ContentSlideView({
   const regionsRef = useRef<HTMLDivElement>(null);
   const [transientFrames, setTransientFrames] = useState<Record<string, ContentSlideFrame>>({});
   const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuides>({ x: null, y: null });
-  const frames = resolveContentSlideFrames(block);
-  const geometrySignature = frameBlockSignature(block);
+  const frames = resolveContentSlideFrames({ ...block, hasMedia });
+  const geometrySignature = frameBlockSignature(block, hasMedia);
   onChangeFrameRef.current = onChangeFrame;
 
   const elementsByRegion = new Map<ContentSlideRegion, ContentSlideTextElement[]>();
@@ -292,6 +296,11 @@ export function ContentSlideView({
     (Object.hasOwn(transientFrames, elementId)
       ? transientFrames[elementId]
       : frames[elementId]) ?? { x: 8, y: 20, width: 84, height: 22 };
+
+  const fitTextFrame = (frame: ContentSlideFrame) => {
+    const bounded = clampContentSlideFrame(frame);
+    return hasMedia ? fitContentSlideFrameAroundMedia(bounded) : bounded;
+  };
 
   useLayoutEffect(() => {
     const pendingId = pendingMoveFocusId.current;
@@ -365,13 +374,16 @@ export function ContentSlideView({
       });
       if (showGuides) {
         const aligned = alignMoveFrame(gesture.elementId, next, { ...frames, ...transientFrames });
-        next = aligned.frame;
-        setAlignmentGuides(aligned.guides);
+        next = fitTextFrame(aligned.frame);
+        setAlignmentGuides(
+          equalFrames(next, aligned.frame) ? aligned.guides : { x: null, y: null },
+        );
       } else {
+        next = fitTextFrame(next);
         setAlignmentGuides({ x: null, y: null });
       }
     } else {
-      next = clampContentSlideFrame({
+      next = fitTextFrame({
         ...gesture.startFrame,
         width: Math.min(100 - gesture.startFrame.x, gesture.startFrame.width + deltaX),
         height: Math.min(100 - gesture.startFrame.y, gesture.startFrame.height + deltaY),
@@ -471,14 +483,14 @@ export function ContentSlideView({
     if (onChangeFrame) {
       if (kind === "move") {
         const step = event.shiftKey ? 5 : 1;
-        next = clampContentSlideFrame({
+        next = fitTextFrame({
           ...frame,
           x: frame.x + (event.key === "ArrowRight" ? step : event.key === "ArrowLeft" ? -step : 0),
           y: frame.y + (event.key === "ArrowDown" ? step : event.key === "ArrowUp" ? -step : 0),
         });
       } else {
         const step = event.shiftKey ? 5 : 1;
-        next = clampContentSlideFrame({
+        next = fitTextFrame({
           ...frame,
           width: Math.min(
             100 - frame.x,
@@ -670,7 +682,25 @@ export function ContentSlideView({
           </div>
         ))}
       </div>
-      {media ? <div className={styles.media}>{media}</div> : null}
+      {media ? (
+        <div
+          className={styles.media}
+          data-media-frame={JSON.stringify(contentSlideMediaFrame)}
+          style={elementFrameStyle(contentSlideMediaFrame)}
+        >
+          {media}
+        </div>
+      ) : null}
+      {editing && showGuides && hasMedia ? (
+        <div
+          aria-hidden="true"
+          className={styles.mediaBayGuide}
+          data-media-bay="true"
+          style={elementFrameStyle(contentSlideMediaFrame)}
+        >
+          <span>Image area</span>
+        </div>
+      ) : null}
     </article>
   );
 }

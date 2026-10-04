@@ -120,8 +120,14 @@ a single reading column rather than shrinking it to the desktop rectangles.
 
 The six structured layouts remain useful starting arrangements and visual styles. Applying one
 resets text positions to that layout's defaults, and **Undo** restores the previous arrangement.
-Images stay in their layout-managed position. The canvas, preview, facilitator view, and participant
-view share the same slide arrangement, with narrow screens reading top to bottom and left to right.
+The canvas, preview, facilitator view, and participant view share the same slide arrangement, with
+narrow screens reading top to bottom and left to right.
+
+Attached images keep their preset placement. The guides mark a reserved **Image area**; attaching
+an image reflows starter text and adjusts custom text boxes that intersect that area. Moving or
+resizing text keeps it clear of the image. Removing an image restores starter text space while
+preserving customized arrangements.
+
 Bounded positioning, resizing, and layout guides are in scope. Rotation, shapes, detailed font
 styling, and a full freeform design canvas remain deferred.
 

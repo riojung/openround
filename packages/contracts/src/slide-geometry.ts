@@ -20,7 +20,16 @@ const regions: readonly ContentSlideRegion[] = [
 type SlideGeometryBlock = {
   layout: ContentSlideLayout;
   textElements: readonly ContentSlideTextElement[];
+  mediaId?: string | null;
+  hasMedia?: boolean;
 };
+
+export const contentSlideMediaFrame: Readonly<ContentSlideFrame> = Object.freeze({
+  x: 60,
+  y: 75,
+  width: 36,
+  height: 22,
+});
 
 function finiteOr(value: number, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
@@ -36,6 +45,28 @@ export function clampContentSlideFrame(frame: ContentSlideFrame): ContentSlideFr
     width,
     height,
   };
+}
+
+/** Keep text clear of the image bay while retaining its horizontal position when possible. */
+export function fitContentSlideFrameAroundMedia(frame: ContentSlideFrame): ContentSlideFrame {
+  const bounded = clampContentSlideFrame(frame);
+  const intersects =
+    bounded.x < contentSlideMediaFrame.x + contentSlideMediaFrame.width &&
+    bounded.x + bounded.width > contentSlideMediaFrame.x &&
+    bounded.y < contentSlideMediaFrame.y + contentSlideMediaFrame.height &&
+    bounded.y + bounded.height > contentSlideMediaFrame.y;
+  if (!intersects) return bounded;
+
+  const heightAboveMedia = 72 - bounded.y;
+  if (heightAboveMedia >= 6) {
+    return { ...bounded, height: Math.min(bounded.height, heightAboveMedia) };
+  }
+  const widthBesideMedia = 56 - bounded.x;
+  if (widthBesideMedia >= 12) {
+    return { ...bounded, width: Math.min(bounded.width, widthBesideMedia) };
+  }
+  const height = Math.min(bounded.height, 72);
+  return { ...bounded, y: Math.min(bounded.y, 72 - height), height };
 }
 
 /** Compatibility regions follow the rectangle's center, with boundaries in row-major order. */
@@ -112,19 +143,28 @@ export function regionContentSlideFrames(
 export function starterContentSlideFrames(
   layout: ContentSlideLayout,
   elements: readonly ContentSlideTextElement[],
+  hasMedia = false,
 ): Record<string, ContentSlideFrame> {
+  const mediaTextBand = hasMedia || layout === "media";
   const defaults = defaultRegions(layout);
   const standard =
     elements.filter((element) => element.role === "title").length === 1 &&
     elements.every((element) => element.region === defaults[element.role]);
-  if (!standard) return regionContentSlideFrames(elements);
+  if (!standard) {
+    const frames = regionContentSlideFrames(elements);
+    return hasMedia
+      ? Object.fromEntries(
+          Object.entries(frames).map(([id, frame]) => [id, fitContentSlideFrameAroundMedia(frame)]),
+        )
+      : frames;
+  }
   if (elements.length <= 2) {
     return Object.fromEntries(
       elements.map((element) => [
         element.id,
         element.role === "title"
           ? { x: 8, y: 20, width: 84, height: 22 }
-          : { x: 8, y: 48, width: 84, height: layout === "media" ? 22 : 40 },
+          : { x: 8, y: 48, width: 84, height: mediaTextBand ? 22 : 40 },
       ]),
     );
   }
@@ -133,10 +173,10 @@ export function starterContentSlideFrames(
   const bodies = elements
     .filter((element) => element.role === "body")
     .sort((left, right) => left.order - right.order);
-  const columns = layout === "media" ? Math.ceil(bodies.length / 3) : bodies.length > 4 ? 2 : 1;
+  const columns = mediaTextBand ? Math.ceil(bodies.length / 3) : bodies.length > 4 ? 2 : 1;
   const rows = Math.ceil(bodies.length / columns);
   const width = (84 - 4 * (columns - 1)) / columns;
-  const height = ((layout === "media" ? 22 : 48) - 2 * (rows - 1)) / rows;
+  const height = ((mediaTextBand ? 22 : 48) - 2 * (rows - 1)) / rows;
   return Object.fromEntries([
     [title.id, { x: 8, y: 12, width: 84, height: 22 }],
     ...bodies.map((element, index) => [
@@ -151,17 +191,18 @@ export function starterContentSlideFrames(
   ]);
 }
 
-/** Existing explicit frames win; unframed siblings continue to use their compatibility regions. */
+/** Preserve explicit text geometry and regional fallbacks while keeping an attached image clear. */
 export function resolveContentSlideFrames(
   block: SlideGeometryBlock,
 ): Record<string, ContentSlideFrame> {
+  const hasMedia = Boolean(block.hasMedia || block.mediaId);
   const fallback = block.textElements.some((element) => element.frame)
     ? regionContentSlideFrames(block.textElements)
-    : starterContentSlideFrames(block.layout, block.textElements);
+    : starterContentSlideFrames(block.layout, block.textElements, hasMedia);
   return Object.fromEntries(
-    block.textElements.map((element) => [
-      element.id,
-      { ...(element.frame ?? fallback[element.id]!) },
-    ]),
+    block.textElements.map((element) => {
+      const frame = { ...(element.frame ?? fallback[element.id]!) };
+      return [element.id, hasMedia ? fitContentSlideFrameAroundMedia(frame) : frame];
+    }),
   );
 }

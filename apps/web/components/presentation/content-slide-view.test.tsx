@@ -1,7 +1,36 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import {
+  contentSlideMediaFrame,
+  type ContentSlideFrame,
+  type ContentSlideLayout,
+} from "@openround/contracts";
 import { createContentBlock } from "../../lib/presentation-builder";
 import { ContentSlideView } from "./content-slide-view";
+
+const layouts: ContentSlideLayout[] = [
+  "title",
+  "title_body",
+  "media",
+  "quote",
+  "section",
+  "callout",
+];
+
+function renderedFrames(markup: string) {
+  return [...markup.matchAll(/data-frame="([^"]+)"/g)].map(
+    ([, value]) => JSON.parse(value!.replaceAll("&quot;", '"')) as ContentSlideFrame,
+  );
+}
+
+function overlapsMedia(frame: ContentSlideFrame) {
+  return (
+    frame.x < contentSlideMediaFrame.x + contentSlideMediaFrame.width &&
+    frame.x + frame.width > contentSlideMediaFrame.x &&
+    frame.y < contentSlideMediaFrame.y + contentSlideMediaFrame.height &&
+    frame.y + frame.height > contentSlideMediaFrame.y
+  );
+}
 
 function slideFixture() {
   const block = createContentBlock();
@@ -128,4 +157,50 @@ describe("ContentSlideView", () => {
       'aria-label="Resize Slide title. Use arrow keys to change width and height."',
     );
   });
+
+  it.each(layouts)(
+    "keeps %s text frames outside the reserved image area across variants",
+    (layout) => {
+      for (const frameMode of ["legacy", "unsafe-explicit"] as const) {
+        const block = createContentBlock(layout);
+        block.mediaId = `media-${layout}`;
+        block.textElements = block.textElements.map((element, index) => {
+          if (frameMode === "legacy") {
+            const legacyElement = { ...element };
+            delete legacyElement.frame;
+            return legacyElement;
+          }
+          return {
+            ...element,
+            frame:
+              index === 0
+                ? { x: 62, y: 76, width: 22, height: 12 }
+                : { x: 75, y: 80, width: 20, height: 14 },
+          };
+        });
+
+        const media = <img alt="Slide illustration" src="/slide-illustration.png" />;
+        const markups = (["editor", "preview", "live"] as const).map((variant) =>
+          renderToStaticMarkup(<ContentSlideView block={block} media={media} variant={variant} />),
+        );
+        const frames = markups.map(renderedFrames);
+
+        expect(frames[0]).toEqual(frames[1]);
+        expect(frames[1]).toEqual(frames[2]);
+        expect(frames[0]).toHaveLength(block.textElements.length);
+        expect(frames[0]!.every((frame) => !overlapsMedia(frame))).toBe(true);
+        for (const markup of markups) {
+          expect(markup).toContain(
+            'data-media-frame="{&quot;x&quot;:60,&quot;y&quot;:75,&quot;width&quot;:36,&quot;height&quot;:22}"',
+          );
+          expect(markup).toContain('style="left:60%;top:75%;width:36%;height:22%"');
+        }
+        expect(markups[0]).toContain('aria-hidden="true"');
+        expect(markups[0]).toContain('data-media-bay="true"');
+        expect(markups[0]).toContain("Image area");
+        expect(markups[1]).not.toContain('data-media-bay="true"');
+        expect(markups[2]).not.toContain('data-media-bay="true"');
+      }
+    },
+  );
 });
