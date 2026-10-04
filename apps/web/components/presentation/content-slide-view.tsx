@@ -1,6 +1,14 @@
 "use client";
 
-import type { DragEvent, KeyboardEvent, ReactNode } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  type DragEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+} from "react";
 import type {
   ContentSlideLayout,
   ContentSlideRegion,
@@ -49,6 +57,49 @@ interface ContentSlideViewProps {
   onMoveElement?: (elementId: string, region: ContentSlideRegion) => void;
 }
 
+interface AutosizingTextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
+  value: string;
+}
+
+function AutosizingTextarea(props: AutosizingTextareaProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const resize = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const style = window.getComputedStyle(textarea);
+    const borderHeight =
+      (Number.parseFloat(style.borderTopWidth) || 0) +
+      (Number.parseFloat(style.borderBottomWidth) || 0);
+    textarea.style.height = `${textarea.scrollHeight + borderHeight}px`;
+  }, []);
+
+  useLayoutEffect(() => {
+    resize();
+  }, [props.value, resize]);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    let observedWidth = textarea.clientWidth;
+    const resizeWhenWidthChanges = () => {
+      const nextWidth = textarea.clientWidth;
+      if (nextWidth === observedWidth) return;
+      observedWidth = nextWidth;
+      resize();
+    };
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", resize);
+      return () => window.removeEventListener("resize", resize);
+    }
+    const observer = new ResizeObserver(resizeWhenWidthChanges);
+    observer.observe(textarea);
+    return () => observer.disconnect();
+  }, [resize]);
+
+  return <textarea {...props} ref={textareaRef} />;
+}
+
 function orderedTextElements(elements: ContentSlideTextElement[]) {
   return [...elements].sort(
     (left, right) => left.order - right.order || left.id.localeCompare(right.id),
@@ -85,11 +136,22 @@ export function ContentSlideView({
   onMoveElement,
 }: ContentSlideViewProps) {
   const editing = variant === "editor";
+  const pendingMoveFocusId = useRef<string | null>(null);
+  const moveHandleRefs = useRef(new Map<string, HTMLButtonElement>());
   const elementsByRegion = new Map<ContentSlideRegion, ContentSlideTextElement[]>();
   for (const region of contentSlideRegions) elementsByRegion.set(region, []);
   for (const element of block.textElements) {
     elementsByRegion.get(element.region)?.push(element);
   }
+
+  useLayoutEffect(() => {
+    const pendingId = pendingMoveFocusId.current;
+    if (!pendingId) return;
+    pendingMoveFocusId.current = null;
+    const handle = moveHandleRefs.current.get(pendingId);
+    if (!handle) return;
+    handle.focus({ preventScroll: true });
+  }, [block.textElements]);
 
   function handleDrop(event: DragEvent<HTMLDivElement>, region: ContentSlideRegion) {
     event.preventDefault();
@@ -102,9 +164,10 @@ export function ContentSlideView({
     element: ContentSlideTextElement,
   ) {
     if (!event.key.startsWith("Arrow")) return;
+    event.preventDefault();
     const region = adjacentRegion(element.region, event.key);
     if (!region) return;
-    event.preventDefault();
+    if (onMoveElement) pendingMoveFocusId.current = element.id;
     onMoveElement?.(element.id, region);
   }
 
@@ -123,6 +186,7 @@ export function ContentSlideView({
             key={region}
             onDragOver={editing ? (event) => event.preventDefault() : undefined}
             onDrop={editing ? (event) => handleDrop(event, region) : undefined}
+            role="group"
           >
             {orderedTextElements(elementsByRegion.get(region) ?? []).map((element) => {
               const selected = editing && selectedElementId === element.id;
@@ -135,7 +199,7 @@ export function ContentSlideView({
                   } ${selected ? styles.selectedElement : ""}`}
                   key={element.id}
                   onClick={editing ? () => onSelectElement?.(element.id) : undefined}
-                  role={editing ? "group" : undefined}
+                  role="group"
                 >
                   {editing ? (
                     <button
@@ -149,6 +213,10 @@ export function ContentSlideView({
                       onFocus={() => onSelectElement?.(element.id)}
                       onKeyDown={(event) => handleMoveKeyDown(event, element)}
                       onMouseDown={() => onSelectElement?.(element.id)}
+                      ref={(handle) => {
+                        if (handle) moveHandleRefs.current.set(element.id, handle);
+                        else moveHandleRefs.current.delete(element.id);
+                      }}
                       type="button"
                     >
                       ⠿
@@ -156,7 +224,7 @@ export function ContentSlideView({
                   ) : null}
                   {editing ? (
                     element.role === "title" ? (
-                      <textarea
+                      <AutosizingTextarea
                         aria-label="Slide title"
                         className={styles.titleInput}
                         lang={element.text.trim() ? "" : "en-CA"}
@@ -168,7 +236,7 @@ export function ContentSlideView({
                         value={element.text}
                       />
                     ) : (
-                      <textarea
+                      <AutosizingTextarea
                         aria-label={label}
                         className={styles.bodyInput}
                         lang={element.text.trim() ? "" : "en-CA"}

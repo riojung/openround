@@ -3,24 +3,23 @@
   flex-direction: column;
   gap: 14px;
   width: 100%;
+  min-width: 0;
   min-height: min(540px, calc(100vh - 250px));
   padding: 12px;
-  overflow: hidden;
   color: var(--ui-text-strong, #102a43);
   background: linear-gradient(130deg, #f8fbff, #fff);
 }
 
 .regions {
   display: grid;
-  flex: 1;
+  flex: 1 0 auto;
   grid-template-areas:
     "top_left top_center top_right"
     "middle_left middle_center middle_right"
     "bottom_left bottom_center bottom_right";
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-template-rows: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(min-content, auto));
   gap: 10px;
-  min-height: 0;
 }
 
 .region {
@@ -28,7 +27,6 @@
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  min-height: 0;
   border-radius: 8px;
 }
 
@@ -75,6 +73,7 @@
 
 .textElement {
   position: relative;
+  box-sizing: border-box;
   width: 100%;
   min-width: 0;
   border: 1px solid transparent;
@@ -90,6 +89,7 @@
 
 .titleElement > h1,
 .titleInput {
+  box-sizing: border-box;
   width: 100%;
   margin: 0;
   border: 1px solid transparent;
@@ -101,11 +101,13 @@
   font-weight: 900;
   letter-spacing: -0.045em;
   line-height: 1.04;
+  overflow-wrap: anywhere;
   background: transparent;
 }
 
 .bodyElement > p,
 .bodyInput {
+  box-sizing: border-box;
   width: 100%;
   margin: 0;
   border: 1px solid transparent;
@@ -124,7 +126,7 @@
 .bodyInput {
   outline: none;
   resize: none;
-  overflow: hidden;
+  overflow-y: auto;
   white-space: pre-wrap;
 }
 
@@ -200,6 +202,18 @@
   background: transparent;
 }
 
+.variant_live.layout_section {
+  background: linear-gradient(135deg, #142b82, #5027b4 60%, #0078c9);
+}
+
+.variant_live.layout_quote {
+  background: #f5f3ff;
+}
+
+.variant_live.layout_callout {
+  background: #fffaeb;
+}
+
 .variant_preview {
   min-height: min(540px, calc(100vh - 280px));
   padding: clamp(20px, 5vw, 56px);
@@ -207,7 +221,6 @@
 }
 
 .variant_editor {
-  min-height: 100%;
   padding: 0;
   background: transparent;
 }

@@ -102,10 +102,10 @@ per month, Hosted Pro allows 100, and a community operator controls provider acc
 
 ### Arrange text on a Presentation slide
 
-Content slides keep one title and support up to eight text boxes. Select a title or text box on the
-canvas to edit it, or use **Content** in the inspector. Choose **Add text box** to add another text
-element. Drag its handle to one of the nine snap regions, use the arrow keys while the handle is
-focused, or select **Position on slide** in the **Layout** inspector. Text boxes in the same region
+Content slides support up to eight text elements: one title and seven text boxes. Select a title
+or text box on the canvas to edit it, or use **Content** in the inspector. Choose **Add text box** to
+add another text element. Drag its handle to one of the nine snap regions, use the arrow keys while
+the handle is focused, or select **Position on slide** in the **Layout** inspector. Text boxes in the same region
 stack in reading order; use **Move up** and **Move down** to change that order. The title stays on
 the slide, while other text boxes can be removed.
 
