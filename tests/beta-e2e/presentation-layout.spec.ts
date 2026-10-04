@@ -142,15 +142,23 @@ test("authors can edit, save, publish, and deliver the same slide arrangement", 
   await actions.getByRole("button", { name: "Delete text box", exact: true }).click();
   await expect(canvas.getByLabel("Text box 3", { exact: true })).toHaveCount(0);
 
-  await canvas
-    .getByRole("button", { name: "Move Slide title. Use arrow keys to change position." })
-    .focus();
+  const titleHandle = canvas.getByRole("button", {
+    name: "Move Slide title. Use arrow keys to change position.",
+  });
+  await titleHandle.focus();
   await page.keyboard.press("ArrowDown");
   await expect(canvas.getByRole("group", { name: "Slide title, Bottom center" })).toBeVisible();
+  await expect(titleHandle).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(canvas.getByRole("group", { name: "Slide title, Bottom right" })).toBeVisible();
+  await expect(titleHandle).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(canvas.getByRole("group", { name: "Slide title, Bottom center" })).toBeVisible();
+  await expect(titleHandle).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(canvas.getByRole("group", { name: "Slide title, Bottom center" })).toBeVisible();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
-  await expect(canvas.getByRole("group", { name: "Slide title, Center" })).toBeVisible();
+  await expect(canvas.getByRole("group", { name: "Slide title, Bottom right" })).toBeVisible();
   await page.getByRole("button", { name: "Redo", exact: true }).click();
   await expect(canvas.getByRole("group", { name: "Slide title, Bottom center" })).toBeVisible();
   await expect(page.getByText("Saved", { exact: true })).toBeVisible();

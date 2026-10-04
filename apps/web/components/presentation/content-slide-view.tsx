@@ -136,11 +136,22 @@ export function ContentSlideView({
   onMoveElement,
 }: ContentSlideViewProps) {
   const editing = variant === "editor";
+  const pendingMoveFocusId = useRef<string | null>(null);
+  const moveHandleRefs = useRef(new Map<string, HTMLButtonElement>());
   const elementsByRegion = new Map<ContentSlideRegion, ContentSlideTextElement[]>();
   for (const region of contentSlideRegions) elementsByRegion.set(region, []);
   for (const element of block.textElements) {
     elementsByRegion.get(element.region)?.push(element);
   }
+
+  useLayoutEffect(() => {
+    const pendingId = pendingMoveFocusId.current;
+    if (!pendingId) return;
+    pendingMoveFocusId.current = null;
+    const handle = moveHandleRefs.current.get(pendingId);
+    if (!handle) return;
+    handle.focus({ preventScroll: true });
+  }, [block.textElements]);
 
   function handleDrop(event: DragEvent<HTMLDivElement>, region: ContentSlideRegion) {
     event.preventDefault();
@@ -153,9 +164,10 @@ export function ContentSlideView({
     element: ContentSlideTextElement,
   ) {
     if (!event.key.startsWith("Arrow")) return;
+    event.preventDefault();
     const region = adjacentRegion(element.region, event.key);
     if (!region) return;
-    event.preventDefault();
+    if (onMoveElement) pendingMoveFocusId.current = element.id;
     onMoveElement?.(element.id, region);
   }
 
@@ -201,6 +213,10 @@ export function ContentSlideView({
                       onFocus={() => onSelectElement?.(element.id)}
                       onKeyDown={(event) => handleMoveKeyDown(event, element)}
                       onMouseDown={() => onSelectElement?.(element.id)}
+                      ref={(handle) => {
+                        if (handle) moveHandleRefs.current.set(element.id, handle);
+                        else moveHandleRefs.current.delete(element.id);
+                      }}
                       type="button"
                     >
                       ⠿
