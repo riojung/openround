@@ -96,14 +96,18 @@ function distanceBetweenRegions(left: number, right: number) {
 /** Region shortcuts use regional slots even when metadata matches a wide starter layout. */
 export function regionContentSlideFrames(
   elements: readonly ContentSlideTextElement[],
+  hasMedia = false,
 ): Record<string, ContentSlideFrame> {
+  const blocked = new Set(hasMedia ? [8] : []);
   const groups = regions.map((region) =>
     elements
       .filter((element) => element.region === region)
       .sort((left, right) => left.order - right.order),
   );
   const occupied = new Set(
-    groups.flatMap((group, regionIndex) => (group.length ? [regionIndex] : [])),
+    groups.flatMap((group, regionIndex) =>
+      group.length && !blocked.has(regionIndex) ? [regionIndex] : [],
+    ),
   );
   const entries: Array<[string, ContentSlideFrame]> = [];
 
@@ -111,11 +115,11 @@ export function regionContentSlideFrames(
     for (let offset = 0; offset < group.length; offset += 5) {
       const chunk = group.slice(offset, offset + 5);
       const targetRegion =
-        offset === 0
+        offset === 0 && !blocked.has(sourceRegion)
           ? sourceRegion
           : regions
               .map((_, index) => index)
-              .filter((index) => !occupied.has(index))
+              .filter((index) => !occupied.has(index) && !blocked.has(index))
               .sort(
                 (left, right) =>
                   distanceBetweenRegions(sourceRegion, left) -
@@ -123,13 +127,14 @@ export function regionContentSlideFrames(
               )[0]!;
       occupied.add(targetRegion);
       const height = 30 / chunk.length;
+      const x = ((targetRegion % 3) * 100) / 3 + 2;
       for (const [position, element] of chunk.entries()) {
         entries.push([
           element.id,
           {
-            x: ((targetRegion % 3) * 100) / 3 + 2,
+            x,
             y: (Math.floor(targetRegion / 3) * 100) / 3 + 2 + position * height,
-            width: 28,
+            width: hasMedia && targetRegion === 7 ? Math.min(28, 56 - x) : 28,
             height,
           },
         ]);
@@ -151,12 +156,7 @@ export function starterContentSlideFrames(
     elements.filter((element) => element.role === "title").length === 1 &&
     elements.every((element) => element.region === defaults[element.role]);
   if (!standard) {
-    const frames = regionContentSlideFrames(elements);
-    return hasMedia
-      ? Object.fromEntries(
-          Object.entries(frames).map(([id, frame]) => [id, fitContentSlideFrameAroundMedia(frame)]),
-        )
-      : frames;
+    return regionContentSlideFrames(elements, hasMedia);
   }
   if (elements.length <= 2) {
     return Object.fromEntries(
@@ -197,12 +197,15 @@ export function resolveContentSlideFrames(
 ): Record<string, ContentSlideFrame> {
   const hasMedia = Boolean(block.hasMedia || block.mediaId);
   const fallback = block.textElements.some((element) => element.frame)
-    ? regionContentSlideFrames(block.textElements)
+    ? regionContentSlideFrames(block.textElements, hasMedia)
     : starterContentSlideFrames(block.layout, block.textElements, hasMedia);
   return Object.fromEntries(
     block.textElements.map((element) => {
       const frame = { ...(element.frame ?? fallback[element.id]!) };
-      return [element.id, hasMedia ? fitContentSlideFrameAroundMedia(frame) : frame];
+      return [
+        element.id,
+        hasMedia && element.frame ? fitContentSlideFrameAroundMedia(frame) : frame,
+      ];
     }),
   );
 }

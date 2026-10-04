@@ -209,6 +209,32 @@ for (const suffix of ["", " @mobile"]) {
       expect(await renderedArrangement(previewSlide)).toEqual(arrangement);
       await page.getByRole("button", { name: "Close preview", exact: true }).click();
     }
+    await canvas
+      .getByLabel("Selected block actions")
+      .getByRole("button", { name: "Add text box", exact: true })
+      .click();
+    await canvas.getByLabel("Text box 2", { exact: true }).fill("Audience takeaway.");
+    await page.getByRole("tab", { name: "Layout", exact: true }).click();
+    for (const label of ["Text box 1", "Text box 2"]) {
+      await page.getByRole("combobox", { name: "Selected text element" }).selectOption({ label });
+      await page.getByRole("combobox", { name: "Position on slide" }).selectOption("bottom_right");
+    }
+    await expectImageClear(slide);
+    const stack = await Promise.all(
+      ["Text box 1", "Text box 2"].map((label) =>
+        canvas.getByLabel(label, { exact: true }).evaluate((input) => {
+          const bounds = input.closest("[data-frame]")!.getBoundingClientRect();
+          return { x: bounds.x, y: bounds.y, bottom: bounds.bottom };
+        }),
+      ),
+    );
+    expect(stack[0]!.bottom).toBeLessThanOrEqual(stack[1]!.y + 1);
+    expect(stack[0]!.x).toBeCloseTo(stack[1]!.x, 1);
+    await canvas
+      .getByLabel("Selected block actions")
+      .getByRole("button", { name: "Delete text box", exact: true })
+      .click();
+    await page.getByRole("tab", { name: "Layout", exact: true }).click();
     await page
       .getByRole("combobox", { name: "Selected text element" })
       .selectOption({ label: "Text box 1" });

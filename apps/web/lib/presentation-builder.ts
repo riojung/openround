@@ -317,7 +317,7 @@ export function moveContentTextElement(
     ),
   );
   // Region shortcuts arrange that group in bounded, evenly stacked slots.
-  const regionFrames = regionContentSlideFrames(elements);
+  const regionFrames = regionContentSlideFrames(elements, Boolean(block.mediaId));
   return {
     ...block,
     textElements: elements.map((element) => ({

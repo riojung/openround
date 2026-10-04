@@ -127,6 +127,8 @@ Attached images keep their preset placement. The guides mark a reserved **Image 
 an image reflows starter text and adjusts custom text boxes that intersect that area. Moving or
 resizing text keeps it clear of the image. Removing an image restores starter text space while
 preserving customized arrangements.
+Region shortcuts use neighboring slots when the image occupies the requested region, keeping
+multiple text boxes stacked in order.
 
 Bounded positioning, resizing, and layout guides are in scope. Rotation, shapes, detailed font
 styling, and a full freeform design canvas remain deferred.

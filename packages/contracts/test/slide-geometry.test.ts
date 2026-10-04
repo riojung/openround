@@ -239,6 +239,135 @@ describe("slide geometry", () => {
     expect(input).toEqual(before);
   });
 
+  it.each(["bottom_right", "bottom_center"] as const)(
+    "keeps two through eight %s text elements stacked clear of media",
+    (region) => {
+      for (let count = 2; count <= 8; count += 1) {
+        const input: ContentSlideTextElement[] = Array.from({ length: count }, (_, order) => ({
+          id: `element-${order}`,
+          role: order === 0 ? "title" : "body",
+          text: `${order}`,
+          region,
+          order,
+        }));
+        const before = structuredClone(input);
+        const frames = regionContentSlideFrames(input, true);
+        expect(Object.keys(frames).sort()).toEqual(input.map((element) => element.id).sort());
+        expect(regionContentSlideFrames(input.toReversed(), true)).toEqual(frames);
+        for (const [index, element] of input.entries()) {
+          const frame = frames[element.id]!;
+          expect(ContentSlideFrameSchema.safeParse(frame).success).toBe(true);
+          expect(overlaps(frame, contentSlideMediaFrame)).toBe(false);
+          expect(regionForContentSlideFrame(frame)).toBe(
+            region === "bottom_right"
+              ? index < 5
+                ? "middle_right"
+                : "bottom_center"
+              : index < 5
+                ? "bottom_center"
+                : "middle_center",
+          );
+          if (regionForContentSlideFrame(frame) === "bottom_center") {
+            expect(frame.x + frame.width).toBe(56);
+          }
+          for (const other of input.slice(index + 1)) {
+            expect(overlaps(frame, frames[other.id]!)).toBe(false);
+          }
+        }
+        for (const layout of [
+          "title",
+          "title_body",
+          "quote",
+          "section",
+          "callout",
+          "media",
+        ] as const) {
+          expect(starterContentSlideFrames(layout, input, true)).toEqual(frames);
+          expect(
+            resolveContentSlideFrames({ layout, textElements: input, mediaId: "attached-image" }),
+          ).toEqual(frames);
+        }
+        expect(input).toEqual(before);
+      }
+    },
+  );
+
+  it("relocates blocked media-region chunks past occupied neighboring regions", () => {
+    const occupiedRegions: ContentSlideRegion[] = [
+      "top_right",
+      "middle_center",
+      "middle_right",
+      "bottom_left",
+      "bottom_center",
+    ];
+    const input: ContentSlideTextElement[] = [
+      ...occupiedRegions.map((region, index) => ({
+        id: `occupied-${index}`,
+        role: "body" as const,
+        text: `${index}`,
+        region,
+        order: 0,
+      })),
+      ...Array.from({ length: 3 }, (_, order) => ({
+        id: `relocated-${order}`,
+        role: "body" as const,
+        text: `${order}`,
+        region: "bottom_right" as const,
+        order,
+      })),
+    ];
+    const frames = regionContentSlideFrames(input, true);
+    for (const [index, region] of occupiedRegions.entries()) {
+      expect(regionForContentSlideFrame(frames[`occupied-${index}`]!)).toBe(region);
+    }
+    for (let order = 0; order < 3; order += 1) {
+      expect(frames[`relocated-${order}`]).toEqual({
+        x: 100 / 3 + 2,
+        y: 2 + order * 10,
+        width: 28,
+        height: 10,
+      });
+    }
+    const rectangles = Object.values(frames);
+    for (const [index, frame] of rectangles.entries()) {
+      expect(ContentSlideFrameSchema.safeParse(frame).success).toBe(true);
+      expect(overlaps(frame, contentSlideMediaFrame)).toBe(false);
+      for (const other of rectangles.slice(index + 1)) expect(overlaps(frame, other)).toBe(false);
+    }
+  });
+
+  it("keeps media-aware regional sibling stacks when another element has an explicit frame", () => {
+    const input: ContentSlideTextElement[] = [
+      {
+        id: "explicit",
+        role: "title",
+        text: "Explicit title",
+        region: "top_left",
+        order: 0,
+        frame: { x: 2, y: 2, width: 28, height: 15 },
+      },
+      ...Array.from({ length: 2 }, (_, order) => ({
+        id: `body-${order}`,
+        role: "body" as const,
+        text: `${order}`,
+        region: "bottom_right" as const,
+        order,
+      })),
+    ];
+    const frames = resolveContentSlideFrames({
+      layout: "title_body",
+      textElements: input,
+      hasMedia: true,
+    });
+    const regional = regionContentSlideFrames(input, true);
+    expect(frames.explicit).toEqual(input[0]!.frame);
+    expect(frames["body-0"]).toEqual(regional["body-0"]);
+    expect(frames["body-1"]).toEqual(regional["body-1"]);
+    expect(overlaps(frames["body-0"]!, frames["body-1"]!)).toBe(false);
+    expect(overlaps(frames["body-0"]!, contentSlideMediaFrame)).toBe(false);
+    expect(overlaps(frames["body-1"]!, contentSlideMediaFrame)).toBe(false);
+  });
+
   it("keeps explicit rectangles intact while unframed siblings retain regional fallback", () => {
     const input = elements("middle_center", "bottom_left");
     const explicit = { x: 72, y: 74, width: 20, height: 18 };

@@ -120,6 +120,27 @@ describe("presentation builder model", () => {
     expect(removed.mediaAlt).toBeNull();
   });
 
+  it("keeps region shortcut groups stacked when the requested region contains an image", () => {
+    const base = addContentTextElement(createContentBlock(), createContentTextElement());
+    const attached = setContentSlideMedia(base, base.id, "Evidence diagram");
+    const first = attached.textElements[1]!;
+    const second = attached.textElements[2]!;
+    const moved = moveContentTextElement(
+      moveContentTextElement(attached, first.id, "bottom_right"),
+      second.id,
+      "bottom_right",
+    );
+    const firstFrame = moved.textElements[1]!.frame!;
+    const secondFrame = moved.textElements[2]!.frame!;
+    expectClearOfImage(firstFrame);
+    expectClearOfImage(secondFrame);
+    expect(firstFrame.y + firstFrame.height).toBeLessThanOrEqual(secondFrame.y);
+    expect(firstFrame.x).toBe(secondFrame.x);
+    expect(reorderContentTextElement(moved, second.id, -1).textElements[1]!.frame).toEqual(
+      secondFrame,
+    );
+  });
+
   it("keeps region shortcuts in their requested cell even when it is a starter's metadata region", () => {
     const original = createContentBlock();
     const bodyId = original.textElements[1]!.id;
