@@ -1,6 +1,14 @@
 "use client";
 
-import type { DragEvent, KeyboardEvent, ReactNode } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  type DragEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+} from "react";
 import type {
   ContentSlideLayout,
   ContentSlideRegion,
@@ -47,6 +55,49 @@ interface ContentSlideViewProps {
   onSelectElement?: (elementId: string) => void;
   onChangeElement?: (elementId: string, text: string) => void;
   onMoveElement?: (elementId: string, region: ContentSlideRegion) => void;
+}
+
+interface AutosizingTextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
+  value: string;
+}
+
+function AutosizingTextarea(props: AutosizingTextareaProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const resize = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const style = window.getComputedStyle(textarea);
+    const borderHeight =
+      (Number.parseFloat(style.borderTopWidth) || 0) +
+      (Number.parseFloat(style.borderBottomWidth) || 0);
+    textarea.style.height = `${textarea.scrollHeight + borderHeight}px`;
+  }, []);
+
+  useLayoutEffect(() => {
+    resize();
+  }, [props.value, resize]);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    let observedWidth = textarea.clientWidth;
+    const resizeWhenWidthChanges = () => {
+      const nextWidth = textarea.clientWidth;
+      if (nextWidth === observedWidth) return;
+      observedWidth = nextWidth;
+      resize();
+    };
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", resize);
+      return () => window.removeEventListener("resize", resize);
+    }
+    const observer = new ResizeObserver(resizeWhenWidthChanges);
+    observer.observe(textarea);
+    return () => observer.disconnect();
+  }, [resize]);
+
+  return <textarea {...props} ref={textareaRef} />;
 }
 
 function orderedTextElements(elements: ContentSlideTextElement[]) {
@@ -123,6 +174,7 @@ export function ContentSlideView({
             key={region}
             onDragOver={editing ? (event) => event.preventDefault() : undefined}
             onDrop={editing ? (event) => handleDrop(event, region) : undefined}
+            role="group"
           >
             {orderedTextElements(elementsByRegion.get(region) ?? []).map((element) => {
               const selected = editing && selectedElementId === element.id;
@@ -135,7 +187,7 @@ export function ContentSlideView({
                   } ${selected ? styles.selectedElement : ""}`}
                   key={element.id}
                   onClick={editing ? () => onSelectElement?.(element.id) : undefined}
-                  role={editing ? "group" : undefined}
+                  role="group"
                 >
                   {editing ? (
                     <button
@@ -156,7 +208,7 @@ export function ContentSlideView({
                   ) : null}
                   {editing ? (
                     element.role === "title" ? (
-                      <textarea
+                      <AutosizingTextarea
                         aria-label="Slide title"
                         className={styles.titleInput}
                         lang={element.text.trim() ? "" : "en-CA"}
@@ -168,7 +220,7 @@ export function ContentSlideView({
                         value={element.text}
                       />
                     ) : (
-                      <textarea
+                      <AutosizingTextarea
                         aria-label={label}
                         className={styles.bodyInput}
                         lang={element.text.trim() ? "" : "en-CA"}

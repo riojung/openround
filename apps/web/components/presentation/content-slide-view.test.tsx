@@ -46,4 +46,19 @@ describe("ContentSlideView", () => {
     expect(editor).toContain("Move Slide title. Use arrow keys to change position.");
     expect(live).not.toContain("Move Slide title.");
   });
+
+  it.each(["editor", "preview", "live"] as const)(
+    "gives every named region and text group a valid group role in %s mode",
+    (variant) => {
+      const markup = renderToStaticMarkup(
+        <ContentSlideView block={slideFixture()} variant={variant} />,
+      );
+      const labelledDivs = markup.match(/<div\b[^>]*aria-label="[^"]*"[^>]*>/g) ?? [];
+
+      expect(labelledDivs).toHaveLength(12);
+      expect(labelledDivs.every((tag) => tag.includes('role="group"'))).toBe(true);
+      expect(markup).toContain('aria-label="Top left region"');
+      expect(markup).toContain('aria-label="Slide title, Bottom left"');
+    },
+  );
 });

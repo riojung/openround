@@ -392,6 +392,7 @@
 .slideCanvas {
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
   justify-content: center;
   padding: clamp(40px, 7vw, 90px);
   overflow: hidden;
@@ -753,7 +754,8 @@
 .previewStage {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  width: min(1200px, 96vw);
+  width: min(1200px, 100%);
+  min-width: 0;
   height: min(820px, 94vh);
   overflow: hidden;
   border-radius: 20px;
@@ -873,6 +875,8 @@
 
 .previewCanvas {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(min-content, 1fr);
   padding: clamp(22px, 4vw, 60px);
   place-items: stretch;
   overflow: auto;
