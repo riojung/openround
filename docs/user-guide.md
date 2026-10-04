@@ -104,17 +104,26 @@ per month, Hosted Pro allows 100, and a community operator controls provider acc
 
 Content slides support up to eight text elements: one title and seven text boxes. Select a title
 or text box on the canvas to edit it, or use **Content** in the inspector. Choose **Add text box** to
-add another text element. Drag its handle to one of the nine snap regions, use the arrow keys while
-the handle is focused, or select **Position on slide** in the **Layout** inspector. Text boxes in the same region
-stack in reading order; use **Move up** and **Move down** to change that order. The title stays on
-the slide, while other text boxes can be removed.
+add another text element. Drag its move handle to position it on the bounded 16:9 canvas. Drag the
+selected element's corner handle to change its width and height. With either handle focused, arrow
+keys move or resize by 1% of the slide; hold Shift for 5%. **Show layout guides** in the **Layout**
+inspector displays a 10% grid, safe margins, and alignment cues. The inspector also provides
+horizontal and vertical position, width, and height as percentages for precise adjustment.
+Adding text to an unchanged starter arrangement creates additional rows or columns. Once placement
+is customized, adding a text box preserves the existing rectangles and looks for an empty area.
+
+**Position on slide** provides nine quick region arrangements, stacking text in that region.
+Use **Move up** and **Move down** to exchange positions and reading order within a region. The title
+stays on the slide, while other text boxes can be removed. Resize a box if a fit warning appears;
+overflowing text remains scrollable in preview and delivery. Narrow screens show complete text in
+a single reading column rather than shrinking it to the desktop rectangles.
 
 The six structured layouts remain useful starting arrangements and visual styles. Applying one
 resets text positions to that layout's defaults, and **Undo** restores the previous arrangement.
 Images stay in their layout-managed position. The canvas, preview, facilitator view, and participant
 view share the same slide arrangement, with narrow screens reading top to bottom and left to right.
-This bounded snap-region tool is in scope; freeform coordinates, resizing, rotation, and shape
-editing remain deferred.
+Bounded positioning, resizing, and layout guides are in scope. Rotation, shapes, detailed font
+styling, and a full freeform design canvas remain deferred.
 
 ### Import, export, folders, and tags
 

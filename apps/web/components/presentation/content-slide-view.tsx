@@ -2,17 +2,24 @@
 
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useRef,
-  type DragEvent,
+  useState,
+  type CSSProperties,
   type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type TextareaHTMLAttributes,
 } from "react";
-import type {
-  ContentSlideLayout,
-  ContentSlideRegion,
-  ContentSlideTextElement,
+import {
+  clampContentSlideFrame,
+  regionForContentSlideFrame,
+  resolveContentSlideFrames,
+  type ContentSlideFrame,
+  type ContentSlideLayout,
+  type ContentSlideRegion,
+  type ContentSlideTextElement,
 } from "@openround/contracts";
 import styles from "./content-slide-view.module.css";
 
@@ -41,6 +48,7 @@ export const contentSlideRegionLabels: Record<ContentSlideRegion, string> = {
 };
 
 type ContentSlideViewBlock = {
+  id?: string;
   layout: ContentSlideLayout;
   textElements: ContentSlideTextElement[];
 };
@@ -52,52 +60,97 @@ interface ContentSlideViewProps {
   selectedElementId?: string | null;
   titlePlaceholder?: string;
   bodyPlaceholder?: string;
+  showGuides?: boolean;
   onSelectElement?: (elementId: string) => void;
   onChangeElement?: (elementId: string, text: string) => void;
   onMoveElement?: (elementId: string, region: ContentSlideRegion) => void;
+  onChangeFrame?: (elementId: string, frame: ContentSlideFrame) => void;
 }
 
 interface AutosizingTextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   value: string;
 }
 
+type GestureKind = "move" | "resize";
+
+interface FrameGesture {
+  elementId: string;
+  kind: GestureKind;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startFrame: ContentSlideFrame;
+  currentFrame: ContentSlideFrame;
+  canvas: DOMRect;
+  handle: HTMLButtonElement;
+}
+
+interface AlignmentGuides {
+  x: number | null;
+  y: number | null;
+}
+
+const gridGuidePath = Array.from({ length: 9 }, (_, index) => (index + 1) * 10)
+  .map((position) => `M ${position} 0 V 100 M 0 ${position} H 100`)
+  .join(" ");
+
 function AutosizingTextarea(props: AutosizingTextareaProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const resize = useCallback(() => {
+  const [overflowsFrame, setOverflowsFrame] = useState(false);
+  const measureOverflow = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
-    textarea.style.height = "auto";
-    const style = window.getComputedStyle(textarea);
-    const borderHeight =
-      (Number.parseFloat(style.borderTopWidth) || 0) +
-      (Number.parseFloat(style.borderBottomWidth) || 0);
-    textarea.style.height = `${textarea.scrollHeight + borderHeight}px`;
+    const isStacked = window.matchMedia
+      ? window.matchMedia("(max-width: 700px)").matches
+      : window.innerWidth <= 700;
+    if (isStacked) {
+      textarea.style.height = "auto";
+      const style = window.getComputedStyle(textarea);
+      const borderHeight =
+        (Number.parseFloat(style.borderTopWidth) || 0) +
+        (Number.parseFloat(style.borderBottomWidth) || 0);
+      textarea.style.height = `${textarea.scrollHeight + borderHeight}px`;
+      setOverflowsFrame(false);
+      return;
+    }
+    textarea.style.height = "";
+    const overflows =
+      textarea.scrollHeight > textarea.clientHeight + 1 ||
+      textarea.scrollWidth > textarea.clientWidth + 1;
+    setOverflowsFrame((current) => (current === overflows ? current : overflows));
   }, []);
 
   useLayoutEffect(() => {
-    resize();
-  }, [props.value, resize]);
+    measureOverflow();
+  }, [props.value, measureOverflow]);
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
-    let observedWidth = textarea.clientWidth;
-    const resizeWhenWidthChanges = () => {
-      const nextWidth = textarea.clientWidth;
-      if (nextWidth === observedWidth) return;
-      observedWidth = nextWidth;
-      resize();
-    };
     if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", resize);
-      return () => window.removeEventListener("resize", resize);
+      window.addEventListener("resize", measureOverflow);
+      return () => window.removeEventListener("resize", measureOverflow);
     }
-    const observer = new ResizeObserver(resizeWhenWidthChanges);
+    const observer = new ResizeObserver(measureOverflow);
     observer.observe(textarea);
     return () => observer.disconnect();
-  }, [resize]);
+  }, [measureOverflow]);
 
-  return <textarea {...props} ref={textareaRef} />;
+  return (
+    <>
+      <textarea {...props} ref={textareaRef} />
+      {overflowsFrame ? (
+        <span
+          className={styles.fitWarning}
+          role="status"
+          aria-label="Text overflows frame"
+          title="Text overflows this frame. Enlarge the text box to show more text."
+        >
+          Text fit
+        </span>
+      ) : null}
+    </>
+  );
 }
 
 function orderedTextElements(elements: ContentSlideTextElement[]) {
@@ -124,6 +177,83 @@ function adjacentRegion(region: ContentSlideRegion, key: string): ContentSlideRe
   return contentSlideRegions[nextRow * 3 + nextColumn] ?? null;
 }
 
+function equalFrames(left: ContentSlideFrame, right: ContentSlideFrame) {
+  return (
+    left.x === right.x &&
+    left.y === right.y &&
+    left.width === right.width &&
+    left.height === right.height
+  );
+}
+
+function elementFrameStyle(frame: ContentSlideFrame): CSSProperties {
+  return {
+    left: `${frame.x}%`,
+    top: `${frame.y}%`,
+    width: `${frame.width}%`,
+    height: `${frame.height}%`,
+  };
+}
+
+function alignMoveFrame(
+  elementId: string,
+  frame: ContentSlideFrame,
+  frames: Record<string, ContentSlideFrame>,
+): { frame: ContentSlideFrame; guides: AlignmentGuides } {
+  const others = Object.entries(frames)
+    .filter(([candidateId]) => candidateId !== elementId)
+    .map(([, candidate]) => candidate);
+  const snapAxis = (start: number, size: number, otherFrames: number[]) => {
+    const landmarks = [start, start + size / 2, start + size];
+    const targets = [10, 50, 90, ...otherFrames];
+    let closest: { delta: number; target: number } | null = null;
+    for (const landmark of landmarks) {
+      for (const target of targets) {
+        const delta = target - landmark;
+        if (Math.abs(delta) > 1.25) continue;
+        if (!closest || Math.abs(delta) < Math.abs(closest.delta)) closest = { delta, target };
+      }
+    }
+    return closest;
+  };
+  const xSnap = snapAxis(
+    frame.x,
+    frame.width,
+    others.flatMap((other) => [other.x, other.x + other.width / 2, other.x + other.width]),
+  );
+  const ySnap = snapAxis(
+    frame.y,
+    frame.height,
+    others.flatMap((other) => [other.y, other.y + other.height / 2, other.y + other.height]),
+  );
+  return {
+    frame: clampContentSlideFrame({
+      ...frame,
+      x: frame.x + (xSnap?.delta ?? 0),
+      y: frame.y + (ySnap?.delta ?? 0),
+    }),
+    guides: { x: xSnap?.target ?? null, y: ySnap?.target ?? null },
+  };
+}
+
+function frameBlockSignature(block: ContentSlideViewBlock) {
+  return `${block.id ?? ""}|${block.layout}|${block.textElements
+    .map((element) => {
+      const frame = element.frame;
+      return [
+        element.id,
+        element.region,
+        element.order,
+        element.text,
+        frame?.x,
+        frame?.y,
+        frame?.width,
+        frame?.height,
+      ].join(":");
+    })
+    .join("|")}`;
+}
+
 export function ContentSlideView({
   block,
   media,
@@ -131,44 +261,268 @@ export function ContentSlideView({
   selectedElementId = null,
   titlePlaceholder = "Give this moment a clear title",
   bodyPlaceholder = "Add the context your audience needs",
+  showGuides: showGuidesProp = true,
   onSelectElement,
   onChangeElement,
   onMoveElement,
+  onChangeFrame,
 }: ContentSlideViewProps) {
   const editing = variant === "editor";
+  const showGuides = editing && showGuidesProp;
   const pendingMoveFocusId = useRef<string | null>(null);
+  const pendingMoveFocusKind = useRef<GestureKind>("move");
   const moveHandleRefs = useRef(new Map<string, HTMLButtonElement>());
+  const resizeHandleRefs = useRef(new Map<string, HTMLButtonElement>());
+  const gestureRef = useRef<FrameGesture | null>(null);
+  const onChangeFrameRef = useRef(onChangeFrame);
+  const regionsRef = useRef<HTMLDivElement>(null);
+  const [transientFrames, setTransientFrames] = useState<Record<string, ContentSlideFrame>>({});
+  const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuides>({ x: null, y: null });
+  const frames = resolveContentSlideFrames(block);
+  const geometrySignature = frameBlockSignature(block);
+  onChangeFrameRef.current = onChangeFrame;
+
   const elementsByRegion = new Map<ContentSlideRegion, ContentSlideTextElement[]>();
   for (const region of contentSlideRegions) elementsByRegion.set(region, []);
   for (const element of block.textElements) {
     elementsByRegion.get(element.region)?.push(element);
   }
 
+  const currentFrame = (elementId: string) =>
+    transientFrames[elementId] ?? frames[elementId] ?? { x: 8, y: 20, width: 84, height: 22 };
+
   useLayoutEffect(() => {
     const pendingId = pendingMoveFocusId.current;
     if (!pendingId) return;
     pendingMoveFocusId.current = null;
-    const handle = moveHandleRefs.current.get(pendingId);
-    if (!handle) return;
-    handle.focus({ preventScroll: true });
+    const kind = pendingMoveFocusKind.current;
+    pendingMoveFocusKind.current = "move";
+    const handle =
+      kind === "resize"
+        ? resizeHandleRefs.current.get(pendingId)
+        : moveHandleRefs.current.get(pendingId);
+    if (handle) handle.focus({ preventScroll: true });
   }, [block.textElements]);
 
-  function handleDrop(event: DragEvent<HTMLDivElement>, region: ContentSlideRegion) {
-    event.preventDefault();
-    const elementId = event.dataTransfer.getData("text/plain");
-    if (elementId) onMoveElement?.(elementId, region);
+  useLayoutEffect(() => {
+    const gesture = gestureRef.current;
+    if (gesture) {
+      gestureRef.current = null;
+      try {
+        if (gesture.handle.hasPointerCapture(gesture.pointerId)) {
+          gesture.handle.releasePointerCapture(gesture.pointerId);
+        }
+      } catch {
+        // The handle may already have been removed by the block update.
+      }
+    }
+    setTransientFrames({});
+    setAlignmentGuides({ x: null, y: null });
+  }, [geometrySignature]);
+
+  useEffect(
+    () => () => {
+      const gesture = gestureRef.current;
+      gestureRef.current = null;
+      if (!gesture) return;
+      try {
+        if (gesture.handle.hasPointerCapture(gesture.pointerId)) {
+          gesture.handle.releasePointerCapture(gesture.pointerId);
+        }
+      } catch {
+        // Unmount can precede pointer-capture cleanup.
+      }
+    },
+    [],
+  );
+
+  function setTransientFrame(elementId: string, frame: ContentSlideFrame) {
+    setTransientFrames((current) => ({ ...current, [elementId]: frame }));
   }
 
-  function handleMoveKeyDown(
+  function clearTransientFrame(elementId: string) {
+    setTransientFrames((current) => {
+      if (!(elementId in current)) return current;
+      const next = { ...current };
+      delete next[elementId];
+      return next;
+    });
+  }
+
+  function updateGestureFrame(event: ReactPointerEvent<HTMLButtonElement>) {
+    const gesture = gestureRef.current;
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    const deltaX = ((event.clientX - gesture.startX) / gesture.canvas.width) * 100;
+    const deltaY = ((event.clientY - gesture.startY) / gesture.canvas.height) * 100;
+    let next: ContentSlideFrame;
+    if (gesture.kind === "move") {
+      next = clampContentSlideFrame({
+        ...gesture.startFrame,
+        x: gesture.startFrame.x + deltaX,
+        y: gesture.startFrame.y + deltaY,
+      });
+      if (showGuides) {
+        const aligned = alignMoveFrame(gesture.elementId, next, { ...frames, ...transientFrames });
+        next = aligned.frame;
+        setAlignmentGuides(aligned.guides);
+      } else {
+        setAlignmentGuides({ x: null, y: null });
+      }
+    } else {
+      next = clampContentSlideFrame({
+        ...gesture.startFrame,
+        width: Math.min(100 - gesture.startFrame.x, gesture.startFrame.width + deltaX),
+        height: Math.min(100 - gesture.startFrame.y, gesture.startFrame.height + deltaY),
+      });
+      setAlignmentGuides({ x: null, y: null });
+    }
+    gesture.currentFrame = next;
+    setTransientFrame(gesture.elementId, next);
+  }
+
+  function finishGesture(event: ReactPointerEvent<HTMLButtonElement>, commit: boolean) {
+    const gesture = gestureRef.current;
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    if (commit) updateGestureFrame(event);
+    const finalFrame = gesture.currentFrame;
+    gestureRef.current = null;
+    clearTransientFrame(gesture.elementId);
+    setAlignmentGuides({ x: null, y: null });
+    try {
+      if (gesture.handle.hasPointerCapture(gesture.pointerId)) {
+        gesture.handle.releasePointerCapture(gesture.pointerId);
+      }
+    } catch {
+      // Browsers can release capture before dispatching pointerup.
+    }
+    if (commit && !equalFrames(gesture.startFrame, finalFrame)) {
+      pendingMoveFocusId.current = gesture.elementId;
+      pendingMoveFocusKind.current = gesture.kind;
+      onChangeFrameRef.current?.(gesture.elementId, finalFrame);
+    }
+  }
+
+  function startGesture(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    element: ContentSlideTextElement,
+    kind: GestureKind,
+  ) {
+    onSelectElement?.(element.id);
+    event.currentTarget.focus({ preventScroll: true });
+    if (!onChangeFrameRef.current || event.button !== 0) return;
+    const isStacked = window.matchMedia
+      ? window.matchMedia("(max-width: 700px)").matches
+      : window.innerWidth <= 700;
+    if (isStacked) return;
+    const canvas = regionsRef.current?.getBoundingClientRect();
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) return;
+    const startFrame = currentFrame(element.id);
+    gestureRef.current = {
+      elementId: element.id,
+      kind,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startFrame,
+      currentFrame: startFrame,
+      canvas,
+      handle: event.currentTarget,
+    };
+    event.preventDefault();
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      gestureRef.current = null;
+    }
+  }
+
+  function cancelGesture(elementId?: string) {
+    const gesture = gestureRef.current;
+    if (!gesture || (elementId && gesture.elementId !== elementId)) return;
+    gestureRef.current = null;
+    clearTransientFrame(gesture.elementId);
+    setAlignmentGuides({ x: null, y: null });
+    try {
+      if (gesture.handle.hasPointerCapture(gesture.pointerId)) {
+        gesture.handle.releasePointerCapture(gesture.pointerId);
+      }
+    } catch {
+      // The pointer may already be cancelled by the browser.
+    }
+  }
+
+  function handleFrameKeyDown(
     event: KeyboardEvent<HTMLButtonElement>,
     element: ContentSlideTextElement,
+    kind: GestureKind,
   ) {
+    if (event.key === "Escape") {
+      if (!gestureRef.current || gestureRef.current.elementId !== element.id) return;
+      event.preventDefault();
+      cancelGesture(element.id);
+      return;
+    }
     if (!event.key.startsWith("Arrow")) return;
     event.preventDefault();
-    const region = adjacentRegion(element.region, event.key);
-    if (!region) return;
-    if (onMoveElement) pendingMoveFocusId.current = element.id;
-    onMoveElement?.(element.id, region);
+    const frame = currentFrame(element.id);
+    let next: ContentSlideFrame;
+    if (onChangeFrame) {
+      if (kind === "move") {
+        const step = event.shiftKey ? 5 : 1;
+        next = clampContentSlideFrame({
+          ...frame,
+          x: frame.x + (event.key === "ArrowRight" ? step : event.key === "ArrowLeft" ? -step : 0),
+          y: frame.y + (event.key === "ArrowDown" ? step : event.key === "ArrowUp" ? -step : 0),
+        });
+      } else {
+        const step = event.shiftKey ? 5 : 1;
+        next = clampContentSlideFrame({
+          ...frame,
+          width: Math.min(
+            100 - frame.x,
+            frame.width +
+              (event.key === "ArrowRight" ? step : event.key === "ArrowLeft" ? -step : 0),
+          ),
+          height: Math.min(
+            100 - frame.y,
+            frame.height + (event.key === "ArrowDown" ? step : event.key === "ArrowUp" ? -step : 0),
+          ),
+        });
+      }
+      if (!equalFrames(frame, next)) {
+        pendingMoveFocusId.current = element.id;
+        pendingMoveFocusKind.current = kind;
+        onChangeFrame(element.id, next);
+      }
+      return;
+    }
+    if (kind === "move" && onMoveElement) {
+      const region = adjacentRegion(element.region, event.key);
+      if (!region) return;
+      pendingMoveFocusId.current = element.id;
+      pendingMoveFocusKind.current = "move";
+      onMoveElement(element.id, region);
+    }
+  }
+
+  const overlapIds = new Set<string>();
+  if (editing) {
+    for (let leftIndex = 0; leftIndex < block.textElements.length; leftIndex += 1) {
+      const left = block.textElements[leftIndex]!;
+      const leftFrame = currentFrame(left.id);
+      for (const right of block.textElements.slice(leftIndex + 1)) {
+        const rightFrame = currentFrame(right.id);
+        if (
+          leftFrame.x < rightFrame.x + rightFrame.width &&
+          leftFrame.x + leftFrame.width > rightFrame.x &&
+          leftFrame.y < rightFrame.y + rightFrame.height &&
+          leftFrame.y + leftFrame.height > rightFrame.y
+        ) {
+          overlapIds.add(left.id);
+          overlapIds.add(right.id);
+        }
+      }
+    }
   }
 
   return (
@@ -177,42 +531,64 @@ export function ContentSlideView({
       data-layout={block.layout}
       lang="en-CA"
     >
-      <div className={styles.regions}>
+      <div className={styles.regions} ref={regionsRef}>
+        {showGuides ? (
+          <div aria-hidden="true" className={styles.guides}>
+            <svg preserveAspectRatio="none" viewBox="0 0 100 100">
+              <path className={styles.gridLines} d={gridGuidePath} />
+              <rect className={styles.safeMargin} height="80" width="80" x="10" y="10" />
+            </svg>
+            {alignmentGuides.x !== null ? (
+              <span
+                className={styles.alignmentGuideVertical}
+                style={{ left: `${alignmentGuides.x}%` }}
+              />
+            ) : null}
+            {alignmentGuides.y !== null ? (
+              <span
+                className={styles.alignmentGuideHorizontal}
+                style={{ top: `${alignmentGuides.y}%` }}
+              />
+            ) : null}
+          </div>
+        ) : null}
         {contentSlideRegions.map((region) => (
           <div
             aria-label={`${contentSlideRegionLabels[region]} region`}
             className={`${styles.region} ${styles[`region_${region}`]}`}
             data-region={region}
             key={region}
-            onDragOver={editing ? (event) => event.preventDefault() : undefined}
-            onDrop={editing ? (event) => handleDrop(event, region) : undefined}
             role="group"
           >
             {orderedTextElements(elementsByRegion.get(region) ?? []).map((element) => {
+              const frame = currentFrame(element.id);
               const selected = editing && selectedElementId === element.id;
               const label = textElementLabel(block, element);
+              const frameRegion = regionForContentSlideFrame(frame);
               return (
                 <div
-                  aria-label={`${label}, ${contentSlideRegionLabels[region]}`}
+                  aria-label={`${label}, ${contentSlideRegionLabels[frameRegion]}`}
                   className={`${styles.textElement} ${
                     element.role === "title" ? styles.titleElement : styles.bodyElement
                   } ${selected ? styles.selectedElement : ""}`}
+                  data-frame={JSON.stringify(frame)}
                   key={element.id}
                   onClick={editing ? () => onSelectElement?.(element.id) : undefined}
                   role="group"
+                  style={elementFrameStyle(frame)}
                 >
                   {editing ? (
                     <button
-                      aria-label={`Move ${label}. Use arrow keys to change position.`}
+                      aria-label={`Move ${label}. Drag to position or use arrow keys to nudge.`}
                       className={styles.moveHandle}
-                      draggable
-                      onDragStart={(event) => {
-                        event.dataTransfer.effectAllowed = "move";
-                        event.dataTransfer.setData("text/plain", element.id);
-                      }}
                       onFocus={() => onSelectElement?.(element.id)}
-                      onKeyDown={(event) => handleMoveKeyDown(event, element)}
+                      onKeyDown={(event) => handleFrameKeyDown(event, element, "move")}
                       onMouseDown={() => onSelectElement?.(element.id)}
+                      onPointerCancel={(event) => finishGesture(event, false)}
+                      onPointerDown={(event) => startGesture(event, element, "move")}
+                      onPointerMove={updateGestureFrame}
+                      onPointerUp={(event) => finishGesture(event, true)}
+                      onLostPointerCapture={() => cancelGesture(element.id)}
                       ref={(handle) => {
                         if (handle) moveHandleRefs.current.set(element.id, handle);
                         else moveHandleRefs.current.delete(element.id);
@@ -232,7 +608,7 @@ export function ContentSlideView({
                         onChange={(event) => onChangeElement?.(element.id, event.target.value)}
                         onFocus={() => onSelectElement?.(element.id)}
                         placeholder={titlePlaceholder}
-                        rows={Math.max(2, Math.min(4, Math.ceil(element.text.length / 10)))}
+                        rows={2}
                         value={element.text}
                       />
                     ) : (
@@ -244,16 +620,47 @@ export function ContentSlideView({
                         onChange={(event) => onChangeElement?.(element.id, event.target.value)}
                         onFocus={() => onSelectElement?.(element.id)}
                         placeholder={bodyPlaceholder}
-                        rows={Math.max(2, Math.min(7, Math.ceil(element.text.length / 16) + 1))}
+                        rows={3}
                         value={element.text}
                       />
                     )
                   ) : element.role === "title" ? (
-                    <h1 lang={element.text ? "" : "en-CA"}>
+                    <h1 lang={element.text ? "" : "en-CA"} tabIndex={0}>
                       {element.text || (variant === "preview" ? "Untitled slide" : "")}
                     </h1>
                   ) : element.text ? (
-                    <p lang="">{element.text}</p>
+                    <p lang="" tabIndex={0}>
+                      {element.text}
+                    </p>
+                  ) : null}
+                  {editing && overlapIds.has(element.id) ? (
+                    <span
+                      className={styles.overlapWarning}
+                      role="status"
+                      aria-label="Frame overlaps another text box"
+                      title="This frame overlaps another text box. Move or resize it to separate the text."
+                    >
+                      Overlap
+                    </span>
+                  ) : null}
+                  {editing && selected && onChangeFrame ? (
+                    <button
+                      aria-label={`Resize ${label}. Use arrow keys to change width and height.`}
+                      className={styles.resizeHandle}
+                      onKeyDown={(event) => handleFrameKeyDown(event, element, "resize")}
+                      onPointerCancel={(event) => finishGesture(event, false)}
+                      onPointerDown={(event) => startGesture(event, element, "resize")}
+                      onPointerMove={updateGestureFrame}
+                      onPointerUp={(event) => finishGesture(event, true)}
+                      onLostPointerCapture={() => cancelGesture(element.id)}
+                      ref={(handle) => {
+                        if (handle) resizeHandleRefs.current.set(element.id, handle);
+                        else resizeHandleRefs.current.delete(element.id);
+                      }}
+                      type="button"
+                    >
+                      <span aria-hidden="true" />
+                    </button>
                   ) : null}
                 </div>
               );

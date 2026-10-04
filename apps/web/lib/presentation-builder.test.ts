@@ -16,8 +16,13 @@ import {
   removeContentTextElement,
   reorderContentTextElement,
   removePresentationBlock,
+  setContentTextElementFrame,
 } from "./presentation-builder";
-import type { PresentationDraft } from "@openround/contracts";
+import {
+  resolveContentSlideFrames,
+  regionForContentSlideFrame,
+  type PresentationDraft,
+} from "@openround/contracts";
 
 function draft(): PresentationDraft {
   const content = createContentBlock();
@@ -43,6 +48,85 @@ function draft(): PresentationDraft {
 }
 
 describe("presentation builder model", () => {
+  it("keeps region shortcuts in their requested cell even when it is a starter's metadata region", () => {
+    const original = createContentBlock();
+    const bodyId = original.textElements[1]!.id;
+    const moved = moveContentTextElement(original, bodyId, "top_center");
+    const returned = moveContentTextElement(moved, bodyId, "middle_center");
+    expect(regionForContentSlideFrame(returned.textElements[1]!.frame!)).toBe("middle_center");
+    const title = moveContentTextElement(original, original.textElements[0]!.id, "middle_center");
+    expect(regionForContentSlideFrame(title.textElements[0]!.frame!)).toBe("middle_center");
+  });
+  it("creates wide starter frames and preserves bounded geometry through recovery and duplication", () => {
+    const block = createContentBlock();
+    const title = block.textElements[0]!;
+    expect(title.frame).toEqual({ x: 8, y: 20, width: 84, height: 22 });
+    const changed = setContentTextElementFrame(block, title.id, {
+      x: 95,
+      y: -4,
+      width: 40,
+      height: 18,
+    });
+    expect(changed.textElements[0]!.frame).toEqual({ x: 60, y: 0, width: 40, height: 18 });
+    expect(changed.textElements[0]!.region).toBe("top_right");
+    expect(changed.textElements[1]!.frame).toEqual(block.textElements[1]!.frame);
+    expect(block.textElements[0]!.frame).toEqual(title.frame);
+    expect(setContentTextElementFrame(block, "missing", title.frame!)).toBe(block);
+    const duplicate = duplicatePresentationBlock(changed);
+    expect(duplicate.kind === "content" && duplicate.textElements[0]!.frame).toEqual(
+      changed.textElements[0]!.frame,
+    );
+    expect(normalizePresentationRecoveryDraft({ ...draft(), blocks: [changed] }).blocks[0]).toEqual(
+      changed,
+    );
+    expect(applyContentSlideLayout(changed, "title_body").textElements[0]!.frame).toEqual(
+      title.frame,
+    );
+  });
+
+  it("materializes legacy frames without moving other text and swaps positions when reordering", () => {
+    const legacy = createContentBlock();
+    legacy.textElements = legacy.textElements.map(({ frame, ...element }) => {
+      expect(frame).toBeDefined();
+      return element;
+    });
+    const frames = resolveContentSlideFrames(legacy);
+    const moved = setContentTextElementFrame(legacy, legacy.textElements[0]!.id, {
+      x: 4,
+      y: 4,
+      width: 70,
+      height: 20,
+    });
+    expect(moved.textElements[1]!.frame).toEqual(frames[legacy.textElements[1]!.id]);
+    const stacked = moveContentTextElement(
+      addContentTextElement(legacy, createContentTextElement()),
+      legacy.textElements[0]!.id,
+      "top_left",
+    );
+    const extra = stacked.textElements[2]!;
+    const together = moveContentTextElement(stacked, extra.id, "top_left");
+    const first = together.textElements[0]!;
+    const second = together.textElements[2]!;
+    const reordered = reorderContentTextElement(together, second.id, -1);
+    expect(reordered.textElements[0]!.frame).toEqual(second.frame);
+    expect(reordered.textElements[2]!.frame).toEqual(first.frame);
+  });
+
+  it("packs added starter text into wide rows and preserves a customized arrangement", () => {
+    const original = createContentBlock();
+    const added = addContentTextElement(original, createContentTextElement());
+    expect(added.textElements[2]!.frame!.width).toBe(84);
+    expect(added.textElements[2]!.frame!.y).toBeGreaterThan(added.textElements[1]!.frame!.y);
+    const customized = setContentTextElementFrame(original, original.textElements[0]!.id, {
+      x: 4,
+      y: 8,
+      width: 72,
+      height: 20,
+    });
+    const withExtra = addContentTextElement(customized, createContentTextElement());
+    expect(withExtra.textElements.slice(0, 2)).toEqual(customized.textElements);
+  });
+
   it("upcasts cached v1 slide content before it can be restored", () => {
     const slide = createContentBlock("quote");
     const legacy = {

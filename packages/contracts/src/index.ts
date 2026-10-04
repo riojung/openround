@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+export {
+  clampContentSlideFrame,
+  regionContentSlideFrames,
+  regionForContentSlideFrame,
+  resolveContentSlideFrames,
+  starterContentSlideFrames,
+} from "./slide-geometry";
+
 function isHttpOrHttpsUrl(value: string) {
   try {
     return ["http:", "https:"].includes(new URL(value).protocol);
@@ -2943,12 +2951,38 @@ export const ContentSlideRegionSchema = z.enum([
 ]);
 export type ContentSlideRegion = z.infer<typeof ContentSlideRegionSchema>;
 
+export const ContentSlideFrameSchema = z
+  .object({
+    x: z.number().finite().min(0).max(100),
+    y: z.number().finite().min(0).max(100),
+    width: z.number().finite().min(12).max(100),
+    height: z.number().finite().min(6).max(100),
+  })
+  .superRefine((frame, context) => {
+    if (frame.x + frame.width > 100) {
+      context.addIssue({
+        code: "custom",
+        path: ["width"],
+        message: "Text elements must fit within the slide width",
+      });
+    }
+    if (frame.y + frame.height > 100) {
+      context.addIssue({
+        code: "custom",
+        path: ["height"],
+        message: "Text elements must fit within the slide height",
+      });
+    }
+  });
+export type ContentSlideFrame = z.infer<typeof ContentSlideFrameSchema>;
+
 const ContentSlideTitleElementSchema = z.object({
   id: z.string().trim().min(1).max(200),
   role: z.literal("title"),
   text: z.string().trim().max(160),
   region: ContentSlideRegionSchema,
   order: z.number().int().min(0).max(7),
+  frame: ContentSlideFrameSchema.optional(),
 });
 
 const ContentSlideBodyElementSchema = z.object({
@@ -2957,6 +2991,7 @@ const ContentSlideBodyElementSchema = z.object({
   text: z.string().trim().max(4_000),
   region: ContentSlideRegionSchema,
   order: z.number().int().min(0).max(7),
+  frame: ContentSlideFrameSchema.optional(),
 });
 
 export const ContentSlideTextElementSchema = z.discriminatedUnion("role", [

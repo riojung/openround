@@ -6,14 +6,27 @@ import { ContentSlideView } from "./content-slide-view";
 function slideFixture() {
   const block = createContentBlock();
   block.textElements = [
-    { ...block.textElements[0]!, text: "Audience takeaway", region: "bottom_left", order: 0 },
-    { ...block.textElements[1]!, text: "Start with the evidence", region: "top_right", order: 0 },
+    {
+      ...block.textElements[0]!,
+      text: "Audience takeaway",
+      region: "bottom_left",
+      order: 0,
+      frame: { x: 2, y: 70, width: 28, height: 20 },
+    },
+    {
+      ...block.textElements[1]!,
+      text: "Start with the evidence",
+      region: "top_right",
+      order: 0,
+      frame: { x: 68, y: 5, width: 28, height: 20 },
+    },
     {
       id: "second-body",
       role: "body",
       text: "Then explain the decision",
       region: "middle_left",
       order: 0,
+      frame: { x: 2, y: 40, width: 28, height: 20 },
     },
   ];
   return block;
@@ -43,7 +56,7 @@ describe("ContentSlideView", () => {
     );
     const live = renderToStaticMarkup(<ContentSlideView block={slideFixture()} variant="live" />);
 
-    expect(editor).toContain("Move Slide title. Use arrow keys to change position.");
+    expect(editor).toContain("Move Slide title. Drag to position or use arrow keys to nudge.");
     expect(live).not.toContain("Move Slide title.");
   });
 
@@ -61,4 +74,48 @@ describe("ContentSlideView", () => {
       expect(markup).toContain('aria-label="Slide title, Bottom left"');
     },
   );
+
+  it("uses the same resolved percentage frames in editor, preview, and live output", () => {
+    const block = slideFixture();
+    const arrangements = (["editor", "preview", "live"] as const).map((variant) => {
+      const markup = renderToStaticMarkup(<ContentSlideView block={block} variant={variant} />);
+      return markup.match(/data-frame="[^"]*"/g);
+    });
+
+    expect(arrangements[0]).toEqual(arrangements[1]);
+    expect(arrangements[1]).toEqual(arrangements[2]);
+    expect(arrangements[0]).toContain(
+      'data-frame="{&quot;x&quot;:2,&quot;y&quot;:70,&quot;width&quot;:28,&quot;height&quot;:20}"',
+    );
+  });
+
+  it("shows the editor grid by default and supports hiding it", () => {
+    const block = slideFixture();
+    const editor = renderToStaticMarkup(<ContentSlideView block={block} variant="editor" />);
+    const hiddenEditor = renderToStaticMarkup(
+      <ContentSlideView block={block} showGuides={false} variant="editor" />,
+    );
+    const preview = renderToStaticMarkup(<ContentSlideView block={block} variant="preview" />);
+
+    expect(editor).toContain('aria-hidden="true"');
+    expect(editor).toContain('viewBox="0 0 100 100"');
+    expect(hiddenEditor).not.toContain('viewBox="0 0 100 100"');
+    expect(preview).not.toContain('viewBox="0 0 100 100"');
+  });
+
+  it("exposes a keyboard-operable resize handle for the selected editor element", () => {
+    const block = slideFixture();
+    const markup = renderToStaticMarkup(
+      <ContentSlideView
+        block={block}
+        onChangeFrame={() => {}}
+        selectedElementId={block.textElements[0]!.id}
+        variant="editor"
+      />,
+    );
+
+    expect(markup).toContain(
+      'aria-label="Resize Slide title. Use arrow keys to change width and height."',
+    );
+  });
 });

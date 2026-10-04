@@ -1,0 +1,217 @@
+import { describe, expect, it } from "vitest";
+import {
+  ContentSlideFrameSchema,
+  clampContentSlideFrame,
+  regionContentSlideFrames,
+  regionForContentSlideFrame,
+  resolveContentSlideFrames,
+  starterContentSlideFrames,
+  type ContentSlideFrame,
+  type ContentSlideLayout,
+  type ContentSlideRegion,
+  type ContentSlideTextElement,
+} from "../src/index.js";
+
+function elements(
+  titleRegion: ContentSlideRegion = "middle_center",
+  bodyRegion: ContentSlideRegion = "middle_center",
+): ContentSlideTextElement[] {
+  return [
+    { id: "title", role: "title", text: "Title", region: titleRegion, order: 0 },
+    {
+      id: "body",
+      role: "body",
+      text: "Body",
+      region: bodyRegion,
+      order: titleRegion === bodyRegion ? 1 : 0,
+    },
+  ];
+}
+
+function overlaps(left: ContentSlideFrame, right: ContentSlideFrame) {
+  return (
+    left.x < right.x + right.width &&
+    left.x + left.width > right.x &&
+    left.y < right.y + right.height &&
+    left.y + left.height > right.y
+  );
+}
+
+describe("slide geometry", () => {
+  it.each([
+    ["title", "middle_center", "bottom_center"],
+    ["title_body", "middle_center", "middle_center"],
+    ["quote", "middle_center", "bottom_center"],
+    ["section", "middle_center", "bottom_center"],
+    ["callout", "top_center", "middle_center"],
+    ["media", "top_center", "middle_center"],
+  ] as const)("uses wide starter frames for the %s layout", (layout, titleRegion, bodyRegion) => {
+    const frames = starterContentSlideFrames(layout, elements(titleRegion, bodyRegion));
+    expect(frames.title).toEqual({ x: 8, y: 20, width: 84, height: 22 });
+    expect(frames.body).toEqual({ x: 8, y: 48, width: 84, height: layout === "media" ? 22 : 40 });
+    expect(overlaps(frames.title!, frames.body!)).toBe(false);
+  });
+
+  it("preserves customized regions and their reading order without changing the input", () => {
+    const ordered = elements("top_left", "top_left");
+    const input = ordered.toReversed();
+    const before = structuredClone(input);
+    const frames = resolveContentSlideFrames({ layout: "title_body", textElements: input });
+    expect(frames.title).toEqual({ x: 2, y: 2, width: 28, height: 15 });
+    expect(frames.body).toEqual({ x: 2, y: 17, width: 28, height: 15 });
+    expect(input).toEqual(before);
+    expect(overlaps(frames.title!, frames.body!)).toBe(false);
+  });
+
+  it("places center-region shortcuts in the center instead of restoring wide layout defaults", () => {
+    const input = elements();
+    const before = structuredClone(input);
+    const frames = regionContentSlideFrames(input);
+    expect(frames.title?.width).toBe(28);
+    expect(frames.body?.width).toBe(28);
+    expect(regionForContentSlideFrame(frames.title!)).toBe("middle_center");
+    expect(regionForContentSlideFrame(frames.body!)).toBe("middle_center");
+    expect(overlaps(frames.title!, frames.body!)).toBe(false);
+    expect(input).toEqual(before);
+  });
+
+  it("keeps explicit rectangles intact while unframed siblings retain regional fallback", () => {
+    const input = elements("middle_center", "bottom_left");
+    const explicit = { x: 72, y: 74, width: 20, height: 18 };
+    input[0]!.frame = explicit;
+    const frames = resolveContentSlideFrames({ layout: "title_body", textElements: input });
+    expect(frames.title).toEqual(explicit);
+    expect(frames.title).not.toBe(explicit);
+    expect(frames.body?.width).toBe(28);
+    expect(regionForContentSlideFrame(frames.body!)).toBe("bottom_left");
+  });
+
+  it("overflows dense legacy regions into adjacent unoccupied cells without overlap", () => {
+    const input: ContentSlideTextElement[] = Array.from({ length: 8 }, (_, order) => ({
+      id: `element-${order}`,
+      role: order === 0 ? "title" : "body",
+      text: `${order}`,
+      region: "top_right",
+      order,
+    }));
+    const before = structuredClone(input);
+    const frames = resolveContentSlideFrames({ layout: "title_body", textElements: input });
+    expect(Object.keys(frames)).toHaveLength(8);
+    for (const [index, element] of input.entries()) {
+      const frame = frames[element.id]!;
+      expect(ContentSlideFrameSchema.safeParse(frame).success).toBe(true);
+      expect(regionForContentSlideFrame(frame)).toBe(index < 5 ? "top_right" : "top_center");
+      for (const other of input.slice(index + 1)) {
+        expect(overlaps(frame, frames[other.id]!)).toBe(false);
+      }
+    }
+    expect(resolveContentSlideFrames({ layout: "title_body", textElements: input })).toEqual(
+      frames,
+    );
+    expect(input).toEqual(before);
+  });
+
+  it("reserves other occupied regions before assigning overflow", () => {
+    const input: ContentSlideTextElement[] = Array.from({ length: 8 }, (_, order) => ({
+      id: `element-${order}`,
+      role: order === 0 ? "title" : "body",
+      text: `${order}`,
+      region: order === 6 ? "top_center" : order === 7 ? "middle_left" : "middle_center",
+      order: order < 6 ? order : 0,
+    }));
+    const frames = resolveContentSlideFrames({ layout: "callout", textElements: input });
+    expect(regionForContentSlideFrame(frames["element-5"]!)).toBe("middle_right");
+    expect(regionForContentSlideFrame(frames["element-6"]!)).toBe("top_center");
+    expect(regionForContentSlideFrame(frames["element-7"]!)).toBe("middle_left");
+  });
+
+  it("clamps unsafe values and canvas edges while preserving valid sizes", () => {
+    expect(clampContentSlideFrame({ x: 200, y: -10, width: 25, height: 10 })).toEqual({
+      x: 75,
+      y: 0,
+      width: 25,
+      height: 10,
+    });
+    const safe = clampContentSlideFrame({
+      x: Number.NaN,
+      y: Number.POSITIVE_INFINITY,
+      width: Number.NEGATIVE_INFINITY,
+      height: 200,
+    });
+    expect(safe).toEqual({ x: 0, y: 0, width: 12, height: 100 });
+    expect(ContentSlideFrameSchema.safeParse(safe).success).toBe(true);
+    const valid = { x: 8, y: 20, width: 84, height: 22 };
+    expect(clampContentSlideFrame(valid)).toEqual(valid);
+    expect(valid).toEqual({ x: 8, y: 20, width: 84, height: 22 });
+  });
+
+  it.each([
+    ["top_left", 0, 0],
+    ["top_center", 40, 0],
+    ["top_right", 80, 0],
+    ["middle_left", 0, 40],
+    ["middle_center", 40, 40],
+    ["middle_right", 80, 40],
+    ["bottom_left", 0, 80],
+    ["bottom_center", 40, 80],
+    ["bottom_right", 80, 80],
+  ] as const)("classifies %s by rectangle center", (region, x, y) => {
+    expect(regionForContentSlideFrame({ x, y, width: 12, height: 6 })).toBe(region);
+  });
+
+  it("supports title-only starters and gives three default text boxes the full slide width", () => {
+    const title = elements()[0]!;
+    expect(starterContentSlideFrames("title", [title]).title).toEqual({
+      x: 8,
+      y: 20,
+      width: 84,
+      height: 22,
+    });
+    const input = [...elements(), { ...elements()[1]!, id: "extra", order: 2 }];
+    const frames = starterContentSlideFrames("title_body" satisfies ContentSlideLayout, input);
+    expect(Object.values(frames).every((frame) => frame.width === 84)).toBe(true);
+    expect(frames.title).toEqual({ x: 8, y: 12, width: 84, height: 22 });
+    expect(frames.body).toEqual({ x: 8, y: 42, width: 84, height: 23 });
+    expect(frames.extra).toEqual({ x: 8, y: 67, width: 84, height: 23 });
+    expect(resolveContentSlideFrames({ layout: "title_body", textElements: input })).toEqual(
+      frames,
+    );
+  });
+
+  it.each([
+    ["title", "middle_center", "bottom_center"],
+    ["title_body", "middle_center", "middle_center"],
+    ["quote", "middle_center", "bottom_center"],
+    ["section", "middle_center", "bottom_center"],
+    ["callout", "top_center", "middle_center"],
+    ["media", "top_center", "middle_center"],
+  ] as const)(
+    "fits two through seven default bodies in the %s layout",
+    (layout, titleRegion, bodyRegion) => {
+      for (let bodyCount = 2; bodyCount <= 7; bodyCount += 1) {
+        const base = elements(titleRegion, bodyRegion);
+        const input = [
+          base[0]!,
+          ...Array.from({ length: bodyCount }, (_, index) => ({
+            ...base[1]!,
+            id: `body-${index}`,
+            order: index + (titleRegion === bodyRegion ? 1 : 0),
+          })),
+        ];
+        const before = structuredClone(input);
+        const frames = Object.values(starterContentSlideFrames(layout, input));
+        expect(frames).toHaveLength(bodyCount + 1);
+        for (const [index, frame] of frames.entries()) {
+          expect(ContentSlideFrameSchema.safeParse(frame).success).toBe(true);
+          for (const other of frames.slice(index + 1)) {
+            expect(overlaps(frame, other)).toBe(false);
+          }
+        }
+        if (layout === "media") {
+          expect(frames.slice(1).every((frame) => frame.y + frame.height <= 64)).toBe(true);
+        }
+        expect(input).toEqual(before);
+      }
+    },
+  );
+});
