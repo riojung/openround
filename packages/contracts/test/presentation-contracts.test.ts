@@ -2,8 +2,11 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   ContentSlideDraftSchema,
+  ContentSlideFrameSchema,
   PresentationContentSchema,
+  PresentationDraftMutationSchema,
   PresentationDraftSchema,
+  migratePresentationV1,
   type ContentSlideDraft,
 } from "../src/index";
 
@@ -62,6 +65,79 @@ function contentBlock(title = "", body = ""): ContentSlideDraft {
 }
 
 describe("presentation contracts", () => {
+  it("retains optional bounded text frames in draft mutations and published content", () => {
+    const slide = contentBlock("Positioned title", "Positioned body");
+    slide.textElements[0]!.frame = { x: 8, y: 20, width: 84, height: 22 };
+    slide.textElements[1]!.frame = { x: 8, y: 48, width: 84, height: 40 };
+    const mutation = PresentationDraftMutationSchema.parse({
+      schemaVersion: 2,
+      mutationId: randomUUID(),
+      expectedRevision: 0,
+      draft: {
+        title: "Bounded geometry",
+        schemaVersion: 2,
+        blocks: [slide, questionBlock()],
+      },
+    });
+    const content = PresentationContentSchema.parse(mutation.draft);
+    const publishedSlide = content.blocks[0];
+    expect(publishedSlide?.kind).toBe("content");
+    if (publishedSlide?.kind !== "content") throw new Error("Expected the content slide");
+    expect(publishedSlide.textElements).toEqual(slide.textElements);
+    expect(ContentSlideFrameSchema.parse({ x: 88, y: 94, width: 12, height: 6 })).toEqual({
+      x: 88,
+      y: 94,
+      width: 12,
+      height: 6,
+    });
+  });
+
+  it.each([
+    { x: -1, y: 0, width: 12, height: 6 },
+    { x: 0, y: -1, width: 12, height: 6 },
+    { x: 0, y: 0, width: 11, height: 6 },
+    { x: 0, y: 0, width: 12, height: 5 },
+    { x: 89, y: 0, width: 12, height: 6 },
+    { x: 0, y: 95, width: 12, height: 6 },
+    { x: 0, y: 0, width: 101, height: 6 },
+    { x: 0, y: 0, width: 12, height: 101 },
+    { x: Number.NaN, y: 0, width: 12, height: 6 },
+    { x: 0, y: Number.POSITIVE_INFINITY, width: 12, height: 6 },
+    { x: 0, y: 0, width: Number.POSITIVE_INFINITY, height: 6 },
+    { x: 0, y: 0, width: 12, height: Number.NEGATIVE_INFINITY },
+  ])("rejects unbounded text frame %j", (frame) => {
+    const slide = contentBlock("Bounded title", "");
+    slide.textElements[0]!.frame = frame;
+    expect(ContentSlideDraftSchema.safeParse(slide).success).toBe(false);
+  });
+
+  it("keeps legacy slides valid without frames and preserves frames during migration", () => {
+    const legacySlide = {
+      id: randomUUID(),
+      kind: "content",
+      layout: "quote",
+      title: "Recovered title",
+      body: "Recovered body",
+      mediaId: null,
+      mediaAlt: null,
+      speakerNotes: "Recovered note",
+    };
+    const migrated = PresentationDraftSchema.parse(
+      migratePresentationV1({
+        title: "Recovered presentation",
+        schemaVersion: 1,
+        blocks: [legacySlide],
+      }),
+    );
+    const migratedSlide = migrated.blocks[0];
+    if (migratedSlide?.kind !== "content") throw new Error("Expected the recovered slide");
+    expect(migratedSlide.textElements.every((element) => element.frame === undefined)).toBe(true);
+    const frame = { x: 8, y: 20, width: 84, height: 22 };
+    migratedSlide.textElements[0]!.frame = frame;
+    const retained = PresentationDraftSchema.parse(migratePresentationV1(migrated));
+    expect(retained).toEqual(migrated);
+  });
+
   it("bounds text elements and requires unique IDs and positions", () => {
     const block = contentBlock("Title", "Body");
     const duplicateId = structuredClone(block);

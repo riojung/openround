@@ -12,13 +12,16 @@ import {
   type MouseEvent,
   type SetStateAction,
 } from "react";
-import type {
-  ContentSlideLayout,
-  ContentSlideRegion,
-  PresentationBlockDraft,
-  PresentationDraft,
-  QuestionDraft,
-  QuestionType,
+import {
+  resolveContentSlideFrames,
+  regionForContentSlideFrame,
+  type ContentSlideFrame,
+  type ContentSlideLayout,
+  type ContentSlideRegion,
+  type PresentationBlockDraft,
+  type PresentationDraft,
+  type QuestionDraft,
+  type QuestionType,
 } from "@openround/contracts";
 import { ApiClientError, apiFetch, humanError } from "../../lib/api";
 import {
@@ -43,6 +46,8 @@ import {
   presentationReadiness,
   removeContentTextElement,
   reorderContentTextElement,
+  setContentTextElementFrame,
+  setContentSlideMedia,
   removePresentationBlock,
   updateContentTextElement,
 } from "../../lib/presentation-builder";
@@ -284,6 +289,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
   const [draft, setDraft] = useState<PresentationDraft | null>(null);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [selectedTextElementId, setSelectedTextElementId] = useState<string | null>(null);
+  const [showLayoutGuides, setShowLayoutGuides] = useState(true);
   const [mapOpen, setMapOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("build");
@@ -318,6 +324,10 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
   const selectedTextElement =
     selectedBlock?.kind === "content"
       ? (selectedBlock.textElements.find((element) => element.id === selectedTextElementId) ?? null)
+      : null;
+  const selectedTextFrame =
+    selectedBlock?.kind === "content" && selectedTextElement
+      ? resolveContentSlideFrames(selectedBlock)[selectedTextElement.id]
       : null;
   const selectedMediaId =
     selectedBlock?.kind === "content"
@@ -669,6 +679,15 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
     setSelectedTextElementId(elementId);
   }
 
+  function changeTextFrame(elementId: string, frame: ContentSlideFrame, historyField?: string) {
+    updateSelected(
+      (block) =>
+        block.kind === "content" ? setContentTextElementFrame(block, elementId, frame) : block,
+      historyField,
+    );
+    setSelectedTextElementId(elementId);
+  }
+
   function deleteSelectedTextBox() {
     if (selectedBlock?.kind !== "content" || !selectedTextElement) return;
     if (selectedTextElement.role === "title") return;
@@ -834,7 +853,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
       commit((current) =>
         updateBlock(current, blockId, (block) =>
           block.kind === "content"
-            ? { ...block, mediaId: ticket.mediaId, mediaAlt: altText }
+            ? setContentSlideMedia(block, ticket.mediaId, altText)
             : {
                 ...block,
                 question: { ...block.question, mediaId: ticket.mediaId, mediaAlt: altText },
@@ -853,7 +872,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
     if (!selectedBlock) return;
     updateSelected((block) =>
       block.kind === "content"
-        ? { ...block, mediaId: null, mediaAlt: null }
+        ? setContentSlideMedia(block, null, null)
         : { ...block, question: { ...block.question, mediaId: null, mediaAlt: null } },
     );
     setMediaPreviewUrl("");
@@ -1315,11 +1334,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
               </div>
             </section>
           ) : selectedBlock.kind === "content" ? (
-            <section
-              className={`${styles.slideCanvas} ${styles[`canvas_${selectedBlock.layout}`]}`}
-              lang="en-CA"
-            >
-              <span className={styles.canvasEyebrow}>{selectedBlock.layout.replace("_", " ")}</span>
+            <section className={styles.slideCanvas} lang="en-CA">
               <ContentSlideView
                 block={selectedBlock}
                 bodyPlaceholder={
@@ -1336,9 +1351,11 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                   ) : undefined
                 }
                 onChangeElement={changeTextElement}
+                onChangeFrame={changeTextFrame}
                 onMoveElement={moveTextElement}
                 onSelectElement={setSelectedTextElementId}
                 selectedElementId={selectedTextElementId}
+                showGuides={showLayoutGuides}
                 variant="editor"
               />
             </section>
@@ -1663,7 +1680,11 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                               event.target.value as ContentSlideRegion,
                             )
                           }
-                          value={selectedTextElement.region}
+                          value={
+                            selectedTextFrame
+                              ? regionForContentSlideFrame(selectedTextFrame)
+                              : selectedTextElement.region
+                          }
                         >
                           {Object.entries(contentSlideRegionLabels).map(([region, label]) => (
                             <option key={region} value={region}>
@@ -1673,6 +1694,50 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                         </select>
                       </label>
                     ) : null}
+                    {selectedTextElement && selectedTextFrame ? (
+                      <div className={styles.geometryFields}>
+                        {(
+                          [
+                            ["x", "Horizontal position", 0, 100 - selectedTextFrame.width],
+                            ["y", "Vertical position", 0, 100 - selectedTextFrame.height],
+                            ["width", "Text box width", 12, 100 - selectedTextFrame.x],
+                            ["height", "Text box height", 6, 100 - selectedTextFrame.y],
+                          ] as const
+                        ).map(([field, label, min, max]) => (
+                          <label className={styles.field} key={field}>
+                            <span lang="en-CA">{label} (%)</span>
+                            <input
+                              lang="en-CA"
+                              type="number"
+                              min={min}
+                              max={Math.ceil(max * 100) / 100}
+                              step={0.01}
+                              value={Math.round(selectedTextFrame[field] * 100) / 100}
+                              onChange={(event) => {
+                                const value = event.target.valueAsNumber;
+                                if (!Number.isFinite(value)) return;
+                                changeTextFrame(
+                                  selectedTextElement.id,
+                                  {
+                                    ...selectedTextFrame,
+                                    [field]: Math.max(min, Math.min(max, value)),
+                                  },
+                                  `frame:${selectedTextElement.id}:${field}`,
+                                );
+                              }}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
+                    <label className={styles.guidesToggle}>
+                      <input
+                        type="checkbox"
+                        checked={showLayoutGuides}
+                        onChange={(event) => setShowLayoutGuides(event.target.checked)}
+                      />
+                      <span lang="en-CA">Show layout guides</span>
+                    </label>
                     <div className={styles.positionActions}>
                       <button
                         disabled={!selectedTextElement}
@@ -1704,8 +1769,13 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                       </button>
                     </div>
                     <p className={styles.helpText} lang="en-CA">
-                      Layouts set a starting arrangement. Move text by dragging its handle or choose
-                      a position here. Text stacks within each region and reflows on small screens.
+                      Drag the move handle to position text and the corner handle to resize it.
+                      Arrow keys adjust by 1%; hold Shift for 5%. Guides mark the grid and safe
+                      margins. Region shortcuts arrange text in stacked slots. Narrow screens show
+                      the full text in reading order. Applying a starter layout resets placement.
+                      {selectedBlock.mediaId
+                        ? " Text stays clear of the reserved image area when moved or resized."
+                        : ""}
                     </p>
                   </>
                 ) : inspectorTab === "media" ? (
@@ -1743,7 +1813,9 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
                     <p className={styles.helpText} lang="en-CA">
                       {mediaUploadsEnabled
                         ? "JPEG, PNG, or WebP up to 10 MB. Uploads are quarantined and scanned."
-                        : "Uploads are unavailable until malware scanning is configured."}
+                        : "Uploads are unavailable until malware scanning is configured."}{" "}
+                      Attaching an image reserves space and adjusts text boxes that intersect its
+                      area.
                     </p>
                     {mediaState !== "idle" ? (
                       <p className={styles.helpText} lang="en-CA" role="status">

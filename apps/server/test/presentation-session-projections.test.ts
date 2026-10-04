@@ -23,7 +23,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it("keeps snap-region text in the same role-safe live content block", () => {
+it("keeps text geometry in the same role-safe live content block", () => {
   const content = PresentationContentSchema.parse({
     title: "Slide layout",
     description: "",
@@ -40,6 +40,7 @@ it("keeps snap-region text in the same role-safe live content block", () => {
             text: "Audience takeaway",
             region: "top_right",
             order: 0,
+            frame: { x: 60, y: 10, width: 32, height: 20 },
           },
           {
             id: "body-element",
@@ -47,6 +48,7 @@ it("keeps snap-region text in the same role-safe live content block", () => {
             text: "Review the evidence.",
             region: "bottom_left",
             order: 0,
+            frame: { x: 8, y: 70, width: 40, height: 22 },
           },
         ],
         mediaId: null,
@@ -84,8 +86,20 @@ it("keeps snap-region text in the same role-safe live content block", () => {
   expect(projected).toMatchObject({
     kind: "content",
     textElements: [
-      { id: "title-element", role: "title", region: "top_right", order: 0 },
-      { id: "body-element", role: "body", region: "bottom_left", order: 0 },
+      {
+        id: "title-element",
+        role: "title",
+        region: "top_right",
+        order: 0,
+        frame: { x: 60, y: 10, width: 32, height: 20 },
+      },
+      {
+        id: "body-element",
+        role: "body",
+        region: "bottom_left",
+        order: 0,
+        frame: { x: 8, y: 70, width: 40, height: 22 },
+      },
     ],
   });
   expect(JSON.stringify(projected)).not.toContain("Facilitator-only cue");

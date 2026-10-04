@@ -29,7 +29,10 @@ async function renderedArrangement(slide: Locator) {
     regions.flatMap((region) =>
       Array.from(region.children).map((element) => ({
         region: region.getAttribute("data-region"),
-        text: element.querySelector("textarea")?.value ?? element.textContent?.trim(),
+        text:
+          element.querySelector("textarea")?.value ??
+          element.querySelector("h1, p")?.textContent?.trim(),
+        frame: element.getAttribute("data-frame"),
       })),
     ),
   );
@@ -65,9 +68,7 @@ async function expectReadableSlide(slide: Locator, narrow = false) {
     return {
       elements,
       withinViewport: bounds.x >= 0 && bounds.right <= window.innerWidth + 1,
-      columns: getComputedStyle(article.querySelector("[data-region]")!.parentElement!)
-        .gridTemplateColumns.trim()
-        .split(/\s+/).length,
+      aspectRatio: bounds.width / bounds.height,
     };
   });
   expect(geometry.elements.length).toBeGreaterThan(1);
@@ -87,7 +88,7 @@ async function expectReadableSlide(slide: Locator, narrow = false) {
       expect(element.y).toBeGreaterThanOrEqual(geometry.elements[index - 1]!.bottom - 1);
     }
   }
-  expect(geometry.columns).toBe(narrow ? 1 : 3);
+  if (!narrow) expect(geometry.aspectRatio).toBeCloseTo(16 / 9, 1);
   if (narrow) expect(geometry.withinViewport).toBe(true);
 }
 
@@ -97,12 +98,191 @@ async function expectAccessibleSlide(page: Page) {
   ).toEqual([]);
 }
 
+for (const suffix of ["", " @mobile"]) {
+  test(`images stay clear of text in every starter layout and after text positioning${suffix}`, async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    // Open the full inspector/preview controls before verifying the narrow layout below.
+    if (suffix) await page.setViewportSize({ width: 1280, height: 720 });
+    await signIn(page);
+    const presentationId = await createPresentation(page);
+    const initial = await page.request.get(`${apiUrl}/v1/presentations/${presentationId}`);
+    expect(initial.ok()).toBeTruthy();
+    let record = (await initial.json()).presentation;
+    const mediaId = randomUUID();
+    const imageUrl = new URL("/layout-fixture.svg", page.url()).href;
+    const uploadUrl = new URL("/layout-fixture-upload", page.url()).href;
+    // Exercise the real upload/editor flow with deterministic storage/scanner responses.
+    // The beta browser server intentionally has no external object store or malware scanner.
+    await page.route(`${apiUrl}/v1/features`, async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({ response, json: { ...(await response.json()), mediaUploads: true } });
+    });
+    await page.route(`${apiUrl}/v1/presentations/${presentationId}`, (route) =>
+      route.fulfill({ json: { presentation: record } }),
+    );
+    await page.route(`${apiUrl}/v1/presentations/${presentationId}/draft`, async (route) => {
+      const { draft } = route.request().postDataJSON();
+      record = { ...record, draft, draftRevision: record.draftRevision + 1 };
+      await route.fulfill({ json: { presentation: record } });
+    });
+    await page.route(`${apiUrl}/v1/media`, (route) =>
+      route.fulfill({ json: { mediaId, uploadUrl } }),
+    );
+    await page.route(uploadUrl, (route) => route.fulfill({ status: 204 }));
+    await page.route(`${apiUrl}/v1/media/${mediaId}/complete`, (route) =>
+      route.fulfill({
+        json: { media: { id: mediaId, scanStatus: "clean" }, downloadUrl: imageUrl },
+      }),
+    );
+    await page.route(`${apiUrl}/v1/media/${mediaId}`, (route) =>
+      route.fulfill({ json: { downloadUrl: imageUrl } }),
+    );
+    await page.route(imageUrl, (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><rect width="400" height="200" fill="#087f8c"/><circle cx="200" cy="100" r="60" fill="#fff"/></svg>',
+      }),
+    );
+    await page.goto(`/presentation/${presentationId}`);
+    const canvas = page.locator("#presentation-canvas");
+    const slide = canvas.locator("article[data-layout]");
+    await canvas.getByLabel("Slide title", { exact: true }).fill("Evidence diagram");
+    await canvas
+      .getByLabel("Text box 1", { exact: true })
+      .fill(
+        "Review the evidence, identify the main signal, and explain how it informs the next decision.",
+      );
+    await page.getByRole("tab", { name: "Media", exact: true }).click();
+    await page.getByLabel("Image alternative text", { exact: true }).fill("Evidence diagram");
+    await page.getByLabel("Instructional image", { exact: true }).setInputFiles({
+      name: "evidence.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    });
+    await expect(slide.getByRole("img", { name: "Evidence diagram" })).toBeVisible();
+
+    async function expectImageClear(target: Locator) {
+      await expect(target.getByRole("img", { name: "Evidence diagram" })).toBeVisible();
+      const clear = await target.evaluate((article) => {
+        const img = article.querySelector("img")!;
+        const image = img.parentElement!.getBoundingClientRect();
+        const actualImage = img.getBoundingClientRect();
+        const bounds = article.getBoundingClientRect();
+        const contained =
+          actualImage.x >= image.x - 1 &&
+          actualImage.right <= image.right + 1 &&
+          actualImage.y >= image.y - 1 &&
+          actualImage.bottom <= image.bottom + 1 &&
+          actualImage.bottom <= bounds.bottom + 1;
+        return (
+          contained &&
+          Array.from(article.querySelectorAll("[data-region] > div")).every((element) => {
+            const text = element.getBoundingClientRect();
+            return (
+              text.right <= image.left + 1 ||
+              text.left >= image.right - 1 ||
+              text.bottom <= image.top + 1 ||
+              text.top >= image.bottom - 1
+            );
+          })
+        );
+      });
+      expect(clear, "text rectangles stay clear of the reserved image area").toBe(true);
+    }
+
+    await expectImageClear(slide);
+    await page.getByRole("tab", { name: "Layout", exact: true }).click();
+    for (const layout of ["title", "title_body", "media", "quote", "section", "callout"]) {
+      await page.getByRole("combobox", { name: "Structured layout" }).selectOption(layout);
+      await expectImageClear(slide);
+      await expect(slide.getByText("Image area", { exact: true })).toBeVisible();
+      const arrangement = await renderedArrangement(slide);
+      await page.getByRole("button", { name: "Preview", exact: true }).click();
+      const preview = page.getByRole("dialog", { name: "Presentation preview" });
+      const previewSlide = preview.locator("article[data-layout]");
+      await expectImageClear(previewSlide);
+      expect(await renderedArrangement(previewSlide)).toEqual(arrangement);
+      await page.getByRole("button", { name: "Close preview", exact: true }).click();
+    }
+    await canvas
+      .getByLabel("Selected block actions")
+      .getByRole("button", { name: "Add text box", exact: true })
+      .click();
+    await canvas.getByLabel("Text box 2", { exact: true }).fill("Audience takeaway.");
+    await page.getByRole("tab", { name: "Layout", exact: true }).click();
+    for (const label of ["Text box 1", "Text box 2"]) {
+      await page.getByRole("combobox", { name: "Selected text element" }).selectOption({ label });
+      await page.getByRole("combobox", { name: "Position on slide" }).selectOption("bottom_right");
+    }
+    await expectImageClear(slide);
+    const stack = await Promise.all(
+      ["Text box 1", "Text box 2"].map((label) =>
+        canvas.getByLabel(label, { exact: true }).evaluate((input) => {
+          const bounds = input.closest("[data-frame]")!.getBoundingClientRect();
+          return { x: bounds.x, y: bounds.y, bottom: bounds.bottom };
+        }),
+      ),
+    );
+    expect(stack[0]!.bottom).toBeLessThanOrEqual(stack[1]!.y + 1);
+    expect(stack[0]!.x).toBeCloseTo(stack[1]!.x, 1);
+    await canvas
+      .getByLabel("Selected block actions")
+      .getByRole("button", { name: "Delete text box", exact: true })
+      .click();
+    await page.getByRole("tab", { name: "Layout", exact: true }).click();
+    await page
+      .getByRole("combobox", { name: "Selected text element" })
+      .selectOption({ label: "Text box 1" });
+    await page.getByRole("combobox", { name: "Position on slide" }).selectOption("bottom_right");
+    await expectImageClear(slide);
+    const height = page.getByLabel("Text box height (%)", { exact: true });
+    await height.fill("100");
+    await expectImageClear(slide);
+    const resize = canvas.getByRole("button", { name: /Resize Text box 1/ });
+    await resize.focus();
+    await page.keyboard.press("Shift+ArrowDown");
+    await expectImageClear(slide);
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await expectImageClear(slide);
+    await page.getByRole("button", { name: "Redo", exact: true }).click();
+    await expectImageClear(slide);
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+    await page.reload();
+    await expectImageClear(slide);
+
+    // Removing a newly attached image restores the wide starter; Undo restores both together.
+    await page.getByRole("tab", { name: "Layout", exact: true }).click();
+    await page.getByRole("combobox", { name: "Structured layout" }).selectOption("title_body");
+    await page.getByRole("tab", { name: "Media", exact: true }).click();
+    await page.getByRole("button", { name: "Remove image", exact: true }).click();
+    await expect(slide.getByRole("img")).toHaveCount(0);
+    expect(
+      (await renderedArrangement(slide)).find((element) => element.text?.startsWith("Review"))
+        ?.frame,
+    ).toBe(JSON.stringify({ x: 8, y: 48, width: 84, height: 40 }));
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await expectImageClear(slide);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Hide inspector" }).click();
+    await page.getByRole("button", { name: "Collapse map" }).click();
+    await expectImageClear(slide);
+    await expectReadableSlide(slide, true);
+  });
+}
+
 test("authors can edit, save, publish, and deliver the same slide arrangement", async ({
   page,
   browser,
 }) => {
+  test.setTimeout(120_000);
   await signIn(page);
   const presentationId = await createPresentation(page);
+  await page.evaluate(() => localStorage.setItem("openround:color-mode", "dark"));
   await page.goto(`/presentation/${presentationId}`);
 
   const canvas = page.locator("#presentation-canvas");
@@ -110,6 +290,12 @@ test("authors can edit, save, publish, and deliver the same slide arrangement", 
   await expect(title).toBeVisible();
   await title.fill("Training and recovery");
   await canvas.getByLabel("Text box 1", { exact: true }).fill("Review the evidence together.");
+  await expectAccessibleSlide(page);
+  await page.getByRole("tab", { name: "Layout", exact: true }).click();
+  for (const layout of ["title", "media", "quote", "section", "callout", "title_body"]) {
+    await page.getByRole("combobox", { name: "Structured layout" }).selectOption(layout);
+    await expectAccessibleSlide(page);
+  }
   await canvas
     .getByLabel("Selected block actions")
     .getByRole("button", { name: "Add text box", exact: true })
@@ -142,27 +328,118 @@ test("authors can edit, save, publish, and deliver the same slide arrangement", 
   await actions.getByRole("button", { name: "Delete text box", exact: true }).click();
   await expect(canvas.getByLabel("Text box 3", { exact: true })).toHaveCount(0);
 
-  const titleHandle = canvas.getByRole("button", {
-    name: "Move Slide title. Use arrow keys to change position.",
-  });
+  const titleHandle = canvas.getByRole("button", { name: /Move Slide title/ });
+  await page.getByRole("tab", { name: "Layout", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "Selected text element" })
+    .selectOption({ label: "Slide title" });
+  await page.getByRole("combobox", { name: "Position on slide" }).selectOption("middle_center");
+  const xField = page.getByLabel("Horizontal position (%)", { exact: true });
+  const yField = page.getByLabel("Vertical position (%)", { exact: true });
+  const widthField = page.getByLabel("Text box width (%)", { exact: true });
+  const heightField = page.getByLabel("Text box height (%)", { exact: true });
+  for (const field of [xField, yField, widthField, heightField]) {
+    expect(await field.evaluate((input) => (input as HTMLInputElement).validity.valid)).toBe(true);
+  }
+  const beforeX = Number(await xField.inputValue());
   await titleHandle.focus();
-  await page.keyboard.press("ArrowDown");
-  await expect(canvas.getByRole("group", { name: "Slide title, Bottom center" })).toBeVisible();
-  await expect(titleHandle).toBeFocused();
   await page.keyboard.press("ArrowRight");
-  await expect(canvas.getByRole("group", { name: "Slide title, Bottom right" })).toBeVisible();
+  await expect(xField).toHaveValue(String(beforeX + 1));
   await expect(titleHandle).toBeFocused();
-  await page.keyboard.press("ArrowLeft");
-  await expect(canvas.getByRole("group", { name: "Slide title, Bottom center" })).toBeVisible();
-  await expect(titleHandle).toBeFocused();
-  await page.keyboard.press("ArrowDown");
-  await expect(canvas.getByRole("group", { name: "Slide title, Bottom center" })).toBeVisible();
+  await page.keyboard.press("Shift+ArrowRight");
+  await expect(xField).toHaveValue(String(beforeX + 6));
   await page.getByRole("button", { name: "Undo", exact: true }).click();
-  await expect(canvas.getByRole("group", { name: "Slide title, Bottom right" })).toBeVisible();
+  await expect(xField).toHaveValue(String(beforeX + 1));
   await page.getByRole("button", { name: "Redo", exact: true }).click();
-  await expect(canvas.getByRole("group", { name: "Slide title, Bottom center" })).toBeVisible();
+  await expect(xField).toHaveValue(String(beforeX + 6));
+
+  // Pointer gestures commit one edit and Escape cancels transient placement.
+  const moveBounds = (await titleHandle.boundingBox())!;
+  await page.mouse.move(moveBounds.x + 10, moveBounds.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(moveBounds.x + 65, moveBounds.y + 35, { steps: 5 });
+  await page.mouse.up();
+  expect(Number(await xField.inputValue())).toBeGreaterThan(beforeX + 6);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(xField).toHaveValue(String(beforeX + 6));
+  const cancelBounds = (await titleHandle.boundingBox())!;
+  await page.mouse.move(cancelBounds.x + 10, cancelBounds.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(cancelBounds.x + 40, cancelBounds.y + 30);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect(xField).toHaveValue(String(beforeX + 6));
+
+  const resizeHandle = canvas.getByRole("button", { name: /Resize Slide title/ });
+  const beforeWidth = Number(await widthField.inputValue());
+  await resizeHandle.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(widthField).toHaveValue(String(beforeWidth + 1));
+  await expect(resizeHandle).toBeFocused();
+  const resizeBounds = (await resizeHandle.boundingBox())!;
+  await page.mouse.move(resizeBounds.x + 5, resizeBounds.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(resizeBounds.x + 35, resizeBounds.y + 20, { steps: 5 });
+  await page.mouse.up();
+  expect(Number(await widthField.inputValue())).toBeGreaterThan(beforeWidth + 1);
+  await widthField.fill("999");
+  expect(await widthField.evaluate((input) => (input as HTMLInputElement).validity.valid)).toBe(
+    true,
+  );
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByLabel("Show layout guides")).toBeChecked();
+  await page.getByLabel("Show layout guides").uncheck();
+  await page.getByLabel("Show layout guides").check();
+
+  async function setFrame(label: string, frame: [number, number, number, number]) {
+    await page.getByRole("combobox", { name: "Selected text element" }).selectOption({ label });
+    // Shrink first, then place and grow, so every intermediate edit stays within bounds.
+    await widthField.fill("12");
+    await heightField.fill("6");
+    await xField.fill(String(frame[0]));
+    await yField.fill(String(frame[1]));
+    await widthField.fill(String(frame[2]));
+    await heightField.fill(String(frame[3]));
+  }
+  await setFrame("Slide title", [8, 10, 84, 24]);
+  await setFrame("Text box 1", [8, 44, 40, 32]);
+  await setFrame("Text box 2", [52, 44, 40, 32]);
+  await xField.fill("999");
+  await expect(xField).toHaveValue("60");
+  await yField.fill("999");
+  await expect(yField).toHaveValue("68");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(yField).toHaveValue("44");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(xField).toHaveValue("52");
+  await page
+    .getByRole("combobox", { name: "Selected text element" })
+    .selectOption({ label: "Slide title" });
+  await heightField.fill("6");
+  await expect(canvas.getByRole("status", { name: "Text overflows frame" })).toBeVisible();
+  await page.getByRole("button", { name: "Preview", exact: true }).click();
+  const overflowHeading = page
+    .getByRole("dialog", { name: "Presentation preview" })
+    .getByRole("heading", { name: "Training and recovery" });
+  await expect(overflowHeading).toHaveAttribute("tabindex", "0");
+  expect(
+    await overflowHeading.evaluate((element) => element.scrollHeight > element.clientHeight),
+  ).toBe(true);
+  await overflowHeading.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect
+    .poll(() => overflowHeading.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  await expectAccessibleSlide(page);
+  await page.getByRole("button", { name: "Close preview", exact: true }).click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(heightField).toHaveValue("24");
+  await page
+    .getByRole("combobox", { name: "Selected text element" })
+    .selectOption({ label: "Text box 2" });
   await expect(page.getByText("Saved", { exact: true })).toBeVisible();
   await expectReadableSlide(canvas.locator("[data-layout]"));
+  await page.screenshot({ path: test.info().outputPath("bounded-layout-editor.png") });
 
   const savedResponse = await page.request.get(`${apiUrl}/v1/presentations/${presentationId}`);
   expect(savedResponse.ok()).toBeTruthy();
@@ -173,12 +450,14 @@ test("authors can edit, save, publish, and deliver the same slide arrangement", 
       expect.objectContaining({
         role: "title",
         text: "Training and recovery",
-        region: "bottom_center",
+        region: "top_center",
+        frame: { x: 8, y: 10, width: 84, height: 24 },
       }),
       expect.objectContaining({
         role: "body",
         text: "Set the context before responding.",
-        region: "top_left",
+        region: "middle_right",
+        frame: { x: 52, y: 44, width: 40, height: 32 },
       }),
     ]),
   );
@@ -194,8 +473,8 @@ test("authors can edit, save, publish, and deliver the same slide arrangement", 
     const bodyStyle = getComputedStyle(article.querySelector("p")!);
     return {
       background: getComputedStyle(article).backgroundImage,
-      title: [titleStyle.fontSize, titleStyle.lineHeight, titleStyle.color],
-      body: [bodyStyle.fontSize, bodyStyle.lineHeight, bodyStyle.color],
+      title: [titleStyle.fontWeight, titleStyle.color],
+      body: [bodyStyle.fontWeight, bodyStyle.color],
     };
   });
   await expectReadableSlide(previewSlide);
@@ -260,12 +539,14 @@ test("authors can edit, save, publish, and deliver the same slide arrangement", 
       expect.objectContaining({
         role: "title",
         text: "Training and recovery",
-        region: "bottom_center",
+        region: "top_center",
+        frame: { x: 8, y: 10, width: 84, height: 24 },
       }),
       expect.objectContaining({
         role: "body",
         text: "Set the context before responding.",
-        region: "top_left",
+        region: "middle_right",
+        frame: { x: 52, y: 44, width: 40, height: 32 },
       }),
     ]),
   );
@@ -300,8 +581,8 @@ test("authors can edit, save, publish, and deliver the same slide arrangement", 
           const bodyStyle = getComputedStyle(article.querySelector("p")!);
           return {
             background: getComputedStyle(article).backgroundImage,
-            title: [titleStyle.fontSize, titleStyle.lineHeight, titleStyle.color],
-            body: [bodyStyle.fontSize, bodyStyle.lineHeight, bodyStyle.color],
+            title: [titleStyle.fontWeight, titleStyle.color],
+            body: [bodyStyle.fontWeight, bodyStyle.color],
           };
         }),
       ).toEqual(previewAppearance);
@@ -391,7 +672,9 @@ test("slide regions reflow into one reading column on narrow screens @mobile", a
   const expected = [...textElements.slice(1, 7), textElements[0]!, textElements[7]!].map(
     ({ region, text }) => ({ region, text }),
   );
-  expect(await renderedArrangement(slide)).toEqual(expected);
+  expect((await renderedArrangement(slide)).map(({ region, text }) => ({ region, text }))).toEqual(
+    expected,
+  );
   await expectReadableSlide(slide, true);
   await expectAccessibleSlide(page);
   // Preview is hidden in the compact toolbar; open it at a wider width, then reflow it.
@@ -401,7 +684,9 @@ test("slide regions reflow into one reading column on narrow screens @mobile", a
   const previewSlide = page
     .getByRole("dialog", { name: "Presentation preview" })
     .locator("article[data-layout]");
-  expect(await renderedArrangement(previewSlide)).toEqual(expected);
+  expect(
+    (await renderedArrangement(previewSlide)).map(({ region, text }) => ({ region, text })),
+  ).toEqual(expected);
   await expectReadableSlide(previewSlide, true);
   await expectAccessibleSlide(page);
 });
