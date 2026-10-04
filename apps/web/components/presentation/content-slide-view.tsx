@@ -272,7 +272,7 @@ export function ContentSlideView({
 }: ContentSlideViewProps) {
   const editing = variant === "editor";
   const showGuides = editing && showGuidesProp;
-  const hasMedia = Boolean(media || block.mediaId);
+  const hasMedia = block.mediaId === undefined ? Boolean(media) : Boolean(block.mediaId);
   const pendingMoveFocusId = useRef<string | null>(null);
   const pendingMoveFocusKind = useRef<GestureKind>("move");
   const moveHandleRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -682,7 +682,7 @@ export function ContentSlideView({
           </div>
         ))}
       </div>
-      {media ? (
+      {hasMedia && media ? (
         <div
           className={styles.media}
           data-media-frame={JSON.stringify(contentSlideMediaFrame)}

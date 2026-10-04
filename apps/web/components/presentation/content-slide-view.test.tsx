@@ -32,6 +32,10 @@ function overlapsMedia(frame: ContentSlideFrame) {
   );
 }
 
+function EmptyMedia() {
+  return null;
+}
+
 function slideFixture() {
   const block = createContentBlock();
   block.textElements = [
@@ -203,4 +207,50 @@ describe("ContentSlideView", () => {
       }
     },
   );
+
+  it("treats an explicit null media ID as authoritative when a media component renders null", () => {
+    const block = createContentBlock("title_body");
+    block.mediaId = null;
+    const emptyMedia = <EmptyMedia />;
+
+    for (const variant of ["editor", "preview", "live"] as const) {
+      const withoutMedia = renderToStaticMarkup(
+        <ContentSlideView block={block} variant={variant} />,
+      );
+      const withEmptyMediaNode = renderToStaticMarkup(
+        <ContentSlideView block={block} media={emptyMedia} variant={variant} />,
+      );
+
+      expect(renderedFrames(withEmptyMediaNode)).toEqual(renderedFrames(withoutMedia));
+      expect(withEmptyMediaNode).not.toContain('data-media-bay="true"');
+      expect(withEmptyMediaNode).not.toContain("Image area");
+      expect(withEmptyMediaNode).not.toContain("data-media-frame=");
+    }
+  });
+
+  it("reserves the media bay from media ID before the image component is available", () => {
+    const block = createContentBlock("title_body");
+    block.mediaId = "pending-image";
+    block.textElements = block.textElements.map((element, index) => ({
+      ...element,
+      frame:
+        index === 0
+          ? { x: 62, y: 76, width: 22, height: 12 }
+          : { x: 75, y: 80, width: 20, height: 14 },
+    }));
+
+    const markups = (["editor", "preview", "live"] as const).map((variant) =>
+      renderToStaticMarkup(<ContentSlideView block={block} variant={variant} />),
+    );
+    const frames = markups.map(renderedFrames);
+
+    expect(frames[0]).toEqual(frames[1]);
+    expect(frames[1]).toEqual(frames[2]);
+    expect(frames[0]!.every((frame) => !overlapsMedia(frame))).toBe(true);
+    expect(markups[0]).toContain('data-media-bay="true"');
+    expect(markups[0]).toContain("Image area");
+    expect(markups[0]).not.toContain("data-media-frame=");
+    expect(markups[1]).not.toContain('data-media-bay="true"');
+    expect(markups[2]).not.toContain('data-media-bay="true"');
+  });
 });
