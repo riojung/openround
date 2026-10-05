@@ -12,8 +12,14 @@ async function signIn(page: Page) {
   const policyConsent = page.getByLabel(/I accept the Terms/);
   await policyConsent.click();
   await page.getByRole("button", { name: "Send sign-in link" }).click();
-  await page.getByRole("link", { name: "Continue to dashboard" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  await Promise.all([
+    page.waitForURL(
+      (url) => url.pathname === "/dashboard" && url.searchParams.get("welcome") === "1",
+      { waitUntil: "load" },
+    ),
+    page.getByRole("link", { name: "Continue to dashboard" }).click(),
+  ]);
+  await expect(page.getByRole("heading", { name: "Rounds", exact: true })).toBeVisible();
 }
 
 async function createPresentation(page: Page) {
