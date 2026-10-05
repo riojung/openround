@@ -26,7 +26,7 @@ export function presentationSessionConformanceContent(): PresentationContent {
     title: "Presentation repository conformance",
     description: "Shared memory and PostgreSQL behavior",
     experiencePreset: { id: "focus", version: 1 },
-    schemaVersion: 1,
+    schemaVersion: 2,
     blocks: [
       {
         id: randomUUID(),

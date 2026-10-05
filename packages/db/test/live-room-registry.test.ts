@@ -20,7 +20,7 @@ const presentationContent: PresentationContent = {
   title: "Registry Presentation",
   description: "",
   experiencePreset: { id: "focus", version: 1 },
-  schemaVersion: 1,
+  schemaVersion: 2,
   blocks: [],
 };
 

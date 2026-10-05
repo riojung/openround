@@ -30,7 +30,15 @@ close the staging gate.
 
 ## GitHub environment
 
-Create a protected `single-vm-staging` environment with required reviewers. The workflow derives
+Create a protected `single-vm-staging` environment with at least one required reviewer, enable
+**prevent self-review**, and disable administrator bypass before dispatching either staging
+workflow. Their unprotected preflight
+reads the GitHub environment with an Actions-read token and fails on an absent environment, an
+unprotected environment, or an API error; no signing, secret-consuming, or self-hosted job can run
+after that failure. GitHub may still auto-create an empty environment when it parses a workflow
+reference, so this guard prevents protected-job execution, not environment creation. Recheck the
+environment protection in GitHub settings after any failed dispatch; an auto-created empty
+environment is not a configured or accepted staging environment. The workflow derives
 its API, web, and media targets from the validated `config/deploy/staging.json`; do not duplicate
 those origins as environment variables. Configure these non-secret variables:
 

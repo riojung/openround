@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import {
   PresentationReportEnvelopeSchema,
   PresentationReportV1Schema,
+  PresentationReportWithSessionContextEnvelopeSchema,
   type PresentationCommand,
   type PresentationHostSnapshot,
   type PresentationParticipantSnapshot,
@@ -11,6 +12,7 @@ import {
   type PresentationSessionResponse,
   type PresentationSyncRequest,
   type PresentationSyncResponse,
+  type PresentationTimeMode,
 } from "@openround/contracts";
 import {
   SessionCodeConflictError,
@@ -97,6 +99,7 @@ export function presentationLiveSessionExpired(
 export class PresentationSessionService {
   private connectedParticipantIdsProvider: PresentationConnectedParticipantIdsProvider | null =
     null;
+  private sessionDeletedHandler: ((sessionId: string) => void) | null = null;
   private readonly liveMutations: PresentationLiveMutationService;
 
   constructor(
@@ -153,6 +156,10 @@ export class PresentationSessionService {
     this.connectedParticipantIdsProvider = provider;
   }
 
+  setSessionDeletedHandler(handler: ((sessionId: string) => void) | null) {
+    this.sessionDeletedHandler = handler;
+  }
+
   private async uniqueJoinCode() {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const code = String(randomInt(0, 10_000_000)).padStart(7, "0");
@@ -162,14 +169,43 @@ export class PresentationSessionService {
   }
 
   async listHostSnapshots(workspaceId: string) {
-    const sessions = await this.sessions.listSessions(workspaceId, new Date());
+    const sessions = await this.sessions.listSessions(workspaceId, new Date(), true);
     return Promise.all(sessions.map((session) => this.hostSnapshot(session)));
+  }
+
+  async deleteSession(input: {
+    workspaceId: string;
+    userId: string;
+    sessionId: string;
+    requestId: string;
+  }) {
+    const deletion = await this.sessions.deleteSession(input.workspaceId, input.sessionId);
+    if (deletion.status === "not_found") {
+      throw new PresentationSessionServiceError(404, "NOT_FOUND", "Presentation session not found");
+    }
+    if (deletion.status === "active") {
+      throw new PresentationSessionServiceError(
+        409,
+        "CONFLICT",
+        "Finish this Presentation session before deleting it",
+      );
+    }
+    this.sessionDeletedHandler?.(input.sessionId);
+    await this.dependencies.repository.recordAudit({
+      workspaceId: input.workspaceId,
+      actorId: input.userId,
+      action: "presentation.session.delete",
+      targetType: "presentation_live_session",
+      targetId: input.sessionId,
+      requestId: input.requestId,
+    });
   }
 
   async createSession(input: {
     workspaceId: string;
     userId: string;
     presentationId: string;
+    timeMode?: PresentationTimeMode;
     requestId: string;
   }) {
     const institutionPolicy = await this.dependencies.repository.getInstitutionPolicy(
@@ -230,7 +266,7 @@ export class PresentationSessionService {
             phase: "lobby",
             currentBlockIndex: -1,
             revision: 0,
-            settings: { timeMode: "timed" },
+            settings: { timeMode: input.timeMode ?? "timed" },
             trustMode: "learning",
             eventSeq: 0,
             questionOpenedAt: null,
@@ -651,7 +687,7 @@ export class PresentationSessionService {
     return this.liveMutations.submitLegacyResponse(input);
   }
 
-  async getReport(workspaceId: string, sessionId: string) {
+  async getReport(workspaceId: string, sessionId: string, includeSessionContext = false) {
     const session = await this.sessions.getSessionForWorkspace(workspaceId, sessionId);
     if (!session) {
       throw new PresentationSessionServiceError(404, "NOT_FOUND", "Presentation session not found");
@@ -685,10 +721,16 @@ export class PresentationSessionService {
       ]);
       report = generatePresentationReport({ session, participants, responses, timeline });
     }
-    return PresentationReportEnvelopeSchema.parse({
+    const envelope = PresentationReportEnvelopeSchema.parse({
       reportStatus: stored.status,
       report,
     });
+    return includeSessionContext
+      ? PresentationReportWithSessionContextEnvelopeSchema.parse({
+          ...envelope,
+          sessionContext: { timeMode: session.settings.timeMode },
+        })
+      : envelope;
   }
 
   async workspaceForCode(code: string) {

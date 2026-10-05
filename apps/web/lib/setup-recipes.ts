@@ -18,12 +18,17 @@ export function resolveSetupRecipe(
   },
 ): ResolvedSetupRecipe {
   const audienceLimit = Math.min(Math.max(1, current.audienceLimit), options.maxParticipants);
-  const common = { audienceLimit, allowLateJoin: true } as const;
+  const common = {
+    audienceLimit,
+    allowLateJoin: true,
+    timeMode: current.timeMode ?? "timed",
+  } as const;
 
   if (recipe === "competition") {
     return {
       settings: {
         ...common,
+        timeMode: "timed",
         scoringMode: "speed",
         resultVisibility: "leaderboard",
         nicknamePolicy: "friendly_only",

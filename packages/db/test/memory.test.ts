@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { Report } from "@openround/contracts";
-import { createGameState } from "@openround/game-engine";
+import { applyHostCommand, createGameState } from "@openround/game-engine";
 import {
   FollowupAccessLimitError,
   MEDIA_DELETION_TOMBSTONE_HOLD_MS,
@@ -62,6 +62,127 @@ async function finalizedMediaForCleanup(
 }
 
 describe("memory repository", () => {
+  it("persists replay events atomically and freezes the session capture setting", async () => {
+    const repository = new MemoryRepository();
+    const sessionId = randomUUID();
+    const workspaceId = randomUUID();
+    let state = createGameState({
+      sessionId,
+      code: "2233445",
+      quiz: publishableRound("Decision replay"),
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    const now = new Date();
+    const stored = {
+      id: sessionId,
+      workspaceId,
+      quizVersionId: randomUUID(),
+      hostId: randomUUID(),
+      hostTokenHash: randomUUID(),
+      decisionReplayEnabled: true,
+      state,
+      expiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await repository.createSession(stored);
+
+    const started = applyHostCommand(state, {
+      commandId: randomUUID(),
+      expectedVersion: state.version,
+      action: "start",
+      nowMs: now.getTime(),
+      newRoundId: randomUUID,
+    });
+    await repository.saveSession({ ...stored, state: started.state }, state.version);
+    state = started.state;
+
+    const locked = applyHostCommand(state, {
+      commandId: randomUUID(),
+      expectedVersion: state.version,
+      action: "lock",
+      nowMs: now.getTime() + 1_000,
+      newRoundId: randomUUID,
+    });
+    const insightSeq = locked.events.find((event) => event.type === "checkpoint.insight")?.seq;
+    if (!insightSeq || !locked.state.roundId) throw new Error("Expected a locked question insight");
+    const captured = {
+      seq: insightSeq,
+      occurredAt: new Date(now.getTime() + 1_000).toISOString(),
+      type: "insight_shown" as const,
+      roundId: locked.state.roundId,
+      questionId: locked.state.quiz.questions[locked.state.questionIndex!]!.id,
+      sampleSize: 0,
+      activeParticipantCount: 0,
+      recommendationCode: "insufficient_sample" as const,
+      ruleSetVersion: "checkpoint-insight-v1",
+    };
+    await repository.saveSession({ ...stored, state: locked.state }, state.version, undefined, [
+      { event: captured, commandId: "lock-command-01", eventOrdinal: 0 },
+    ]);
+
+    expect(await repository.getSessionEvidence(workspaceId, sessionId)).toMatchObject({
+      decisionReplayEnabled: true,
+      decisionEvents: [captured],
+      decisionEventsComplete: true,
+    });
+    await expect(
+      repository.saveSession(
+        { ...stored, state: locked.state, decisionReplayEnabled: false },
+        locked.state.version,
+      ),
+    ).rejects.toThrow("immutable");
+  });
+
+  it("preserves a flex Round's missing deadline in durable evidence", async () => {
+    const repository = new MemoryRepository();
+    const sessionId = randomUUID();
+    const workspaceId = randomUUID();
+    const lobby = createGameState({
+      sessionId,
+      code: "1234567",
+      quiz: publishableRound("Untimed checkpoint"),
+      settings: {
+        audienceLimit: 20,
+        timeMode: "flex",
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    const opened = applyHostCommand(lobby, {
+      commandId: randomUUID(),
+      expectedVersion: lobby.version,
+      action: "start",
+      nowMs: Date.now(),
+      newRoundId: randomUUID,
+    }).state;
+    const now = new Date();
+    await repository.createSession({
+      id: sessionId,
+      workspaceId,
+      quizVersionId: randomUUID(),
+      hostId: randomUUID(),
+      hostTokenHash: randomUUID(),
+      state: opened,
+      expiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(await repository.getSessionEvidence(workspaceId, sessionId)).toMatchObject({
+      rounds: [{ id: opened.roundId, deadlineMs: null }],
+    });
+  });
+
   it("fences stale draft saves and publishes the acknowledged revision idempotently", async () => {
     const repository = new MemoryRepository();
     const workspaceId = randomUUID();
@@ -919,6 +1040,161 @@ describe("memory repository", () => {
     const exported = await repository.exportAccount(creator!.userId);
     expect(exported.consentRecords).toHaveLength(2);
     expect(await repository.consumeMagicToken(tokenHash, new Date())).toBeNull();
+  });
+
+  it("exports and deletes content-addressed Question Health dismissals with the source workspace", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date();
+    const tokenHash = `question-health-export-${randomUUID()}`;
+    await repository.createMagicToken({
+      id: randomUUID(),
+      email: `question-health-export-${randomUUID()}@example.com`,
+      segment: "education",
+      tokenHash,
+      policyVersion: "test-v1",
+      expiresAt: new Date(now.getTime() + 60_000),
+      consumedAt: null,
+    });
+    const owner = await repository.consumeMagicToken(tokenHash, now);
+    expect(owner).not.toBeNull();
+    const draft = publishableRound("Question Health export");
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner!.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await repository.putQuestionHealthDismissal({
+      actorId: owner!.userId,
+      workspaceId: owner!.workspaceId,
+      quizId: quiz.id,
+      findingId: "qh-1.0.0-question.missing_citation-item-sourceCitations",
+      ruleVersion: 1,
+      rulesetVersion: "1.0.0",
+      contentHash: "b".repeat(64),
+      reason: "will_address_later",
+      expectedDraftRevision: 0,
+      requestId: randomUUID(),
+    });
+
+    const exported = await repository.exportAccount(owner!.userId);
+    expect(exported.questionHealthDismissals).toMatchObject([
+      expect.objectContaining({ quizId: quiz.id, reason: "will_address_later" }),
+    ]);
+    await repository.deleteAccount(owner!.userId);
+    expect(await repository.listQuestionHealthDismissals(owner!.workspaceId, quiz.id)).toEqual([]);
+  });
+
+  it("keeps Question Health draft application and undo receipts tenant-scoped and idempotent", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date();
+    const tokenHash = `question-health-application-${randomUUID()}`;
+    await repository.createMagicToken({
+      id: randomUUID(),
+      email: `application-${randomUUID()}@example.com`,
+      segment: "education",
+      tokenHash,
+      policyVersion: "test-v1",
+      expiresAt: new Date(now.getTime() + 60_000),
+      consumedAt: null,
+    });
+    const owner = await repository.consumeMagicToken(tokenHash, now);
+    expect(owner).not.toBeNull();
+    const draft = publishableRound("Question Health application");
+    const old = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1_000);
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner!.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: old,
+      updatedAt: old,
+    });
+    const applicationId = randomUUID();
+    const changed = {
+      ...draft,
+      questions: [{ ...draft.questions[0]!, explanation: "Reviewed wording." }],
+    };
+    const mutation = {
+      workspaceId: owner!.workspaceId,
+      quizId: quiz.id,
+      draft: changed,
+      expectedRevision: 0,
+      mutationId: applicationId,
+      editorId: owner!.userId,
+      schemaVersion: 1,
+      draftHash: "application-draft",
+      questionHealthApplication: {
+        workspaceId: owner!.workspaceId,
+        quizId: quiz.id,
+        applicationId,
+        findingId: "qh-test-missing-explanation",
+        ruleVersion: 1,
+        rulesetVersion: "1.0.0",
+        contentHash: "a".repeat(64),
+        sourceRevision: 0,
+        requestHash: "b".repeat(64),
+        changes: [
+          {
+            fieldPath: "questions.0.explanation",
+            before: "One plus one is two.",
+            after: "Reviewed wording.",
+          },
+        ],
+        requestId: randomUUID(),
+      },
+    };
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({ draftRevision: 1 });
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({ draftRevision: 1 });
+    expect(
+      await repository.getQuestionHealthApplication(owner!.workspaceId, quiz.id, applicationId),
+    ).toMatchObject({ sourceRevision: 0, appliedRevision: 1, requestHash: "b".repeat(64) });
+    expect(
+      await repository.getQuestionHealthApplication(randomUUID(), quiz.id, applicationId),
+    ).toBeNull();
+    expect(
+      (await repository.listQuizDraftHistory(owner!.workspaceId, quiz.id)).map(
+        (snapshot) => snapshot.revision,
+      ),
+    ).toContain(0);
+
+    const undo = {
+      workspaceId: owner!.workspaceId,
+      quizId: quiz.id,
+      historyRevision: 0,
+      expectedRevision: 1,
+      mutationId: randomUUID(),
+      editorId: owner!.userId,
+      questionHealthUndo: { applicationId, requestId: randomUUID() },
+    };
+    await expect(repository.restoreQuizDraftHistory(undo)).resolves.toMatchObject({
+      draftRevision: 2,
+    });
+    await expect(repository.restoreQuizDraftHistory(undo)).resolves.toMatchObject({
+      draftRevision: 2,
+    });
+    expect(
+      (await repository.listAuditEvents(owner!.workspaceId, null, 100)).filter(
+        (event) => event.action === "question_health.application.undo",
+      ),
+    ).toHaveLength(1);
+
+    const exported = await repository.exportAccount(owner!.userId);
+    expect(exported.questionHealthApplications).toMatchObject([
+      expect.objectContaining({ quizId: quiz.id, applicationId }),
+    ]);
+    await repository.deleteAccount(owner!.userId);
+    expect(
+      await repository.getQuestionHealthApplication(owner!.workspaceId, quiz.id, applicationId),
+    ).toBeNull();
   });
 
   it("defaults legacy report trust mode in account exports", async () => {

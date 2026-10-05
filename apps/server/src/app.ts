@@ -49,6 +49,7 @@ import { registerGroupRoutes } from "./group-routes.js";
 import { registerHomeRoutes } from "./home-routes.js";
 import { registerLibraryRoutes } from "./library-routes.js";
 import { registerLiveRoomRoutes } from "./live-room-routes.js";
+import { registerQuestionHealthRoutes } from "./question-health-routes.js";
 import {
   evidenceWorkspaceFeatureEnabled,
   professionalWorkspaceEligible,
@@ -356,6 +357,7 @@ export async function buildApp(
     readiness,
     stripeClient: overrides.stripe,
   });
+  await registerQuestionHealthRoutes(app, { config, repository, auth });
   await registerLiveRoomRoutes(app, {
     repository,
     sessions,

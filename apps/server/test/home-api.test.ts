@@ -176,14 +176,28 @@ describe("Home workspace summary", () => {
       title: "Safety briefing",
       description: "A concise facilitator deck",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: presentation.draft.blocks[0]!.id,
           kind: "content",
           layout: "title_body",
-          title: "Know the plan",
-          body: "Review the response sequence before practice.",
+          textElements: [
+            {
+              id: randomUUID(),
+              role: "title",
+              text: "Know the plan",
+              region: "middle_center",
+              order: 0,
+            },
+            {
+              id: randomUUID(),
+              role: "body",
+              text: "Review the response sequence before practice.",
+              region: "middle_center",
+              order: 1,
+            },
+          ],
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "Confirm roles before continuing.",
@@ -221,7 +235,7 @@ describe("Home workspace summary", () => {
         draft: presentationDraft,
         expectedRevision: 0,
         mutationId: randomUUID(),
-        schemaVersion: 1,
+        schemaVersion: 2,
       },
     });
     expect(savedPresentation.statusCode, savedPresentation.body).toBe(200);
