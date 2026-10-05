@@ -1299,13 +1299,24 @@ describe("live Presentation sessions", () => {
     });
     expect(listed.statusCode).toBe(200);
     expect(listed.headers["cache-control"]).toContain("no-store");
-    const listedSessions = listed.json<{ sessions: Array<{ id: string; status: string }> }>()
-      .sessions;
+    const listedSessions = PresentationRestV1SessionListResponseSchema.parse(
+      listed.json(),
+    ).sessions;
     expect(listedSessions).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: entitled.id, status: "active" })]),
     );
-    expect(listedSessions).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: expired.id })]),
+    expect(listedSessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: expired.id,
+          status: "active",
+          liveExpiresAt: expired.liveExpiresAt.toISOString(),
+          acceptingResponses: false,
+        }),
+      ]),
     );
+    expect(await built.presentationSessions.getSessionByCode(expired.code)).toBeNull();
+    expect(await repository.getLiveRoomCode(expired.code)).toBeNull();
+    expect(await built.presentationSessions.getSessionById(expired.id)).not.toBeNull();
   });
 });
