@@ -109,7 +109,7 @@ The current constraints matter more than the feature count:
 | Live accessibility       | Whole-room timed/flex mode is implemented for new Rounds and Presentations behind `FEATURE_LIVE_FLEX_MODE` and a workspace allowlist. It has no countdown; the facilitator closes the window. Private individual extra-time passes remain deferred pending fairness, privacy, and reveal research. |
 | Response breadth         | Six response types are implemented. Exact short text and rank/order are not; add them only if the roadmap's observed demand threshold passes. Moderated open response, drawing, and word cloud remain deliberate later decisions.                                                                  |
 | Existing-deck workflow   | A structured Presentation builder exists. Companion mode is a research prototype, not a production sidecar; native slide add-ins are explicitly out of scope.                                                                                                                                      |
-| Reuse                    | Cross-Round reuse creates independent snapshots. A first-class immutable, versioned Recovery Pack with update review and multi-surface insertion is not implemented.                                                                                                                               |
+| Reuse                    | Cross-Round reuse creates independent snapshots. The Recovery Pack foundation adds immutable versions and Round-draft insertion with a retained source baseline; update review and multi-surface insertion remain pending.                                                                         |
 | Question Health          | Deterministic advice, dismiss/reopen, approved draft edits with same-revision undo, immutable published-version analysis, and exact-version aggregate post-use observations are implemented in a gated slice. Advice usefulness and retained-revision thresholds remain unmeasured.                |
 | Session Decision Replay  | New eligible sessions can capture aggregate facilitator-decision events in durable state and show a read-only Report V4 timeline. Older report versions remain readable without replay; rollout and partner-value evidence remain open.                                                            |
 | Presentation editing     | Text boxes can be positioned/resized on a bounded 16:9 slide with guides, keyboard controls, and an image-safe region. This is not a full freeform design canvas or production slide companion.                                                                                                    |
@@ -722,6 +722,13 @@ MVP acceptance:
 ### Epic C — Recovery Pack
 
 **User job:** “Give me a tested sequence, not a pile of unrelated questions.”
+
+**Incremental implementation:** the first foundation now supplies Pack authoring from published
+Round pairs, immutable publishing, revision/history recovery, native JSON, and independent Round
+draft insertion with item provenance and a complete frozen source baseline. Cards are facilitator
+references in the Round builder, not live playback. Three-way update review, other insertion
+surfaces, source-authoring approval, and QTI/CSV loss reports remain pending. See the
+[implementation checkpoint](implementation-status.md#recovery-pack-foundation--2026-10-05).
 
 MVP acceptance:
 

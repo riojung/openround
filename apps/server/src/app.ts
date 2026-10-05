@@ -11,6 +11,7 @@ import {
   createCollaborationGroupRepository,
   createLibraryMetadataRepository,
   createPresentationRepository,
+  createRecoveryPackRepository,
   createPresentationSessionRepository,
   MemoryRepository,
   PostgresRepository,
@@ -50,6 +51,7 @@ import { registerHomeRoutes } from "./home-routes.js";
 import { registerLibraryRoutes } from "./library-routes.js";
 import { registerLiveRoomRoutes } from "./live-room-routes.js";
 import { registerQuestionHealthRoutes } from "./question-health-routes.js";
+import { registerRecoveryPackRoutes } from "./recovery-pack-routes.js";
 import {
   evidenceWorkspaceFeatureEnabled,
   professionalWorkspaceEligible,
@@ -128,6 +130,7 @@ export async function buildApp(
           })());
   const metrics = new MetricsService();
   const presentations = createPresentationRepository(repository);
+  const recoveryPacks = createRecoveryPackRepository(repository);
   const presentationSessions = createPresentationSessionRepository(repository, {
     concurrentResponseWrites: config.PRESENTATION_CONCURRENT_RESPONSE_WRITES,
   });
@@ -358,6 +361,7 @@ export async function buildApp(
     stripeClient: overrides.stripe,
   });
   await registerQuestionHealthRoutes(app, { config, repository, auth });
+  await registerRecoveryPackRoutes(app, { config, repository, packs: recoveryPacks, auth });
   await registerLiveRoomRoutes(app, {
     repository,
     sessions,

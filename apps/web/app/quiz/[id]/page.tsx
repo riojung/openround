@@ -1004,6 +1004,11 @@ export default function QuizEditorPage() {
   }
 
   const question = draft?.questions[selectedIndex];
+  const recoveryPackInsertion = draft?.recoveryPackInsertions?.find(
+    (insertion) =>
+      insertion.diagnosticQuestionId === question?.id ||
+      insertion.recheckQuestionId === question?.id,
+  );
   const linkedRecheck =
     question?.linkedRecheckQuestionId && draft
       ? draft.questions.find((candidate) => candidate.id === question.linkedRecheckQuestionId)
@@ -1588,6 +1593,35 @@ export default function QuizEditorPage() {
                   quizId={id}
                   versionId={quiz?.currentVersionId ?? null}
                 />
+                {recoveryPackInsertion ? (
+                  <details className="notice" lang="en-CA">
+                    <summary>
+                      Recovery Pack facilitator references:{" "}
+                      {recoveryPackInsertion.originalContent.title}
+                      {" · version "}
+                      {recoveryPackInsertion.packVersion}
+                    </summary>
+                    <p>
+                      These cards are the frozen references copied with this Pack. Local checkpoint
+                      edits do not update them. Live card playback is not available yet.
+                    </p>
+                    {recoveryPackInsertion.originalContent.interventions.map((card) => (
+                      <section key={card.id}>
+                        <h3>{card.title}</h3>
+                        <p style={{ whiteSpace: "pre-wrap" }}>{card.body}</p>
+                        {card.citations.length ? (
+                          <p className="muted">
+                            Sources:{" "}
+                            {card.citations
+                              .map((citation) => `${citation.sourceName}, ${citation.locator}`)
+                              .join("; ")}
+                          </p>
+                        ) : null}
+                      </section>
+                    ))}
+                    <Link href="/recovery-packs">Open Recovery Pack library</Link>
+                  </details>
+                ) : null}
                 <section
                   aria-label={t("delivery.builder.question", { number: selectedIndex + 1 })}
                   className={builderStyles.canvas}

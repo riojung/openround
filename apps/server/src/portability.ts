@@ -92,6 +92,16 @@ function regenerateIds(draft: QuizDraft) {
   const questionIds = new Map(draft.questions.map((question) => [question.id, randomUUID()]));
   return {
     ...draft,
+    ...(draft.recoveryPackInsertions
+      ? {
+          recoveryPackInsertions: draft.recoveryPackInsertions.map((insertion) => ({
+            ...insertion,
+            id: randomUUID(),
+            diagnosticQuestionId: questionIds.get(insertion.diagnosticQuestionId) ?? randomUUID(),
+            recheckQuestionId: questionIds.get(insertion.recheckQuestionId) ?? randomUUID(),
+          })),
+        }
+      : {}),
     questions: draft.questions.map((question) => ({
       ...question,
       id: questionIds.get(question.id)!,
@@ -128,7 +138,11 @@ export function openRoundJson(draft: QuizDraft) {
   return JSON.stringify(
     OpenRoundCheckpointSetExportSchema.parse({
       format: "openround.checkpoint-set",
-      version: 2,
+      version:
+        draft.recoveryPackInsertions?.length ||
+        draft.questions.some((question) => question.recoveryPackSource)
+          ? 3
+          : 2,
       exportedAt: new Date().toISOString(),
       checkpointSet: draft,
     }),
