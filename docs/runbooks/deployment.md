@@ -396,6 +396,10 @@ change—requires a new reviewed release build and tag.
 - Database migrations are forward-only. Repair schema/data with a reviewed forward migration.
 - A code rollback is safe only when the older images tolerate the current schema. Preserve
   expand/contract compatibility during every rollout window.
+- Presentation v2/custom geometry and capture-enabled Round sessions/Report V4 also constrain the
+  rollback target. Apply migrations through 048 before the current server and follow the
+  [content, report, and deletion upgrade checklist](upgrade.md#recent-content-report-and-deletion-upgrades).
+  An older image cannot undo a completed deletion or safely reconstruct missing decision events.
 - Deploy a flex-capable image with `FEATURE_LIVE_FLEX_MODE=false` first, and retain that image as
   the approved rollback target before enabling flex creation. Do not roll back to a pre-flex image
   after flex creation is enabled: older code cannot accept untimed responses, reads null Round

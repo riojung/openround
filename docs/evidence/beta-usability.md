@@ -53,6 +53,27 @@ entry in that segment's explicit supersession chain; the earlier attempt remains
 
 ## Study integrity and decision
 
+### Enabled-feature task coverage
+
+When these features are enabled in the frozen candidate, add the following observed tasks to the
+study protocol and retain assistance, errors, timing, and comprehension results separately from the
+P0 thresholds above. Code or browser coverage does not supply these observations.
+
+- Move/resize a slide title, add and position multiple text boxes, use guides/inspector controls,
+  save and publish, then recognize the same arrangement in preview and live delivery. Include a
+  narrow-screen reading-order task and content that triggers overflow guidance.
+- Explain a Question Health finding and its sample/version limits; dismiss/reopen it or preview,
+  apply, and undo a supported draft edit without assuming the published version changed.
+- Explain the captured decisions in an eligible Round report and distinguish an unavailable or
+  truncated timeline from evidence that an action never happened.
+- Find the owner deletion action for archived content and finished/expired session history, cancel
+  once, confirm with synthetic data, and understand a retained-dependency error without deleting
+  linked practice unintentionally.
+- Run a whole-room flex question and identify that the facilitator closes responses and speed
+  scoring is absent; do not imply private participant-specific extra time is available live.
+
+### Record the study decision
+
 - Task order and counterbalancing:
 - Timing/instrumentation method and clock source:
 - Browser, device, and network mix:

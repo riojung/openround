@@ -119,8 +119,10 @@ than accumulating in the active state snapshot.
 ### PostgreSQL
 
 PostgreSQL stores creator identity, workspaces, roles/invitations, magic links, creator sessions,
-checkpoint-set drafts, immutable versions, folders/tags, media metadata, live sessions,
-round/intervention evidence, accepted canonical responses and confidence, Audience Pulse, chat,
+Round and Presentation drafts, immutable versions, revision history and mutation receipts,
+Question Health dismissals/application provenance, folders/tags/favorites, media metadata, live
+Round and Presentation sessions, durable decision events, round/intervention evidence, accepted
+canonical responses and confidence, Audience Pulse, chat,
 Q&A, staff credentials, transactional audience outbox records, versioned report jobs, self-paced
 recovery follow-ups and standalone assignments, authoring jobs, subscriptions, consent,
 institution policies, external identity links,
@@ -219,7 +221,7 @@ LTI third-party login resolves exactly one active operator registration, then st
 and nonce. The form-post launch consumes state before validation and verifies platform signature,
 issuer, audience/authorized party, nonce, deployment, version, message type, signed target, and
 role. An unknown instructor subject receives a short-lived explicit-link token in a URL fragment;
-it is never auto-linked by email. Deep Linking accepts only a published checkpoint set, only an
+it is never auto-linked by email. Deep Linking accepts only a published Round, only an
 `ltiResourceLink`, and only a return origin registered by the operator. The signed response is
 stored and returned idempotently on retry.
 
@@ -231,7 +233,7 @@ features. See the [institution integration guide](institution-integrations.md).
 
 ### Author and publish
 
-The creator updates a mutable checkpoint-set draft. Opening participant preview first persists that
+The creator updates a mutable Round draft. Opening participant preview first persists that
 draft, then renders its checkpoints and answer reveal locally without creating a session or
 exposing it to guests. Publish validates response-type rules, confidence/purpose constraints, and
 acyclic recheck links, inserts a new immutable `quiz_versions` record, and points the legacy quiz
@@ -243,6 +245,66 @@ Native JSON, CSV, bulk text, and a constrained QTI 3 package flow through bounde
 creating a draft. Archive and XML readers enforce path, entry, expansion, compression, entity,
 remote-reference, and media limits. Imports return errors/warnings instead of silently discarding
 unsupported content; CSV output escapes formula prefixes.
+
+### Question Health and reviewed revisions
+
+Question Health is deterministic advisory evaluation in `packages/insights`; it uses versioned
+rules and hashes of relevant authoring content. Draft/published rule evaluation makes no provider
+calls and does not use live learner data. Findings never
+block publication. The saved-draft read returns its acknowledged revision, ruleset version, and
+bounded findings with explicit truncation metadata. A published-version read evaluates the exact
+immutable version, and never inherits draft dismissals.
+
+Dismissal identity binds the finding ID, rule/ruleset versions, and content hash. The repository
+checks the saved draft revision when recording or reopening a dismissal, and reads show it only
+while the evaluated identity still matches. Owner/editor preview reevaluates a finding and returns
+one or two field changes; apply permits only the bounded action types that resolve that finding.
+Draft write, history, mutation receipt, application provenance, and audit commit together. IDs and
+published versions remain unchanged. Undo restores the source snapshot as a new revision only
+while the applied revision is current; a newer edit prevents undo. Idempotent receipt replays
+return authoritative current state.
+
+`FEATURE_QUESTION_HEALTH` and the evidence workspace allowlist gate new evaluations and actions.
+After rollback, matching stored draft dismissals remain readable/reopenable, accepted application
+retries and undo remain available, and new published/observation evaluations are unavailable.
+
+Post-use observations use at most 250 recent ready reports from retained sessions for one exact
+published Round version. Scorable main questions require at least 20 responses per included
+session and are grouped by trust, time, and scoring mode. An accuracy range of at least 30
+percentage points across three compatible sessions produces an instability advisory; an unused
+incorrect choice requires complete choice-distribution coverage. The result contains aggregate
+counts, thresholds, and bounded-history metadata, without learner rows, raw answers, or aliases.
+These are descriptive review signals and do not establish a cause or learning efficacy.
+
+### Presentation versions and content-slide geometry
+
+Presentations combine content and interactive question blocks in a separately versioned artifact.
+Draft mutation uses an expected revision and mutation ID; publish freezes the exact acknowledged
+draft. Published content remains immutable for existing live sessions. Importing selected questions
+from a published Round creates independent copies with fresh block/question/choice IDs and source
+provenance, preserving complete linked Recovery pairs and remapping their links.
+
+Presentation content schema v2 represents text as stable-ID elements with `title`/`body` roles,
+nine named regions, and an order within a region. Each slide has one to eight text elements total,
+including exactly one title; IDs and region/order pairs are unique within the slide. Editing,
+moving, and resizing preserve element identity. Copies receive fresh IDs. Read upcasters convert
+legacy `title`/`body` content into stable text elements and region metadata without rewriting
+immutable published rows. The same upgrade path supports browser draft recovery; unsupported
+future versions fail closed.
+
+Optional text frames store finite percentages of the canvas. Width is at least 12%, height at
+least 6%, and each rectangle must stay within the 0–100% canvas. Shared geometry helpers resolve
+explicit frames, starter layouts, and legacy region/order placement. Attached media reserves the
+same image bay (`x: 60`, `y: 75`, `width: 36`, `height: 22`) before the image has loaded; text
+geometry is fitted clear of that bay. Custom text frames may overlap each other, with editor
+warnings for overlap/text fit. No arbitrary style text is persisted.
+
+The builder, preview, live host, and participant views use one content-slide renderer. Wide views
+use percentage geometry; narrow views stack content for readable, accessible text. Builder grid
+and alignment guides, pointer move/resize controls, and keyboard controls update bounded frames;
+guides are editing aids and are not persisted. Public content projection includes text/layout and
+image alt but omits speaker notes, citations, and source disclosure. Drafts allow incomplete text
+and image descriptions; publishing requires meaningful slide content and nonblank alt for media.
 
 ### Source-grounded authoring
 
@@ -263,7 +325,7 @@ sequenceDiagram
   W->>W: Validate schema, links, answers, and citation grounding
   W->>D: Store proposal; clear source bytes
   C->>S: Explicitly create review draft
-  S->>D: Idempotently create one unpublished checkpoint set
+  S->>D: Idempotently create selected unpublished Round or Presentation draft
 ```
 
 The provider never receives participants, responses, sessions, reports, or Q&A. Provider failure
@@ -278,9 +340,28 @@ responses, confidence, round kind, intervention links, and timing. `packages/ins
 deterministic measurements and recommendation explanations without network or model calls.
 
 Finishing a session inserts a versioned pending report. A database worker claims it with
-`FOR UPDATE SKIP LOCKED`, retries transient failure, and reconstructs report v3 from durable rows.
-Linked recovery and revote improvement use separate evidence types. Older report schemas remain
-renderable; new report creation targets 60 seconds.
+`FOR UPDATE SKIP LOCKED`, retries transient failure, and reconstructs report v3 from durable rows,
+or v4 for a Round session created with decision capture enabled. Linked recovery and revote
+improvement use separate evidence types. Report schemas v1–v3 remain renderable; new report
+creation targets 60 seconds. Presentation reports retain their separate V1 storage and strict
+legacy response; timing context is added only to the opt-in response envelope.
+
+### Durable session decision trail
+
+`FEATURE_DECISION_REPLAY` plus explicit evidence allowlisting is resolved by the server at new
+Round-session creation and stored as an immutable capture setting. Existing sessions are not
+backfilled. Accepted host/deadline transitions append bounded decision events in the same
+transaction as the version-fenced canonical state, using the durable `session_events` journal. Command/event identity and session sequence
+make retries idempotent. The trail records insight/reveal, intervention, linked recheck/revote,
+advance, and finish events with server timestamps, identifiers, and bounded aggregate insight
+metadata; it excludes prompts, raw answer bodies, and aliases.
+
+Capture stops at 5,000 events plus a truncation marker without blocking live transitions. Report v4
+extends v3 with `decisionTimeline`, `decisionReplayAvailable`, and `decisionReplayComplete`, so
+readers can distinguish absent or truncated capture from a complete trail. Existing report and
+export routes carry that versioned evidence. Later gate rollback preserves the session's frozen
+capture setting and readable reports. This durable facilitator decision trail follows session
+retention/deletion and is separate from the bounded Redis transport journal used for reconnect.
 
 ### Q&A and scoped session staff
 
@@ -295,7 +376,8 @@ revocable, role-scoped records; the presenter never reuses the host token.
 `packages/experience` is the only registry for the six versioned presets. Drafts and immutable
 exports carry category plus preset reference. Session creation resolves published preset, optional
 host override, eligible workspace branding, and sound preference into a validated theme snapshot
-stored in game state v4. The v3 upgrader supplies Focus for restored active sessions; future state
+stored in current game state v5 together with the frozen trust mode. Legacy upcasting resolves a
+missing theme from frozen content and supplies Learning trust mode when omitted; future state
 versions fail closed. Reconnect and process recovery therefore cannot pick up later draft or
 branding changes.
 
@@ -327,8 +409,11 @@ only; public aggregate counts remain null below five unique signalers.
 2. After the creator confirms the settings, the browser requests a session. Merely opening setup
    does not reserve a code or issue a host credential.
 3. The server validates every setting and checks the hosted plan or community operator limit.
-4. It reserves a seven-digit code in Redis with the session ID as owner.
-5. It inserts the session in PostgreSQL; the partial unique index on active codes is the final collision backstop.
+4. It reserves a seven-digit code in Valkey with the session ID as owner and checks existing Round
+   and Presentation claims.
+5. It inserts the session in PostgreSQL. The shared durable `live_room_codes` registry is the
+   cross-artifact collision backstop; transaction triggers claim/release codes with the room's
+   lifecycle. Valkey coordinates the creation attempt and is not the authoritative code directory.
 6. It returns the host credential once and stores only its hash.
 7. Guest joins are admitted in a short deterministic per-session batch. Capacity, lobby state,
    nickname policy, avatar allowlist, and uniqueness are evaluated against one evolving state.
@@ -389,6 +474,22 @@ Every mutation first enters an in-process per-session queue, then acquires a sho
 
 A safe non-join mutation retries once from canonical state after a compare-and-swap conflict. Host commands that still conflict return `STALE_VERSION` and prompt a client resynchronization.
 
+### Whole-room timing mode
+
+Round creation freezes `settings.timeMode` as `timed` (the compatible default) or `flex`.
+`FEATURE_LIVE_FLEX_MODE` and explicit evidence allowlisting gate new flex rooms. Flex covers the
+whole room, including main questions, linked rechecks, and revotes: durable deadlines are null,
+the scheduler does not auto-lock, and the host closes each question. The engine resolves speed
+scoring to accuracy scoring, while retaining measured response times as evidence. There is no
+per-question timing-mode override.
+
+Presentation creation freezes the same choice in session settings. A flex interactive block has
+no `questionClosesAt` and advances/reveals under host control. Restored snapshots and ready Round
+reports expose the effective timing mode; legacy Round evidence defaults to timed. Presentation
+Report V1 remains unchanged, with `sessionContext.timeMode` available through an opt-in envelope.
+Changing creation eligibility cannot disable joining, responding, control, or reports in an
+already-created flex room.
+
 ### Answer durability and batching
 
 An accepted answer and the resulting canonical session snapshot commit in one PostgreSQL transaction before the acknowledgement is returned. Database uniqueness protects both `(participant, round)` and the answer idempotency key, so a retry returns the original outcome without a second score effect.
@@ -426,8 +527,35 @@ the plan retention duration captured at creation and are purged directly at thei
 
 Scheduled retention closes expired live/practice access, directly purges expired standalone
 assignments, removes expired authoring jobs, then cascades session deletion at the stored deadline.
-Explicit session deletion removes the same tree,
-including interaction state and outbox rows, and invalidates active cache. Account export gathers
+Owner-only Round-session deletion removes the same tree, including interaction state/outbox,
+linked recovery follow-ups, and report rows, then invalidates active cache and room-code state.
+Round deletion is not restricted to finished sessions. Owner-only Presentation-session deletion
+requires durable status `finished` or `liveExpiresAt` at/before server time; the repository checks
+that condition atomically under the parent lock. An active, unexpired room returns a conflict.
+Success removes its participants, responses, rounds, credentials, report jobs, and code claim.
+
+Presentation deletion also disconnects room sockets through the shared Socket.IO adapter, clears
+local raw credential/broadcast state, and makes queued projections recheck durable room existence.
+Report completion requires the existing report row and matching lease; a stale worker cannot
+recreate a deleted report. These fences cover deletion racing a response, command, projection, or
+report job. Retained expired rooms remain visible in the creator list with `liveExpiresAt`.
+
+Archived Library deletion is a separate owner-only, workspace-gated operation. The parent lock and
+retained-dependency check reject an unarchived artifact or any artifact referenced by a retained
+session/practice assignment, including finished/expired sessions and closed assignments. Deletion
+cascades drafts, immutable versions, history, mutation receipts, Question Health metadata, media
+references, and polymorphic Library/group links; it removes favorites for every member and audits
+the action. Media assets remain subject to their own deletion/retention lifecycle.
+
+Migration `048_library_artifact_deletion.sql` keeps assignment source-version references with
+`ON DELETE NO ACTION`, preventing parent deletion from silently erasing practice evidence while
+preserving same-statement account/workspace cascades. Polymorphic-link triggers acquire a parent
+key-share lock and enforce artifact existence/workspace scope. A narrowly scoped parent-delete
+trigger removes all members' favorite/group links under RLS; request roles receive no broader
+published-version update/delete grants. The memory repositories enforce equivalent cleanup and
+fence pending writes against deleted artifacts.
+
+Account export gathers
 collaboration, Pulse, chat, moderation, Q&A, recovery, follow-up, and authoring/institution data
 while excluding bearer hashes and LTI response JWTs; account deletion removes or anonymizes owned
 records and private objects according to the repository workflow. An
@@ -435,7 +563,7 @@ approved institution owner can separately export up to 10,000 ordered audit even
 truncation and workspace home-region metadata.
 
 One entitlement policy supplies API enforcement and UI capability data. Hosted Free receives 20
-participants, five published checkpoint sets, 30-day reports, aggregate Recovery Loop/Q&A, and
+participants, five published Rounds, 30-day reports, aggregate Recovery Loop/Q&A, and
 three authoring jobs. Hosted Pro receives 100 participants, unlimited sets, exports/QTI, follow-up,
 cohosting, one workspace theme, 365-day reports, and 100 authoring jobs. Community mode removes
 application paywalls while preserving operator-configured participant, retention, and provider
@@ -461,8 +589,10 @@ text is never accepted.
 - A repeated answer `idempotencyKey` returns the original acknowledgement.
 - Legacy `choiceId` input canonicalizes to the versioned response payload; durable uniqueness
   remains participant + round and idempotency key.
-- Server receipt time and deadline determine acceptance; the rendered countdown is advisory.
-- Published quiz versions are immutable, and running sessions retain their frozen version.
+- In timed rooms, server receipt time and deadline determine acceptance; the rendered countdown
+  is advisory. Flex rooms have null deadlines, require host closure, and use accuracy scoring.
+- Published Round and Presentation versions are immutable, and running sessions retain their
+  frozen version and timing mode.
 - Open-checkpoint payloads omit correctness, explanation, misconception metadata, source
   citations, distributions, and score outcome.
 - Participant snapshots reveal only that participant's private result in private-result mode and
@@ -505,7 +635,9 @@ Lobby locking controls admission and does not remove existing participants. Late
 
 ## Public protocol
 
-REST routes are versioned under `/v1`. Socket.IO messages use a shared envelope carrying session identity, version, sequence, type, schema version, server time, and validated payload. Host commands include a unique command ID and expected version; answers include a unique idempotency key.
+REST routes are versioned under `/v1`. Round Socket.IO messages use an envelope carrying session
+identity, session version, sequence, type, schema version, server time, and validated payload. Host
+commands include a unique command ID and expected version; answers include a unique idempotency key.
 
 Question IDs, host command IDs, and answer idempotency suffixes are non-secret UUID v4 values
 generated with browser Web Crypto random bytes. The helper does not depend on
@@ -526,7 +658,17 @@ durable Q&A changes also use the same cursor through `audience.event` while lega
 notifications remain available. Its sync request and cursor are separate from game-state replay so
 interaction load cannot affect scoring correctness.
 
-Stable errors include `INVALID_CODE`, `SESSION_FULL`, `SESSION_LOCKED`, `NICKNAME_REJECTED`, `STALE_VERSION`, `ANSWER_LATE`, `ANSWER_INVALID`, `ENTITLEMENT_LIMIT`, `UNAUTHORIZED`, and `RATE_LIMITED`. See the [API and realtime reference](api.md) for endpoint, credential, and payload details.
+Presentation uses a separate strict envelope with `eventId`, `sessionId`, `revision`, `seq`,
+`type`, `serverTime`, and role-filtered payload. Its clients send `presentation.join`,
+`presentation.sync.request`, `presentation.command`, and `presentation.response.submit`; server
+notifications are `presentation.session.updated` and `presentation.room-status.updated`.
+Host/participant/companion sync requires the matching scoped credential and returns an authoritative
+snapshot, bounded replay events, and `resetRequired`. Revision and stream sequence are distinct
+fences. Advance commands carry `commandId` and `expectedRevision`; responses commit durably before
+acknowledgement. Participant/companion projections exclude unrevealed answers and authoring notes.
+Strict Presentation REST V1 compatibility DTOs remain separate from the realtime projections.
+
+Stable errors include `INVALID_CODE`, `SESSION_FULL`, `SESSION_LOCKED`, `NICKNAME_REJECTED`, `STALE_VERSION`, `ANSWER_LATE`, `ANSWER_INVALID`, `ENTITLEMENT_LIMIT`, `UNAUTHORIZED`, `RATE_LIMITED`, `ARTIFACT_NOT_ARCHIVED`, and `ARTIFACT_IN_USE`. See the [API and realtime reference](api.md) for endpoint, credential, and payload details.
 
 ## Security and tenancy boundaries
 
@@ -651,7 +793,7 @@ a future topology passes all of these gates:
 | Report worker/process loss           | Expired leases make pending jobs claimable again; durable evidence remains unchanged.                                                                          |
 | Authoring extraction rejected        | Job fails without calling the provider and private source bytes are cleared.                                                                                   |
 | Authoring provider interruption      | The job retries with bounded backoff, fails after three attempts, and never creates or publishes content automatically.                                        |
-| Duplicate authoring apply            | A row lock and stored applied checkpoint-set ID return the first unpublished draft instead of creating another.                                                |
+| Duplicate authoring apply            | A row lock and stored applied artifact ID return the first unpublished review draft instead of creating another.                                               |
 | Replayed OIDC or LTI state           | Atomic one-time consumption rejects the callback/launch; no creator session or identity link is issued.                                                        |
 | Unknown federated identity           | OpenRound rejects login and requires email authentication plus an explicit link in the same workspace.                                                         |
 | Changed or disabled LMS registration | New launches fail; an already verified launch remains short-lived and workspace scoped.                                                                        |
@@ -666,7 +808,10 @@ runtime switches without a restart; every guarded request reads the shared state
 plus global audit record commit in one transaction. A workspace UUID allowlist supports the
 design-partner stage. Runtime switches cannot enable missing infrastructure or override a disabled
 startup ceiling, and they do not interrupt active games. Retention runs on an interval in the
-server process. Production promotion also requires strict SSH host-key verification, valid TLS for
+server process. Once flex sessions, Presentation v2/custom frames, or Report v4 exist, rollback
+requires images that can preserve/read those contracts; see the
+[upgrade and rollback runbook](runbooks/upgrade.md#recent-content-report-and-deletion-upgrades).
+Production promotion also requires strict SSH host-key verification, valid TLS for
 application and media names, external uptime checks, centralized logs/metrics, alert routing,
 encrypted off-host backup verification, a clean replacement-VM restore drill, target-host capacity
 evidence, and named operator ownership; see the
@@ -681,7 +826,7 @@ evidence, and named operator ownership; see the
 | Pure game engine                   | Deterministic tests and no infrastructure coupling                     | Orchestration must translate engine events into persistence and role-filtered transport    |
 | PostgreSQL as source of truth      | Durable acknowledgements, reports, tenancy, and recovery in one system | Every accepted answer reaches durable storage before acknowledgement                       |
 | Valkey for coordination, not truth | Fast leases, replay, codes, and fan-out without risking durable loss   | The active single VM becomes unavailable when its local coordination service is unhealthy  |
-| Immutable quiz versions            | Running sessions cannot change underneath participants                 | Creators must republish edits for future sessions                                          |
+| Immutable artifact versions        | Running sessions cannot change underneath participants                 | Creators must republish edits for future sessions                                          |
 | Session-scoped guests              | Low-friction joining and reduced child/privacy surface                 | No cross-session learner history or roster identity in P0                                  |
 | Q&A outside game state             | Conversation traffic and moderation do not bloat live snapshots        | Q&A requires its own persistence, limits, retention, and realtime events                   |
 | Audience outbox outside game state | Durable chat/Pulse acknowledgements and cross-process fan-out          | At-least-once delivery requires event deduplication and separate audience synchronization  |
@@ -694,10 +839,20 @@ evidence, and named operator ownership; see the
 ## Implementation map
 
 - Shared contracts: [`packages/contracts/src/index.ts`](../packages/contracts/src/index.ts)
+- Shared slide geometry: [`packages/contracts/src/slide-geometry.ts`](../packages/contracts/src/slide-geometry.ts)
+- Shared content renderer: [`apps/web/components/presentation/content-slide-view.tsx`](../apps/web/components/presentation/content-slide-view.tsx)
 - Pure transitions and projections: [`packages/game-engine/src/index.ts`](../packages/game-engine/src/index.ts)
 - Session orchestration: [`apps/server/src/session-service.ts`](../apps/server/src/session-service.ts)
 - REST routes: [`apps/server/src/routes.ts`](../apps/server/src/routes.ts)
 - Realtime transport: [`apps/server/src/realtime.ts`](../apps/server/src/realtime.ts)
+- Presentation authoring/session transport: [`apps/server/src/presentation-routes.ts`](../apps/server/src/presentation-routes.ts),
+  [`apps/server/src/presentation-session-service.ts`](../apps/server/src/presentation-session-service.ts),
+  [`apps/server/src/presentation-realtime.ts`](../apps/server/src/presentation-realtime.ts)
+- Question Health APIs/revisions: [`apps/server/src/question-health-routes.ts`](../apps/server/src/question-health-routes.ts),
+  [`apps/server/src/question-health-revisions.ts`](../apps/server/src/question-health-revisions.ts)
+- Durable decision capture: [`apps/server/src/session-decision-replay.ts`](../apps/server/src/session-decision-replay.ts)
+- Library deletion: [`apps/server/src/library-routes.ts`](../apps/server/src/library-routes.ts),
+  [`packages/db/migrations/048_library_artifact_deletion.sql`](../packages/db/migrations/048_library_artifact_deletion.sql)
 - Redis coordination/replay: [`apps/server/src/cache.ts`](../apps/server/src/cache.ts)
 - PostgreSQL repository: [`packages/db/src/postgres.ts`](../packages/db/src/postgres.ts)
 - Schema and RLS: [`packages/db/migrations/001_initial.sql`](../packages/db/migrations/001_initial.sql)

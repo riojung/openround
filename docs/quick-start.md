@@ -87,12 +87,19 @@ default by running the normal `docker compose up -d` command again.
 
 Publishing creates an immutable version for future sessions. You can keep editing the draft afterward; a running session continues to use the version it started with.
 
+An eligible beta workspace can also review **Question Health** before publishing. Its advice,
+dismissals, and preview/apply/undo actions use the saved draft revision; published-version reviews
+and aggregate post-use observations are separate. This is optional and absent from the default
+classic walkthrough. See [Question Health](user-guide.md#review-question-health).
+
 ## 4. Host and join a round
 
 1. On the published Round card, select **Host**.
 2. Review the audience, late-join, scoring, result, nickname, and published experience settings.
    Optionally choose a one-session preset override. Presenter sounds remain off unless explicitly
-   enabled.
+   enabled. **Timed** is the default. An eligible workspace can choose whole-room **Flex**: no
+   response deadline or countdown, no speed bonus, and the host closes each question. Session
+   creation freezes that choice.
 3. Select **Create live session**.
 4. Leave the host tab open. It contains the session-scoped host credential.
 5. In another browser or private window, open <http://localhost:8080/join>.
@@ -114,6 +121,9 @@ Publishing creates an immutable version for future sessions. You can keep editin
 The report shows initial evidence, confidence, misconceptions, interventions, linked recovery,
 revote improvement, unresolved concepts, participant outcomes, Q&A, aggregate pulse/chat evidence,
 and versioned exports. Authorized report users can open the separate interaction transcript.
+When decision replay capture was enabled at Round creation, report v4 also offers **Decision
+replay** for recorded insight measurements and facilitator actions; older sessions are not
+reconstructed.
 
 Each live surface also provides local high-contrast, reduced-motion, and mute controls. These
 preferences override the selected preset on that device and do not change the frozen session
@@ -161,6 +171,37 @@ docker compose -f compose.yaml -f compose.media.yaml ps
 ```
 
 After the scanner is healthy, the quiz editor accepts JPEG, PNG, and WebP images up to 10 MB. Enter meaningful instructional alt text before selecting a file. Files are private and unavailable until they pass validation and malware scanning.
+
+## Optional beta workflows
+
+The default Compose profile leaves these beta flags off. An operator can enable a local test
+workspace using its UUID in the applicable comma-separated allowlist and the required flags in
+`.env`, then rebuild the server and web services. Feature availability also follows workspace
+roles and entitlements; flags do not complete production or institutional readiness gates.
+
+| Workflow                                          | Required deployment configuration                                                                                                          |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Professional workspace and Round builder          | `FEATURE_UX_BETA=true`, `FEATURE_WORKSPACE_SHELL=true`, `FEATURE_BUILDER_V2=true`, and the workspace UUID in `UX_BETA_WORKSPACE_ALLOWLIST` |
+| Presentation authoring                            | Professional workspace configuration plus `FEATURE_PRESENTATIONS=true`                                                                     |
+| Live Presentation creation                        | Presentation configuration plus `FEATURE_PRESENTATION_REALTIME=true` and the workspace UUID in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`     |
+| Whole-room live flex timing                       | `FEATURE_LIVE_FLEX_MODE=true` and the workspace UUID in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`                                            |
+| Question Health in the professional Round builder | Professional builder configuration plus `FEATURE_QUESTION_HEALTH=true` and the workspace UUID in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`   |
+| Decision replay capture for new Round sessions    | `FEATURE_DECISION_REPLAY=true` and the workspace UUID in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`                                           |
+
+The evidence-feature allowlist is independent of the UX beta allowlist. Enable only the workflows
+you intend to inspect. For Presentation authoring, start from **Create → Presentation**, add
+content slides and question blocks, save, preview, and publish. Content slides support six layouts
+and eight text elements total, including one title, with bounded move/resize controls, keyboard
+adjustment, layout guides, and image-area reservation. The preview and live views share the
+arrangement. See [the Presentation walkthrough](user-guide.md#create-and-host-a-presentation).
+
+In the professional **Library** and **Sessions** screens, workspace owners can also permanently
+delete archived content and finished or expired session history. Confirmation is required;
+retained sessions or practice assignments prevent source-content deletion. See
+[deletion and retention](user-guide.md#delete-archived-content-and-session-history) before trying
+this with synthetic data. Existing slide documents are read as the v2 structured model without a
+database migration; permanent Library deletion uses migration
+`048_library_artifact_deletion.sql`, applied through the normal database migration workflow.
 
 ## Optional: enable source-grounded authoring
 
