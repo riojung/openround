@@ -28,6 +28,8 @@ import {
 import { resolveExperienceTheme } from "@openround/experience";
 import { deriveCheckpointInsight } from "@openround/insights";
 
+// Time mode is additive within v5. Keep newly created timed rooms readable by prior v5 binaries
+// during rolling deployment and rollback; legacy snapshots resolve a missing mode to timed.
 export const CURRENT_GAME_STATE_SCHEMA_VERSION = 5;
 
 /** Browser-safe stable fallback used for legacy and avatar-less participants. */
@@ -66,9 +68,14 @@ function participantsWithAvatars(
   return normalized;
 }
 
-function settingsWithTrustMode(settings: SessionSettings): ResolvedSessionSettings {
+function resolvedSettings(settings: SessionSettings): ResolvedSessionSettings {
+  const timeMode = settings.timeMode ?? "timed";
   return {
     ...settings,
+    timeMode,
+    // An untimed room cannot award a speed advantage, including when an older client still
+    // submits its default speed-scoring selection at session creation.
+    scoringMode: timeMode === "flex" ? "accuracy" : settings.scoringMode,
     trustMode: settings.trustMode ?? "learning",
   };
 }
@@ -95,7 +102,7 @@ export interface EngineRound {
   sourceRoundId: string | null;
   interventionId: string | null;
   openedAtMs: number;
-  deadlineMs: number;
+  deadlineMs: number | null;
   lockedAtMs: number | null;
 }
 
@@ -223,7 +230,7 @@ export function upgradeGameState(input: GameState): GameState {
     );
   }
   const participants = participantsWithAvatars(legacy.participants);
-  const settings = settingsWithTrustMode(legacy.settings);
+  const settings = resolvedSettings(legacy.settings);
   if (legacy.stateSchemaVersion === CURRENT_GAME_STATE_SCHEMA_VERSION) {
     return { ...legacy, participants, settings };
   }
@@ -301,7 +308,7 @@ export function createGameState(input: {
     intervention: null,
     interventions: {},
     lobbyLocked: false,
-    settings: settingsWithTrustMode(input.settings),
+    settings: resolvedSettings(input.settings),
     brandTheme,
     experienceTheme:
       input.experienceTheme ??
@@ -444,6 +451,8 @@ function openQuestion(
 ) {
   const question = state.quiz.questions[index];
   if (!question) throw new EngineError("NOT_FOUND", "Checkpoint does not exist");
+  const deadlineMs =
+    state.settings.timeMode === "flex" ? null : nowMs + question.timeLimitSeconds * 1_000;
   return nextState(
     state,
     {
@@ -453,7 +462,7 @@ function openQuestion(
       roundKind: kind,
       sourceRoundId,
       openedAtMs: nowMs,
-      deadlineMs: nowMs + question.timeLimitSeconds * 1_000,
+      deadlineMs,
       pausedRemainingMs: null,
       pausedFrom: null,
       interventionReturnPhase: null,
@@ -468,7 +477,7 @@ function openQuestion(
           sourceRoundId,
           interventionId,
           openedAtMs: nowMs,
-          deadlineMs: nowMs + question.timeLimitSeconds * 1_000,
+          deadlineMs,
           lockedAtMs: null,
         },
       },
@@ -511,15 +520,19 @@ export function applyHostCommand(
       break;
     }
     case "pause": {
-      if (state.phase !== "question_open" || state.deadlineMs === null) {
+      if (state.phase !== "question_open") {
         throw new EngineError("CONFLICT", "Only an open checkpoint can be paused");
+      }
+      if (state.settings.timeMode === "timed" && state.deadlineMs === null) {
+        throw new EngineError("CONFLICT", "The timed checkpoint has no deadline");
       }
       result = nextState(
         state,
         {
           phase: "paused",
           pausedFrom: "question_open",
-          pausedRemainingMs: Math.max(0, state.deadlineMs - input.nowMs),
+          pausedRemainingMs:
+            state.deadlineMs === null ? null : Math.max(0, state.deadlineMs - input.nowMs),
           deadlineMs: null,
         },
         ["session.snapshot"],
@@ -527,10 +540,14 @@ export function applyHostCommand(
       break;
     }
     case "resume": {
-      if (state.phase !== "paused" || state.pausedRemainingMs === null) {
+      if (
+        state.phase !== "paused" ||
+        (state.settings.timeMode === "timed" && state.pausedRemainingMs === null)
+      ) {
         throw new EngineError("CONFLICT", "The session is not paused");
       }
-      const deadlineMs = input.nowMs + state.pausedRemainingMs;
+      const deadlineMs =
+        state.settings.timeMode === "flex" ? null : input.nowMs + state.pausedRemainingMs!;
       result = nextState(
         state,
         {
@@ -891,12 +908,12 @@ export function acceptAnswer(
     state.phase !== "question_open" ||
     !state.roundId ||
     state.roundId !== input.roundId ||
-    state.deadlineMs === null ||
+    (state.settings.timeMode === "timed" && state.deadlineMs === null) ||
     state.openedAtMs === null
   ) {
     throw new EngineError("CONFLICT", "The checkpoint is not accepting responses");
   }
-  if (input.nowMs > state.deadlineMs) {
+  if (state.deadlineMs !== null && input.nowMs > state.deadlineMs) {
     throw new EngineError("ANSWER_LATE", "The response arrived after the server deadline");
   }
   const participant = state.participants[input.participantId];
@@ -975,7 +992,7 @@ export function leaderboard(state: GameState): ParticipantView[] {
       (a, b) =>
         b.score - a.score ||
         b.correctCount - a.correctCount ||
-        a.acceptedResponseMs - b.acceptedResponseMs ||
+        (state.settings.timeMode === "flex" ? 0 : a.acceptedResponseMs - b.acceptedResponseMs) ||
         a.id.localeCompare(b.id),
     );
   return sorted.map((participant, index) => ({

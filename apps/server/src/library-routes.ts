@@ -3,6 +3,7 @@ import { z } from "zod";
 import type {
   CreatorContext,
   LibraryMetadataRepository,
+  LibraryArtifactDeletionResult,
   PresentationRepository,
   Repository,
 } from "@openround/db";
@@ -38,6 +39,43 @@ function requireEditor(creator: CreatorContext, reply: FastifyReply, requestId: 
         "Your workspace role does not allow this action",
         requestId,
       );
+}
+
+function requireOwner(creator: CreatorContext, reply: FastifyReply, requestId: string) {
+  return creator.role === "owner"
+    ? true
+    : apiError(
+        reply,
+        403,
+        "UNAUTHORIZED",
+        "Only workspace owners can permanently delete Library items",
+        requestId,
+      );
+}
+
+function deletionError(
+  reply: FastifyReply,
+  result: Exclude<LibraryArtifactDeletionResult, "deleted">,
+  name: string,
+  requestId: string,
+) {
+  if (result === "not_found")
+    return apiError(reply, 404, "NOT_FOUND", `${name} not found`, requestId);
+  if (result === "not_archived")
+    return apiError(
+      reply,
+      409,
+      "ARTIFACT_NOT_ARCHIVED",
+      `Archive this ${name.toLowerCase()} before permanently deleting it`,
+      requestId,
+    );
+  return apiError(
+    reply,
+    409,
+    "ARTIFACT_IN_USE",
+    `${name} is used by retained sessions or practice assignments. Delete the associated sessions first. If practice assignments exist, keep the ${name.toLowerCase()} archived to preserve them.`,
+    requestId,
+  );
 }
 
 export async function registerLibraryRoutes(
@@ -110,6 +148,9 @@ export async function registerLibraryRoutes(
       favorite,
       now: new Date(),
     });
+    if (favorite && !record) {
+      return apiError(reply, 404, "NOT_FOUND", "Library item not found", request.id);
+    }
     await repository.recordAudit({
       workspaceId: creator.workspaceId,
       actorId: creator.userId,
@@ -119,6 +160,47 @@ export async function registerLibraryRoutes(
       requestId: request.id,
     });
     return { favorite: record };
+  });
+
+  app.delete("/v1/quizzes/:id", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireLibraryWorkspace(creator, reply, request.id) !== true) return;
+    if (requireOwner(creator, reply, request.id) !== true) return;
+    const { id } = PresentationParamsSchema.parse(request.params);
+    const result = await repository.deleteQuiz(creator.workspaceId, id);
+    if (result !== "deleted") return deletionError(reply, result, "Round", request.id);
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "quiz.delete",
+      targetType: "quiz",
+      targetId: id,
+      requestId: request.id,
+    });
+    return reply.code(204).send();
+  });
+
+  app.delete("/v1/presentations/:id", async (request, reply) => {
+    const creator = await auth.requireCreator(request, reply);
+    if (!creator) return;
+    if (requireLibraryWorkspace(creator, reply, request.id) !== true) return;
+    if (!presentationsEnabled(creator.workspaceId)) {
+      return professionalFeatureUnavailable(reply, request.id, "Presentation not found");
+    }
+    if (requireOwner(creator, reply, request.id) !== true) return;
+    const { id } = PresentationParamsSchema.parse(request.params);
+    const result = await presentations.deletePresentation(creator.workspaceId, id);
+    if (result !== "deleted") return deletionError(reply, result, "Presentation", request.id);
+    await repository.recordAudit({
+      workspaceId: creator.workspaceId,
+      actorId: creator.userId,
+      action: "presentation.delete",
+      targetType: "presentation",
+      targetId: id,
+      requestId: request.id,
+    });
+    return reply.code(204).send();
   });
 
   app.patch("/v1/presentations/:id/organization", async (request, reply) => {

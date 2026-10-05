@@ -61,15 +61,15 @@
   width: min(100%, 850px);
 }
 
-.canvas h1,
-.canvas h2 {
+.canvasContent > h1,
+.canvasContent > h2 {
   margin: 0 0 18px;
   font-size: clamp(2rem, 5vw, 4.5rem);
   letter-spacing: -0.045em;
   line-height: 1.02;
 }
 
-.canvas p {
+.canvasContent > p {
   font-size: clamp(1.05rem, 2vw, 1.45rem);
   line-height: 1.6;
 }

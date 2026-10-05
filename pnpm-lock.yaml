@@ -96,6 +96,9 @@ importers:
       '@openround/game-engine':
         specifier: workspace:*
         version: link:../../packages/game-engine
+      '@openround/insights':
+        specifier: workspace:*
+        version: link:../../packages/insights
       '@opentelemetry/api':
         specifier: 1.9.1
         version: 1.9.1

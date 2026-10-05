@@ -12,9 +12,12 @@ import type {
   InstitutionContractStatus,
   InteractionSettings,
   ProductEvent,
+  QuestionHealthDismissalReason,
+  QuestionHealthRevisionChange,
   QuizDraft,
   Report,
   ResponsePayload,
+  SessionDecisionEvent,
   SupportedLocale,
   TimeMultiplier,
   TrustMode,
@@ -263,6 +266,53 @@ export interface QuizDraftHistoryRecord {
   createdAt: Date;
 }
 
+export interface QuestionHealthDismissalRecord {
+  workspaceId: string;
+  quizId: string;
+  findingId: string;
+  ruleVersion: number;
+  rulesetVersion: string;
+  contentHash: string;
+  reason: QuestionHealthDismissalReason;
+  createdAt: Date;
+}
+
+export interface QuestionHealthDismissalWrite {
+  actorId: string;
+  workspaceId: string;
+  quizId: string;
+  findingId: string;
+  ruleVersion: number;
+  rulesetVersion: string;
+  contentHash: string;
+  reason: QuestionHealthDismissalReason;
+  expectedDraftRevision: number;
+  requestId: string;
+}
+
+export type QuestionHealthDismissalIdentity = Omit<QuestionHealthDismissalWrite, "reason">;
+
+/** Durable provenance for a facilitator-approved, draft-only Question Health edit. */
+export interface QuestionHealthApplicationRecord {
+  workspaceId: string;
+  quizId: string;
+  applicationId: string;
+  findingId: string;
+  ruleVersion: number;
+  rulesetVersion: string;
+  contentHash: string;
+  sourceRevision: number;
+  appliedRevision: number;
+  requestHash: string;
+  changes: QuestionHealthRevisionChange[];
+  createdAt: Date;
+}
+
+export type QuestionHealthApplicationWrite = Omit<
+  QuestionHealthApplicationRecord,
+  "appliedRevision" | "createdAt"
+> & { requestId: string };
+
 export interface QuizDraftUpdate {
   workspaceId: string;
   quizId: string;
@@ -272,6 +322,8 @@ export interface QuizDraftUpdate {
   editorId: string;
   schemaVersion: number;
   draftHash: string;
+  questionHealthApplication?: QuestionHealthApplicationWrite;
+  questionHealthUndo?: { applicationId: string; requestId: string };
 }
 
 export interface StoredSession {
@@ -282,6 +334,8 @@ export interface StoredSession {
   hostTokenHash: string;
   /** Frozen identity/privacy promise for this session. */
   trustMode?: TrustMode;
+  /** Whether the optional decision timeline was enabled when the session was created. */
+  decisionReplayEnabled?: boolean;
   state: GameState;
   /** Last instant at which host and participant credentials may use the live session. */
   expiresAt: Date;
@@ -307,6 +361,9 @@ export interface LiveRoomCodeRecord {
 export type LiveRoomCodeClaim = Omit<LiveRoomCodeRecord, "releasedAt">;
 
 export interface SessionEvidence {
+  decisionReplayEnabled: boolean;
+  decisionEvents: SessionDecisionEvent[];
+  decisionEventsComplete: boolean;
   answers: EngineAnswer[];
   rounds: Array<EngineRound & { id: string }>;
   interventions: EngineIntervention[];
@@ -329,12 +386,39 @@ export interface SessionEvidence {
   };
 }
 
+export interface SessionDecisionEventWrite {
+  event: SessionDecisionEvent;
+  commandId: string;
+  eventOrdinal: number;
+}
+
 export interface ReportJob {
   reportId: string;
   workspaceId: string;
   sessionId: string;
   attempts: number;
   expiresAt: Date;
+}
+
+/** Narrow, aggregate-only projection for Question Health. Never contains prompts or participants. */
+export interface QuestionHealthObservationReport {
+  trustMode: TrustMode;
+  timeMode: "timed" | "flex";
+  scoringMode: "accuracy" | "speed";
+  questions: Array<{
+    questionId: string;
+    responses: number;
+    correct: number;
+    responseDistribution?: {
+      kind: "choice";
+      buckets: Array<{ value: string; count: number }>;
+    };
+  }>;
+}
+
+export interface QuestionHealthObservationReportPage {
+  reports: QuestionHealthObservationReport[];
+  hasMoreReports: boolean;
 }
 
 interface FollowupRecordBase {
@@ -924,6 +1008,8 @@ export type OperationalFeaturesUpdate = Partial<
   >
 >;
 
+export type LibraryArtifactDeletionResult = "deleted" | "not_found" | "not_archived" | "in_use";
+
 export interface Repository {
   initialize(): Promise<void>;
   close(): Promise<void>;
@@ -987,6 +1073,27 @@ export interface Repository {
     editorId?: string,
   ): Promise<QuizRecord | null>;
   updateQuizDraft(input: QuizDraftUpdate): Promise<QuizRecord | null>;
+  getQuestionHealthApplication(
+    workspaceId: string,
+    quizId: string,
+    applicationId: string,
+  ): Promise<QuestionHealthApplicationRecord | null>;
+  listQuestionHealthDismissals(
+    workspaceId: string,
+    quizId: string,
+  ): Promise<QuestionHealthDismissalRecord[]>;
+  putQuestionHealthDismissal(
+    input: QuestionHealthDismissalWrite,
+  ): Promise<
+    | { status: "ok"; dismissal: QuestionHealthDismissalRecord }
+    | { status: "not_found" }
+    | { status: "revision_conflict" }
+  >;
+  deleteQuestionHealthDismissal(
+    input: QuestionHealthDismissalIdentity,
+  ): Promise<
+    { status: "ok"; removed: boolean } | { status: "not_found" } | { status: "revision_conflict" }
+  >;
   listQuizDraftHistory(
     workspaceId: string,
     quizId: string,
@@ -999,6 +1106,7 @@ export interface Repository {
     expectedRevision: number;
     mutationId: string;
     editorId: string;
+    questionHealthUndo?: { applicationId: string; requestId: string };
   }): Promise<QuizRecord | null>;
   archiveQuiz(
     workspaceId: string,
@@ -1006,6 +1114,7 @@ export interface Repository {
     archived: boolean,
     maxPublishedQuizzes?: number | null,
   ): Promise<QuizRecord | null>;
+  deleteQuiz(workspaceId: string, quizId: string): Promise<LibraryArtifactDeletionResult>;
   duplicateQuiz(input: QuizRecord): Promise<QuizRecord>;
   publishQuiz(
     input: QuizVersionRecord,
@@ -1094,7 +1203,12 @@ export interface Repository {
       now: Date;
     },
   ): Promise<HistoryPage<SessionHistoryRecord>>;
-  saveSession(input: StoredSession, expectedVersion: number, report?: Report): Promise<void>;
+  saveSession(
+    input: StoredSession,
+    expectedVersion: number,
+    report?: Report,
+    decisionEvents?: SessionDecisionEventWrite[],
+  ): Promise<void>;
   deleteSession(workspaceId: string, sessionId: string): Promise<boolean>;
   createParticipant(input: ParticipantRecord): Promise<void>;
   commitParticipants(
@@ -1347,6 +1461,12 @@ export interface Repository {
   retryReportJob(job: ReportJob, error: string, availableAt: Date, failed: boolean): Promise<void>;
   getReport(workspaceId: string, reportId: string): Promise<Report | null>;
   getReportBySession(workspaceId: string, sessionId: string): Promise<Report | null>;
+  listQuestionHealthObservationReports(
+    workspaceId: string,
+    quizId: string,
+    quizVersionId: string,
+    now: Date,
+  ): Promise<QuestionHealthObservationReportPage>;
   listReportHistory(
     workspaceId: string,
     options: {

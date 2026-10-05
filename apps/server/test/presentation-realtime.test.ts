@@ -119,17 +119,28 @@ class FakePresentationRealtimeService implements PresentationRealtimeService {
   activeSyncs = 0;
   maximumActiveSyncs = 0;
   syncCalls = 0;
+  deleted = false;
+  sessionDeletedHandler: ((sessionId: string) => void) | null = null;
+
+  setSessionDeletedHandler(handler: ((sessionId: string) => void) | null) {
+    this.sessionDeletedHandler = handler;
+  }
+
+  deleteSession() {
+    this.deleted = true;
+    this.sessionDeletedHandler?.(sessionId);
+  }
 
   async workspaceForCode(code: string) {
-    return code === "1234567" ? workspaceId : null;
+    return !this.deleted && code === "1234567" ? workspaceId : null;
   }
 
   async workspaceForSession(candidate: string) {
-    return candidate === sessionId ? workspaceId : null;
+    return !this.deleted && candidate === sessionId ? workspaceId : null;
   }
 
   async join(code: string, _nickname: string) {
-    if (code !== "1234567")
+    if (this.deleted || code !== "1234567")
       throw Object.assign(new Error("Presentation not found"), { code: "NOT_FOUND" });
     return {
       workspaceId,
@@ -144,6 +155,7 @@ class FakePresentationRealtimeService implements PresentationRealtimeService {
     this.maximumActiveSyncs = Math.max(this.maximumActiveSyncs, this.activeSyncs);
     try {
       if (this.syncBarrier) await this.syncBarrier;
+      if (this.deleted) this.unauthorized();
       if (this.internalSyncError) {
         throw Object.assign(new Error("database host db.internal and table secret_table failed"), {
           details: { internalQuery: "SELECT secret" },
@@ -172,6 +184,7 @@ class FakePresentationRealtimeService implements PresentationRealtimeService {
   }
 
   async command(input: PresentationCommand) {
+    if (this.deleted) this.unauthorized();
     if (input.controlToken !== controlToken) this.unauthorized();
     if (input.expectedRevision !== this.revision) {
       throw Object.assign(new Error("This Presentation advanced in another host window"), {
@@ -184,6 +197,7 @@ class FakePresentationRealtimeService implements PresentationRealtimeService {
   }
 
   async submitResponse(input: PresentationResponseSubmit): Promise<PresentationResponseAck> {
+    if (this.deleted) this.unauthorized();
     if (input.participantToken !== participantToken) this.unauthorized();
     const duplicate = this.responses.has(input.idempotencyKey);
     this.responses.add(input.idempotencyKey);
@@ -349,6 +363,39 @@ describe("Presentation realtime transport", () => {
       responseId: first.data.responseId,
       blockId,
     });
+  });
+
+  it("disconnects a deleted room and rejects its old credentials on reconnect", async () => {
+    const participant = await connect();
+    await emitAck(participant, "presentation.join", { code: "1234567", nickname: "Learner" });
+    const host = await connect();
+    await emitAck(host, "presentation.sync.request", {
+      sessionId,
+      projection: "host",
+      controlToken,
+    });
+    const unrelated = await connect();
+    expect(service.sessionDeletedHandler).toEqual(expect.any(Function));
+
+    const participantDisconnected = new Promise<string>((resolve) =>
+      participant.once("disconnect", resolve),
+    );
+    const hostDisconnected = new Promise<string>((resolve) => host.once("disconnect", resolve));
+    service.deleteSession();
+    await expect(participantDisconnected).resolves.toBe("io server disconnect");
+    await expect(hostDisconnected).resolves.toBe("io server disconnect");
+    expect(unrelated.connected).toBe(true);
+    expect(await realtime.io.in(`presentation:${sessionId}`).fetchSockets()).toEqual([]);
+
+    const reconnect = await connect();
+    for (const payload of [
+      { sessionId, projection: "host", controlToken },
+      { sessionId, projection: "participant", participantToken },
+    ]) {
+      const response = await emitAck(reconnect, "presentation.sync.request", payload);
+      expect(response).toMatchObject({ error: { code: "UNAUTHORIZED" } });
+    }
+    expect(await realtime.io.in(`presentation:${sessionId}`).fetchSockets()).toEqual([]);
   });
 
   it("keeps an active session usable and reconnectable when rollout is paused", async () => {
@@ -611,7 +658,7 @@ function mixedTransportContent(): PresentationContent {
     title: "Mixed transport presence",
     description: "",
     experiencePreset: { id: "focus", version: 1 },
-    schemaVersion: 1,
+    schemaVersion: 2,
     blocks: [
       {
         id: crypto.randomUUID(),

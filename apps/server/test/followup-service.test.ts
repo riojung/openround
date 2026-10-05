@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { ReportV2Schema, ReportV3Schema, type QuizDraft } from "@openround/contracts";
+import {
+  ReportV2Schema,
+  ReportV3Schema,
+  ReportV4Schema,
+  type QuizDraft,
+} from "@openround/contracts";
 import { MemoryRepository, type CreatorContext } from "@openround/db";
 import { createGameState } from "@openround/game-engine";
 import { FollowupService } from "../src/followup-service.js";
 import type { FollowupError } from "../src/followup-service.js";
 
-async function fixture(timeMode: "timed" | "flex" = "timed", reportVersion: 2 | 3 = 2) {
+async function fixture(timeMode: "timed" | "flex" = "timed", reportVersion: 2 | 3 | 4 = 2) {
   const repository = new MemoryRepository();
   const service = new FollowupService(repository);
   const workspaceId = randomUUID();
@@ -186,31 +191,47 @@ async function fixture(timeMode: "timed" | "flex" = "timed", reportVersion: 2 | 
     ],
     evidenceNote: "Session evidence only.",
   } as const;
+  const reportV3 = {
+    ...reportBase,
+    schemaVersion: 3 as const,
+    experience: { category: "safety_compliance" as const, preset: { id: "signal", version: 1 } },
+    audiencePulse: {
+      uniqueParticipants: 0,
+      events: 0,
+      bySignal: { got_it: 0, unsure: 0, need_example: 0, too_fast: 0 },
+      contexts: [],
+    },
+    conversation: {
+      messages: 0,
+      uniqueContributors: 0,
+      reactions: 0,
+      reports: 0,
+      removed: 0,
+      moderationActions: 0,
+      peakMessagesPerMinute: 0,
+      transcriptAvailable: false,
+    },
+  };
   await repository.saveReport(
     workspaceId,
-    reportVersion === 3
-      ? ReportV3Schema.parse({
-          ...reportBase,
-          schemaVersion: 3,
-          experience: { category: "safety_compliance", preset: { id: "signal", version: 1 } },
-          audiencePulse: {
-            uniqueParticipants: 0,
-            events: 0,
-            bySignal: { got_it: 0, unsure: 0, need_example: 0, too_fast: 0 },
-            contexts: [],
-          },
-          conversation: {
-            messages: 0,
-            uniqueContributors: 0,
-            reactions: 0,
-            reports: 0,
-            removed: 0,
-            moderationActions: 0,
-            peakMessagesPerMinute: 0,
-            transcriptAvailable: false,
-          },
+    reportVersion === 4
+      ? ReportV4Schema.parse({
+          ...reportV3,
+          schemaVersion: 4,
+          decisionReplayAvailable: true,
+          decisionReplayComplete: true,
+          decisionTimeline: [
+            {
+              seq: 1,
+              occurredAt: now.toISOString(),
+              type: "session_finished",
+              reason: "completed",
+            },
+          ],
         })
-      : ReportV2Schema.parse({ ...reportBase, schemaVersion: 2 }),
+      : reportVersion === 3
+        ? ReportV3Schema.parse(reportV3)
+        : ReportV2Schema.parse({ ...reportBase, schemaVersion: 2 }),
   );
   const creator: CreatorContext = {
     userId,
@@ -351,11 +372,13 @@ async function assignmentFixture() {
 }
 
 describe("self-paced follow-up", () => {
-  it("creates follow-ups from both ready Report V2 and Report V3 evidence", async () => {
+  it("creates follow-ups from ready Report V2, V3, and V4 evidence", async () => {
     const v2 = await fixture("flex", 2);
     const v3 = await fixture("flex", 3);
+    const v4 = await fixture("flex", 4);
     expect(v2.created.followup.conceptKeys).toEqual(["lockout"]);
     expect(v3.created.followup.conceptKeys).toEqual(["lockout"]);
+    expect(v4.created.followup.conceptKeys).toEqual(["lockout"]);
   });
 
   it("uses an immutable linked recheck and resumes one personal attempt", async () => {

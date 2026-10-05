@@ -295,6 +295,7 @@ const messages = {
   "pages.home.sessions.empty": "아직 호스팅된 세션이 없습니다.",
   "pages.home.sessions.eyebrow": "배달",
   "pages.library.action.archive": "아카이브",
+  "pages.library.action.delete": "삭제됨",
   "pages.library.action.duplicate": "중복",
   "pages.library.action.restore": "복원",
   "pages.library.actionComplete": "{count} {type} {action}.",
@@ -308,6 +309,12 @@ const messages = {
   "pages.library.clear": "지우기",
   "pages.library.createPresentation": "프레젠테이션 만들기",
   "pages.library.createRound": "라운드 생성",
+  "pages.library.delete": "영구 삭제",
+  "pages.library.deleteConfirm":
+    "“{title}”와 모든 초안 및 게시된 버전을 영구 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+  "pages.library.deleteCount": "삭제 ({count})",
+  "pages.library.deleteManyConfirm":
+    "선택한 보관 항목 {count}개와 모든 초안 및 게시된 버전을 영구 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
   "pages.library.deselectResults": "결과 선택 해제",
   "pages.library.destinationFolder": "대상 폴더",
   "pages.library.duplicate": "중복",
@@ -419,6 +426,10 @@ const messages = {
   "pages.sessions.artifactType": "아티팩트 유형",
   "pages.sessions.blockProgress": "블록 진행",
   "pages.sessions.currentResponses": "현재 응답",
+  "pages.sessions.delete": "세션 삭제",
+  "pages.sessions.deleteConfirm":
+    "세션 “{title}”와 응답, 보고서 및 연결된 후속 연습을 영구 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+  "pages.sessions.deleting": "삭제 중…",
   "pages.sessions.emptyDescription":
     "게시된 라운드 또는 프리젠테이션을 주최하면 해당 라이브 세션이 여기에 표시됩니다.",
   "pages.sessions.emptyFiltered": "이 작업공간에는 {status} 세션이 없습니다.",

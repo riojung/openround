@@ -19,6 +19,7 @@ export default defineConfig({
     "@openround/db",
     "@openround/experience",
     "@openround/game-engine",
+    "@openround/insights",
   ],
   // The database package is bundled into the server, but node-postgres must stay
   // external because its CommonJS runtime performs legitimate dynamic requires.

@@ -8,6 +8,7 @@ import type { QuizDraft } from "@openround/contracts";
 import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
 import { apiFetch, humanError } from "../../lib/api";
+import { clearBuilderRecovery } from "../../lib/builder-recovery";
 import { pluralCategory } from "../../lib/i18n/format";
 import {
   filterLibraryItems,
@@ -52,7 +53,7 @@ interface PresentationRecord {
 
 type LibraryType = "rounds" | "presentations";
 type ArtifactType = "round" | "presentation";
-type BulkAction = "duplicate" | "archive" | "restore";
+type BulkAction = "duplicate" | "archive" | "restore" | "delete";
 
 interface FolderRecord {
   id: string;
@@ -91,6 +92,7 @@ function LibraryContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { canEdit, creator, productFeatures } = useWorkspace();
+  const canDelete = creator?.role === "owner";
   const presentationsEnabled = productFeatures?.presentations === true;
   const requestedType = searchParams.get("type");
   const [type, setType] = useState<LibraryType>(
@@ -299,25 +301,61 @@ function LibraryContent() {
   }
 
   async function runArtifactAction(action: BulkAction, ids: string[]) {
-    if (!ids.length) return;
+    if (!ids.length || busyAction) return;
+    const actionType = type;
+    if (action === "delete") {
+      if (!canDelete) return;
+      const items = actionType === "rounds" ? rounds : presentations;
+      const targets = items.filter((item) => ids.includes(item.id) && item.status === "archived");
+      if (targets.length !== ids.length) return;
+      const message =
+        targets.length === 1
+          ? t("pages.library.deleteConfirm", { title: targets[0]!.title })
+          : t("pages.library.deleteManyConfirm", { count: targets.length });
+      if (!window.confirm(message)) return;
+    }
     setBusyAction(action);
     setAnnouncement("");
     setError("");
     const results = await Promise.allSettled(
       ids.map((id) =>
-        action === "duplicate"
-          ? apiFetch(`/v1/quizzes/${id}/duplicate`, { method: "POST", body: "{}" })
-          : apiFetch(
-              type === "rounds" ? `/v1/quizzes/${id}/archive` : `/v1/presentations/${id}/archive`,
-              {
-                method: "POST",
-                body: JSON.stringify({ archived: action === "archive" }),
-              },
-            ),
+        action === "delete"
+          ? apiFetch(actionType === "rounds" ? `/v1/quizzes/${id}` : `/v1/presentations/${id}`, {
+              method: "DELETE",
+            })
+          : action === "duplicate"
+            ? apiFetch(`/v1/quizzes/${id}/duplicate`, { method: "POST", body: "{}" })
+            : apiFetch(
+                actionType === "rounds"
+                  ? `/v1/quizzes/${id}/archive`
+                  : `/v1/presentations/${id}/archive`,
+                {
+                  method: "POST",
+                  body: JSON.stringify({ archived: action === "archive" }),
+                },
+              ),
       ),
     );
     const succeeded = ids.filter((_, index) => results[index]?.status === "fulfilled");
     const failed = results.find((result) => result.status === "rejected");
+    if (action === "delete") {
+      const deleted = new Set(succeeded);
+      if (actionType === "rounds")
+        setRounds((current) => current.filter((item) => !deleted.has(item.id)));
+      else setPresentations((current) => current.filter((item) => !deleted.has(item.id)));
+      setFavoriteIds((current) => {
+        const next = new Set(current);
+        succeeded.forEach((id) =>
+          next.delete(favoriteKey(actionType === "rounds" ? "round" : "presentation", id)),
+        );
+        return next;
+      });
+      await Promise.allSettled(
+        succeeded.map((id) =>
+          clearBuilderRecovery(`${actionType === "rounds" ? "round" : "presentation"}:${id}`),
+        ),
+      );
+    }
     setSelectedIds((current) => {
       const next = new Set(current);
       succeeded.forEach((id) => next.delete(id));
@@ -329,7 +367,7 @@ function LibraryContent() {
       setAnnouncement(
         t("pages.library.actionComplete", {
           count: succeeded.length,
-          type: t(type === "rounds" ? "pages.common.rounds" : "pages.common.presentations"),
+          type: t(actionType === "rounds" ? "pages.common.rounds" : "pages.common.presentations"),
           action: t(`pages.library.action.${action}`),
         }),
       );
@@ -616,6 +654,16 @@ function LibraryContent() {
                     {t("pages.library.restoreCount", { count: bulkTargets.restore.length })}
                   </button>
                 ) : null}
+                {canDelete && bulkTargets.restore.length ? (
+                  <button
+                    className={styles.dangerAction}
+                    disabled={Boolean(busyAction)}
+                    onClick={() => void runArtifactAction("delete", bulkTargets.restore)}
+                    type="button"
+                  >
+                    {t("pages.library.deleteCount", { count: bulkTargets.restore.length })}
+                  </button>
+                ) : null}
                 <label className={styles.bulkFolder}>
                   <span className="sr-only">{t("pages.library.destinationFolder")}</span>
                   <select
@@ -781,6 +829,16 @@ function LibraryContent() {
                               >
                                 {archived ? t("pages.library.restore") : t("pages.library.archive")}
                               </button>
+                              {archived && canDelete ? (
+                                <button
+                                  className={styles.dangerAction}
+                                  disabled={Boolean(busyAction)}
+                                  onClick={() => void runArtifactAction("delete", [round.id])}
+                                  type="button"
+                                >
+                                  {t("pages.library.delete")}
+                                </button>
+                              ) : null}
                             </div>
                           </details>
                         ) : null}
@@ -930,6 +988,18 @@ function LibraryContent() {
                                     ? t("pages.library.restore")
                                     : t("pages.library.archive")}
                                 </button>
+                                {archived && canDelete ? (
+                                  <button
+                                    className={styles.dangerAction}
+                                    disabled={Boolean(busyAction)}
+                                    onClick={() =>
+                                      void runArtifactAction("delete", [presentation.id])
+                                    }
+                                    type="button"
+                                  >
+                                    {t("pages.library.delete")}
+                                  </button>
+                                ) : null}
                               </div>
                             </details>
                           ) : null}

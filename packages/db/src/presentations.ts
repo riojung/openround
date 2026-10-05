@@ -6,7 +6,7 @@ import {
   type MemoryRepositoryLifecycleExtension,
 } from "./memory.js";
 import { PostgresRepository } from "./postgres.js";
-import type { Repository } from "./types.js";
+import type { LibraryArtifactDeletionResult, Repository } from "./types.js";
 import { presentationMediaIds } from "./media-references.js";
 import {
   PRESENTATION_CONTENT_SCHEMA_VERSION,
@@ -208,9 +208,26 @@ export class MemoryPresentationRepository
   constructor(
     private readonly repository?: Pick<
       MemoryRepository,
-      "listFolders" | "replaceMediaReferences" | "validateMediaReferences"
+      | "listFolders"
+      | "replaceMediaReferences"
+      | "validateMediaReferences"
+      | "isLibraryArtifactReferenced"
+      | "markLibraryArtifactDeleted"
+      | "deleteLibraryArtifactMetadata"
+      | "removeMediaReferencesForOwners"
     >,
   ) {}
+
+  hasLibraryArtifact(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    return (
+      artifactType === "presentation" &&
+      this.presentations.get(artifactId)?.workspaceId === workspaceId
+    );
+  }
 
   exportAccount({ ownedWorkspaceIds }: MemoryRepositoryLifecycleContext) {
     return {
@@ -521,6 +538,51 @@ export class MemoryPresentationRepository
     presentation.folderId = folderId;
     presentation.updatedAt = new Date();
     return clone(normalizePresentationRecord(presentation));
+  }
+
+  async deletePresentation(
+    workspaceId: string,
+    presentationId: string,
+  ): Promise<LibraryArtifactDeletionResult> {
+    const presentation = this.presentations.get(presentationId);
+    if (!presentation || presentation.workspaceId !== workspaceId) return "not_found";
+    if (presentation.status !== "archived") return "not_archived";
+    if (this.repository?.isLibraryArtifactReferenced(workspaceId, "presentation", presentationId))
+      return "in_use";
+
+    const versionIds = new Set<string>();
+    const historyIds = new Set<string>();
+    for (const [id, version] of this.versions) {
+      if (version.workspaceId === workspaceId && version.presentationId === presentationId) {
+        versionIds.add(id);
+        this.versions.delete(id);
+      }
+    }
+    for (const [key, snapshot] of this.history) {
+      if (snapshot.workspaceId === workspaceId && snapshot.presentationId === presentationId) {
+        historyIds.add(snapshot.id);
+        this.history.delete(key);
+      }
+    }
+    for (const [key, mutation] of this.mutations) {
+      if (mutation.workspaceId === workspaceId && mutation.presentationId === presentationId)
+        this.mutations.delete(key);
+    }
+    this.repository?.removeMediaReferencesForOwners(workspaceId, [
+      { ownerType: "presentation_draft", ownerId: presentationId },
+      ...[...versionIds].map((ownerId) => ({
+        ownerType: "presentation_version" as const,
+        ownerId,
+      })),
+      ...[...historyIds].map((ownerId) => ({
+        ownerType: "presentation_history" as const,
+        ownerId,
+      })),
+    ]);
+    this.presentations.delete(presentationId);
+    this.repository?.markLibraryArtifactDeleted(workspaceId, "presentation", presentationId);
+    this.repository?.deleteLibraryArtifactMetadata(workspaceId, "presentation", presentationId);
+    return "deleted";
   }
 
   async archivePresentation(workspaceId: string, presentationId: string, archived: boolean) {
@@ -900,6 +962,37 @@ export class PostgresPresentationRepository implements PresentationRepository {
       );
       return result.rows[0] ? mapPresentation(result.rows[0]) : null;
     });
+  }
+
+  async deletePresentation(
+    workspaceId: string,
+    presentationId: string,
+  ): Promise<LibraryArtifactDeletionResult> {
+    try {
+      return await this.transaction(workspaceId, async (client) => {
+        const current = await client.query(
+          "SELECT status FROM presentations WHERE workspace_id = $1 AND id = $2 FOR UPDATE",
+          [workspaceId, presentationId],
+        );
+        if (!current.rows[0]) return "not_found";
+        if (current.rows[0].status !== "archived") return "not_archived";
+        const referenced = await client.query(
+          `SELECT 1 FROM presentation_live_sessions
+           WHERE workspace_id = $1 AND presentation_id = $2 LIMIT 1`,
+          [workspaceId, presentationId],
+        );
+        if (referenced.rows[0]) return "in_use";
+        // Cascades run with the parent table owner's privileges, preserving version immutability grants.
+        await client.query("DELETE FROM presentations WHERE workspace_id = $1 AND id = $2", [
+          workspaceId,
+          presentationId,
+        ]);
+        return "deleted";
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === "23503") return "in_use";
+      throw error;
+    }
   }
 
   async archivePresentation(workspaceId: string, presentationId: string, archived: boolean) {

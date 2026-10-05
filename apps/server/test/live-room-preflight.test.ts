@@ -103,14 +103,22 @@ async function createPresentation(
     title: "Unified join test",
     description: "",
     experiencePreset: { id: "focus", version: 1 },
-    schemaVersion: 1,
+    schemaVersion: 2,
     blocks: [
       {
         id: randomUUID(),
         kind: "content",
         layout: "title_body",
-        title: "Welcome",
-        body: "Test room",
+        textElements: [
+          { id: "welcome:title", role: "title", text: "Welcome", region: "top_center", order: 0 },
+          {
+            id: "welcome:body",
+            role: "body",
+            text: "Test room",
+            region: "middle_center",
+            order: 0,
+          },
+        ],
         mediaId: null,
         mediaAlt: null,
         speakerNotes: "",

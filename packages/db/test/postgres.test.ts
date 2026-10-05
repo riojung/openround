@@ -36,6 +36,7 @@ import {
   WorkspaceDeletionInProgressError,
 } from "../src/types.js";
 import { discoverMigrations, runMigrations } from "../src/migrations.js";
+import { createLibraryDeletionFixture } from "./support/library-deletion-fixtures.js";
 import { expectPresentationSessionRepositoryConformance } from "./support/presentation-session-conformance.js";
 
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -199,7 +200,14 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
           verificationClient.query<{ count: string; maximum: number }>(
             "SELECT count(*) AS count, max(version) AS maximum FROM _openround_migrations",
           ),
-        ).resolves.toMatchObject({ rows: [{ count: "43", maximum: 43 }] });
+        ).resolves.toMatchObject({
+          rows: [
+            {
+              count: String(migrations.length),
+              maximum: migrations.at(-1)!.version,
+            },
+          ],
+        });
 
         await expect(
           verificationClient.query(
@@ -286,7 +294,7 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
             },
           },
         ],
-      } satisfies PresentationDraft;
+      } as unknown as PresentationDraft;
       const fixtures = [
         {
           sessionId: randomUUID(),
@@ -724,6 +732,11 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 41, name: "media_deletion_tombstone" },
       { version: 42, name: "workspace_deletion_cleanup" },
       { version: 43, name: "bounded_media_object_cleanup" },
+      { version: 44, name: "round_flex_deadlines" },
+      { version: 45, name: "question_health_dismissals" },
+      { version: 46, name: "question_health_applications" },
+      { version: 47, name: "session_decision_replay" },
+      { version: 48, name: "library_artifact_deletion" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -733,7 +746,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("43");
+    expect(bootstrapped.rows[0]?.count).toBe(String(migrations.rows.length));
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -812,6 +825,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     fixture: Awaited<ReturnType<typeof createPublishedRoundFixture>>,
     code: string,
     trustMode: "learning" | "verified" = "learning",
+    decisionReplayEnabled = false,
   ) {
     const now = new Date();
     const id = randomUUID();
@@ -835,6 +849,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       hostId: owner.userId,
       hostTokenHash: randomUUID(),
       trustMode,
+      decisionReplayEnabled,
       state,
       expiresAt: new Date(now.getTime() + 60_000),
       retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
@@ -853,7 +868,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       title: label,
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: randomUUID(),
@@ -883,7 +898,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "draft",
       draft: content,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -1563,6 +1578,97 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     }
   });
 
+  it("commits decision events with the matching Round state and rolls both back on conflict", async () => {
+    const owner = await creator("decision-replay-postgres");
+    const round = await createPublishedRoundFixture(owner, "Decision replay transaction");
+    const session = await createRoundSessionFixture(
+      owner,
+      round,
+      String(randomInt(1_000_000, 10_000_000)),
+      "learning",
+      true,
+    );
+    const storedSession = await repository.getSessionById(session.id);
+    if (!storedSession) throw new Error("Expected a stored replay session");
+    const now = new Date();
+    const started = applyHostCommand(session.state, {
+      commandId: randomUUID(),
+      expectedVersion: session.state.version,
+      action: "start",
+      nowMs: now.getTime(),
+      newRoundId: randomUUID,
+    });
+    await repository.saveSession(
+      { ...storedSession, state: started.state, decisionReplayEnabled: true },
+      session.state.version,
+    );
+    const locked = applyHostCommand(started.state, {
+      commandId: randomUUID(),
+      expectedVersion: started.state.version,
+      action: "lock",
+      nowMs: now.getTime() + 1_000,
+      newRoundId: randomUUID,
+    });
+    const seq = locked.events.find((event) => event.type === "checkpoint.insight")?.seq;
+    if (!seq || !locked.state.roundId) throw new Error("Expected the checkpoint insight event");
+    const insight = {
+      seq,
+      occurredAt: new Date(now.getTime() + 1_000).toISOString(),
+      type: "insight_shown" as const,
+      roundId: locked.state.roundId,
+      questionId: locked.state.quiz.questions[locked.state.questionIndex!]!.id,
+      sampleSize: 0,
+      activeParticipantCount: 0,
+      recommendationCode: "insufficient_sample" as const,
+      ruleSetVersion: "checkpoint-insight-v1",
+    };
+    await repository.saveSession(
+      { ...storedSession, state: locked.state, decisionReplayEnabled: true },
+      started.state.version,
+      undefined,
+      [{ event: insight, commandId: "decision-lock-command", eventOrdinal: 0 }],
+    );
+    expect(await repository.getSessionEvidence(owner.workspaceId, session.id)).toMatchObject({
+      decisionReplayEnabled: true,
+      decisionEvents: [insight],
+      decisionEventsComplete: true,
+    });
+
+    const revealed = applyHostCommand(locked.state, {
+      commandId: randomUUID(),
+      expectedVersion: locked.state.version,
+      action: "reveal",
+      nowMs: now.getTime() + 2_000,
+      newRoundId: randomUUID,
+    });
+    await expect(
+      repository.saveSession(
+        { ...storedSession, state: revealed.state, decisionReplayEnabled: true },
+        locked.state.version,
+        undefined,
+        [
+          {
+            event: {
+              seq: insight.seq,
+              occurredAt: new Date(now.getTime() + 2_000).toISOString(),
+              type: "answer_revealed",
+              roundId: insight.roundId,
+              questionId: insight.questionId,
+            },
+            commandId: "decision-reveal-command",
+            eventOrdinal: 0,
+          },
+        ],
+      ),
+    ).rejects.toMatchObject({ code: "23505" });
+    await expect(repository.getSessionById(session.id)).resolves.toMatchObject({
+      state: { version: locked.state.version, phase: "question_locked" },
+    });
+    expect(
+      (await repository.getSessionEvidence(owner.workspaceId, session.id)).decisionEvents,
+    ).toEqual([insight]);
+  });
+
   it("persists an idempotent locale preference for only the selected user", async () => {
     const first = await creator("locale-first");
     const second = await creator("locale-second");
@@ -1609,6 +1715,223 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       profile: { locale: "zh-TW", localePreferenceSet: true },
     });
     await expect(repository.updateUserLocale(randomUUID(), "de-DE")).resolves.toBeNull();
+  });
+
+  it("persists tenant-scoped, revision-fenced Question Health dismissals in account exports", async () => {
+    const owner = await creator("question-health-dismissal");
+    const other = await creator("question-health-dismissal-other");
+    const now = new Date();
+    const draft = publishableRound("Dismissal persistence");
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const dismissalInput = {
+      actorId: owner.userId,
+      workspaceId: owner.workspaceId,
+      quizId: quiz.id,
+      findingId: "qh-1.0.0-question.missing_citation-question-field",
+      ruleVersion: 1,
+      rulesetVersion: "1.0.0",
+      contentHash: "a".repeat(64),
+      reason: "intentional_choice" as const,
+      expectedDraftRevision: 0,
+      requestId: randomUUID(),
+    };
+
+    const saved = await repository.putQuestionHealthDismissal(dismissalInput);
+    expect(saved.status).toBe("ok");
+    expect(await repository.listQuestionHealthDismissals(owner.workspaceId, quiz.id)).toHaveLength(
+      1,
+    );
+    expect(await repository.listQuestionHealthDismissals(other.workspaceId, quiz.id)).toEqual([]);
+    expect(
+      await repository.putQuestionHealthDismissal({
+        ...dismissalInput,
+        expectedDraftRevision: 1,
+      }),
+    ).toEqual({ status: "revision_conflict" });
+
+    const accountExport = (await repository.exportAccount(owner.userId)) as {
+      questionHealthDismissals?: Array<{ quiz_id: string; reason: string }>;
+    };
+    expect(accountExport.questionHealthDismissals).toEqual([
+      expect.objectContaining({ quiz_id: quiz.id, reason: "intentional_choice" }),
+    ]);
+
+    expect(await repository.deleteQuestionHealthDismissal(dismissalInput)).toEqual({
+      status: "ok",
+      removed: true,
+    });
+    expect(await repository.listQuestionHealthDismissals(owner.workspaceId, quiz.id)).toEqual([]);
+  });
+
+  it("projects only retained aggregate reports for the exact Question Health version and workspace", async () => {
+    const owner = await creator("question-health-observation");
+    const other = await creator("question-health-observation-other");
+    const fixture = await createPublishedRoundFixture(owner, "Question Health observation");
+    const { id: sessionId, state } = await createRoundSessionFixture(
+      owner,
+      fixture,
+      String(randomInt(1_000_000, 9_999_999)),
+    );
+    const now = new Date();
+    const question = fixture.content.questions[0]!;
+    const session = await repository.getSessionById(sessionId);
+    if (!session) throw new Error("Expected the observation fixture session");
+    const report: Report = {
+      id: randomUUID(),
+      sessionId,
+      schemaVersion: 1,
+      trustMode: "learning",
+      timeMode: "timed",
+      status: "ready",
+      generatedAt: now.toISOString(),
+      expiresAt: session.retentionExpiresAt.toISOString(),
+      metrics: {
+        participantCount: 20,
+        completedCount: 20,
+        answerCount: 20,
+        accuracyPercent: 60,
+      },
+      questions: [
+        {
+          questionId: question.id,
+          prompt: question.prompt,
+          responses: 20,
+          correct: 12,
+          accuracyPercent: 60,
+          difficult: false,
+        },
+      ],
+      participants: [],
+    };
+    expect(state.sessionId).toBe(sessionId);
+    await repository.saveReport(owner.workspaceId, report);
+
+    const observations = await repository.listQuestionHealthObservationReports(
+      owner.workspaceId,
+      fixture.version.quizId,
+      fixture.version.id,
+      now,
+    );
+    expect(observations).toEqual({
+      hasMoreReports: false,
+      reports: [
+        {
+          trustMode: "learning",
+          timeMode: "timed",
+          scoringMode: "accuracy",
+          questions: [{ questionId: question.id, responses: 20, correct: 12 }],
+        },
+      ],
+    });
+    expect(JSON.stringify(observations)).not.toContain(question.prompt);
+    expect(JSON.stringify(observations)).not.toContain("sessionId");
+    await expect(
+      repository.listQuestionHealthObservationReports(
+        owner.workspaceId,
+        fixture.version.quizId,
+        randomUUID(),
+        now,
+      ),
+    ).resolves.toEqual({ reports: [], hasMoreReports: false });
+    await expect(
+      repository.listQuestionHealthObservationReports(
+        other.workspaceId,
+        fixture.version.quizId,
+        fixture.version.id,
+        now,
+      ),
+    ).resolves.toEqual({ reports: [], hasMoreReports: false });
+  });
+
+  it("atomically stores tenant-scoped Question Health application provenance with a draft revision", async () => {
+    const owner = await creator("question-health-application");
+    const other = await creator("question-health-application-other");
+    const now = new Date();
+    const old = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1_000);
+    const draft = publishableRound("Application persistence");
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: old,
+      updatedAt: old,
+    });
+    const applicationId = randomUUID();
+    const changed = {
+      ...draft,
+      questions: [{ ...draft.questions[0]!, explanation: "A reviewed explanation." }],
+    } as QuizDraft;
+    const mutation = {
+      workspaceId: owner.workspaceId,
+      quizId: quiz.id,
+      draft: changed,
+      expectedRevision: 0,
+      mutationId: applicationId,
+      editorId: owner.userId,
+      schemaVersion: 1,
+      draftHash: createHash("sha256").update(JSON.stringify(changed)).digest("hex"),
+      questionHealthApplication: {
+        workspaceId: owner.workspaceId,
+        quizId: quiz.id,
+        applicationId,
+        findingId: "qh-test-missing-explanation",
+        ruleVersion: 1,
+        rulesetVersion: "1.0.0",
+        contentHash: "a".repeat(64),
+        sourceRevision: 0,
+        requestHash: "b".repeat(64),
+        changes: [
+          {
+            fieldPath: "questions.0.explanation",
+            before: "One plus one is two.",
+            after: "A reviewed explanation.",
+          },
+        ],
+        requestId: randomUUID(),
+      },
+    };
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({ draftRevision: 1 });
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({ draftRevision: 1 });
+    expect(
+      await repository.getQuestionHealthApplication(owner.workspaceId, quiz.id, applicationId),
+    ).toMatchObject({ sourceRevision: 0, appliedRevision: 1, requestHash: "b".repeat(64) });
+    expect(
+      await repository.getQuestionHealthApplication(other.workspaceId, quiz.id, applicationId),
+    ).toBeNull();
+    expect(
+      (await repository.listQuizDraftHistory(owner.workspaceId, quiz.id)).map(
+        (snapshot) => snapshot.revision,
+      ),
+    ).toContain(0);
+    await expect(
+      repository.updateQuizDraft({
+        ...mutation,
+        questionHealthApplication: {
+          ...mutation.questionHealthApplication,
+          requestHash: "c".repeat(64),
+        },
+      }),
+    ).rejects.toThrow();
+    const accountExport = (await repository.exportAccount(owner.userId)) as {
+      questionHealthApplications?: Array<{ application_id: string }>;
+    };
+    expect(accountExport.questionHealthApplications).toMatchObject([
+      { application_id: applicationId },
+    ]);
   });
 
   it("atomically fences draft replacements and revision-bound publishing", async () => {
@@ -1835,14 +2158,16 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       title: "Secure presentation",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: randomUUID(),
           kind: "content",
           layout: "title_body",
-          title: "Opening",
-          body: "",
+          textElements: [
+            { id: "opening:title", role: "title", text: "Opening", region: "top_center", order: 0 },
+            { id: "opening:body", role: "body", text: "", region: "middle_center", order: 0 },
+          ],
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "",
@@ -1857,7 +2182,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "draft",
       draft,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -2030,6 +2355,188 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     });
   });
 
+  it("permanently deletes archived Library parents with restricted runtime grants and cleans every member's links", async () => {
+    const owner = await creator("library-delete-owner");
+    const second = await creator("library-delete-second");
+    const fixture = await createLibraryDeletionFixture(repository, owner, second.userId);
+    expect(await repository.deleteQuiz(second.workspaceId, fixture.round.id)).toBe("not_found");
+    expect(
+      await fixture.presentations.deletePresentation(second.workspaceId, fixture.presentation.id),
+    ).toBe("not_found");
+    expect(await repository.deleteQuiz(owner.workspaceId, fixture.round.id)).toBe("not_archived");
+    expect(
+      await fixture.presentations.deletePresentation(owner.workspaceId, fixture.presentation.id),
+    ).toBe("not_archived");
+    expect(await repository.listMediaReferences(owner.workspaceId, fixture.mediaId)).toHaveLength(
+      8,
+    );
+    const privileges = await runtimePool.query<{ can_update: boolean; can_delete: boolean }>(
+      "SELECT has_table_privilege(current_user, 'presentation_versions', 'UPDATE') AS can_update, has_table_privilege(current_user, 'presentation_versions', 'DELETE') AS can_delete",
+    );
+    expect(privileges.rows).toEqual([{ can_update: false, can_delete: false }]);
+    await repository.archiveQuiz(owner.workspaceId, fixture.round.id, true);
+    await fixture.presentations.archivePresentation(
+      owner.workspaceId,
+      fixture.presentation.id,
+      true,
+    );
+    expect(await repository.deleteQuiz(owner.workspaceId, fixture.round.id)).toBe("deleted");
+    expect(
+      await fixture.presentations.getPresentation(owner.workspaceId, fixture.presentation.id),
+    ).not.toBeNull();
+    expect(await fixture.favorites.listFavorites(owner.workspaceId, second.userId)).toMatchObject([
+      { artifactId: fixture.presentation.id },
+    ]);
+    expect(
+      await fixture.presentations.deletePresentation(owner.workspaceId, fixture.presentation.id),
+    ).toBe("deleted");
+    expect(await repository.getQuizVersion(owner.workspaceId, fixture.roundVersion.id)).toBeNull();
+    expect(
+      await fixture.presentations.getPresentationVersion(
+        owner.workspaceId,
+        fixture.presentationVersion.id,
+      ),
+    ).toBeNull();
+    for (const userId of [owner.userId, second.userId])
+      expect(await fixture.favorites.listFavorites(owner.workspaceId, userId)).toEqual([]);
+    expect(await fixture.groups.listArtifacts(fixture.group.id)).toEqual([]);
+    expect(await fixture.groups.listSchedule(fixture.group.id)).toEqual([]);
+    expect(await repository.listMediaReferences(owner.workspaceId)).toEqual([]);
+    expect(await repository.getMediaAsset(owner.workspaceId, fixture.mediaId)).not.toBeNull();
+    expect(
+      await fixture.favorites.setFavorite({
+        workspaceId: owner.workspaceId,
+        userId: owner.userId,
+        artifactType: "round",
+        artifactId: fixture.round.id,
+        favorite: true,
+        now: fixture.now,
+      }),
+    ).toBeNull();
+    const inspector = await runtimePool.connect();
+    try {
+      await inspector.query("BEGIN");
+      await inspector.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+      for (const table of [
+        "quiz_draft_mutations",
+        "quiz_draft_history",
+        "presentation_draft_mutations",
+        "presentation_draft_history",
+      ]) {
+        const remaining = await inspector.query<{ count: number }>(
+          `SELECT count(*)::integer AS count FROM ${table} WHERE workspace_id = $1`,
+          [owner.workspaceId],
+        );
+        expect(remaining.rows[0]?.count, table).toBe(0);
+      }
+      expect(
+        (
+          await inspector.query(
+            "SELECT current_setting('app.system_access', true) AS system_access",
+          )
+        ).rows[0]?.system_access,
+      ).not.toBe("on");
+      await inspector.query("ROLLBACK");
+    } finally {
+      inspector.release();
+    }
+  });
+
+  it("preserves retained Library dependents and still cascades assignments during account deletion", async () => {
+    const owner = await creator("library-delete-dependents");
+    const fixture = await createLibraryDeletionFixture(repository, owner, owner.userId);
+    const roundSession = await createRoundSessionFixture(
+      owner,
+      { content: fixture.content, version: fixture.roundVersion },
+      "8529641",
+    );
+    const presentationSessions = new PostgresPresentationSessionRepository(repository);
+    const presentationSession = await presentationSessions.createSession({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      presentationId: fixture.presentation.id,
+      presentationVersionId: fixture.presentationVersion.id,
+      title: fixture.presentationContent.title,
+      content: fixture.presentationContent,
+      code: "8529642",
+      status: "finished",
+      phase: "finished",
+      currentBlockIndex: 0,
+      revision: 0,
+      createdBy: owner.userId,
+      createdAt: fixture.now,
+      updatedAt: fixture.now,
+      finishedAt: fixture.now,
+      liveExpiresAt: new Date(fixture.now.getTime() - 1),
+      retentionExpiresAt: new Date(fixture.now.getTime() + 86_400_000),
+    });
+    const assignment = {
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      purpose: "assignment" as const,
+      sourceQuizVersionId: fixture.roundVersion.id,
+      sourceSessionId: null,
+      sourceReportId: null,
+      title: "Closed retained assignment",
+      content: fixture.content,
+      conceptKeys: [],
+      timeMode: "flex" as const,
+      genericTokenHash: randomUUID(),
+      opensAt: fixture.now,
+      closesAt: new Date(fixture.now.getTime() + 60_000),
+      expiresAt: new Date(fixture.now.getTime() + 86_400_000),
+      closedAt: fixture.now,
+      createdBy: owner.userId,
+      createdAt: fixture.now,
+    };
+    expect(await repository.createPracticeAssignment(fixture.round.id, assignment, [])).toBe(true);
+    await repository.archiveQuiz(owner.workspaceId, fixture.round.id, true);
+    await fixture.presentations.archivePresentation(
+      owner.workspaceId,
+      fixture.presentation.id,
+      true,
+    );
+    expect(await repository.deleteQuiz(owner.workspaceId, fixture.round.id)).toBe("in_use");
+    expect(
+      await fixture.presentations.deletePresentation(owner.workspaceId, fixture.presentation.id),
+    ).toBe("in_use");
+    expect(await repository.getSessionById(roundSession.id)).not.toBeNull();
+    expect(await presentationSessions.getSessionById(presentationSession.id)).not.toBeNull();
+    expect(await repository.deleteSession(owner.workspaceId, roundSession.id)).toBe(true);
+    expect(await repository.deleteQuiz(owner.workspaceId, fixture.round.id)).toBe("in_use");
+    expect(await repository.getFollowup(owner.workspaceId, assignment.id)).toMatchObject({
+      closedAt: fixture.now,
+    });
+    // The FK also protects assignments if a writer commits after the repository's reference check.
+    const directDelete = await runtimePool.connect();
+    try {
+      await directDelete.query("BEGIN");
+      await directDelete.query("SELECT set_config('app.workspace_id', $1, true)", [
+        owner.workspaceId,
+      ]);
+      await expect(
+        directDelete.query("DELETE FROM quizzes WHERE id = $1", [fixture.round.id]),
+      ).rejects.toMatchObject({ code: "23503" });
+      await directDelete.query("ROLLBACK");
+    } finally {
+      directDelete.release();
+    }
+    expect(await repository.getFollowup(owner.workspaceId, assignment.id)).not.toBeNull();
+    expect(
+      await presentationSessions.deleteSession(
+        owner.workspaceId,
+        presentationSession.id,
+        fixture.now,
+      ),
+    ).toEqual({ status: "deleted" });
+    expect(
+      await fixture.presentations.deletePresentation(owner.workspaceId, fixture.presentation.id),
+    ).toBe("deleted");
+    await expect(repository.deleteAccount(owner.userId)).resolves.toBeUndefined();
+    expect(await repository.getFollowup(owner.workspaceId, assignment.id)).toBeNull();
+    expect(await repository.getQuizVersion(owner.workspaceId, fixture.roundVersion.id)).toBeNull();
+  });
+
   it("creates a Presentation room and initial credential atomically", async () => {
     const owner = await creator("presentation-atomic-credential");
     const published = await createPublishedPresentationFixture(owner, "Atomic Presentation");
@@ -2196,7 +2703,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       title: "Legacy realtime compatibility",
       description: "Migration compatibility coverage",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: questionBlockId,
@@ -2225,7 +2732,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "draft",
       draft,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -2559,14 +3066,28 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       title: "Portable briefing",
       description: "Lifecycle coverage",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: blockId,
           kind: "content",
           layout: "title_body",
-          title: "Opening",
-          body: "Review together.",
+          textElements: [
+            {
+              id: `${blockId}:title`,
+              role: "title",
+              text: "Opening",
+              region: "top_center",
+              order: 0,
+            },
+            {
+              id: `${blockId}:body`,
+              role: "body",
+              text: "Review together.",
+              region: "middle_center",
+              order: 0,
+            },
+          ],
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "Private facilitator note",
@@ -2598,7 +3119,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "draft",
       draft,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -4899,6 +5420,40 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       }),
     ).toBe(true);
     expect(await repository.getPlan(first.workspaceId)).toBe("pro");
+
+    const flexSessionId = randomUUID();
+    const flexLobby = createGameState({
+      sessionId: flexSessionId,
+      code: String(randomInt(1_000_000, 10_000_000)),
+      quiz: firstVersion.content,
+      settings: {
+        audienceLimit: 20,
+        timeMode: "flex",
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    const flexStoredSession = {
+      ...persistedSession,
+      id: flexSessionId,
+      hostTokenHash: randomUUID(),
+      state: flexLobby,
+    };
+    await repository.createSession(flexStoredSession);
+    const flexOpened = applyHostCommand(flexLobby, {
+      commandId: randomUUID(),
+      expectedVersion: flexLobby.version,
+      action: "start",
+      nowMs: Date.now(),
+      newRoundId: randomUUID,
+    }).state;
+    flexStoredSession.state = flexOpened;
+    await repository.saveSession(flexStoredSession, flexLobby.version);
+    expect(await repository.getSessionEvidence(first.workspaceId, flexSessionId)).toMatchObject({
+      rounds: [{ id: flexOpened.roundId, deadlineMs: null }],
+    });
   });
 
   it("atomically provisions and audits one synthetic capacity workspace", async () => {

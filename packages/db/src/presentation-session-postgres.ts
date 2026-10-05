@@ -27,6 +27,7 @@ import {
   type PresentationSessionCreateInput,
   type PresentationSessionCredentialRecord,
   type PresentationSessionCredentialRole,
+  type PresentationSessionDeletion,
   type PresentationSessionParticipantRecord,
   type PresentationSessionRecord,
   type PresentationSessionReportCompletion,
@@ -260,17 +261,44 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     return mapCredential(result.rows[0]!);
   }
 
-  async listSessions(workspaceId: string, now = new Date()) {
+  async listSessions(workspaceId: string, now = new Date(), includeExpired = false) {
     return this.transaction(workspaceId, async (client) => {
       const result = await client.query(
         `SELECT session.*, ${PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL} AS event_seq
            FROM presentation_live_sessions session
           WHERE session.workspace_id = $1
-            AND (session.status <> 'active' OR session.live_expires_at > $2)
+            AND ($3 OR session.status <> 'active' OR session.live_expires_at > $2)
           ORDER BY session.created_at DESC`,
-        [workspaceId, now],
+        [workspaceId, now, includeExpired],
       );
       return result.rows.map(mapSession);
+    });
+  }
+
+  async deleteSession(
+    workspaceId: string,
+    sessionId: string,
+    now = new Date(),
+  ): Promise<PresentationSessionDeletion> {
+    return this.transaction(workspaceId, async (client) => {
+      // Fence transitions and child writes with the parent row lock. The terminal check and
+      // cascading delete belong to one workspace-scoped transaction.
+      const locked = await client.query(
+        `SELECT status, live_expires_at FROM presentation_live_sessions
+          WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+        [workspaceId, sessionId],
+      );
+      const session = locked.rows[0];
+      if (!session) return { status: "not_found" };
+      if (session.status === "active" && new Date(session.live_expires_at) > now) {
+        return { status: "active" };
+      }
+      // Child foreign keys and the live-room-code trigger remove the entire durable room.
+      await client.query(
+        "DELETE FROM presentation_live_sessions WHERE workspace_id = $1 AND id = $2",
+        [workspaceId, sessionId],
+      );
+      return { status: "deleted" };
     });
   }
 
