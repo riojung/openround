@@ -36,6 +36,7 @@ import {
   WorkspaceDeletionInProgressError,
 } from "../src/types.js";
 import { discoverMigrations, runMigrations } from "../src/migrations.js";
+import { createLibraryDeletionFixture } from "./support/library-deletion-fixtures.js";
 import { expectPresentationSessionRepositoryConformance } from "./support/presentation-session-conformance.js";
 
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -735,6 +736,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 45, name: "question_health_dismissals" },
       { version: 46, name: "question_health_applications" },
       { version: 47, name: "session_decision_replay" },
+      { version: 48, name: "library_artifact_deletion" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -744,7 +746,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("47");
+    expect(bootstrapped.rows[0]?.count).toBe(String(migrations.rows.length));
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -2351,6 +2353,188 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       can_update: false,
       can_delete: false,
     });
+  });
+
+  it("permanently deletes archived Library parents with restricted runtime grants and cleans every member's links", async () => {
+    const owner = await creator("library-delete-owner");
+    const second = await creator("library-delete-second");
+    const fixture = await createLibraryDeletionFixture(repository, owner, second.userId);
+    expect(await repository.deleteQuiz(second.workspaceId, fixture.round.id)).toBe("not_found");
+    expect(
+      await fixture.presentations.deletePresentation(second.workspaceId, fixture.presentation.id),
+    ).toBe("not_found");
+    expect(await repository.deleteQuiz(owner.workspaceId, fixture.round.id)).toBe("not_archived");
+    expect(
+      await fixture.presentations.deletePresentation(owner.workspaceId, fixture.presentation.id),
+    ).toBe("not_archived");
+    expect(await repository.listMediaReferences(owner.workspaceId, fixture.mediaId)).toHaveLength(
+      8,
+    );
+    const privileges = await runtimePool.query<{ can_update: boolean; can_delete: boolean }>(
+      "SELECT has_table_privilege(current_user, 'presentation_versions', 'UPDATE') AS can_update, has_table_privilege(current_user, 'presentation_versions', 'DELETE') AS can_delete",
+    );
+    expect(privileges.rows).toEqual([{ can_update: false, can_delete: false }]);
+    await repository.archiveQuiz(owner.workspaceId, fixture.round.id, true);
+    await fixture.presentations.archivePresentation(
+      owner.workspaceId,
+      fixture.presentation.id,
+      true,
+    );
+    expect(await repository.deleteQuiz(owner.workspaceId, fixture.round.id)).toBe("deleted");
+    expect(
+      await fixture.presentations.getPresentation(owner.workspaceId, fixture.presentation.id),
+    ).not.toBeNull();
+    expect(await fixture.favorites.listFavorites(owner.workspaceId, second.userId)).toMatchObject([
+      { artifactId: fixture.presentation.id },
+    ]);
+    expect(
+      await fixture.presentations.deletePresentation(owner.workspaceId, fixture.presentation.id),
+    ).toBe("deleted");
+    expect(await repository.getQuizVersion(owner.workspaceId, fixture.roundVersion.id)).toBeNull();
+    expect(
+      await fixture.presentations.getPresentationVersion(
+        owner.workspaceId,
+        fixture.presentationVersion.id,
+      ),
+    ).toBeNull();
+    for (const userId of [owner.userId, second.userId])
+      expect(await fixture.favorites.listFavorites(owner.workspaceId, userId)).toEqual([]);
+    expect(await fixture.groups.listArtifacts(fixture.group.id)).toEqual([]);
+    expect(await fixture.groups.listSchedule(fixture.group.id)).toEqual([]);
+    expect(await repository.listMediaReferences(owner.workspaceId)).toEqual([]);
+    expect(await repository.getMediaAsset(owner.workspaceId, fixture.mediaId)).not.toBeNull();
+    expect(
+      await fixture.favorites.setFavorite({
+        workspaceId: owner.workspaceId,
+        userId: owner.userId,
+        artifactType: "round",
+        artifactId: fixture.round.id,
+        favorite: true,
+        now: fixture.now,
+      }),
+    ).toBeNull();
+    const inspector = await runtimePool.connect();
+    try {
+      await inspector.query("BEGIN");
+      await inspector.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+      for (const table of [
+        "quiz_draft_mutations",
+        "quiz_draft_history",
+        "presentation_draft_mutations",
+        "presentation_draft_history",
+      ]) {
+        const remaining = await inspector.query<{ count: number }>(
+          `SELECT count(*)::integer AS count FROM ${table} WHERE workspace_id = $1`,
+          [owner.workspaceId],
+        );
+        expect(remaining.rows[0]?.count, table).toBe(0);
+      }
+      expect(
+        (
+          await inspector.query(
+            "SELECT current_setting('app.system_access', true) AS system_access",
+          )
+        ).rows[0]?.system_access,
+      ).not.toBe("on");
+      await inspector.query("ROLLBACK");
+    } finally {
+      inspector.release();
+    }
+  });
+
+  it("preserves retained Library dependents and still cascades assignments during account deletion", async () => {
+    const owner = await creator("library-delete-dependents");
+    const fixture = await createLibraryDeletionFixture(repository, owner, owner.userId);
+    const roundSession = await createRoundSessionFixture(
+      owner,
+      { content: fixture.content, version: fixture.roundVersion },
+      "8529641",
+    );
+    const presentationSessions = new PostgresPresentationSessionRepository(repository);
+    const presentationSession = await presentationSessions.createSession({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      presentationId: fixture.presentation.id,
+      presentationVersionId: fixture.presentationVersion.id,
+      title: fixture.presentationContent.title,
+      content: fixture.presentationContent,
+      code: "8529642",
+      status: "finished",
+      phase: "finished",
+      currentBlockIndex: 0,
+      revision: 0,
+      createdBy: owner.userId,
+      createdAt: fixture.now,
+      updatedAt: fixture.now,
+      finishedAt: fixture.now,
+      liveExpiresAt: new Date(fixture.now.getTime() - 1),
+      retentionExpiresAt: new Date(fixture.now.getTime() + 86_400_000),
+    });
+    const assignment = {
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      purpose: "assignment" as const,
+      sourceQuizVersionId: fixture.roundVersion.id,
+      sourceSessionId: null,
+      sourceReportId: null,
+      title: "Closed retained assignment",
+      content: fixture.content,
+      conceptKeys: [],
+      timeMode: "flex" as const,
+      genericTokenHash: randomUUID(),
+      opensAt: fixture.now,
+      closesAt: new Date(fixture.now.getTime() + 60_000),
+      expiresAt: new Date(fixture.now.getTime() + 86_400_000),
+      closedAt: fixture.now,
+      createdBy: owner.userId,
+      createdAt: fixture.now,
+    };
+    expect(await repository.createPracticeAssignment(fixture.round.id, assignment, [])).toBe(true);
+    await repository.archiveQuiz(owner.workspaceId, fixture.round.id, true);
+    await fixture.presentations.archivePresentation(
+      owner.workspaceId,
+      fixture.presentation.id,
+      true,
+    );
+    expect(await repository.deleteQuiz(owner.workspaceId, fixture.round.id)).toBe("in_use");
+    expect(
+      await fixture.presentations.deletePresentation(owner.workspaceId, fixture.presentation.id),
+    ).toBe("in_use");
+    expect(await repository.getSessionById(roundSession.id)).not.toBeNull();
+    expect(await presentationSessions.getSessionById(presentationSession.id)).not.toBeNull();
+    expect(await repository.deleteSession(owner.workspaceId, roundSession.id)).toBe(true);
+    expect(await repository.deleteQuiz(owner.workspaceId, fixture.round.id)).toBe("in_use");
+    expect(await repository.getFollowup(owner.workspaceId, assignment.id)).toMatchObject({
+      closedAt: fixture.now,
+    });
+    // The FK also protects assignments if a writer commits after the repository's reference check.
+    const directDelete = await runtimePool.connect();
+    try {
+      await directDelete.query("BEGIN");
+      await directDelete.query("SELECT set_config('app.workspace_id', $1, true)", [
+        owner.workspaceId,
+      ]);
+      await expect(
+        directDelete.query("DELETE FROM quizzes WHERE id = $1", [fixture.round.id]),
+      ).rejects.toMatchObject({ code: "23503" });
+      await directDelete.query("ROLLBACK");
+    } finally {
+      directDelete.release();
+    }
+    expect(await repository.getFollowup(owner.workspaceId, assignment.id)).not.toBeNull();
+    expect(
+      await presentationSessions.deleteSession(
+        owner.workspaceId,
+        presentationSession.id,
+        fixture.now,
+      ),
+    ).toEqual({ status: "deleted" });
+    expect(
+      await fixture.presentations.deletePresentation(owner.workspaceId, fixture.presentation.id),
+    ).toBe("deleted");
+    await expect(repository.deleteAccount(owner.userId)).resolves.toBeUndefined();
+    expect(await repository.getFollowup(owner.workspaceId, assignment.id)).toBeNull();
+    expect(await repository.getQuizVersion(owner.workspaceId, fixture.roundVersion.id)).toBeNull();
   });
 
   it("creates a Presentation room and initial credential atomically", async () => {

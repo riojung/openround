@@ -28,6 +28,8 @@ export const errorCodes = [
   "ANSWER_INVALID",
   "ENTITLEMENT_LIMIT",
   "UNAUTHORIZED",
+  "ARTIFACT_NOT_ARCHIVED",
+  "ARTIFACT_IN_USE",
   "RATE_LIMITED",
   "NOT_FOUND",
   "VALIDATION_ERROR",
@@ -3986,6 +3988,7 @@ export const PresentationRestV1SessionListItemSchema = z
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
     finishedAt: z.string().datetime().nullable(),
+    liveExpiresAt: z.string().datetime().optional(),
   })
   .strict()
   .superRefine((snapshot, ctx) => {

@@ -99,6 +99,7 @@ export function presentationLiveSessionExpired(
 export class PresentationSessionService {
   private connectedParticipantIdsProvider: PresentationConnectedParticipantIdsProvider | null =
     null;
+  private sessionDeletedHandler: ((sessionId: string) => void) | null = null;
   private readonly liveMutations: PresentationLiveMutationService;
 
   constructor(
@@ -155,6 +156,10 @@ export class PresentationSessionService {
     this.connectedParticipantIdsProvider = provider;
   }
 
+  setSessionDeletedHandler(handler: ((sessionId: string) => void) | null) {
+    this.sessionDeletedHandler = handler;
+  }
+
   private async uniqueJoinCode() {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const code = String(randomInt(0, 10_000_000)).padStart(7, "0");
@@ -164,8 +169,36 @@ export class PresentationSessionService {
   }
 
   async listHostSnapshots(workspaceId: string) {
-    const sessions = await this.sessions.listSessions(workspaceId, new Date());
+    const sessions = await this.sessions.listSessions(workspaceId, new Date(), true);
     return Promise.all(sessions.map((session) => this.hostSnapshot(session)));
+  }
+
+  async deleteSession(input: {
+    workspaceId: string;
+    userId: string;
+    sessionId: string;
+    requestId: string;
+  }) {
+    const deletion = await this.sessions.deleteSession(input.workspaceId, input.sessionId);
+    if (deletion.status === "not_found") {
+      throw new PresentationSessionServiceError(404, "NOT_FOUND", "Presentation session not found");
+    }
+    if (deletion.status === "active") {
+      throw new PresentationSessionServiceError(
+        409,
+        "CONFLICT",
+        "Finish this Presentation session before deleting it",
+      );
+    }
+    this.sessionDeletedHandler?.(input.sessionId);
+    await this.dependencies.repository.recordAudit({
+      workspaceId: input.workspaceId,
+      actorId: input.userId,
+      action: "presentation.session.delete",
+      targetType: "presentation_live_session",
+      targetId: input.sessionId,
+      requestId: input.requestId,
+    });
   }
 
   async createSession(input: {

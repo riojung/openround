@@ -158,6 +158,12 @@ Legacy `/v1/quizzes` naming is intentionally stable through v1 even though the U
 - `GET /v1/quizzes/{id}/history`; `POST /v1/quizzes/{id}/history/{revision}/restore`
 - `POST /v1/quizzes/{id}/duplicate`
 - `POST /v1/quizzes/{id}/archive`
+- `DELETE /v1/quizzes/{id}`; `DELETE /v1/presentations/{id}` — owner-only permanent
+  deletion of archived Library content, under the existing workspace and Presentation gates.
+  Returns `204` on success, tenant-scoped `404` for missing items, or `409`
+  `ARTIFACT_NOT_ARCHIVED` / `ARTIFACT_IN_USE`. Retained sessions and practice assignments
+  prevent deletion. Drafts, versions, history, favorites, group links, and media references
+  are removed atomically without deleting unrelated content.
 - `GET|POST /v1/folders`
 - `PATCH|DELETE /v1/folders/{id}`
 - `PATCH /v1/quizzes/{id}/organization`
@@ -230,7 +236,11 @@ permanent untracked object.
 - `POST /v1/sessions/{id}/commands`
 - `POST /v1/sessions/{id}/answers`
 - `POST /v1/sessions/{id}/control-pass` — owner/editor secure resume for an active room.
-- `DELETE /v1/sessions/{id}`
+- `DELETE /v1/sessions/{id}` — owner-only deletion of a Round session, its answers, report,
+  and linked follow-ups.
+- `DELETE /v1/presentation-sessions/{id}` — owner-only deletion of a finished or expired
+  Presentation session and its responses, report, credentials, and room-code claim.
+  Returns `204`, tenant-scoped `404`, or `409` for an active, unexpired room.
 - Session staff credential creation/list/revocation routes under `/v1/sessions/{id}/staff`
 - Presenter/embed policy issuance under the session routes
 - `GET /v1/embed/policies/{sessionId}/{policyKey}`
