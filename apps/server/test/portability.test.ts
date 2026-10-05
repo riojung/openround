@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import type { QuizDraft } from "@openround/contracts";
+import {
+  recoveryPackContentHash,
+  RecoveryPackContentSchema,
+  type QuizDraft,
+} from "@openround/contracts";
 import { checkpointSetCsv, importCheckpointSet, openRoundJson } from "../src/portability.js";
 
 function linkedDraft(): QuizDraft {
@@ -76,6 +80,52 @@ function linkedDraft(): QuizDraft {
 }
 
 describe("checkpoint-set portability", () => {
+  it("round-trips Pack-backed v3 JSON with fresh destination IDs and an unchanged source baseline", () => {
+    const source = linkedDraft();
+    source.questions[0]!.mediaId = null;
+    source.questions[0]!.mediaAlt = null;
+    const content = RecoveryPackContentSchema.parse({
+      schemaVersion: 1,
+      title: "Safe handling Pack",
+      description: "",
+      diagnostic: source.questions[0],
+      recheck: source.questions[1],
+      delayedProbe: null,
+      interventions: [
+        {
+          id: randomUUID(),
+          title: "Explain safe handling",
+          body: "Use the complete procedure.",
+          citations: [],
+        },
+      ],
+      conceptKeys: ["safe-work"],
+      misconceptionKeys: [],
+      citations: [],
+    });
+    source.recoveryPackInsertions = [
+      {
+        id: randomUUID(),
+        packId: randomUUID(),
+        packVersionId: randomUUID(),
+        packVersion: 1,
+        contentHash: recoveryPackContentHash(content),
+        diagnosticQuestionId: source.questions[0]!.id,
+        recheckQuestionId: source.questions[1]!.id,
+        originalContent: content,
+      },
+    ];
+    const exported = openRoundJson(source);
+    expect(JSON.parse(exported)).toMatchObject({ version: 3 });
+    const imported = importCheckpointSet("openround_json", exported);
+    expect(imported.validation.errors).toEqual([]);
+    const insertion = imported.draft!.recoveryPackInsertions![0]!;
+    expect(insertion.id).not.toBe(source.recoveryPackInsertions[0]!.id);
+    expect(insertion.diagnosticQuestionId).toBe(imported.draft!.questions[0]!.id);
+    expect(insertion.recheckQuestionId).toBe(imported.draft!.questions[1]!.id);
+    expect(insertion.originalContent).toEqual(content);
+    expect(insertion.contentHash).toBe(source.recoveryPackInsertions[0]!.contentHash);
+  });
   it("round-trips OpenRound JSON with fresh IDs and an explicit media warning", () => {
     const source = linkedDraft();
     const imported = importCheckpointSet("openround_json", openRoundJson(source));

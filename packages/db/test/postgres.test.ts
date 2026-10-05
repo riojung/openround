@@ -11,6 +11,7 @@ import {
   type PresentationDraft,
   type QuizDraft,
   type Report,
+  RecoveryPackContentSchema,
 } from "@openround/contracts";
 import {
   acceptAnswer,
@@ -25,6 +26,8 @@ import {
   PostgresLibraryMetadataRepository,
   PostgresPresentationRepository,
   PostgresPresentationSessionRepository,
+  createRecoveryPackRepository,
+  RecoveryPackMediaValidationError,
   type PresentationSessionCredentialRecord,
 } from "../src/index.js";
 import {
@@ -38,6 +41,11 @@ import {
 import { discoverMigrations, runMigrations } from "../src/migrations.js";
 import { createLibraryDeletionFixture } from "./support/library-deletion-fixtures.js";
 import { expectPresentationSessionRepositoryConformance } from "./support/presentation-session-conformance.js";
+import {
+  expectRecoveryPackRepositoryConformance,
+  recoveryPackDraft,
+  recoveryPackRecord,
+} from "./support/recovery-pack-conformance.js";
 
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
 const runtimeUrl = process.env.TEST_DATABASE_URL;
@@ -737,6 +745,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 46, name: "question_health_applications" },
       { version: 47, name: "session_decision_replay" },
       { version: 48, name: "library_artifact_deletion" },
+      { version: 49, name: "recovery_packs" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -819,6 +828,245 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     });
     return { content, version };
   }
+
+  it("persists Recovery Packs with mutation replay, version ordering, and forced tenant isolation", async () => {
+    const owner = await creator("recovery-pack-owner");
+    const other = await creator("recovery-pack-other");
+    const packs = createRecoveryPackRepository(repository);
+    await expectRecoveryPackRepositoryConformance({
+      repository: packs,
+      workspaceId: owner.workspaceId,
+      otherWorkspaceId: other.workspaceId,
+      editorId: owner.userId,
+    });
+
+    const pack = await packs.createRecoveryPack(
+      recoveryPackRecord(owner.workspaceId, owner.userId),
+    );
+    const content = RecoveryPackContentSchema.parse(pack.draft);
+    const published = await packs.publishRecoveryPack(
+      {
+        id: randomUUID(),
+        workspaceId: owner.workspaceId,
+        packId: pack.id,
+        version: 1,
+        content,
+        contentHash: createHash("sha256").update(JSON.stringify(content)).digest("hex"),
+        sourceDraftRevision: 0,
+        publishedAt: new Date(),
+      },
+      0,
+    );
+    const client = await runtimePool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [other.workspaceId]);
+      expect(
+        (await client.query("SELECT id FROM recovery_packs WHERE id = $1", [pack.id])).rows,
+      ).toEqual([]);
+      expect(
+        (await client.query("SELECT id FROM recovery_pack_versions WHERE id = $1", [published.id]))
+          .rows,
+      ).toEqual([]);
+      expect(
+        (
+          await client.query("SELECT id FROM recovery_pack_draft_history WHERE pack_id = $1", [
+            pack.id,
+          ])
+        ).rows,
+      ).toEqual([]);
+      expect(
+        (await client.query("DELETE FROM recovery_packs WHERE id = $1 RETURNING id", [pack.id]))
+          .rows,
+      ).toEqual([]);
+      await client.query("ROLLBACK");
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+      await expect(
+        client.query("UPDATE recovery_pack_versions SET content_hash = 'modified' WHERE id = $1", [
+          published.id,
+        ]),
+      ).rejects.toMatchObject({ code: "42501" });
+      await client.query("ROLLBACK");
+      const security = await client.query<{ relname: string; relforcerowsecurity: boolean }>(
+        "SELECT relname, relforcerowsecurity FROM pg_class WHERE relname IN ('recovery_packs', 'recovery_pack_versions', 'recovery_pack_draft_history', 'recovery_pack_draft_mutations')",
+      );
+      expect(security.rows).toHaveLength(4);
+      expect(security.rows.every((row) => row.relforcerowsecurity)).toBe(true);
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+    const exported = await repository.exportAccount(owner.userId);
+    expect(exported.recoveryPacks).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: pack.id })]),
+    );
+    expect(exported.recoveryPackVersions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: published.id })]),
+    );
+    await repository.deleteAccount(owner.userId);
+    expect(await packs.getRecoveryPack(owner.workspaceId, pack.id)).toBeNull();
+    expect(await packs.getRecoveryPackVersion(owner.workspaceId, published.id)).toBeNull();
+  });
+
+  it("keeps Recovery Pack snapshot and receipt media while rejecting unclean publication", async () => {
+    const owner = await creator("recovery-pack-media");
+    const other = await creator("recovery-pack-media-other");
+    const packs = createRecoveryPackRepository(repository);
+    const mediaId = randomUUID();
+    const now = new Date();
+    await repository.createMediaAsset({
+      id: mediaId,
+      workspaceId: owner.workspaceId,
+      objectKey: `media/${mediaId}.png`,
+      mimeType: "image/png",
+      sizeBytes: 10,
+      scanStatus: "pending",
+      altText: "Diagram",
+      createdAt: now,
+    });
+    const draft = recoveryPackDraft();
+    draft.diagnostic.mediaId = mediaId;
+    draft.diagnostic.mediaAlt = "Pending diagram";
+    const pack = await packs.createRecoveryPack(
+      recoveryPackRecord(owner.workspaceId, owner.userId, draft),
+    );
+    const content = RecoveryPackContentSchema.parse(draft);
+    const contentHash = createHash("sha256").update(JSON.stringify(content)).digest("hex");
+    const candidate = {
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      packId: pack.id,
+      version: 1,
+      content,
+      contentHash,
+      sourceDraftRevision: 0,
+      publishedAt: now,
+    };
+    await expect(packs.publishRecoveryPack(candidate, 0)).rejects.toBeInstanceOf(
+      RecoveryPackMediaValidationError,
+    );
+    await expect(
+      packs.createRecoveryPack(recoveryPackRecord(other.workspaceId, other.userId, draft)),
+    ).rejects.toBeInstanceOf(RecoveryPackMediaValidationError);
+    const token = randomUUID();
+    await repository.claimMediaAssetFinalization(owner.workspaceId, mediaId, token, now);
+    await repository.updateMediaAsset(owner.workspaceId, mediaId, {
+      scanStatus: "clean",
+      finalizationToken: token,
+      finalizedAt: now,
+    });
+    const version = await packs.publishRecoveryPack(candidate, 0);
+    const mutationId = randomUUID();
+    await packs.updateRecoveryPackDraft({
+      workspaceId: owner.workspaceId,
+      packId: pack.id,
+      draft: { ...draft, title: "Acknowledged media" },
+      expectedRevision: 0,
+      mutationId,
+      editorId: owner.userId,
+      draftHash: "with-media",
+    });
+    expect(await repository.listMediaReferences(owner.workspaceId, mediaId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ownerType: "recovery_pack_mutation", ownerId: mutationId }),
+      ]),
+    );
+    const mediaFreeQuestions = [
+      { ...draft.diagnostic, mediaId: null, mediaAlt: null },
+      draft.recheck,
+    ];
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: "Snapshot destination",
+      description: "",
+      status: "draft",
+      draft: {
+        title: "Snapshot destination",
+        description: "",
+        questions: mediaFreeQuestions,
+        recoveryPackInsertions: [
+          {
+            id: randomUUID(),
+            packId: pack.id,
+            packVersionId: version.id,
+            packVersion: version.version,
+            contentHash,
+            diagnosticQuestionId: draft.diagnostic.id,
+            recheckQuestionId: draft.recheck.id,
+            originalContent: content,
+          },
+        ],
+      },
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(await repository.listMediaReferences(owner.workspaceId, mediaId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ownerType: "quiz_draft", ownerId: quiz.id }),
+      ]),
+    );
+    await packs.deleteRecoveryPack(owner.workspaceId, pack.id);
+    expect(await repository.deleteMediaAsset(owner.workspaceId, mediaId)).toBe(false);
+    expect(
+      (await repository.getQuiz(owner.workspaceId, quiz.id))?.draft.recoveryPackInsertions?.[0]
+        ?.originalContent,
+    ).toEqual(content);
+  });
+
+  it("fences new Recovery Pack writes when an empty workspace has begun deletion", async () => {
+    const owner = await creator("recovery-pack-deletion");
+    const packs = createRecoveryPackRepository(repository);
+    const initial = await packs.createRecoveryPack(
+      recoveryPackRecord(owner.workspaceId, owner.userId),
+    );
+    const mutation = {
+      workspaceId: owner.workspaceId,
+      packId: initial.id,
+      draft: { ...initial.draft, title: "Saved" },
+      expectedRevision: 0,
+      mutationId: randomUUID(),
+      editorId: owner.userId,
+      draftHash: "saved",
+    };
+    const saved = (await packs.updateRecoveryPackDraft(mutation))!;
+    expect(await repository.claimWorkspaceMediaDeletion(owner.workspaceId)).toEqual([]);
+    await expect(
+      packs.createRecoveryPack(recoveryPackRecord(owner.workspaceId, owner.userId)),
+    ).rejects.toBeInstanceOf(WorkspaceDeletionInProgressError);
+    await expect(
+      packs.updateRecoveryPackDraft({
+        ...mutation,
+        draft: { ...saved.draft, title: "Blocked" },
+        expectedRevision: 1,
+        mutationId: randomUUID(),
+        draftHash: "blocked",
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceDeletionInProgressError);
+    await expect(
+      packs.publishRecoveryPack(
+        {
+          id: randomUUID(),
+          workspaceId: owner.workspaceId,
+          packId: initial.id,
+          version: 1,
+          content: RecoveryPackContentSchema.parse(saved.draft),
+          contentHash: "saved",
+          sourceDraftRevision: 1,
+          publishedAt: new Date(),
+        },
+        1,
+      ),
+    ).rejects.toBeInstanceOf(WorkspaceDeletionInProgressError);
+    expect(await packs.replayRecoveryPackMutation(mutation)).toMatchObject({ draftRevision: 1 });
+    expect(await packs.updateRecoveryPackDraft(mutation)).toMatchObject({ draftRevision: 1 });
+    expect(await packs.getRecoveryPack(owner.workspaceId, initial.id)).toMatchObject({
+      draftRevision: 1,
+    });
+    expect(await packs.deleteRecoveryPack(owner.workspaceId, initial.id)).toBe(true);
+  });
 
   async function createRoundSessionFixture(
     owner: Awaited<ReturnType<typeof creator>>,

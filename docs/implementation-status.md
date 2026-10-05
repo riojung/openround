@@ -140,9 +140,60 @@ observations; its partner usefulness and retained-revision thresholds remain unm
 merged Session Decision Replay: a strict aggregate-only event journal, Report V4 with V1–V3 read
 compatibility, and a read-only decision timeline for new eligible Round sessions. Capture is frozen
 at creation behind `FEATURE_DECISION_REPLAY` and the evidence workspace allowlist. Existing reports
-are not backfilled or reconstructed. First-class Recovery Packs, Delayed Recovery Trail, and Concept
-Health remain future capabilities. Partner-evidence decisions remain explicitly deferred; these
+are not backfilled or reconstructed. Delayed Recovery Trail and Concept Health remain future
+capabilities; the Recovery Pack foundation below is the next incremental implementation.
+Partner-evidence decisions remain explicitly deferred; these
 merged features do not close external research or release gates.
+
+## Recovery Pack foundation — 2026-10-05
+
+This incremental slice adds first-class Pack drafts, revision-fenced/idempotent saves, bounded
+history and restore, immutable hash-deduplicated publication, workspace isolation, native JSON
+import/export, account export/delete, and media-reference lifecycle handling. It is provisional
+feature development, not a passed demand, quality, accessibility, or release gate.
+
+The creator Library links to `/recovery-packs`. Authors start with an existing published Round's
+diagnostic/linked-recheck pair, review its prompts and concepts, and add 1–5 facilitator intervention
+cards. Publication checks question correctness, topology, concepts, IDs, and distinct normalized
+prompts. The distinct-prompt check is not a semantic guarantee: authors must still review whether
+the recheck tests transfer and whether the citations support the content.
+
+An immutable version can be inserted into a Round draft as a fresh, linked question pair. Every
+copy has Pack/version/item/role/hash provenance; the destination also retains the complete original
+Pack snapshot, including cards, citations, and any delayed probe. The Round builder shows the cards
+as facilitator references. Copies survive Pack deletion and never update automatically. Insertion
+uses the existing Round mutation receipts and revision fence, so a retry does not add a second pair.
+Insertion also enforces a 3.5 MB serialized draft ceiling, leaving headroom within the 4 MB editor
+request limit. Pack authoring/import accepts up to 1 MB, including multi-byte text and citations.
+
+Enable authoring, publishing, imports, and insertion only with `FEATURE_RECOVERY_PACKS=true` and
+the workspace in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`. Existing Packs, history, exports, and
+inserted copies remain readable after disabling the feature. Owners/editors may remove a Pack even
+when disabled. Migration `049_recovery_packs.sql` supplies forced RLS, immutable versions, scoped
+foreign keys, and media-reference triggers. History retains at most 20 revisions and 30 days;
+mutation receipts retain their original result for 30 days.
+
+Native Pack JSON round-trips the content, but does not embed media bytes. Media IDs remain private
+to their workspace; importing a Pack with inaccessible media fails rather than transferring access.
+Imports create drafts and require human review/publication.
+Pack-backed Round JSON declares format version 3, retains the immutable source baseline, and remaps
+only destination IDs on import. Older importers can reject the version rather than silently dropping
+Pack references. Cross-workspace imports with private baseline media return an explicit validation
+failure instead of altering the baseline under an unchanged hash.
+
+Still pending for the Recovery Pack epic: live intervention-card playback; insertion into
+Presentation, practice, and Companion; three-way update review and explicit acceptance UI;
+source-authoring proposals and content-hash-bound citation approval; QTI/CSV Pack exports with loss
+reports; and real preparation-time/quality validation. The stored original snapshot supports the
+next update-review slice but is not itself an implemented update workflow.
+
+Verification includes memory/PostgreSQL conformance, tenant isolation, media and account-deletion
+races, receipt recovery, native roundtrips, type/lint checks, and production builds. Browser workflows
+pass desktop Chromium, Android Chrome, and iPhone WebKit with automated accessibility checks,
+lost-save-acknowledgement retry, and feature-disabled reads/export/delete. Local Firefox could not
+launch because its temporary profile folder was unavailable; its workflow remains unverified here.
+
+## Access/resilience provisional slice
 
 An Access/resilience implementation slice is complete in the repository provisionally, without
 claiming that Phase 1's branch-selection gate passed. Gated whole-room flex mode is available for

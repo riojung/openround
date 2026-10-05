@@ -18,6 +18,7 @@ const enabledFeatures: WorkspaceProductFeatures = {
   presentationRealtime: true,
   liveFlexMode: true,
   questionHealth: false,
+  recoveryPacks: false,
   groups: true,
   discover: true,
 };

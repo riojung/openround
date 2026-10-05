@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 
 export {
   clampContentSlideFrame,
@@ -123,6 +125,7 @@ export const WorkspaceProductFeaturesSchema = z.object({
   presentationRealtime: z.boolean(),
   liveFlexMode: z.boolean().default(false),
   questionHealth: z.boolean().default(false),
+  recoveryPacks: z.boolean().default(false),
   groups: z.boolean(),
   discover: z.boolean(),
 });
@@ -512,6 +515,23 @@ function applyCommonQuestionRules(question: CommonQuestionRuleInput, ctx: z.Refi
   }
 }
 
+export const RecoveryPackSourceSchema = z.object({
+  artifactType: z.literal("recovery_pack"),
+  packId: z.string().uuid(),
+  packVersionId: z.string().uuid(),
+  packVersion: z.number().int().positive(),
+  sourceItemId: z.string().uuid(),
+  role: z.enum(["diagnostic", "recheck", "delayed_probe"]),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+export const SourceCitationSchema = z.object({
+  sourceName: z.string().trim().min(1).max(200),
+  sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  locator: z.string().trim().min(1).max(120),
+  excerpt: z.string().trim().min(1).max(500),
+});
+
 const CommonQuestionDraftSchema = z.object({
   id: z.string().uuid(),
   prompt: z.string().trim().max(500),
@@ -525,17 +545,8 @@ const CommonQuestionDraftSchema = z.object({
   explanation: z.string().trim().max(1_000),
   mediaId: z.string().uuid().nullable(),
   mediaAlt: z.string().trim().max(300).nullable(),
-  sourceCitations: z
-    .array(
-      z.object({
-        sourceName: z.string().trim().min(1).max(200),
-        sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
-        locator: z.string().trim().min(1).max(120),
-        excerpt: z.string().trim().min(1).max(500),
-      }),
-    )
-    .max(5)
-    .optional(),
+  sourceCitations: z.array(SourceCitationSchema).max(5).optional(),
+  recoveryPackSource: RecoveryPackSourceSchema.optional(),
 });
 
 const ChoiceQuestionDraftSchema = CommonQuestionDraftSchema.extend({
@@ -893,12 +904,149 @@ export const QuestionSchema = z
   .superRefine(applyCommonQuestionRules);
 export type Question = z.infer<typeof QuestionSchema>;
 
+export const RecoveryInterventionCardDraftSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().trim().max(160),
+  body: z.string().trim().max(2_000),
+  citations: z.array(SourceCitationSchema).max(5).default([]),
+});
+export const RecoveryInterventionCardSchema = RecoveryInterventionCardDraftSchema.extend({
+  title: z.string().trim().min(1).max(160),
+  body: z.string().trim().min(1).max(2_000),
+});
+
+export const RecoveryPackDraftSchema = z.object({
+  schemaVersion: z.literal(1).default(1),
+  title: z.string().trim().max(160),
+  description: z.string().trim().max(1_000).default(""),
+  diagnostic: QuestionDraftSchema,
+  interventions: z.array(RecoveryInterventionCardDraftSchema).max(5),
+  recheck: QuestionDraftSchema,
+  delayedProbe: QuestionDraftSchema.nullable().default(null),
+  conceptKeys: z.array(ConceptKeySchema).max(12),
+  misconceptionKeys: z.array(ConceptKeySchema).max(12).default([]),
+  citations: z.array(SourceCitationSchema).max(20).default([]),
+});
+export type RecoveryPackDraft = z.infer<typeof RecoveryPackDraftSchema>;
+
+export const RecoveryPackContentSchema = RecoveryPackDraftSchema.extend({
+  title: z.string().trim().min(1).max(160),
+  diagnostic: QuestionSchema,
+  interventions: z.array(RecoveryInterventionCardSchema).min(1).max(5),
+  recheck: QuestionSchema,
+  delayedProbe: QuestionSchema.nullable().default(null),
+  conceptKeys: z.array(ConceptKeySchema).min(1).max(12),
+}).superRefine((pack, context) => {
+  const issue = (path: (string | number)[], message: string) =>
+    context.addIssue({ code: "custom", path, message });
+  if ((pack.diagnostic.delivery ?? "main") !== "main" || pack.diagnostic.purpose !== "diagnostic")
+    issue(["diagnostic"], "The first item must be a main diagnostic checkpoint");
+  if (
+    pack.recheck.delivery !== "recheck" ||
+    pack.diagnostic.linkedRecheckQuestionId !== pack.recheck.id
+  )
+    issue(["recheck"], "Link the diagnostic to this recheck checkpoint");
+  const questions = [
+    pack.diagnostic,
+    pack.recheck,
+    ...(pack.delayedProbe ? [pack.delayedProbe] : []),
+  ];
+  const ids = [...questions.map((item) => item.id), ...pack.interventions.map((card) => card.id)];
+  if (new Set(ids).size !== ids.length) issue([], "Pack item IDs must be unique");
+  const normalize = (value: string) =>
+    value.normalize("NFKC").toLocaleLowerCase("en").replace(/\s+/g, " ").trim();
+  for (const [index, question] of questions.entries()) {
+    const path = index === 0 ? "diagnostic" : index === 1 ? "recheck" : "delayedProbe";
+    if (!QUESTION_TYPE_REGISTRY[question.type].supportsRecovery)
+      issue([path, "type"], "Use a scored recovery question type");
+    if (!question.conceptKeys?.some((key) => pack.conceptKeys.includes(key)))
+      issue([path, "conceptKeys"], "Each checkpoint must share a Pack concept");
+    if (index > 0 && normalize(question.prompt) === normalize(pack.diagnostic.prompt))
+      issue([path, "prompt"], "Use a different prompt to check transfer, not recall");
+    if (question.recoveryPackSource)
+      issue(
+        [path, "recoveryPackSource"],
+        "Pack source items cannot contain nested Pack provenance",
+      );
+    if (
+      "choices" in question &&
+      new Set(question.choices.map((choice) => choice.id)).size !== question.choices.length
+    )
+      issue([path, "choices"], "Choice IDs must be unique");
+  }
+  if (
+    pack.delayedProbe &&
+    ((pack.delayedProbe.delivery ?? "main") !== "main" || pack.delayedProbe.linkedRecheckQuestionId)
+  )
+    issue(["delayedProbe"], "A delayed probe must be a standalone main checkpoint");
+  if (pack.delayedProbe && normalize(pack.delayedProbe.prompt) === normalize(pack.recheck.prompt))
+    issue(["delayedProbe", "prompt"], "The delayed probe must differ from the immediate recheck");
+});
+export type RecoveryPackContent = z.infer<typeof RecoveryPackContentSchema>;
+
+function hashParsedRecoveryPackContent(content: RecoveryPackContent) {
+  return bytesToHex(sha256(new TextEncoder().encode(JSON.stringify(content))));
+}
+
+/**
+ * Hash the strict parsed representation, matching immutable Pack publication in Node and
+ * normalizing property order after JSON/JSONB round-trips. This is an integrity check, not proof
+ * that a claimed source Pack/version exists or that its citation approvals were granted.
+ */
+export function recoveryPackContentHash(content: unknown): string {
+  return hashParsedRecoveryPackContent(RecoveryPackContentSchema.parse(content));
+}
+
+/** Frozen source baseline; destination copies remain usable after source deletion. */
+export const RecoveryPackInsertionSchema = z
+  .object({
+    id: z.string().uuid(),
+    packId: z.string().uuid(),
+    packVersionId: z.string().uuid(),
+    packVersion: z.number().int().positive(),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    diagnosticQuestionId: z.string().uuid(),
+    recheckQuestionId: z.string().uuid(),
+    originalContent: RecoveryPackContentSchema,
+  })
+  .superRefine((insertion, context) => {
+    if (hashParsedRecoveryPackContent(insertion.originalContent) !== insertion.contentHash) {
+      context.addIssue({
+        code: "custom",
+        path: ["contentHash"],
+        message: "The Recovery Pack baseline does not match its content hash",
+      });
+    }
+  });
+
+export const CreateRecoveryPackSchema = z.object({ draft: RecoveryPackDraftSchema });
+export const UpdateRecoveryPackSchema = z.object({
+  draft: RecoveryPackDraftSchema,
+  expectedRevision: z.number().int().nonnegative(),
+  mutationId: z.string().uuid(),
+});
+export const PublishRecoveryPackSchema = z.object({
+  expectedDraftRevision: z.number().int().nonnegative(),
+});
+export const InsertRecoveryPackSchema = z.object({
+  packVersionId: z.string().uuid(),
+  quizId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  mutationId: z.string().uuid(),
+});
+export const RecoveryPackJsonSchema = z.object({
+  format: z.literal("openround-recovery-pack"),
+  schemaVersion: z.literal(1),
+  content: RecoveryPackContentSchema,
+});
+
 export const QuizDraftSchema = z.object({
   title: z.string().trim().max(160),
   description: z.string().trim().max(1_000).default(""),
   category: RoundCategorySchema.default("general"),
   experiencePreset: ExperiencePresetRefSchema.default({ id: "focus", version: 1 }),
   questions: z.array(QuestionDraftSchema).max(200),
+  recoveryPackInsertions: z.array(RecoveryPackInsertionSchema).max(100).optional(),
 });
 type ParsedQuizDraft = z.infer<typeof QuizDraftSchema>;
 /** Presentation fields stay optional in the TypeScript compatibility shape through v1. */
@@ -914,6 +1062,7 @@ export const QuizContentSchema = z
     category: RoundCategorySchema.default("general"),
     experiencePreset: ExperiencePresetRefSchema.default({ id: "focus", version: 1 }),
     questions: z.array(QuestionSchema).min(1, "Add at least one question").max(200),
+    recoveryPackInsertions: z.array(RecoveryPackInsertionSchema).max(100).optional(),
   })
   .superRefine((quiz, context) => {
     if (!quiz.questions.some((question) => (question.delivery ?? "main") === "main")) {
@@ -1017,7 +1166,13 @@ export const OpenRoundCheckpointSetExportV2Schema = z.object({
   checkpointSet: QuizDraftSchema,
 });
 
+/** v3 declares Pack lineage/baselines so older importers fail rather than silently losing them. */
+export const OpenRoundCheckpointSetExportV3Schema = OpenRoundCheckpointSetExportV2Schema.extend({
+  version: z.literal(3),
+});
+
 export const OpenRoundCheckpointSetExportSchema = z.union([
+  OpenRoundCheckpointSetExportV3Schema,
   OpenRoundCheckpointSetExportV2Schema,
   OpenRoundCheckpointSetExportV1Schema,
 ]);

@@ -111,6 +111,7 @@ import { LtiError, type LtiService } from "./lti-service.js";
 import { InteractionError, type InteractionService } from "./interaction-service.js";
 import { instantiateStarter, starterSummaries } from "./starters.js";
 import type { ProductEventDispatcher } from "./product-events.js";
+import { ROUND_DRAFT_BODY_LIMIT } from "./draft-limits.js";
 import {
   evidenceWorkspaceFeatureEnabled,
   professionalWorkspaceEligible,
@@ -493,6 +494,7 @@ export async function registerRoutes(
         evidenceWorkspaceFeatureEnabled(config, workspaceId, "presentationRealtime"),
       liveFlexMode: evidenceWorkspaceFeatureEnabled(config, workspaceId, "liveFlexMode"),
       questionHealth: evidenceWorkspaceFeatureEnabled(config, workspaceId, "questionHealth"),
+      recoveryPacks: evidenceWorkspaceFeatureEnabled(config, workspaceId, "recoveryPacks"),
       groups: professionalWorkspaceFeatureEnabled(config, workspaceId, "groups"),
       discover: professionalWorkspaceFeatureEnabled(config, workspaceId, "discover"),
     };
@@ -1602,6 +1604,40 @@ export async function registerRoutes(
         validation: result.validation,
       });
     }
+    // A Pack baseline is immutable evidence, unlike portable destination question media. Never
+    // strip its media IDs under an unchanged hash or grant access to another workspace's media.
+    const baselineMediaIds = new Set(
+      (result.draft.recoveryPackInsertions ?? []).flatMap(({ originalContent }) =>
+        [originalContent.diagnostic, originalContent.recheck, originalContent.delayedProbe].flatMap(
+          (question) => (question?.mediaId ? [question.mediaId] : []),
+        ),
+      ),
+    );
+    for (const mediaId of baselineMediaIds) {
+      const asset = await repository.getMediaAsset(creator.workspaceId, mediaId);
+      if (!asset || asset.deletionStartedAt || asset.scanStatus === "rejected") {
+        return reply.code(422).send({
+          error: {
+            code: "IMPORT_VALIDATION_FAILED",
+            message:
+              "A Recovery Pack baseline references private media unavailable in this workspace. Import into the source workspace or prepare a media-free Pack before exporting.",
+            requestId: request.id,
+          },
+          validation: {
+            ...result.validation,
+            errors: [
+              ...result.validation.errors,
+              {
+                severity: "error",
+                code: "RECOVERY_PACK_MEDIA_UNAVAILABLE",
+                field: "recoveryPackInsertions",
+                message: "The frozen Pack baseline was not changed or imported.",
+              },
+            ],
+          },
+        });
+      }
+    }
     const now = new Date();
     const quiz = await repository.createQuiz({
       id: randomUUID(),
@@ -1727,7 +1763,7 @@ export async function registerRoutes(
       .send(result.archive);
   });
 
-  app.patch("/v1/quizzes/:id", async (request, reply) => {
+  app.patch("/v1/quizzes/:id", { bodyLimit: ROUND_DRAFT_BODY_LIMIT }, async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
     if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
@@ -1751,26 +1787,30 @@ export async function registerRoutes(
     return { quiz };
   });
 
-  app.put("/v1/quizzes/:id/draft", { bodyLimit: 4_000_000 }, async (request, reply) => {
-    const creator = await auth.requireCreator(request, reply);
-    if (!creator) return;
-    if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
-    const { id } = IdParamsSchema.parse(request.params);
-    const input = RoundDraftMutationSchema.parse(request.body);
-    const quiz = await repository.updateQuizDraft({
-      workspaceId: creator.workspaceId,
-      quizId: id,
-      draft: input.draft,
-      expectedRevision: input.expectedRevision,
-      mutationId: input.mutationId,
-      editorId: creator.userId,
-      schemaVersion: input.schemaVersion,
-      draftHash: createHash("sha256").update(JSON.stringify(input.draft)).digest("hex"),
-    });
-    if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
-    reply.header("etag", draftEtag(quiz.draftRevision));
-    return { quiz };
-  });
+  app.put(
+    "/v1/quizzes/:id/draft",
+    { bodyLimit: ROUND_DRAFT_BODY_LIMIT },
+    async (request, reply) => {
+      const creator = await auth.requireCreator(request, reply);
+      if (!creator) return;
+      if (requireWorkspaceRole(creator, ["owner", "editor"], reply, request.id) !== true) return;
+      const { id } = IdParamsSchema.parse(request.params);
+      const input = RoundDraftMutationSchema.parse(request.body);
+      const quiz = await repository.updateQuizDraft({
+        workspaceId: creator.workspaceId,
+        quizId: id,
+        draft: input.draft,
+        expectedRevision: input.expectedRevision,
+        mutationId: input.mutationId,
+        editorId: creator.userId,
+        schemaVersion: input.schemaVersion,
+        draftHash: createHash("sha256").update(JSON.stringify(input.draft)).digest("hex"),
+      });
+      if (!quiz) return apiError(reply, 404, "NOT_FOUND", "Quiz not found", request.id);
+      reply.header("etag", draftEtag(quiz.draftRevision));
+      return { quiz };
+    },
+  );
 
   app.get("/v1/quizzes/:id/history", async (request, reply) => {
     reply.header("cache-control", "private, no-store").header("pragma", "no-cache");

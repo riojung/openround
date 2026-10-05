@@ -36,10 +36,14 @@ import {
   PRESENTATION_DRAFT_SCHEMA_VERSION,
   ROUND_CONTENT_SCHEMA_VERSION,
   ROUND_DRAFT_SCHEMA_VERSION,
+  RECOVERY_PACK_CONTENT_SCHEMA_VERSION,
+  RECOVERY_PACK_DRAFT_SCHEMA_VERSION,
   upcastPresentationContent,
   upcastPresentationDraft,
   upcastRoundContent,
   upcastRoundDraft,
+  upcastRecoveryPackContent,
+  upcastRecoveryPackDraft,
 } from "./artifact-schemas.js";
 import type {
   AudienceEventInput,
@@ -6900,6 +6904,28 @@ export class PostgresRepository implements Repository {
            FROM presentation_draft_history WHERE workspace_id = ANY($1::uuid[])
            ORDER BY presentation_id, revision`,
         );
+        const recoveryPacks = await queryWorkspaceData(
+          `SELECT id, workspace_id, title, description, draft, draft_revision,
+                  draft_schema_version, current_version_id, published_draft_revision,
+                  last_edited_by, created_at, updated_at
+           FROM recovery_packs WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
+        );
+        const recoveryPackVersions = await queryWorkspaceData(
+          `SELECT id, workspace_id, pack_id, version, content, content_schema_version,
+                  content_hash, source_draft_revision, published_at
+           FROM recovery_pack_versions WHERE workspace_id = ANY($1::uuid[]) ORDER BY pack_id, version`,
+        );
+        const recoveryPackDraftHistory = await queryWorkspaceData(
+          `SELECT id, workspace_id, pack_id, revision, draft, draft_schema_version,
+                  saved_by, mutation_id, created_at
+           FROM recovery_pack_draft_history WHERE workspace_id = ANY($1::uuid[]) ORDER BY pack_id, revision`,
+        );
+        const recoveryPackDraftMutations = await queryWorkspaceData(
+          `SELECT workspace_id, mutation_id, pack_id, expected_revision, resulting_revision,
+                  draft_hash, resulting_draft, draft_schema_version, last_edited_by,
+                  resulting_at, created_at
+           FROM recovery_pack_draft_mutations WHERE workspace_id = ANY($1::uuid[]) ORDER BY pack_id, created_at, mutation_id`,
+        );
         const mediaAssets = await queryWorkspaceData(
           `SELECT id, workspace_id, object_key, mime_type, size_bytes, scan_status, alt_text,
                   created_at
@@ -7182,6 +7208,34 @@ export class PostgresRepository implements Repository {
               Number(row.draft_schema_version ?? PRESENTATION_DRAFT_SCHEMA_VERSION),
             ),
           })),
+          recoveryPacks: recoveryPacks.rows.map((row) => ({
+            ...row,
+            draft: upcastRecoveryPackDraft(
+              row.draft,
+              Number(row.draft_schema_version ?? RECOVERY_PACK_DRAFT_SCHEMA_VERSION),
+            ),
+          })),
+          recoveryPackVersions: recoveryPackVersions.rows.map((row) => ({
+            ...row,
+            content: upcastRecoveryPackContent(
+              row.content,
+              Number(row.content_schema_version ?? RECOVERY_PACK_CONTENT_SCHEMA_VERSION),
+            ),
+          })),
+          recoveryPackDraftHistory: recoveryPackDraftHistory.rows.map((row) => ({
+            ...row,
+            draft: upcastRecoveryPackDraft(
+              row.draft,
+              Number(row.draft_schema_version ?? RECOVERY_PACK_DRAFT_SCHEMA_VERSION),
+            ),
+          })),
+          recoveryPackDraftMutations: recoveryPackDraftMutations.rows.map((row) => ({
+            ...row,
+            resulting_draft: upcastRecoveryPackDraft(
+              row.resulting_draft,
+              Number(row.draft_schema_version ?? RECOVERY_PACK_DRAFT_SCHEMA_VERSION),
+            ),
+          })),
           libraryFavorites: libraryFavorites.rows,
           mediaAssets: mediaAssets.rows,
           mediaReferences: mediaReferences.rows,
@@ -7318,6 +7372,14 @@ export class PostgresRepository implements Repository {
         await client.query("DELETE FROM federated_auth_transactions WHERE expires_at <= $1", [now]);
         await client.query("DELETE FROM lti_login_transactions WHERE expires_at <= $1", [now]);
         await client.query("DELETE FROM lti_launches WHERE expires_at <= $1", [now]);
+        await client.query(
+          "DELETE FROM recovery_pack_draft_history WHERE created_at < $1::timestamptz - interval '30 days'",
+          [now],
+        );
+        await client.query(
+          "DELETE FROM recovery_pack_draft_mutations WHERE created_at < $1::timestamptz - interval '30 days'",
+          [now],
+        );
         return [...result.rows, ...presentationResult.rows].map((row) => String(row.id));
       },
       { system: true },

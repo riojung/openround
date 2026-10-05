@@ -181,6 +181,7 @@ This file is not legal advice.
 | @napi-rs/canvas-platform-binary       | 1.0.9               | [Project page](https://github.com/Brooooooklyn/canvas#readme)                                       |
 | @next/env                             | 16.3.6              | [Project page](https://github.com/vercel/next.js#readme)                                            |
 | @next/swc-platform-binary             | 16.3.6              | [Project page](https://github.com/vercel/next.js#readme)                                            |
+| @noble/hashes                         | 2.4.0               | [Project page](https://paulmillr.com/noble/)                                                        |
 | @nodable/entities                     | 3.0.0               | [Project page](https://github.com/nodable/val-parsers#readme)                                       |
 | @pinojs/redact                        | 0.4.0               | [Project page](https://github.com/pinojs/redact#readme)                                             |
 | @socket.io/component-emitter          | 3.1.2               | [Project page](https://github.com/socketio/emitter#readme)                                          |

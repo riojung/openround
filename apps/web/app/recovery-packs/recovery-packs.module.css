@@ -1,0 +1,86 @@
+.page {
+  overflow-wrap: anywhere;
+}
+.layout {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(230px, 0.7fr) minmax(0, 1.5fr);
+  align-items: start;
+}
+.panel {
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: 16px;
+  padding: 24px;
+  min-width: 0;
+}
+.panel h2 {
+  margin-top: 0;
+}
+.status {
+  min-height: 1.5em;
+}
+.list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.packButton {
+  background: var(--ui-surface-soft);
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  color: var(--ui-text);
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  text-align: left;
+  width: 100%;
+  overflow-wrap: anywhere;
+}
+.packButton[aria-pressed="true"] {
+  background: var(--ui-accent-soft);
+  border-color: var(--ui-accent);
+}
+.packButton span {
+  color: var(--ui-text-muted);
+  font-size: 0.85rem;
+}
+.editor {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.subsection {
+  border-top: 1px solid var(--ui-border);
+  margin-top: 24px;
+  padding-top: 8px;
+}
+.subsection :global(.field) {
+  margin-top: 18px;
+}
+.card {
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  margin-bottom: 16px;
+  padding: 16px;
+}
+.import {
+  margin-top: 24px;
+}
+.import summary {
+  margin-bottom: 16px;
+}
+.builderLink {
+  display: inline-block;
+  margin: 16px 0 0 16px;
+}
+@media (max-width: 850px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+  .panel {
+    padding: 18px;
+  }
+}

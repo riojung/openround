@@ -518,6 +518,9 @@ function LibraryContent() {
         <Link className={styles.manageLink} href="/dashboard">
           {t("pages.library.manageFolders")}
         </Link>
+        <Link className={styles.manageLink} href="/recovery-packs" lang="en-CA">
+          Recovery Packs
+        </Link>
       </div>
 
       <section className={styles.filterBar} aria-label={t("pages.library.filtersLabel")}>

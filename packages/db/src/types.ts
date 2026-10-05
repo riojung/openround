@@ -956,7 +956,11 @@ export type MediaReferenceOwnerType =
   | "quiz_history"
   | "presentation_draft"
   | "presentation_version"
-  | "presentation_history";
+  | "presentation_history"
+  | "recovery_pack_draft"
+  | "recovery_pack_version"
+  | "recovery_pack_history"
+  | "recovery_pack_mutation";
 
 /**
  * A durable usage edge between a media asset and authoring content. References are

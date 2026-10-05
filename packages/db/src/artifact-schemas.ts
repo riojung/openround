@@ -3,18 +3,24 @@ import {
   PresentationDraftSchema,
   QuizContentSchema,
   QuizDraftSchema,
+  RecoveryPackContentSchema,
+  RecoveryPackDraftSchema,
   migratePresentationV1,
   type PresentationContent,
   type PresentationDraft,
   type QuizDraft,
+  type RecoveryPackContent,
+  type RecoveryPackDraft,
 } from "@openround/contracts";
 
 export const ROUND_DRAFT_SCHEMA_VERSION = 1;
 export const ROUND_CONTENT_SCHEMA_VERSION = 1;
 export const PRESENTATION_DRAFT_SCHEMA_VERSION = 2;
 export const PRESENTATION_CONTENT_SCHEMA_VERSION = 2;
+export const RECOVERY_PACK_DRAFT_SCHEMA_VERSION = 1;
+export const RECOVERY_PACK_CONTENT_SCHEMA_VERSION = 1;
 
-export type PersistedArtifactType = "round" | "presentation";
+export type PersistedArtifactType = "round" | "presentation" | "recovery_pack";
 export type PersistedArtifactDocument = "draft" | "content";
 
 /**
@@ -68,6 +74,13 @@ const roundContentUpcasters = new Map<number, Upcaster<QuizDraft>>([
   [ROUND_CONTENT_SCHEMA_VERSION, (value) => QuizContentSchema.parse(value)],
 ]);
 
+const recoveryPackDraftUpcasters = new Map<number, Upcaster<RecoveryPackDraft>>([
+  [RECOVERY_PACK_DRAFT_SCHEMA_VERSION, (value) => RecoveryPackDraftSchema.parse(value)],
+]);
+const recoveryPackContentUpcasters = new Map<number, Upcaster<RecoveryPackContent>>([
+  [RECOVERY_PACK_CONTENT_SCHEMA_VERSION, (value) => RecoveryPackContentSchema.parse(value)],
+]);
+
 const presentationDraftUpcasters = new Map<number, Upcaster<PresentationDraft>>([
   [1, (value) => PresentationDraftSchema.parse(migratePresentationV1(value))],
   [
@@ -95,6 +108,26 @@ export function upcastRoundDraft(value: unknown, schemaVersion?: unknown): QuizD
 
 export function upcastRoundContent(value: unknown, schemaVersion?: unknown): QuizDraft {
   return parseVersioned("round", "content", value, schemaVersion, roundContentUpcasters);
+}
+
+export function upcastRecoveryPackDraft(
+  value: unknown,
+  schemaVersion?: unknown,
+): RecoveryPackDraft {
+  return parseVersioned("recovery_pack", "draft", value, schemaVersion, recoveryPackDraftUpcasters);
+}
+
+export function upcastRecoveryPackContent(
+  value: unknown,
+  schemaVersion?: unknown,
+): RecoveryPackContent {
+  return parseVersioned(
+    "recovery_pack",
+    "content",
+    value,
+    schemaVersion,
+    recoveryPackContentUpcasters,
+  );
 }
 
 export function upcastPresentationDraft(
