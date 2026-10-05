@@ -15,6 +15,7 @@ import {
   recoveryPackDraft,
   recoveryPackRecord,
 } from "./support/recovery-pack-conformance.js";
+import { expectRecoveryPackUpdateMediaConformance } from "./support/recovery-pack-update-media-conformance.js";
 
 async function creator(repository: MemoryRepository) {
   const tokenHash = randomUUID();
@@ -31,6 +32,16 @@ async function creator(repository: MemoryRepository) {
 }
 
 describe("Recovery Pack repositories", () => {
+  it("retains updated probe-only media across source deletion and immutable Round copies", async () => {
+    const repository = new MemoryRepository();
+    const owner = await creator(repository);
+    await expectRecoveryPackUpdateMediaConformance({
+      repository,
+      workspaceId: owner.workspaceId,
+      editorId: owner.userId,
+    });
+  });
+
   it("drains in-flight creations before account cleanup and fences queued/stale writes", async () => {
     const repository = new MemoryRepository();
     const packs = createRecoveryPackRepository(repository);

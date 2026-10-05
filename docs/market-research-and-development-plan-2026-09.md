@@ -725,10 +725,11 @@ MVP acceptance:
 
 **Incremental implementation:** the first foundation now supplies Pack authoring from published
 Round pairs, immutable publishing, revision/history recovery, native JSON, and independent Round
-draft insertion with item provenance and a complete frozen source baseline. Cards are facilitator
-references in the Round builder, not live playback. Three-way update review, other insertion
-surfaces, source-authoring approval, and QTI/CSV loss reports remain pending. See the
-[implementation checkpoint](implementation-status.md#recovery-pack-foundation--2026-10-05).
+draft insertion with item provenance and a complete frozen source baseline. Round drafts now have
+three-way update review, explicit conflict choices, revision-fenced undo, and retry recovery.
+Cards are facilitator references in the Round builder, not live playback. Other insertion surfaces,
+source-authoring approval, and QTI/CSV loss reports remain pending. See the
+[update-review checkpoint](implementation-status.md#recovery-pack-round-update-review--2026-10-05).
 
 MVP acceptance:
 

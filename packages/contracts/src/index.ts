@@ -12,6 +12,17 @@ export {
   starterContentSlideFrames,
 } from "./slide-geometry";
 
+export {
+  applyRecoveryPackUpdate,
+  buildRecoveryPackUpdatePreview,
+  recoveryPackQuestionSemanticValue,
+  recoveryPackUpdateLinkIssue,
+  RecoveryPackUpdateError,
+  type RecoveryPackUpdateComparison,
+  type RecoveryPackUpdateErrorCode,
+  type RecoveryPackUpdateTarget,
+} from "./recovery-pack-updates";
+
 function isHttpOrHttpsUrl(value: string) {
   try {
     return ["http:", "https:"].includes(new URL(value).protocol);
@@ -997,6 +1008,24 @@ export function recoveryPackContentHash(content: unknown): string {
   return hashParsedRecoveryPackContent(RecoveryPackContentSchema.parse(content));
 }
 
+export const RecoveryPackUpdateBaselineSchema = z
+  .object({
+    packVersionId: z.string().uuid(),
+    packVersion: z.number().int().positive(),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    content: RecoveryPackContentSchema,
+  })
+  .superRefine((baseline, context) => {
+    if (hashParsedRecoveryPackContent(baseline.content) !== baseline.contentHash) {
+      context.addIssue({
+        code: "custom",
+        path: ["contentHash"],
+        message: "The Recovery Pack update baseline does not match its content hash",
+      });
+    }
+  });
+export type RecoveryPackUpdateBaseline = z.infer<typeof RecoveryPackUpdateBaselineSchema>;
+
 /** Frozen source baseline; destination copies remain usable after source deletion. */
 export const RecoveryPackInsertionSchema = z
   .object({
@@ -1008,6 +1037,7 @@ export const RecoveryPackInsertionSchema = z
     diagnosticQuestionId: z.string().uuid(),
     recheckQuestionId: z.string().uuid(),
     originalContent: RecoveryPackContentSchema,
+    updateBaseline: RecoveryPackUpdateBaselineSchema.optional(),
   })
   .superRefine((insertion, context) => {
     if (hashParsedRecoveryPackContent(insertion.originalContent) !== insertion.contentHash) {
@@ -1018,6 +1048,69 @@ export const RecoveryPackInsertionSchema = z
       });
     }
   });
+export type RecoveryPackInsertion = z.infer<typeof RecoveryPackInsertionSchema>;
+
+export const RecoveryPackUpdateRoleSchema = z.enum(["diagnostic", "recheck"]);
+export type RecoveryPackUpdateRole = z.infer<typeof RecoveryPackUpdateRoleSchema>;
+export const RecoveryPackUpdateChoiceSchema = z.object({
+  role: RecoveryPackUpdateRoleSchema,
+  action: z.enum(["keep_local", "use_latest"]),
+});
+export type RecoveryPackUpdateChoice = z.infer<typeof RecoveryPackUpdateChoiceSchema>;
+
+export const RecoveryPackUpdatePreviewRequestSchema = z.object({
+  quizId: z.string().uuid(),
+  insertionId: z.string().uuid(),
+});
+export type RecoveryPackUpdatePreviewRequest = z.infer<
+  typeof RecoveryPackUpdatePreviewRequestSchema
+>;
+
+export const RecoveryPackUpdatePreviewSchema = z.object({
+  quizId: z.string().uuid(),
+  insertionId: z.string().uuid(),
+  draftRevision: z.number().int().nonnegative(),
+  baselineVersionId: z.string().uuid(),
+  baselineVersion: z.number().int().positive(),
+  latestVersionId: z.string().uuid(),
+  latestVersion: z.number().int().positive(),
+  baselineContent: RecoveryPackContentSchema,
+  latestContent: RecoveryPackContentSchema,
+  items: z
+    .array(
+      z.object({
+        role: RecoveryPackUpdateRoleSchema,
+        questionId: z.string().uuid(),
+        status: z.enum(["unchanged", "source_changed", "local_changed", "conflict"]),
+        baseline: QuestionSchema,
+        local: QuestionDraftSchema.nullable(),
+        latest: QuestionSchema,
+      }),
+    )
+    .length(2)
+    .refine(
+      (items) => new Set(items.map((item) => item.role)).size === items.length,
+      "Review each question role exactly once",
+    ),
+  contextChanged: z.boolean(),
+});
+export type RecoveryPackUpdatePreview = z.infer<typeof RecoveryPackUpdatePreviewSchema>;
+
+export const ApplyRecoveryPackUpdateSchema = z.object({
+  quizId: z.string().uuid(),
+  insertionId: z.string().uuid(),
+  packVersionId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  mutationId: z.string().uuid(),
+  choices: z
+    .array(RecoveryPackUpdateChoiceSchema)
+    .max(2)
+    .refine(
+      (choices) => new Set(choices.map((choice) => choice.role)).size === choices.length,
+      "Choose one action per question role",
+    ),
+});
+export type ApplyRecoveryPackUpdate = z.infer<typeof ApplyRecoveryPackUpdateSchema>;
 
 export const CreateRecoveryPackSchema = z.object({ draft: RecoveryPackDraftSchema });
 export const UpdateRecoveryPackSchema = z.object({
@@ -1171,7 +1264,13 @@ export const OpenRoundCheckpointSetExportV3Schema = OpenRoundCheckpointSetExport
   version: z.literal(3),
 });
 
+/** v4 declares accepted Pack update baselines; older importers must not silently discard them. */
+export const OpenRoundCheckpointSetExportV4Schema = OpenRoundCheckpointSetExportV3Schema.extend({
+  version: z.literal(4),
+});
+
 export const OpenRoundCheckpointSetExportSchema = z.union([
+  OpenRoundCheckpointSetExportV4Schema,
   OpenRoundCheckpointSetExportV3Schema,
   OpenRoundCheckpointSetExportV2Schema,
   OpenRoundCheckpointSetExportV1Schema,

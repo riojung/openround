@@ -41,6 +41,8 @@ import {
 import { discoverMigrations, runMigrations } from "../src/migrations.js";
 import { createLibraryDeletionFixture } from "./support/library-deletion-fixtures.js";
 import { expectPresentationSessionRepositoryConformance } from "./support/presentation-session-conformance.js";
+import { expectRecoveryPackDraftUndoConformance } from "./support/recovery-pack-draft-undo-conformance.js";
+import { expectRecoveryPackUpdateMediaConformance } from "./support/recovery-pack-update-media-conformance.js";
 import {
   expectRecoveryPackRepositoryConformance,
   recoveryPackDraft,
@@ -746,6 +748,8 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 47, name: "session_decision_replay" },
       { version: 48, name: "library_artifact_deletion" },
       { version: 49, name: "recovery_packs" },
+      { version: 50, name: "recovery_pack_update_media" },
+      { version: 51, name: "recovery_pack_update_undo" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -907,6 +911,24 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     await repository.deleteAccount(owner.userId);
     expect(await packs.getRecoveryPack(owner.workspaceId, pack.id)).toBeNull();
     expect(await packs.getRecoveryPackVersion(owner.workspaceId, published.id)).toBeNull();
+  });
+
+  it("keeps old Recovery Pack update sources immediately undoable and fences stale undo", async () => {
+    const owner = await creator("recovery-pack-update-undo");
+    await expectRecoveryPackDraftUndoConformance({
+      repository,
+      workspaceId: owner.workspaceId,
+      editorId: owner.userId,
+    });
+  });
+
+  it("retains updated probe-only media across source deletion and immutable Round copies", async () => {
+    const owner = await creator("recovery-pack-update-probe-media");
+    await expectRecoveryPackUpdateMediaConformance({
+      repository,
+      workspaceId: owner.workspaceId,
+      editorId: owner.userId,
+    });
   });
 
   it("keeps Recovery Pack snapshot and receipt media while rejecting unclean publication", async () => {

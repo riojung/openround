@@ -1920,6 +1920,14 @@ export class PostgresRepository implements Repository {
 
   async updateQuizDraft(input: QuizDraftUpdate) {
     const draft = upcastRoundDraft(input.draft, input.schemaVersion);
+    if (
+      input.recoveryPackUpdateSourceRevision !== undefined &&
+      (!Number.isSafeInteger(input.recoveryPackUpdateSourceRevision) ||
+        input.recoveryPackUpdateSourceRevision < 0 ||
+        input.recoveryPackUpdateSourceRevision !== input.expectedRevision)
+    ) {
+      throw new QuizDraftMutationConflictError(input.mutationId);
+    }
     return this.transaction(
       async (client) => {
         await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
@@ -1927,7 +1935,7 @@ export class PostgresRepository implements Repository {
         ]);
         const prior = await client.query(
           `SELECT quiz_id, expected_revision, resulting_revision, draft_hash,
-                  question_health_undo_application_id
+                  question_health_undo_application_id, recovery_pack_update_source_revision
            FROM quiz_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2`,
           [input.workspaceId, input.mutationId],
         );
@@ -1940,7 +1948,11 @@ export class PostgresRepository implements Repository {
             (receipt.question_health_undo_application_id == null
               ? null
               : String(receipt.question_health_undo_application_id)) !==
-              (input.questionHealthUndo?.applicationId ?? null)
+              (input.questionHealthUndo?.applicationId ?? null) ||
+            (receipt.recovery_pack_update_source_revision == null
+              ? null
+              : Number(receipt.recovery_pack_update_source_revision)) !==
+              (input.recoveryPackUpdateSourceRevision ?? null)
           ) {
             throw new QuizDraftMutationConflictError(input.mutationId);
           }
@@ -1968,7 +1980,7 @@ export class PostgresRepository implements Repository {
         // the Round row lock, so check the receipt again before evaluating CAS.
         const raced = await client.query(
           `SELECT quiz_id, expected_revision, resulting_revision, draft_hash,
-                  question_health_undo_application_id
+                  question_health_undo_application_id, recovery_pack_update_source_revision
            FROM quiz_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2`,
           [input.workspaceId, input.mutationId],
         );
@@ -1981,7 +1993,11 @@ export class PostgresRepository implements Repository {
             (receipt.question_health_undo_application_id == null
               ? null
               : String(receipt.question_health_undo_application_id)) !==
-              (input.questionHealthUndo?.applicationId ?? null)
+              (input.questionHealthUndo?.applicationId ?? null) ||
+            (receipt.recovery_pack_update_source_revision == null
+              ? null
+              : Number(receipt.recovery_pack_update_source_revision)) !==
+              (input.recoveryPackUpdateSourceRevision ?? null)
           ) {
             throw new QuizDraftMutationConflictError(input.mutationId);
           }
@@ -2014,15 +2030,19 @@ export class PostgresRepository implements Repository {
           [JSON.stringify(quiz.draft), JSON.stringify(draft)],
         );
         const meaningful = comparison.rows[0]?.meaningful ?? true;
-        if (input.questionHealthApplication && !meaningful) {
+        if (
+          (input.questionHealthApplication ||
+            input.recoveryPackUpdateSourceRevision !== undefined) &&
+          !meaningful
+        ) {
           throw new QuizDraftMutationConflictError(input.mutationId);
         }
         const resultingRevision = meaningful ? currentRevision + 1 : currentRevision;
         await client.query(
           `INSERT INTO quiz_draft_mutations
              (mutation_id, workspace_id, quiz_id, expected_revision, resulting_revision,
-              draft_hash, question_health_undo_application_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              draft_hash, question_health_undo_application_id, recovery_pack_update_source_revision)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
             input.mutationId,
             input.workspaceId,
@@ -2031,6 +2051,7 @@ export class PostgresRepository implements Repository {
             resultingRevision,
             input.draftHash,
             input.questionHealthUndo?.applicationId ?? null,
+            input.recoveryPackUpdateSourceRevision ?? null,
           ],
         );
         if (!meaningful) return quiz;
@@ -2295,6 +2316,15 @@ export class PostgresRepository implements Repository {
              AND application.quiz_id = history.quiz_id
              AND application.source_revision = history.revision
              AND application.applied_revision = quiz.draft_revision
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM quiz_draft_mutations mutation
+           JOIN quizzes quiz ON quiz.workspace_id = mutation.workspace_id
+                            AND quiz.id = mutation.quiz_id
+           WHERE mutation.workspace_id = history.workspace_id
+             AND mutation.quiz_id = history.quiz_id
+             AND mutation.recovery_pack_update_source_revision = history.revision
+             AND mutation.resulting_revision = quiz.draft_revision
          )`,
       [workspaceId, quizId],
     );
@@ -2332,7 +2362,7 @@ export class PostgresRepository implements Repository {
         async (client) => {
           const prior = await client.query(
             `SELECT quiz_id, expected_revision, resulting_revision, draft_hash,
-                    question_health_undo_application_id
+                    question_health_undo_application_id, recovery_pack_update_source_revision
              FROM quiz_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2`,
             [input.workspaceId, input.mutationId],
           );
@@ -2345,7 +2375,8 @@ export class PostgresRepository implements Repository {
             (receipt.question_health_undo_application_id == null
               ? null
               : String(receipt.question_health_undo_application_id)) !==
-              (input.questionHealthUndo?.applicationId ?? null)
+              (input.questionHealthUndo?.applicationId ?? null) ||
+            receipt.recovery_pack_update_source_revision != null
           ) {
             throw new QuizDraftMutationConflictError(input.mutationId);
           }

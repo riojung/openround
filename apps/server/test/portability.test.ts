@@ -125,6 +125,26 @@ describe("checkpoint-set portability", () => {
     expect(insertion.recheckQuestionId).toBe(imported.draft!.questions[1]!.id);
     expect(insertion.originalContent).toEqual(content);
     expect(insertion.contentHash).toBe(source.recoveryPackInsertions[0]!.contentHash);
+
+    const accepted = structuredClone(content);
+    accepted.interventions[0]!.body = "Use this revised facilitator guidance.";
+    source.recoveryPackInsertions[0]!.updateBaseline = {
+      packVersionId: randomUUID(),
+      packVersion: 2,
+      contentHash: recoveryPackContentHash(accepted),
+      content: accepted,
+    };
+    const updatedExport = openRoundJson(source);
+    expect(JSON.parse(updatedExport)).toMatchObject({ version: 4 });
+    const updatedImport = importCheckpointSet("openround_json", updatedExport);
+    expect(updatedImport.validation.errors).toEqual([]);
+    const updatedInsertion = updatedImport.draft!.recoveryPackInsertions![0]!;
+    expect(updatedInsertion.originalContent).toEqual(content);
+    expect(updatedInsertion.updateBaseline).toEqual(
+      source.recoveryPackInsertions[0]!.updateBaseline,
+    );
+    expect(updatedInsertion.diagnosticQuestionId).toBe(updatedImport.draft!.questions[0]!.id);
+    expect(updatedInsertion.id).not.toBe(source.recoveryPackInsertions[0]!.id);
   });
   it("round-trips OpenRound JSON with fresh IDs and an explicit media warning", () => {
     const source = linkedDraft();

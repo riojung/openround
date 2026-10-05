@@ -30,6 +30,7 @@ import type { AuthService } from "./auth.js";
 import type { AppConfig } from "./config.js";
 import { evidenceWorkspaceFeatureEnabled } from "./workspace-rollout.js";
 import { RECOVERY_PACK_BODY_LIMIT, ROUND_PACK_INSERTION_DRAFT_LIMIT } from "./draft-limits.js";
+import { registerRecoveryPackUpdateRoutes } from "./recovery-pack-update-routes.js";
 
 const IdParams = z.object({ id: z.string().uuid() });
 const VersionParams = z.object({ versionId: z.string().uuid() });
@@ -496,4 +497,5 @@ export async function registerRecoveryPackRoutes(
       return conflict(error, reply, request.id);
     }
   });
+  registerRecoveryPackUpdateRoutes(app, { repository, packs, authorize, conflict });
 }

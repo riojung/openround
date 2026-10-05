@@ -138,9 +138,10 @@ export function openRoundJson(draft: QuizDraft) {
   return JSON.stringify(
     OpenRoundCheckpointSetExportSchema.parse({
       format: "openround.checkpoint-set",
-      version:
-        draft.recoveryPackInsertions?.length ||
-        draft.questions.some((question) => question.recoveryPackSource)
+      version: draft.recoveryPackInsertions?.some((insertion) => insertion.updateBaseline)
+        ? 4
+        : draft.recoveryPackInsertions?.length ||
+            draft.questions.some((question) => question.recoveryPackSource)
           ? 3
           : 2,
       exportedAt: new Date().toISOString(),

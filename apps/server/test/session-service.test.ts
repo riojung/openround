@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type * as PrometheusClient from "@prometheus-io/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { QuizDraft, Report } from "@openround/contracts";
 import {
@@ -19,6 +20,13 @@ import { MetricsService } from "../src/metrics.js";
 import { ProductEventDispatcher } from "../src/product-events.js";
 import { hashToken } from "../src/security.js";
 import { SessionService } from "../src/session-service.js";
+
+// Process collectors keep sampling intervals alive across fake/real clock transitions. Their
+// hrtime catch-up loop can block the worker; these ordering tests need only service metrics.
+vi.mock("@prometheus-io/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof PrometheusClient>()),
+  collectDefaultMetrics: vi.fn(),
+}));
 
 const config = ConfigSchema.parse({
   NODE_ENV: "test",
