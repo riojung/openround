@@ -14,6 +14,34 @@
 7. Roll back by deploying the prior immutable image. Do not reverse a destructive database migration; use the documented forward repair.
 8. Contract or remove old schema only in a later release after every running version has stopped using it.
 
+## Recent content, report, and deletion upgrades
+
+The current merged feature set includes migrations through
+`048_library_artifact_deletion.sql`. Apply the complete ordered migration set with the restricted
+one-shot migration job before starting the new server; do not grant the runtime role ownership or
+direct mutation privileges on published Presentation versions.
+
+| Change                                 | Data and compatibility behavior                                                                                                                                                                                                                                                                                    | Rollout/rollback requirement                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Question Health                        | Migration 045 stores content-addressed dismissals; 046 stores bounded approved field diffs and apply/undo provenance. Read-only post-use analysis derives from retained exact-version reports.                                                                                                                     | Leave `FEATURE_QUESTION_HEALTH` off outside the evidence allowlist. Rehearse stale revision, apply/undo, export, and source-deletion cleanup. Published content must remain unchanged.                                                                                                                                                                                                                  |
+| Session Decision Replay                | Migration 047 adds the immutable creation-time `decision_replay_enabled` setting, defaulting existing sessions to false. Eligible new Round sessions capture bounded aggregate events in the existing journal and produce Report V4; V1–V3 remain readable.                                                        | Deploy replay-capable server, worker, and web images before enabling `FEATURE_DECISION_REPLAY`. Disabling the flag prevents new capture-enabled rooms but preserves capture in existing rooms. Choose a replay/Report V4-capable rollback target once such rooms/reports exist; older writers cannot preserve complete capture and older readers may reject V4. Never backfill a timeline from answers. |
+| Presentation content v2                | Drafts, history, published content, and browser recovery are upcast on read from v1 title/body into stable text elements, preserving media, notes, citations, and style. Optional percentage frames extend v2. No database rewrite is required for this content change.                                            | Deploy the matching web/server pair within the existing Presentation beta gate. After v2 or custom-frame writes, use a v2/geometry-capable rollback target: an older editor can reject v2 or discard custom geometry on save. Do not rewrite immutable published versions as a rollback.                                                                                                                |
+| Archived artifact and session deletion | Migration 048 protects retained practice with `ON DELETE NO ACTION` and adds parent-scoped locking/cleanup for favorites and Group links. Owner artifact deletion requires archived status and no retained session/assignment dependencies. Presentation session deletion requires finished status or live expiry. | Verify runtime-role behavior, restore/dependent-write races, all-user favorite cleanup, and terminal-session/report-worker/socket cleanup on a production-like copy. Keep the stronger foreign key and cleanup triggers during a code rollback. Deletion is not reversible by deploying an older image.                                                                                                 |
+
+Before promotion, use synthetic records to verify legacy draft/history/published reads; move and
+resize slide text, save, undo/redo, publish, and compare preview with both live roles; verify narrow
+reading order and image reservation. For a capture-enabled Round, finish/reconcile a Report V4 and
+confirm explicit incomplete capture at the bound without identity leakage. Delete finished/expired
+sessions, then archive and delete unreferenced content; confirm active/restored source and retained
+assignment guards, inaccessible reports/credentials, and released room codes. Retain the serving
+image set, flags, migration result, compatible rollback target, and human acceptance with the release
+evidence. See [deletion and restored data](backup-restore.md#deletion-and-restored-data) before using
+a pre-deletion backup.
+
+Whole-room flex still needs a flex-capable rollback target after creation is enabled; follow the
+[deployment rollback policy](deployment.md#failure-and-rollback-policy). These compatibility checks
+do not replace the external security, accessibility, capacity, or restore gates.
+
 ## Presentation concurrent-response rollout
 
 `PRESENTATION_CONCURRENT_RESPONSE_WRITES` defaults to `false`. Leave it off while a prior server

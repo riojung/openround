@@ -241,7 +241,13 @@ export default function PresenterPage() {
                 )}
               </span>
               {snapshot.phase === "question_open" ? (
-                <Countdown deadline={snapshot.deadline} />
+                snapshot.settings.timeMode === "flex" ? (
+                  <span className="muted" lang={locale} role="status">
+                    {t("live.common.flexOpen")}
+                  </span>
+                ) : (
+                  <Countdown deadline={snapshot.deadline} />
+                )
               ) : null}
             </div>
             <h1 lang="" style={{ fontSize: "clamp(2.4rem, 6vw, 5rem)" }}>

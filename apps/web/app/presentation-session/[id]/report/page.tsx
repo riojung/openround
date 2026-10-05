@@ -1,6 +1,10 @@
 "use client";
 
-import type { PresentationReportEnvelope, PresentationReportV1 } from "@openround/contracts";
+import type {
+  PresentationReportV1,
+  PresentationReportWithSessionContextEnvelope,
+  PresentationTimeMode,
+} from "@openround/contracts";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -19,6 +23,7 @@ function PresentationReportContent() {
   const { locale, t } = useLocale();
   const { productFeatures } = useWorkspace();
   const [report, setReport] = useState<PresentationReportV1 | null>(null);
+  const [timeMode, setTimeMode] = useState<PresentationTimeMode | null>(null);
   const [reportFailed, setReportFailed] = useState(false);
   const [error, setError] = useState("");
 
@@ -27,16 +32,19 @@ function PresentationReportContent() {
     let pollTimer: ReturnType<typeof setTimeout> | undefined;
     let retryAttempts = 0;
     setReport(null);
+    setTimeMode(null);
     setReportFailed(false);
     setError("");
     const load = async () => {
       try {
-        const result = await apiFetch<PresentationReportEnvelope>(
-          `/v1/presentation-sessions/${id}/report`,
+        const result = await apiFetch<PresentationReportWithSessionContextEnvelope>(
+          `/v1/presentation-sessions/${id}/report?includeSessionContext=true`,
         );
         if (cancelled) return;
         setError("");
         retryAttempts = 0;
+        // An older API binary ignores the opt-in query during a rolling web/API upgrade.
+        setTimeMode(result.sessionContext?.timeMode ?? "timed");
         if (result.report) {
           setReport(result.report);
         }
@@ -106,6 +114,12 @@ function PresentationReportContent() {
               </span>
               <h1 lang="">{report.title}</h1>
               <p lang="en-CA">{report.evidenceNote}</p>
+              {timeMode ? (
+                <p className="muted" lang={locale}>
+                  {t("live.common.timeMode")}:{" "}
+                  {t(timeMode === "flex" ? "live.common.flexMode" : "live.common.timedMode")}
+                </p>
+              ) : null}
               <div className={styles.metricRow}>
                 <div className={styles.metric}>
                   <strong>{report.participantCount.toLocaleString(locale)}</strong>

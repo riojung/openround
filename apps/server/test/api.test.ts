@@ -3,10 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import Stripe from "stripe";
 import type { Report, SessionSnapshot } from "@openround/contracts";
-import { MemoryRepository } from "@openround/db";
+import { MEDIA_DELETION_TOMBSTONE_HOLD_MS, MemoryRepository } from "@openround/db";
 import { buildApp } from "../src/app.js";
 import { ConfigSchema } from "../src/config.js";
 import { MemorySessionCache } from "../src/cache.js";
+import { mediaFinalizationObjectKey, StorageService } from "../src/storage.js";
 
 let app: FastifyInstance | undefined;
 
@@ -30,6 +31,7 @@ async function signIn(target: FastifyInstance, email: string) {
 afterEach(async () => {
   if (app) await app.close();
   app = undefined;
+  vi.restoreAllMocks();
 });
 
 describe("revision-safe Round authoring", () => {
@@ -1562,7 +1564,13 @@ describe("creator to report journey", () => {
       (await app.inject({ method: "GET", url: "/v1/auth/me", headers: { cookie } })).statusCode,
     ).toBe(200);
 
-    await repository.deleteMediaAsset(creator.workspaceId, mediaId);
+    const deletionStartedAt = new Date();
+    await repository.claimMediaAssetDeletion(creator.workspaceId, mediaId, deletionStartedAt);
+    await repository.deleteMediaAsset(
+      creator.workspaceId,
+      mediaId,
+      new Date(deletionStartedAt.getTime() + MEDIA_DELETION_TOMBSTONE_HOLD_MS),
+    );
     const deleted = await app.inject({
       method: "DELETE",
       url: "/v1/account",
@@ -2094,6 +2102,395 @@ describe("creator to report journey", () => {
         })
       ).statusCode,
     ).toBe(202);
+  });
+});
+
+describe("media cleanup", () => {
+  it("allows owners and editors to delete only unreferenced media and retains a retryable tombstone", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+    const { cookie, creator } = await signIn(app, "media-cleanup@example.com");
+    const user = repository.users.get(creator.userId)!;
+    const deleteAsset = vi
+      .spyOn(StorageService.prototype, "deleteAsset")
+      .mockResolvedValue(undefined);
+    const createAsset = async (id = randomUUID()) => {
+      await repository.createMediaAsset({
+        id,
+        workspaceId: creator.workspaceId,
+        objectKey: `media/${creator.workspaceId}/${id}.png`,
+        mimeType: "image/png",
+        sizeBytes: 68,
+        scanStatus: "clean",
+        altText: "Readiness cleanup fixture",
+        createdAt: new Date(),
+      });
+      return id;
+    };
+
+    const unauthorizedId = await createAsset();
+    const unauthorized = await app.inject({
+      method: "DELETE",
+      url: `/v1/media/${unauthorizedId}`,
+    });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const ownerId = await createAsset();
+    const ownerDeleted = await app.inject({
+      method: "DELETE",
+      url: `/v1/media/${ownerId}`,
+      headers: { cookie },
+    });
+    expect(ownerDeleted.statusCode).toBe(204);
+    expect(await repository.getMediaAsset(creator.workspaceId, ownerId)).toMatchObject({
+      scanStatus: "deleting",
+      deletionStartedAt: expect.any(Date),
+    });
+    expect(repository.audits.at(-1)).toMatchObject({
+      action: "media.deletion_requested",
+      targetType: "media_asset",
+      targetId: ownerId,
+      requestId: ownerDeleted.headers["x-request-id"],
+    });
+
+    user.role = "editor";
+    const editorId = await createAsset();
+    const editorDeleted = await app.inject({
+      method: "DELETE",
+      url: `/v1/media/${editorId}`,
+      headers: { cookie },
+    });
+    expect(editorDeleted.statusCode).toBe(204);
+
+    user.role = "viewer";
+    const viewerId = await createAsset();
+    const viewerDenied = await app.inject({
+      method: "DELETE",
+      url: `/v1/media/${viewerId}`,
+      headers: { cookie },
+    });
+    expect(viewerDenied.statusCode).toBe(403);
+    expect(await repository.getMediaAsset(creator.workspaceId, viewerId)).not.toBeNull();
+
+    user.role = "editor";
+    const referencedId = await createAsset();
+    await repository.replaceMediaReferences(creator.workspaceId, "quiz_draft", randomUUID(), [
+      referencedId,
+    ]);
+    const referenced = await app.inject({
+      method: "DELETE",
+      url: `/v1/media/${referencedId}`,
+      headers: { cookie },
+    });
+    expect(referenced.statusCode).toBe(409);
+    expect(referenced.json()).toMatchObject({ error: { code: "CONFLICT" } });
+    expect(await repository.getMediaAsset(creator.workspaceId, referencedId)).not.toBeNull();
+
+    const failedId = await createAsset();
+    deleteAsset.mockRejectedValueOnce(new Error("object storage unavailable"));
+    const failed = await app.inject({
+      method: "DELETE",
+      url: `/v1/media/${failedId}`,
+      headers: { cookie },
+    });
+    expect(failed.statusCode).toBe(503);
+    expect(failed.json()).toMatchObject({ error: { code: "DEPENDENCY_UNAVAILABLE" } });
+    expect(await repository.getMediaAsset(creator.workspaceId, failedId)).toMatchObject({
+      scanStatus: "deleting",
+    });
+    const tombstoneComplete = await app.inject({
+      method: "POST",
+      url: `/v1/media/${failedId}/complete`,
+      headers: { cookie },
+    });
+    expect(tombstoneComplete.statusCode).toBe(404);
+    expect(tombstoneComplete.body).not.toContain("deleting");
+    const tombstoneRead = await app.inject({
+      method: "GET",
+      url: `/v1/media/${failedId}`,
+      headers: { cookie },
+    });
+    expect(tombstoneRead.statusCode).toBe(404);
+    await expect(
+      repository.replaceMediaReferences(creator.workspaceId, "quiz_draft", randomUUID(), [
+        failedId,
+      ]),
+    ).rejects.toThrow(/unavailable/);
+    expect(deleteAsset).toHaveBeenCalledTimes(3);
+
+    const retried = await app.inject({
+      method: "DELETE",
+      url: `/v1/media/${failedId}`,
+      headers: { cookie },
+    });
+    expect(retried.statusCode).toBe(204);
+    const retriedTombstone = await repository.getMediaAsset(creator.workspaceId, failedId);
+    expect(retriedTombstone).toMatchObject({ scanStatus: "deleting" });
+    expect(retriedTombstone?.deletionStartedAt).toEqual(
+      (await repository.getMediaAsset(creator.workspaceId, failedId))?.deletionStartedAt,
+    );
+  });
+
+  it("releases a failed finalization lease for an immediate retry", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+    const { cookie, creator } = await signIn(app, "media-finalization@example.com");
+    const mediaId = randomUUID();
+    const objectKey = `quarantine/${creator.workspaceId}/${mediaId}.png`;
+    await repository.createMediaAsset({
+      id: mediaId,
+      workspaceId: creator.workspaceId,
+      objectKey,
+      mimeType: "image/png",
+      sizeBytes: 68,
+      scanStatus: "pending",
+      altText: "Retryable finalization fixture",
+      createdAt: new Date(),
+    });
+    const finalize = vi
+      .spyOn(StorageService.prototype, "finalize")
+      .mockRejectedValueOnce(new Error("scanner temporarily unavailable"))
+      .mockResolvedValueOnce({ scanStatus: "rejected", objectKey });
+
+    const failed = await app.inject({
+      method: "POST",
+      url: `/v1/media/${mediaId}/complete`,
+      headers: { cookie },
+    });
+    expect(failed.statusCode).toBe(409);
+    expect(await repository.getMediaAsset(creator.workspaceId, mediaId)).toMatchObject({
+      scanStatus: "pending",
+    });
+
+    const retried = await app.inject({
+      method: "POST",
+      url: `/v1/media/${mediaId}/complete`,
+      headers: { cookie },
+    });
+    expect(retried.statusCode).toBe(200);
+    expect(retried.json()).toMatchObject({ media: { id: mediaId, scanStatus: "rejected" } });
+    expect(finalize).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves a committed finalization when its audit write fails", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+    const { cookie, creator } = await signIn(app, "media-audit-failure@example.com");
+    const mediaId = randomUUID();
+    await repository.createMediaAsset({
+      id: mediaId,
+      workspaceId: creator.workspaceId,
+      objectKey: `quarantine/${creator.workspaceId}/${mediaId}.png`,
+      mimeType: "image/png",
+      sizeBytes: 68,
+      scanStatus: "pending",
+      altText: "Committed finalization fixture",
+      createdAt: new Date(),
+    });
+    vi.spyOn(StorageService.prototype, "finalize").mockImplementation((asset, token) =>
+      Promise.resolve({
+        scanStatus: "clean",
+        objectKey: mediaFinalizationObjectKey(asset, token),
+      }),
+    );
+    const commitCandidate = vi
+      .spyOn(StorageService.prototype, "commitFinalizationCandidate")
+      .mockResolvedValue(undefined);
+    vi.spyOn(StorageService.prototype, "cleanupFinalization").mockRejectedValueOnce(
+      new Error("loser cleanup deferred"),
+    );
+    const deleteCandidate = vi
+      .spyOn(StorageService.prototype, "deleteFinalizationCandidate")
+      .mockResolvedValue(undefined);
+    vi.spyOn(StorageService.prototype, "createDownloadUrl").mockResolvedValue(
+      "https://media.example.test/signed",
+    );
+    vi.spyOn(repository, "recordAudit").mockRejectedValueOnce(new Error("audit unavailable"));
+
+    const completed = await app.inject({
+      method: "POST",
+      url: `/v1/media/${mediaId}/complete`,
+      headers: { cookie },
+    });
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json()).toMatchObject({
+      media: { id: mediaId, scanStatus: "clean" },
+      downloadUrl: "https://media.example.test/signed",
+    });
+    expect(await repository.getMediaAsset(creator.workspaceId, mediaId)).toMatchObject({
+      scanStatus: "clean",
+      objectKey: expect.stringContaining(`media/${creator.workspaceId}/${mediaId}/`),
+    });
+    expect(commitCandidate).toHaveBeenCalledTimes(1);
+    expect(deleteCandidate).not.toHaveBeenCalled();
+
+    const retried = await app.inject({
+      method: "POST",
+      url: `/v1/media/${mediaId}/complete`,
+      headers: { cookie },
+    });
+    expect(retried.statusCode).toBe(200);
+    expect(retried.json()).toMatchObject({
+      media: { id: mediaId, scanStatus: "clean" },
+      downloadUrl: "https://media.example.test/signed",
+    });
+    expect(deleteCandidate).not.toHaveBeenCalled();
+  });
+
+  it("does not acknowledge a clean database row when the lifecycle-safe tag fails", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+    const { cookie, creator } = await signIn(app, "media-tag-failure@example.com");
+    const mediaId = randomUUID();
+    await repository.createMediaAsset({
+      id: mediaId,
+      workspaceId: creator.workspaceId,
+      objectKey: `quarantine/${creator.workspaceId}/${mediaId}.png`,
+      mimeType: "image/png",
+      sizeBytes: 68,
+      scanStatus: "pending",
+      altText: "Lifecycle tag failure fixture",
+      createdAt: new Date(),
+    });
+    vi.spyOn(StorageService.prototype, "finalize").mockImplementation((asset, token) =>
+      Promise.resolve({
+        scanStatus: "clean",
+        objectKey: mediaFinalizationObjectKey(asset, token),
+      }),
+    );
+    vi.spyOn(StorageService.prototype, "commitFinalizationCandidate").mockRejectedValueOnce(
+      new Error("tagging unavailable"),
+    );
+    const deleteCandidate = vi
+      .spyOn(StorageService.prototype, "deleteFinalizationCandidate")
+      .mockResolvedValue(undefined);
+
+    const completed = await app.inject({
+      method: "POST",
+      url: `/v1/media/${mediaId}/complete`,
+      headers: { cookie },
+    });
+
+    expect(completed.statusCode).toBe(409);
+    expect(await repository.getMediaAsset(creator.workspaceId, mediaId)).toMatchObject({
+      scanStatus: "pending",
+      objectKey: `quarantine/${creator.workspaceId}/${mediaId}.png`,
+    });
+    expect(deleteCandidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles a committed clean row before handling an indeterminate database error", async () => {
+    const repository = new MemoryRepository();
+    const built = await buildApp(
+      ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: "http://localhost:3000",
+        PUBLIC_API_URL: "http://localhost:4000",
+        LOG_LEVEL: "silent",
+      }),
+      { repository, cache: new MemorySessionCache() },
+    );
+    app = built.app;
+    const { cookie, creator } = await signIn(app, "media-indeterminate-commit@example.com");
+    const mediaId = randomUUID();
+    await repository.createMediaAsset({
+      id: mediaId,
+      workspaceId: creator.workspaceId,
+      objectKey: `quarantine/${creator.workspaceId}/${mediaId}.png`,
+      mimeType: "image/png",
+      sizeBytes: 68,
+      scanStatus: "pending",
+      altText: "Indeterminate commit fixture",
+      createdAt: new Date(),
+    });
+    vi.spyOn(StorageService.prototype, "finalize").mockImplementation((asset, token) =>
+      Promise.resolve({
+        scanStatus: "clean",
+        objectKey: mediaFinalizationObjectKey(asset, token),
+      }),
+    );
+    vi.spyOn(StorageService.prototype, "commitFinalizationCandidate").mockResolvedValue(undefined);
+    vi.spyOn(StorageService.prototype, "cleanupFinalization").mockResolvedValue(undefined);
+    vi.spyOn(StorageService.prototype, "createDownloadUrl").mockResolvedValue(
+      "https://media.example.test/signed",
+    );
+    const deleteCandidate = vi
+      .spyOn(StorageService.prototype, "deleteFinalizationCandidate")
+      .mockResolvedValue(undefined);
+    const updateMediaAsset = repository.updateMediaAsset.bind(repository);
+    vi.spyOn(repository, "updateMediaAsset").mockImplementationOnce(async (...arguments_) => {
+      await updateMediaAsset(...arguments_);
+      throw new Error("connection dropped after commit");
+    });
+
+    const completed = await app.inject({
+      method: "POST",
+      url: `/v1/media/${mediaId}/complete`,
+      headers: { cookie },
+    });
+
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json()).toMatchObject({
+      media: { id: mediaId, scanStatus: "clean" },
+      downloadUrl: "https://media.example.test/signed",
+    });
+    expect(await repository.getMediaAsset(creator.workspaceId, mediaId)).toMatchObject({
+      scanStatus: "clean",
+      objectKey: expect.stringContaining(`media/${creator.workspaceId}/${mediaId}/`),
+    });
+    expect(deleteCandidate).not.toHaveBeenCalled();
+    expect(await repository.claimMediaObjectCleanupCandidates(new Date(), 1)).toEqual([]);
+    const finalized = await repository.getMediaAsset(creator.workspaceId, mediaId);
+    const finalSweepAt = new Date(finalized!.finalizedAt!.getTime() + 6 * 24 * 60 * 60_000);
+    expect(await repository.claimMediaObjectCleanupCandidates(finalSweepAt, 1)).toEqual([
+      expect.objectContaining({ asset: expect.objectContaining({ id: mediaId }), pass: 1 }),
+    ]);
   });
 });
 

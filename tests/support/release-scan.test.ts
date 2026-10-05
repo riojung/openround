@@ -67,6 +67,67 @@ describe("workflow action supply chain", () => {
   });
 });
 
+describe("release tag governance specification", () => {
+  it("separates named-owner creation authority from no-bypass tag immutability", async () => {
+    const [creationSource, immutabilitySource, runbook, evidenceRecord] = await Promise.all([
+      readFile(join(repositoryRoot, ".github/rulesets/release-tags.json"), "utf8"),
+      readFile(join(repositoryRoot, ".github/rulesets/release-tag-immutability.json"), "utf8"),
+      readFile(join(repositoryRoot, "docs/runbooks/repository-governance.md"), "utf8"),
+      readFile(join(repositoryRoot, "docs/evidence/repository-governance-canary.md"), "utf8"),
+    ]);
+    const creationRuleset = JSON.parse(creationSource) as {
+      bypass_actors?: unknown[];
+      conditions?: { ref_name?: { exclude?: string[]; include?: string[] } };
+      enforcement?: string;
+      name?: string;
+      rules?: Array<{
+        parameters?: { update_allows_fetch_and_merge?: boolean };
+        type?: string;
+      }>;
+      target?: string;
+    };
+    const immutabilityRuleset = JSON.parse(immutabilitySource) as typeof creationRuleset;
+    const normalizedRunbook = runbook.replace(/\s+/g, " ");
+
+    expect(creationRuleset.name).toBe("Restrict v release tag creation");
+    expect(creationRuleset.target).toBe("tag");
+    expect(creationRuleset.enforcement).toBe("disabled");
+    expect(creationRuleset.conditions?.ref_name).toEqual({
+      include: ["refs/tags/v*"],
+      exclude: [],
+    });
+    expect(creationRuleset.rules?.map(({ type }) => type)).toEqual(["creation"]);
+    expect(creationRuleset.bypass_actors).toEqual([
+      { actor_id: 1459373, actor_type: "User", bypass_mode: "always" },
+    ]);
+
+    expect(immutabilityRuleset.name).toBe("Make v release tags immutable");
+    expect(immutabilityRuleset.target).toBe("tag");
+    expect(immutabilityRuleset.enforcement).toBe("disabled");
+    expect(immutabilityRuleset.conditions?.ref_name).toEqual({
+      include: ["refs/tags/v*"],
+      exclude: [],
+    });
+    expect(immutabilityRuleset.rules?.map(({ type }) => type).sort()).toEqual([
+      "deletion",
+      "non_fast_forward",
+      "update",
+    ]);
+    expect(immutabilityRuleset.rules?.find(({ type }) => type === "update")?.parameters).toEqual({
+      update_allows_fetch_and_merge: false,
+    });
+    expect(immutabilityRuleset.bypass_actors).toEqual([]);
+    expect(runbook).toContain("gh api --method POST repos/riojung/openround/rulesets");
+    expect(normalizedRunbook).toContain("single named owner user, `riojung`");
+    expect(normalizedRunbook).toContain("never to a repository role");
+    expect(normalizedRunbook).toContain("Only that named owner may create a");
+    expect(normalizedRunbook).toContain("no bypass actors");
+    expect(normalizedRunbook).toContain("do not enable the created rules");
+    expect(evidenceRecord).toContain("## Release-tag rule snapshot");
+    expect(evidenceRecord).toContain("Immutability ruleset has no bypass actor");
+  });
+});
+
 describe("staging readiness trust boundary", () => {
   it("uses a default-branch repository dispatch with a fail-closed payload", async () => {
     const workflow = await readFile(
@@ -99,6 +160,13 @@ describe("staging readiness trust boundary", () => {
       "run_stripe_replay: ${{ steps.payload.outputs.run_stripe_replay }}",
     );
     expect(mainCandidate).toContain("soak_minutes: ${{ steps.payload.outputs.soak_minutes }}");
+    expect(mainCandidate).toContain("node scripts/check-deployment-target.mjs staging");
+    expect(mainCandidate).toContain("public_api_url: ${{ steps.target.outputs.public_api_url }}");
+    expect(mainCandidate).toContain("public_web_url: ${{ steps.target.outputs.public_web_url }}");
+    expect(mainCandidate).toContain(
+      "public_media_url: ${{ steps.target.outputs.public_media_url }}",
+    );
+    expect(mainCandidate).toContain('readFileSync("config/deploy/staging.json", "utf8")');
 
     expect(workflow).toContain("needs.main-candidate.outputs.soak_minutes != '0'");
     expect(workflow).toContain("SOAK_MINUTES: ${{ needs.main-candidate.outputs.soak_minutes }}");
@@ -116,6 +184,25 @@ describe("staging readiness trust boundary", () => {
       expect(section).toContain("github.ref == 'refs/heads/main'");
       expect(section).toContain(dependency);
     }
+
+    expect(workflow).toContain(
+      "READINESS_API_URL: ${{ needs.main-candidate.outputs.public_api_url }}",
+    );
+    expect(workflow).toContain(
+      "READINESS_WEB_URL: ${{ needs.main-candidate.outputs.public_web_url }}",
+    );
+    expect(workflow).toContain(
+      "READINESS_MEDIA_URL: ${{ needs.main-candidate.outputs.public_media_url }}",
+    );
+    expect(workflow).toContain("LOAD_BASE_URL: ${{ needs.main-candidate.outputs.public_api_url }}");
+    expect(workflow).toContain("LOAD_ORIGIN: ${{ needs.main-candidate.outputs.public_web_url }}");
+    expect(workflow).toContain(
+      "STRIPE_REHEARSAL_BASE_URL: ${{ needs.main-candidate.outputs.public_api_url }}",
+    );
+    expect(workflow).toContain(
+      "STRIPE_REHEARSAL_ORIGIN: ${{ needs.main-candidate.outputs.public_web_url }}",
+    );
+    expect(workflow).not.toMatch(/\$\{\{ vars\.OPENROUND_(?:API|WEB|MEDIA)_URL \}\}/);
   });
 });
 
@@ -154,6 +241,7 @@ describe("staging image trust boundary", () => {
     expect(mainCandidate).toContain("const payload = event.client_payload ?? {};");
     expect(mainCandidate).toContain("Array.isArray(payload)");
     expect(mainCandidate).toContain("Object.keys(payload).length !== 0");
+    expect(mainCandidate).toContain("node scripts/check-deployment-target.mjs staging");
 
     expect(build).toContain("github.ref == 'refs/heads/main'");
     expect(build).toContain("needs: main-candidate");
@@ -175,6 +263,104 @@ describe("staging image trust boundary", () => {
     expect(checkoutIndex).toBeGreaterThanOrEqual(0);
     expect(revalidationIndex).toBeGreaterThan(checkoutIndex);
     expect(packageLoginIndex).toBeGreaterThan(revalidationIndex);
+  });
+});
+
+describe("production release target boundary", () => {
+  it("validates the production target and host-key pin before building release images", async () => {
+    const workflow = await readFile(join(repositoryRoot, ".github/workflows/release.yml"), "utf8");
+    const preflight = workflow.match(/ {2}preflight:\n([\s\S]*?)(?=\n {2}images:)/)?.[1];
+
+    expect(preflight).toBeDefined();
+    expect(preflight).toContain("node scripts/check-deployment-target.mjs production");
+    expect(workflow.indexOf("node scripts/check-deployment-target.mjs production")).toBeLessThan(
+      workflow.indexOf("./scripts/product-build.sh production"),
+    );
+  });
+
+  it("creates only a bounded draft release after all image evidence succeeds", async () => {
+    const workflow = await readFile(join(repositoryRoot, ".github/workflows/release.yml"), "utf8");
+    const topLevelPermissions = workflow.match(
+      /\npermissions:\n([\s\S]*?)(?=\n\nconcurrency:)/,
+    )?.[1];
+    const images = workflow.match(/ {2}images:\n([\s\S]*?)(?=\n {2}draft-release:)/)?.[1];
+    const draft = workflow.match(/ {2}draft-release:\n([\s\S]*)$/)?.[1];
+
+    expect(topLevelPermissions?.trim()).toBe("contents: read");
+    expect(images).toBeDefined();
+    expect(images).toContain("contents: read");
+    expect(images).toContain("id-token: write");
+    expect(images).toContain("packages: write");
+    expect(images).toContain("security-events: write");
+    expect(images).toContain("Retain SBOM and provenance attestations");
+    expect(images).toContain("{{ json .SBOM.SPDX }}");
+    expect(images).toContain("{{ json .Provenance.SLSA }}");
+
+    expect(draft).toBeDefined();
+    expect(draft).toContain("name: Create draft GitHub Release");
+    expect(draft).toContain("needs: [preflight, images]");
+    expect(draft).toContain("actions: read");
+    expect(draft).toContain("contents: write");
+    expect(draft).not.toContain("id-token: write");
+    expect(draft).not.toContain("packages: write");
+    expect(draft).not.toContain("security-events: write");
+    expect(draft).toContain("actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0");
+    expect(draft).toContain("sbom.spdx.json");
+    expect(draft).toContain("provenance.slsa.json");
+    expect(draft).toContain("trivy.sarif");
+    expect(draft).toContain("git archive --format=tar");
+    expect(draft).toContain("SHA256SUMS");
+    expect(draft).toContain('test "$(wc -c < "$output/release-notes.md")" -le 8192');
+    expect(draft).toContain("gh release create");
+    expect(draft).not.toContain("gh release edit");
+    expect(draft).not.toContain("gh release upload");
+    expect(draft.match(/\s--draft(?:\s|\\)/g)).toHaveLength(1);
+    expect(draft).toContain("--verify-tag");
+    expect(draft).toContain("--notes-file");
+    expect(draft).not.toContain("--generate-notes");
+    expect(draft).not.toContain("--draft=false");
+    expect(draft).not.toContain("--clobber");
+    expect(draft).toContain("do not replace reviewed evidence");
+    expect(draft).toContain("releases?per_page=100");
+    expect(draft).toContain("--paginate --slurp");
+    expect(draft).not.toContain("releases/tags/$GITHUB_REF_NAME");
+    expect(draft).toContain(".verification.reason");
+    expect(draft.match(/git\/ref\/tags\/\$GITHUB_REF_NAME/g)).toHaveLength(2);
+    expect(draft).toContain("requiredReleaseAssetNames");
+    expect(draft).toContain('test "${#assets[@]}" -eq 13');
+    expect(draft).toContain("sha256sum --check --strict SHA256SUMS");
+    expect(draft).toContain("release-binding.json");
+    expect(draft).toContain("validateDraftGithubRelease");
+    expect(draft).toContain("release-publication-${{ github.ref_name }}");
+    expect(draft).toContain(".published_at");
+    expect(draft).toContain(".assets[] | select(.name == $name) | .digest");
+    expect(workflow).toContain("TAG_PUSH_ACTOR_ID: ${{ github.event.sender.id }}");
+    expect(workflow).toContain("TAG_PUSH_CREATED: ${{ github.event.created }}");
+    expect(workflow).toContain("TAG_PUSH_DELETED: ${{ github.event.deleted }}");
+    expect(workflow).toContain("TAG_PUSH_FORCED: ${{ github.event.forced }}");
+    expect(workflow).toContain("TAG_PUSH_BEFORE: ${{ github.event.before }}");
+    expect(workflow).toContain("TAG_PUSH_AFTER: ${{ github.event.after }}");
+    expect(workflow).toContain("Release tags may be pushed only by the named release owner");
+    expect(workflow).toContain(
+      "Release workflow accepts only the initial creation of a new version tag",
+    );
+    expect(workflow).toContain(
+      "The release tag no longer matches the initial tag-creation payload",
+    );
+    expect(workflow).toContain("evidence_candidate_commit");
+    expect(workflow).toContain(
+      'test "${evidence_descendant_changes[0]}" = "docs/release-readiness.json"',
+    );
+    expect(workflow).toContain(
+      'git diff --name-only --no-renames "$evidence_candidate_commit" "$tag_commit" --',
+    );
+    expect(workflow).toContain("evidenceOnlyDescendant: true");
+    expect(workflow).toContain('and .event == "push"');
+    expect(workflow).toContain('and .head_branch == "main"');
+    expect(workflow).toContain("and .path == $path");
+    expect(workflow).toContain('local workflow_path=".github/workflows/$workflow_file"');
+    expect(workflow).toContain("path: .path");
+    expect(workflow).toContain("headBranch: .head_branch");
   });
 });
 
@@ -218,7 +404,7 @@ describe("release image vulnerability evidence", () => {
       expect(scan).toMatch(/limit-severities-for-sarif: true/);
       expect(scan).toMatch(/skip-setup-trivy: true/);
     }
-    expect(workflow).toMatch(/version: v0\.68\.2/);
+    expect(workflow).toMatch(/version: v0\.74\.0/);
     expect(workflow).toMatch(
       /printf '%s\\n' "\$image_ref" > "artifacts\/release\/\$component\/ref\.txt"/,
     );

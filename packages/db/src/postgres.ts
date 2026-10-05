@@ -4,8 +4,11 @@ import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { upgradeGameState, type EngineAnswer, type GameState } from "@openround/game-engine";
 import {
+  MAX_SESSION_DECISION_EVENTS,
+  QUESTION_HEALTH_POST_USE_MAX_REPORTS,
   ReportSchema,
   ResponsePayloadSchema,
+  SessionDecisionEventSchema,
   SupportedLocaleSchema,
   TrustModeSchema,
   questionDelivery,
@@ -18,12 +21,14 @@ import {
   AudienceStoreError,
   FollowupAccessLimitError,
   FollowupVersionConflictError,
+  MEDIA_DELETION_TOMBSTONE_HOLD_MS,
   PublishedQuizLimitError,
   QuizDraftMutationConflictError,
   QuizDraftRevisionConflictError,
   SessionCodeConflictError,
   SessionNotActiveError,
   SessionVersionConflictError,
+  WorkspaceDeletionInProgressError,
 } from "./types.js";
 import { runMigrations } from "./migrations.js";
 import {
@@ -68,19 +73,27 @@ import type {
   LtiLoginTransactionRecord,
   LtiRegistrationRecord,
   LiveRoomArtifactType,
+  LibraryArtifactDeletionResult,
   LiveRoomCodeClaim,
   LiveRoomCodeRecord,
   MagicTokenRecord,
+  MediaAssetCreateInput,
   MediaAssetRecord,
+  MediaObjectCleanupClaim,
   MediaReferenceOwnerType,
   MediaReferenceRecord,
-  MediaScanStatus,
   OperationalFeaturesRecord,
   OperationalFeaturesUpdate,
   ParticipantRecord,
   ParticipantSignalRecord,
   Plan,
   ProductEventRecord,
+  QuestionHealthObservationReport,
+  QuestionHealthObservationReportPage,
+  QuestionHealthDismissalIdentity,
+  QuestionHealthDismissalRecord,
+  QuestionHealthDismissalWrite,
+  QuestionHealthApplicationRecord,
   QnaQuestionRecord,
   QnaReplyRecord,
   QnaSettingsRecord,
@@ -96,9 +109,12 @@ import type {
   Segment,
   SessionStaffCredentialRecord,
   SessionStaffCredentialInput,
+  SessionDecisionEventWrite,
   SessionHistoryRecord,
+  SessionInvalidationTarget,
   StoredSession,
   WorkspaceInvitationRecord,
+  WorkspaceMediaDeletionJobRecord,
   WorkspaceMemberRecord,
   WorkspaceSummaryRecord,
 } from "./types.js";
@@ -257,6 +273,36 @@ function mapQuizDraftHistory(row: QueryResultRow): QuizDraftHistoryRecord {
     draftSchemaVersion,
     savedBy: row.saved_by ? String(row.saved_by) : null,
     mutationId: row.mutation_id ? String(row.mutation_id) : null,
+    createdAt: date(row.created_at),
+  };
+}
+
+function mapQuestionHealthDismissal(row: QueryResultRow): QuestionHealthDismissalRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    quizId: String(row.quiz_id),
+    findingId: String(row.finding_id),
+    ruleVersion: Number(row.rule_version),
+    rulesetVersion: String(row.ruleset_version),
+    contentHash: String(row.content_hash).trim(),
+    reason: row.reason,
+    createdAt: date(row.created_at),
+  };
+}
+
+function mapQuestionHealthApplication(row: QueryResultRow): QuestionHealthApplicationRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    quizId: String(row.quiz_id),
+    applicationId: String(row.application_id),
+    findingId: String(row.finding_id),
+    ruleVersion: Number(row.rule_version),
+    rulesetVersion: String(row.ruleset_version),
+    contentHash: String(row.content_hash).trim(),
+    sourceRevision: Number(row.source_revision),
+    appliedRevision: Number(row.applied_revision),
+    requestHash: String(row.request_hash).trim(),
+    changes: row.changes,
     createdAt: date(row.created_at),
   };
 }
@@ -456,6 +502,7 @@ function mapSession(row: QueryResultRow): StoredSession {
     hostId: row.host_id,
     hostTokenHash: row.host_token_hash,
     trustMode: TrustModeSchema.parse(row.trust_mode ?? state.settings.trustMode ?? "learning"),
+    decisionReplayEnabled: row.decision_replay_enabled === true,
     state,
     expiresAt: date(row.expires_at),
     retentionExpiresAt: date(row.retention_expires_at),
@@ -490,6 +537,16 @@ function mapMediaAsset(row: QueryResultRow): MediaAssetRecord {
     scanStatus: row.scan_status,
     altText: row.alt_text,
     createdAt: date(row.created_at),
+    deletionStartedAt: row.deletion_started_at ? date(row.deletion_started_at) : null,
+    finalizedAt: row.finalized_at ? date(row.finalized_at) : null,
+  };
+}
+
+function mapWorkspaceMediaDeletionJob(row: QueryResultRow): WorkspaceMediaDeletionJobRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    deletionStartedAt: date(row.deletion_started_at),
+    sweepAfter: date(row.sweep_after),
   };
 }
 
@@ -1146,9 +1203,11 @@ export class PostgresRepository implements Repository {
       const question = session.state.quiz.questions[round.position];
       const openedAtMs = round.openedAtMs > 0 ? round.openedAtMs : session.createdAt.getTime();
       const deadlineMs =
-        round.deadlineMs > openedAtMs
-          ? round.deadlineMs
-          : openedAtMs + (question?.timeLimitSeconds ?? 20) * 1_000;
+        round.deadlineMs === null
+          ? null
+          : round.deadlineMs > openedAtMs
+            ? round.deadlineMs
+            : openedAtMs + (question?.timeLimitSeconds ?? 20) * 1_000;
       await client.query(
         `INSERT INTO question_rounds
            (id, session_id, question_id, position, opened_at, deadline, locked_at, round_kind)
@@ -1166,7 +1225,7 @@ export class PostgresRepository implements Repository {
           round.questionId,
           round.position,
           new Date(openedAtMs),
-          new Date(deadlineMs),
+          deadlineMs === null ? null : new Date(deadlineMs),
           round.lockedAtMs === null ? null : new Date(round.lockedAtMs),
           round.kind,
         ],
@@ -1863,7 +1922,8 @@ export class PostgresRepository implements Repository {
           `${input.workspaceId}:${input.mutationId}`,
         ]);
         const prior = await client.query(
-          `SELECT quiz_id, expected_revision, resulting_revision, draft_hash
+          `SELECT quiz_id, expected_revision, resulting_revision, draft_hash,
+                  question_health_undo_application_id
            FROM quiz_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2`,
           [input.workspaceId, input.mutationId],
         );
@@ -1872,9 +1932,25 @@ export class PostgresRepository implements Repository {
           if (
             String(receipt.quiz_id) !== input.quizId ||
             Number(receipt.expected_revision) !== input.expectedRevision ||
-            String(receipt.draft_hash) !== input.draftHash
+            String(receipt.draft_hash) !== input.draftHash ||
+            (receipt.question_health_undo_application_id == null
+              ? null
+              : String(receipt.question_health_undo_application_id)) !==
+              (input.questionHealthUndo?.applicationId ?? null)
           ) {
             throw new QuizDraftMutationConflictError(input.mutationId);
+          }
+          if (input.questionHealthApplication) {
+            const application = await client.query(
+              `SELECT request_hash FROM question_health_applications
+               WHERE workspace_id = $1 AND quiz_id = $2 AND application_id = $3`,
+              [input.workspaceId, input.quizId, input.mutationId],
+            );
+            if (
+              String(application.rows[0]?.request_hash ?? "").trim() !==
+              input.questionHealthApplication.requestHash
+            )
+              throw new QuizDraftMutationConflictError(input.mutationId);
           }
           return this.replayQuizDraftMutation(client, input, receipt);
         }
@@ -1887,7 +1963,8 @@ export class PostgresRepository implements Repository {
         // A duplicate request may have committed while this transaction waited on
         // the Round row lock, so check the receipt again before evaluating CAS.
         const raced = await client.query(
-          `SELECT quiz_id, expected_revision, resulting_revision, draft_hash
+          `SELECT quiz_id, expected_revision, resulting_revision, draft_hash,
+                  question_health_undo_application_id
            FROM quiz_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2`,
           [input.workspaceId, input.mutationId],
         );
@@ -1896,9 +1973,25 @@ export class PostgresRepository implements Repository {
           if (
             String(receipt.quiz_id) !== input.quizId ||
             Number(receipt.expected_revision) !== input.expectedRevision ||
-            String(receipt.draft_hash) !== input.draftHash
+            String(receipt.draft_hash) !== input.draftHash ||
+            (receipt.question_health_undo_application_id == null
+              ? null
+              : String(receipt.question_health_undo_application_id)) !==
+              (input.questionHealthUndo?.applicationId ?? null)
           ) {
             throw new QuizDraftMutationConflictError(input.mutationId);
+          }
+          if (input.questionHealthApplication) {
+            const application = await client.query(
+              `SELECT request_hash FROM question_health_applications
+               WHERE workspace_id = $1 AND quiz_id = $2 AND application_id = $3`,
+              [input.workspaceId, input.quizId, input.mutationId],
+            );
+            if (
+              String(application.rows[0]?.request_hash ?? "").trim() !==
+              input.questionHealthApplication.requestHash
+            )
+              throw new QuizDraftMutationConflictError(input.mutationId);
           }
           return this.replayQuizDraftMutation(client, input, receipt, current.rows[0]);
         }
@@ -1917,11 +2010,15 @@ export class PostgresRepository implements Repository {
           [JSON.stringify(quiz.draft), JSON.stringify(draft)],
         );
         const meaningful = comparison.rows[0]?.meaningful ?? true;
+        if (input.questionHealthApplication && !meaningful) {
+          throw new QuizDraftMutationConflictError(input.mutationId);
+        }
         const resultingRevision = meaningful ? currentRevision + 1 : currentRevision;
         await client.query(
           `INSERT INTO quiz_draft_mutations
-             (mutation_id, workspace_id, quiz_id, expected_revision, resulting_revision, draft_hash)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
+             (mutation_id, workspace_id, quiz_id, expected_revision, resulting_revision,
+              draft_hash, question_health_undo_application_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
             input.mutationId,
             input.workspaceId,
@@ -1929,6 +2026,7 @@ export class PostgresRepository implements Repository {
             input.expectedRevision,
             resultingRevision,
             input.draftHash,
+            input.questionHealthUndo?.applicationId ?? null,
           ],
         );
         if (!meaningful) return quiz;
@@ -1967,8 +2065,210 @@ export class PostgresRepository implements Repository {
             saved.updatedAt,
           ],
         );
+        if (input.questionHealthApplication) {
+          const application = input.questionHealthApplication;
+          await client.query(
+            `INSERT INTO question_health_applications
+               (workspace_id, quiz_id, application_id, finding_id, rule_version,
+                ruleset_version, content_hash, source_revision, applied_revision,
+                request_hash, changes, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)`,
+            [
+              input.workspaceId,
+              input.quizId,
+              application.applicationId,
+              application.findingId,
+              application.ruleVersion,
+              application.rulesetVersion,
+              application.contentHash,
+              application.sourceRevision,
+              resultingRevision,
+              application.requestHash,
+              JSON.stringify(application.changes),
+              saved.updatedAt,
+            ],
+          );
+          await client.query(
+            `INSERT INTO audit_events
+               (id, workspace_id, actor_id, action, target_type, target_id, request_id, metadata)
+             VALUES ($1, $2, $3, 'question_health.application.apply',
+                     'question_health_application', $4, $5, $6::jsonb)`,
+            [
+              randomUUID(),
+              input.workspaceId,
+              input.editorId,
+              input.mutationId,
+              application.requestId,
+              JSON.stringify({
+                quizId: input.quizId,
+                findingId: application.findingId,
+                sourceRevision: application.sourceRevision,
+                appliedRevision: resultingRevision,
+              }),
+            ],
+          );
+        }
+        if (input.questionHealthUndo) {
+          await client.query(
+            `INSERT INTO audit_events
+               (id, workspace_id, actor_id, action, target_type, target_id, request_id, metadata)
+             VALUES ($1, $2, $3, 'question_health.application.undo',
+                     'question_health_application', $4, $5, $6::jsonb)`,
+            [
+              randomUUID(),
+              input.workspaceId,
+              input.editorId,
+              input.questionHealthUndo.applicationId,
+              input.questionHealthUndo.requestId,
+              JSON.stringify({
+                quizId: input.quizId,
+                sourceRevision: input.expectedRevision - 1,
+                resultingRevision,
+              }),
+            ],
+          );
+        }
         await this.pruneQuizDraftHistory(client, input.workspaceId, input.quizId);
         return saved;
+      },
+      { workspaceId: input.workspaceId },
+    );
+  }
+
+  async listQuestionHealthDismissals(workspaceId: string, quizId: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT * FROM question_health_dismissals
+       WHERE workspace_id = $1 AND quiz_id = $2
+       ORDER BY created_at DESC, finding_id`,
+      [workspaceId, quizId],
+    );
+    return result.rows.map(mapQuestionHealthDismissal);
+  }
+
+  async getQuestionHealthApplication(workspaceId: string, quizId: string, applicationId: string) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT * FROM question_health_applications
+       WHERE workspace_id = $1 AND quiz_id = $2 AND application_id = $3`,
+      [workspaceId, quizId, applicationId],
+    );
+    return result.rows[0] ? mapQuestionHealthApplication(result.rows[0]) : null;
+  }
+
+  async putQuestionHealthDismissal(input: QuestionHealthDismissalWrite) {
+    return this.transaction(
+      async (client) => {
+        const quiz = await client.query(
+          `SELECT draft_revision FROM quizzes
+           WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+          [input.workspaceId, input.quizId],
+        );
+        if (!quiz.rows[0]) return { status: "not_found" as const };
+        if (Number(quiz.rows[0].draft_revision) !== input.expectedDraftRevision) {
+          return { status: "revision_conflict" as const };
+        }
+
+        await client.query(
+          `DELETE FROM question_health_dismissals
+           WHERE workspace_id = $1 AND quiz_id = $2 AND finding_id = $3`,
+          [input.workspaceId, input.quizId, input.findingId],
+        );
+        const result = await client.query(
+          `INSERT INTO question_health_dismissals
+             (workspace_id, quiz_id, finding_id, rule_version, ruleset_version,
+              content_hash, reason)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (workspace_id, quiz_id, finding_id, rule_version,
+                        ruleset_version, content_hash)
+           DO UPDATE SET reason = EXCLUDED.reason, created_at = now()
+           RETURNING *`,
+          [
+            input.workspaceId,
+            input.quizId,
+            input.findingId,
+            input.ruleVersion,
+            input.rulesetVersion,
+            input.contentHash,
+            input.reason,
+          ],
+        );
+        await client.query(
+          `INSERT INTO audit_events
+             (id, workspace_id, actor_id, action, target_type, target_id, request_id, metadata)
+           VALUES ($1, $2, $3, 'question_health.dismissal.create',
+                   'question_health_dismissal', $4, $5, $6::jsonb)`,
+          [
+            randomUUID(),
+            input.workspaceId,
+            input.actorId,
+            input.findingId,
+            input.requestId,
+            JSON.stringify({
+              quizId: input.quizId,
+              findingId: input.findingId,
+              ruleVersion: input.ruleVersion,
+              rulesetVersion: input.rulesetVersion,
+              contentHash: input.contentHash,
+              reason: input.reason,
+            }),
+          ],
+        );
+        return { status: "ok" as const, dismissal: mapQuestionHealthDismissal(result.rows[0]!) };
+      },
+      { workspaceId: input.workspaceId },
+    );
+  }
+
+  async deleteQuestionHealthDismissal(input: QuestionHealthDismissalIdentity) {
+    return this.transaction(
+      async (client) => {
+        const quiz = await client.query(
+          `SELECT draft_revision FROM quizzes
+           WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+          [input.workspaceId, input.quizId],
+        );
+        if (!quiz.rows[0]) return { status: "not_found" as const };
+        if (Number(quiz.rows[0].draft_revision) !== input.expectedDraftRevision) {
+          return { status: "revision_conflict" as const };
+        }
+        const deleted = await client.query(
+          `DELETE FROM question_health_dismissals
+           WHERE workspace_id = $1 AND quiz_id = $2 AND finding_id = $3
+             AND rule_version = $4 AND ruleset_version = $5 AND content_hash = $6
+           RETURNING finding_id`,
+          [
+            input.workspaceId,
+            input.quizId,
+            input.findingId,
+            input.ruleVersion,
+            input.rulesetVersion,
+            input.contentHash,
+          ],
+        );
+        if (deleted.rowCount) {
+          await client.query(
+            `INSERT INTO audit_events
+               (id, workspace_id, actor_id, action, target_type, target_id, request_id, metadata)
+             VALUES ($1, $2, $3, 'question_health.dismissal.delete',
+                     'question_health_dismissal', $4, $5, $6::jsonb)`,
+            [
+              randomUUID(),
+              input.workspaceId,
+              input.actorId,
+              input.findingId,
+              input.requestId,
+              JSON.stringify({
+                quizId: input.quizId,
+                findingId: input.findingId,
+                ruleVersion: input.ruleVersion,
+                rulesetVersion: input.rulesetVersion,
+                contentHash: input.contentHash,
+              }),
+            ],
+          );
+        }
+        return { status: "ok" as const, removed: Boolean(deleted.rowCount) };
       },
       { workspaceId: input.workspaceId },
     );
@@ -1982,7 +2282,16 @@ export class PostgresRepository implements Repository {
            SELECT kept.id FROM quiz_draft_history kept
            WHERE kept.workspace_id = $1 AND kept.quiz_id = $2
            ORDER BY kept.revision DESC LIMIT 20
-         ))`,
+         ))
+         AND NOT EXISTS (
+           SELECT 1 FROM question_health_applications application
+           JOIN quizzes quiz ON quiz.workspace_id = application.workspace_id
+                            AND quiz.id = application.quiz_id
+           WHERE application.workspace_id = history.workspace_id
+             AND application.quiz_id = history.quiz_id
+             AND application.source_revision = history.revision
+             AND application.applied_revision = quiz.draft_revision
+         )`,
       [workspaceId, quizId],
     );
     await client.query(
@@ -2011,13 +2320,15 @@ export class PostgresRepository implements Repository {
     expectedRevision: number;
     mutationId: string;
     editorId: string;
+    questionHealthUndo?: { applicationId: string; requestId: string };
   }) {
     const draftHash = `restore:${input.historyRevision}`;
     const replayReceipt = () =>
       this.transaction(
         async (client) => {
           const prior = await client.query(
-            `SELECT quiz_id, expected_revision, resulting_revision, draft_hash
+            `SELECT quiz_id, expected_revision, resulting_revision, draft_hash,
+                    question_health_undo_application_id
              FROM quiz_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2`,
             [input.workspaceId, input.mutationId],
           );
@@ -2026,7 +2337,11 @@ export class PostgresRepository implements Repository {
           if (
             String(receipt.quiz_id) !== input.quizId ||
             Number(receipt.expected_revision) !== input.expectedRevision ||
-            String(receipt.draft_hash) !== draftHash
+            String(receipt.draft_hash) !== draftHash ||
+            (receipt.question_health_undo_application_id == null
+              ? null
+              : String(receipt.question_health_undo_application_id)) !==
+              (input.questionHealthUndo?.applicationId ?? null)
           ) {
             throw new QuizDraftMutationConflictError(input.mutationId);
           }
@@ -2060,6 +2375,7 @@ export class PostgresRepository implements Repository {
       editorId: input.editorId,
       schemaVersion: history.draftSchemaVersion ?? ROUND_DRAFT_SCHEMA_VERSION,
       draftHash,
+      questionHealthUndo: input.questionHealthUndo,
     });
   }
 
@@ -2100,6 +2416,44 @@ export class PostgresRepository implements Repository {
       },
       { workspaceId },
     );
+  }
+
+  async deleteQuiz(workspaceId: string, quizId: string): Promise<LibraryArtifactDeletionResult> {
+    try {
+      return await this.transaction(
+        async (client) => {
+          const current = await client.query(
+            "SELECT status FROM quizzes WHERE workspace_id = $1 AND id = $2 FOR UPDATE",
+            [workspaceId, quizId],
+          );
+          if (!current.rows[0]) return "not_found";
+          if (current.rows[0].status !== "archived") return "not_archived";
+          const referenced = await client.query(
+            `SELECT 1 FROM quiz_versions AS version
+             WHERE version.workspace_id = $1 AND version.quiz_id = $2
+               AND (EXISTS (
+                 SELECT 1 FROM game_sessions AS session
+                 WHERE session.workspace_id = $1 AND session.quiz_version_id = version.id
+               ) OR EXISTS (
+                 SELECT 1 FROM followups AS followup
+                 WHERE followup.workspace_id = $1 AND followup.source_quiz_version_id = version.id
+               )) LIMIT 1`,
+            [workspaceId, quizId],
+          );
+          if (referenced.rows[0]) return "in_use";
+          // Parent cascades remove versions/history; their FKs reject newly committed dependents.
+          await client.query("DELETE FROM quizzes WHERE workspace_id = $1 AND id = $2", [
+            workspaceId,
+            quizId,
+          ]);
+          return "deleted";
+        },
+        { workspaceId },
+      );
+    } catch (error) {
+      if ((error as { code?: string }).code === "23503") return "in_use";
+      throw error;
+    }
   }
 
   async duplicateQuiz(input: QuizRecord) {
@@ -2729,16 +3083,23 @@ export class PostgresRepository implements Repository {
     try {
       await this.workspaceQuery(
         input.workspaceId,
-        `WITH inserted_session AS (
+        `WITH eligible_workspace AS (
+           SELECT id FROM workspaces
+           WHERE id = $2 AND deletion_started_at IS NULL
+           FOR SHARE
+         ), inserted_session AS (
            INSERT INTO game_sessions
              (id, workspace_id, quiz_version_id, host_id, code, state, version, seq, deadline,
               settings, state_snapshot, state_schema_version, host_token_hash, trust_mode,
-              expires_at, retention_expires_at, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+              decision_replay_enabled, expires_at, retention_expires_at, created_at, updated_at)
+           SELECT $1, eligible_workspace.id, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+                  $16,$17,$18,$19
+           FROM eligible_workspace
            RETURNING id, workspace_id
          )
          INSERT INTO session_interaction_settings (session_id, workspace_id)
-         SELECT id, workspace_id FROM inserted_session`,
+         SELECT id, workspace_id FROM inserted_session
+         RETURNING session_id`,
         [
           input.id,
           input.workspaceId,
@@ -2754,12 +3115,17 @@ export class PostgresRepository implements Repository {
           state.stateSchemaVersion,
           input.hostTokenHash,
           input.trustMode ?? state.settings.trustMode ?? "learning",
+          input.decisionReplayEnabled ?? false,
           input.expiresAt,
           input.retentionExpiresAt,
           input.createdAt,
           input.updatedAt,
         ],
-      );
+      ).then((result) => {
+        if (result.rowCount !== 1) {
+          throw new WorkspaceDeletionInProgressError(input.workspaceId);
+        }
+      });
     } catch (error) {
       const postgresError = error as { code?: string; constraint?: string };
       if (
@@ -2798,6 +3164,28 @@ export class PostgresRepository implements Repository {
       [workspaceId],
     );
     return result.rows.map((row) => String(row.id));
+  }
+
+  async listSessionInvalidationTargets(workspaceId: string): Promise<SessionInvalidationTarget[]> {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT id, code FROM game_sessions
+       WHERE workspace_id = $1
+       ORDER BY id`,
+      [workspaceId],
+    );
+    return result.rows.map((row) => ({
+      sessionId: String(row.id),
+      code: String(row.code),
+    }));
+  }
+
+  async workspaceDeletionStarted(workspaceId: string) {
+    const result = await this.systemQuery(
+      "SELECT deletion_started_at FROM workspaces WHERE id = $1",
+      [workspaceId],
+    );
+    return !result.rows[0] || result.rows[0].deletion_started_at !== null;
   }
 
   async listSessionHistory(
@@ -2882,21 +3270,61 @@ export class PostgresRepository implements Repository {
     };
   }
 
-  async saveSession(input: StoredSession, expectedVersion: number, report?: Report) {
+  async saveSession(
+    input: StoredSession,
+    expectedVersion: number,
+    report?: Report,
+    decisionEvents: SessionDecisionEventWrite[] = [],
+  ) {
     const state = input.state;
     const trustMode = input.trustMode ?? state.settings.trustMode ?? "learning";
+    const decisionReplayEnabled = input.decisionReplayEnabled ?? false;
+    const validatedDecisionEvents = decisionEvents.map((write) => ({
+      ...write,
+      event: SessionDecisionEventSchema.parse(write.event),
+    }));
+    if (validatedDecisionEvents.length > 0 && !decisionReplayEnabled) {
+      throw new Error("Decision events cannot be written for a session without replay enabled");
+    }
+    if (
+      validatedDecisionEvents.some(
+        (write) =>
+          typeof write.commandId !== "string" ||
+          write.commandId.length === 0 ||
+          write.commandId.length > 160 ||
+          !Number.isSafeInteger(write.eventOrdinal) ||
+          write.eventOrdinal < 0,
+      ) ||
+      new Set(validatedDecisionEvents.map((write) => write.event.seq)).size !==
+        validatedDecisionEvents.length ||
+      new Set(
+        validatedDecisionEvents.map((write) => `${write.commandId}\u0000${write.eventOrdinal}`),
+      ).size !== validatedDecisionEvents.length
+    ) {
+      throw new Error("Duplicate or invalid session decision event sequence/ordinal");
+    }
     if ((state.settings.trustMode ?? "learning") !== trustMode) {
       throw new Error("Session state trust mode must match its immutable session trust mode");
     }
     if (report && report.sessionId !== input.id) throw new Error("Report session does not match");
     await this.transaction(
       async (client) => {
+        const workspace = await client.query(
+          `SELECT id FROM workspaces
+           WHERE id = $1 AND deletion_started_at IS NULL
+           FOR SHARE`,
+          [input.workspaceId],
+        );
+        if (!workspace.rows[0]) {
+          throw new WorkspaceDeletionInProgressError(input.workspaceId);
+        }
         const result = await client.query(
           `UPDATE game_sessions SET state = $2, version = $3, seq = $4, deadline = $5,
            state_snapshot = $6, state_schema_version = $7,
            ended_at = CASE WHEN $2 = 'finished' THEN COALESCE(ended_at, now()) ELSE ended_at END,
            retention_expires_at = $8, updated_at = now()
-           WHERE id = $1 AND version = $9 AND trust_mode = $10`,
+           WHERE id = $1 AND version = $9 AND trust_mode = $10
+             AND decision_replay_enabled = $11`,
           [
             input.id,
             state.phase,
@@ -2908,10 +3336,68 @@ export class PostgresRepository implements Repository {
             input.retentionExpiresAt,
             expectedVersion,
             trustMode,
+            decisionReplayEnabled,
           ],
         );
         if (result.rowCount !== 1) {
           throw new SessionVersionConflictError(input.id, expectedVersion);
+        }
+        if (validatedDecisionEvents.length > 0) {
+          if (!decisionReplayEnabled) {
+            throw new Error(
+              "Decision events cannot be written for a session without replay enabled",
+            );
+          }
+          const capture = await client.query<{
+            captured_count: number;
+            truncated: boolean | null;
+          }>(
+            `SELECT count(*) FILTER (WHERE type <> 'decision.capture_truncated')::integer
+               AS captured_count,
+                    bool_or(type = 'decision.capture_truncated') AS truncated
+             FROM session_events
+             WHERE workspace_id = $1 AND session_id = $2 AND type LIKE 'decision.%'`,
+            [input.workspaceId, input.id],
+          );
+          const captureRow = capture.rows[0];
+          if (!captureRow?.truncated) {
+            const remaining = Math.max(
+              0,
+              MAX_SESSION_DECISION_EVENTS - Number(captureRow?.captured_count ?? 0),
+            );
+            const writes = validatedDecisionEvents.slice(0, remaining);
+            const overflow = validatedDecisionEvents[remaining];
+            if (overflow) {
+              writes.push({
+                ...overflow,
+                event: {
+                  type: "capture_truncated",
+                  seq: overflow.event.seq,
+                  occurredAt: overflow.event.occurredAt,
+                  reason: "event_limit",
+                },
+              });
+            }
+            for (const write of writes) {
+              await client.query(
+                `INSERT INTO session_events
+                   (id, workspace_id, session_id, seq, type, payload, command_id,
+                    event_ordinal, expires_at)
+                 VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)`,
+                [
+                  randomUUID(),
+                  input.workspaceId,
+                  input.id,
+                  write.event.seq,
+                  `decision.${write.event.type}`,
+                  JSON.stringify(write.event),
+                  write.commandId,
+                  write.eventOrdinal,
+                  input.retentionExpiresAt,
+                ],
+              );
+            }
+          }
         }
         if (state.phase === "finished") {
           await client.query(
@@ -2974,6 +3460,15 @@ export class PostgresRepository implements Repository {
     if (participants.length === 0) return;
     await this.transaction(
       async (client) => {
+        const workspace = await client.query(
+          `SELECT id FROM workspaces
+           WHERE id = $1 AND deletion_started_at IS NULL
+           FOR SHARE`,
+          [session.workspaceId],
+        );
+        if (!workspace.rows[0]) {
+          throw new WorkspaceDeletionInProgressError(session.workspaceId);
+        }
         const inserted = await client.query(
           `INSERT INTO participants (id, session_id, nickname, token_hash, status, joined_at)
            SELECT id, session_id, nickname, token_hash, status, joined_at
@@ -4236,6 +4731,24 @@ export class PostgresRepository implements Repository {
           "SELECT * FROM answers WHERE workspace_id = $1 AND session_id = $2 ORDER BY accepted_at, id",
           [workspaceId, sessionId],
         );
+        const sessionResult = await client.query<{ decision_replay_enabled: boolean }>(
+          `SELECT decision_replay_enabled FROM game_sessions
+           WHERE workspace_id = $1 AND id = $2`,
+          [workspaceId, sessionId],
+        );
+        const decisionResult = await client.query<{ type: string; payload: unknown }>(
+          `SELECT type, payload FROM session_events
+           WHERE workspace_id = $1 AND session_id = $2 AND type LIKE 'decision.%'
+           ORDER BY seq ASC LIMIT $3`,
+          [workspaceId, sessionId, MAX_SESSION_DECISION_EVENTS + 1],
+        );
+        const decisionEvents = decisionResult.rows.map((row) => {
+          const event = SessionDecisionEventSchema.parse(row.payload);
+          if (row.type !== `decision.${event.type}`) {
+            throw new Error("Stored decision event type does not match its payload");
+          }
+          return event;
+        });
         const roundResult = await client.query(
           `SELECT * FROM question_rounds WHERE session_id = $1 ORDER BY opened_at, id`,
           [sessionId],
@@ -4279,6 +4792,12 @@ export class PostgresRepository implements Repository {
           [workspaceId, sessionId],
         );
         return {
+          decisionReplayEnabled: sessionResult.rows[0]?.decision_replay_enabled === true,
+          decisionEvents,
+          decisionEventsComplete:
+            sessionResult.rows[0]?.decision_replay_enabled === true &&
+            decisionEvents.some((event) => event.type !== "capture_truncated") &&
+            !decisionEvents.some((event) => event.type === "capture_truncated"),
           answers: answerResult.rows.map(mapAnswer),
           rounds: roundResult.rows.map((row) => ({
             id: String(row.id),
@@ -4288,7 +4807,7 @@ export class PostgresRepository implements Repository {
             sourceRoundId: row.source_round_id,
             interventionId: row.intervention_id,
             openedAtMs: date(row.opened_at).getTime(),
-            deadlineMs: date(row.deadline).getTime(),
+            deadlineMs: row.deadline ? date(row.deadline).getTime() : null,
             lockedAtMs: row.locked_at ? date(row.locked_at).getTime() : null,
           })),
           interventions: interventionResult.rows.map((row) => ({
@@ -4374,12 +4893,19 @@ export class PostgresRepository implements Repository {
     return result.rows.map((row) => String(row.participant_id));
   }
 
-  async createMediaAsset(input: MediaAssetRecord) {
+  async createMediaAsset(input: MediaAssetCreateInput) {
     const result = await this.workspaceQuery(
       input.workspaceId,
-      `INSERT INTO media_assets
-       (id, workspace_id, object_key, mime_type, size_bytes, scan_status, alt_text, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      `WITH eligible_workspace AS (
+         SELECT id FROM workspaces
+         WHERE id = $2 AND deletion_started_at IS NULL
+         FOR SHARE
+       )
+       INSERT INTO media_assets
+         (id, workspace_id, object_key, mime_type, size_bytes, scan_status, alt_text, created_at)
+       SELECT $1, eligible_workspace.id, $3, $4, $5, $6, $7, $8
+       FROM eligible_workspace
+       RETURNING *`,
       [
         input.id,
         input.workspaceId,
@@ -4391,6 +4917,7 @@ export class PostgresRepository implements Repository {
         input.createdAt,
       ],
     );
+    if (!result.rows[0]) throw new Error("Workspace deletion is in progress");
     return mapMediaAsset(result.rows[0]!);
   }
 
@@ -4436,7 +4963,10 @@ export class PostgresRepository implements Repository {
         if (uniqueMediaIds.length > 0) {
           const existing = await client.query<{ id: string }>(
             `SELECT id FROM media_assets
-             WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
+             WHERE workspace_id = $1 AND id = ANY($2::uuid[])
+               AND scan_status <> 'deleting'
+             ORDER BY id
+             FOR UPDATE`,
             [workspaceId, uniqueMediaIds],
           );
           const existingIds = new Set(existing.rows.map(({ id }) => String(id)));
@@ -4476,7 +5006,8 @@ export class PostgresRepository implements Repository {
   async listStaleMedia(cutoff: Date, limit = 100) {
     const result = await this.systemQuery(
       `SELECT asset.* FROM media_assets asset
-       WHERE asset.scan_status <> 'clean' AND asset.created_at <= $1
+       WHERE (asset.scan_status = 'deleting'
+              OR (asset.scan_status <> 'clean' AND asset.created_at <= $1))
          AND NOT EXISTS (
            SELECT 1 FROM media_references reference
            WHERE reference.workspace_id = asset.workspace_id AND reference.media_id = asset.id
@@ -4501,31 +5032,330 @@ export class PostgresRepository implements Repository {
     return result.rows.map(mapMediaAsset);
   }
 
+  async claimMediaObjectCleanupCandidates(now: Date, limit = 100) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("Media cleanup batch limit must be between 1 and 100");
+    }
+    const claimToken = randomUUID();
+    const result = await this.systemQuery(
+      `WITH due AS (
+         SELECT id FROM media_assets
+         WHERE scan_status = 'clean' AND object_cleanup_pass < 2
+           AND object_cleanup_due_at <= $1
+           AND (object_cleanup_claim_token IS NULL
+                OR object_cleanup_claimed_at <= $1::timestamptz - interval '5 minutes')
+         ORDER BY object_cleanup_due_at, id
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+       )
+       UPDATE media_assets AS asset
+       SET object_cleanup_claim_token = $3, object_cleanup_claimed_at = $1
+       FROM due
+       WHERE asset.id = due.id
+       RETURNING asset.*`,
+      [now, limit, claimToken],
+    );
+    return result.rows
+      .sort(
+        (left, right) =>
+          date(left.object_cleanup_due_at).getTime() -
+            date(right.object_cleanup_due_at).getTime() ||
+          String(left.id).localeCompare(String(right.id)),
+      )
+      .map((row): MediaObjectCleanupClaim => ({
+        asset: mapMediaAsset(row),
+        pass: Number(row.object_cleanup_pass) as 0 | 1,
+        claimToken,
+      }));
+  }
+
+  async completeMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, completedAt: Date) {
+    const { asset, pass, claimToken } = claim;
+    if (!asset.finalizedAt) return false;
+    const result = await this.workspaceQuery(
+      asset.workspaceId,
+      `UPDATE media_assets
+       SET object_cleanup_pass = CASE WHEN $5 = 0 THEN 1 ELSE 2 END,
+           object_cleanup_due_at = CASE WHEN $5 = 0
+             THEN GREATEST(finalized_at + interval '6 days', $7::timestamptz + interval '1 hour')
+             ELSE NULL END,
+           object_cleanup_claim_token = NULL, object_cleanup_claimed_at = NULL
+       WHERE workspace_id = $1 AND id = $2 AND scan_status = 'clean'
+         AND object_key = $3 AND finalized_at = $4
+         AND object_cleanup_pass = $5 AND object_cleanup_claim_token = $6
+       RETURNING id`,
+      [
+        asset.workspaceId,
+        asset.id,
+        asset.objectKey,
+        asset.finalizedAt,
+        pass,
+        claimToken,
+        completedAt,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
+  async renewMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, renewedAt: Date) {
+    const { asset, pass, claimToken } = claim;
+    if (!asset.finalizedAt) return false;
+    const result = await this.workspaceQuery(
+      asset.workspaceId,
+      `UPDATE media_assets
+       SET object_cleanup_claimed_at = $7
+       WHERE workspace_id = $1 AND id = $2 AND scan_status = 'clean'
+         AND object_key = $3 AND finalized_at = $4
+         AND object_cleanup_pass = $5 AND object_cleanup_claim_token = $6
+       RETURNING id`,
+      [
+        asset.workspaceId,
+        asset.id,
+        asset.objectKey,
+        asset.finalizedAt,
+        pass,
+        claimToken,
+        renewedAt,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
+  async deferMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, retryAt: Date) {
+    const { asset, pass, claimToken } = claim;
+    if (!asset.finalizedAt) return false;
+    const result = await this.workspaceQuery(
+      asset.workspaceId,
+      `UPDATE media_assets
+       SET object_cleanup_due_at = $7,
+           object_cleanup_claim_token = NULL, object_cleanup_claimed_at = NULL
+       WHERE workspace_id = $1 AND id = $2 AND scan_status = 'clean'
+         AND object_key = $3 AND finalized_at = $4
+         AND object_cleanup_pass = $5 AND object_cleanup_claim_token = $6
+       RETURNING id`,
+      [asset.workspaceId, asset.id, asset.objectKey, asset.finalizedAt, pass, claimToken, retryAt],
+    );
+    return result.rowCount === 1;
+  }
+
+  async completeInlineMediaObjectCleanup(asset: MediaAssetRecord, completedAt: Date) {
+    if (asset.scanStatus !== "clean" || !asset.finalizedAt) return false;
+    const result = await this.workspaceQuery(
+      asset.workspaceId,
+      `UPDATE media_assets
+       SET object_cleanup_pass = 1,
+           object_cleanup_due_at = GREATEST(finalized_at + interval '6 days', $5::timestamptz + interval '1 hour')
+       WHERE workspace_id = $1 AND id = $2 AND scan_status = 'clean'
+         AND object_key = $3 AND finalized_at = $4
+         AND object_cleanup_pass = 0 AND object_cleanup_claim_token IS NULL
+       RETURNING id`,
+      [asset.workspaceId, asset.id, asset.objectKey, asset.finalizedAt, completedAt],
+    );
+    return result.rowCount === 1;
+  }
+
   async updateMediaAsset(
     workspaceId: string,
     mediaId: string,
-    update: { objectKey?: string; scanStatus: MediaScanStatus },
+    update: {
+      objectKey?: string;
+      scanStatus: "clean" | "rejected";
+      finalizationToken: string;
+      finalizedAt: Date;
+    },
   ) {
     const result = await this.workspaceQuery(
       workspaceId,
-      `UPDATE media_assets SET scan_status = $3, object_key = COALESCE($4, object_key)
-       WHERE workspace_id = $1 AND id = $2 RETURNING *`,
-      [workspaceId, mediaId, update.scanStatus, update.objectKey ?? null],
+      `UPDATE media_assets
+       SET scan_status = $3, object_key = COALESCE($4, object_key),
+           finalization_token = NULL, finalization_started_at = NULL,
+           deletion_started_at = NULL, finalized_at = $6::timestamptz,
+           object_cleanup_pass = 0,
+           object_cleanup_due_at = CASE WHEN $3 = 'clean' THEN $6::timestamptz ELSE NULL END,
+           object_cleanup_claim_token = NULL, object_cleanup_claimed_at = NULL
+       WHERE workspace_id = $1 AND id = $2 AND scan_status = 'finalizing'
+         AND finalization_token = $5
+       RETURNING *`,
+      [
+        workspaceId,
+        mediaId,
+        update.scanStatus,
+        update.objectKey ?? null,
+        update.finalizationToken,
+        update.finalizedAt,
+      ],
     );
     return result.rows[0] ? mapMediaAsset(result.rows[0]) : null;
   }
 
-  async deleteMediaAsset(workspaceId: string, mediaId: string) {
+  async claimMediaAssetFinalization(
+    workspaceId: string,
+    mediaId: string,
+    finalizationToken: string,
+    claimedAt = new Date(),
+  ) {
+    return this.transaction(
+      async (client) => {
+        const claimed = await client.query(
+          `UPDATE media_assets
+           SET scan_status = 'finalizing', finalization_token = $3,
+               finalization_started_at = $4::timestamptz, deletion_started_at = NULL
+           WHERE workspace_id = $1 AND id = $2
+             AND (
+               scan_status = 'pending'
+               OR (
+                 scan_status = 'finalizing'
+                 AND (
+                   finalization_started_at IS NULL
+                   OR finalization_started_at <= $4::timestamptz - interval '5 minutes'
+                 )
+               )
+             )
+           RETURNING *`,
+          [workspaceId, mediaId, finalizationToken, claimedAt],
+        );
+        return claimed.rows[0] ? mapMediaAsset(claimed.rows[0]) : null;
+      },
+      { workspaceId },
+    );
+  }
+
+  async releaseMediaAssetFinalization(
+    workspaceId: string,
+    mediaId: string,
+    finalizationToken: string,
+  ) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `UPDATE media_assets
+       SET scan_status = 'pending', finalization_token = NULL,
+           finalization_started_at = NULL, deletion_started_at = NULL
+       WHERE workspace_id = $1 AND id = $2 AND scan_status = 'finalizing'
+         AND finalization_token = $3
+       RETURNING id`,
+      [workspaceId, mediaId, finalizationToken],
+    );
+    return result.rowCount === 1;
+  }
+
+  async claimMediaAssetDeletion(workspaceId: string, mediaId: string, now = new Date()) {
+    return this.transaction(
+      async (client) => {
+        const current = await client.query(
+          `SELECT * FROM media_assets
+           WHERE workspace_id = $1 AND id = $2
+           FOR UPDATE`,
+          [workspaceId, mediaId],
+        );
+        if (!current.rows[0]) return null;
+        const references = await client.query(
+          `SELECT 1 FROM media_references
+           WHERE workspace_id = $1 AND media_id = $2
+           LIMIT 1`,
+          [workspaceId, mediaId],
+        );
+        if (references.rowCount !== 0) return null;
+        if (
+          current.rows[0].scan_status === "finalizing" &&
+          current.rows[0].finalization_started_at &&
+          date(current.rows[0].finalization_started_at).getTime() > now.getTime() - 5 * 60_000
+        ) {
+          return null;
+        }
+        if (current.rows[0].scan_status === "deleting") {
+          return mapMediaAsset(current.rows[0]);
+        }
+        const claimed = await client.query(
+          `UPDATE media_assets
+           SET scan_status = 'deleting', finalization_token = NULL,
+               finalization_started_at = NULL,
+               deletion_started_at = COALESCE(deletion_started_at, $3)
+           WHERE workspace_id = $1 AND id = $2
+           RETURNING *`,
+          [workspaceId, mediaId, now],
+        );
+        return mapMediaAsset(claimed.rows[0]);
+      },
+      { workspaceId },
+    );
+  }
+
+  async claimWorkspaceMediaDeletion(workspaceId: string, now = new Date()) {
+    return this.transaction(
+      async (client) => {
+        const workspace = await client.query(
+          `UPDATE workspaces
+           SET deletion_started_at = COALESCE(deletion_started_at, $2)
+           WHERE id = $1
+           RETURNING id`,
+          [workspaceId, now],
+        );
+        if (!workspace.rows[0]) return [];
+        const claimed = await client.query(
+          `UPDATE media_assets
+           SET scan_status = 'deleting', finalization_token = NULL,
+               finalization_started_at = NULL,
+               deletion_started_at = COALESCE(deletion_started_at, $2)
+           WHERE workspace_id = $1
+           RETURNING *`,
+          [workspaceId, now],
+        );
+        if ((claimed.rowCount ?? 0) > 0) {
+          await client.query(
+            `INSERT INTO workspace_media_deletion_jobs
+               (workspace_id, deletion_started_at, sweep_after)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (workspace_id) DO NOTHING`,
+            [workspaceId, now, new Date(now.getTime() + MEDIA_DELETION_TOMBSTONE_HOLD_MS)],
+          );
+        }
+        return claimed.rows
+          .map(mapMediaAsset)
+          .sort(
+            (left, right) =>
+              left.createdAt.getTime() - right.createdAt.getTime() ||
+              left.id.localeCompare(right.id),
+          );
+      },
+      { workspaceId },
+    );
+  }
+
+  async listDueWorkspaceMediaDeletionJobs(now: Date, limit = 100) {
+    const result = await this.systemQuery(
+      `SELECT workspace_id, deletion_started_at, sweep_after
+       FROM workspace_media_deletion_jobs
+       WHERE sweep_after <= $1
+       ORDER BY sweep_after, workspace_id
+       LIMIT $2`,
+      [now, limit],
+    );
+    return result.rows.map(mapWorkspaceMediaDeletionJob);
+  }
+
+  async completeWorkspaceMediaDeletionJob(workspaceId: string, deletionStartedAt: Date) {
+    const result = await this.systemQuery(
+      `DELETE FROM workspace_media_deletion_jobs
+       WHERE workspace_id = $1 AND deletion_started_at = $2
+       RETURNING workspace_id`,
+      [workspaceId, deletionStartedAt],
+    );
+    return result.rowCount === 1;
+  }
+
+  async deleteMediaAsset(workspaceId: string, mediaId: string, now = new Date()) {
     const result = await this.workspaceQuery(
       workspaceId,
       `DELETE FROM media_assets asset
        WHERE asset.workspace_id = $1 AND asset.id = $2
+         AND asset.scan_status = 'deleting'
+         AND asset.deletion_started_at <= $3
          AND NOT EXISTS (
            SELECT 1 FROM media_references reference
            WHERE reference.workspace_id = asset.workspace_id AND reference.media_id = asset.id
          )
        RETURNING id`,
-      [workspaceId, mediaId],
+      [workspaceId, mediaId, new Date(now.getTime() - MEDIA_DELETION_TOMBSTONE_HOLD_MS)],
     );
     return result.rowCount === 1;
   }
@@ -4572,6 +5402,15 @@ export class PostgresRepository implements Repository {
     if (answers.length === 0) return [];
     return this.transaction(
       async (client) => {
+        const workspace = await client.query(
+          `SELECT id FROM workspaces
+           WHERE id = $1 AND deletion_started_at IS NULL
+           FOR SHARE`,
+          [session.workspaceId],
+        );
+        if (!workspace.rows[0]) {
+          throw new WorkspaceDeletionInProgressError(session.workspaceId);
+        }
         if (!options.roundEvidencePersisted) await this.syncSessionEvidence(client, session);
         const result = await client.query(
           `WITH answer_input AS (
@@ -4799,6 +5638,100 @@ export class PostgresRepository implements Repository {
       [workspaceId, sessionId],
     );
     return result.rows[0] ? this.mapReport(result.rows[0]) : null;
+  }
+
+  async listQuestionHealthObservationReports(
+    workspaceId: string,
+    quizId: string,
+    quizVersionId: string,
+    now: Date,
+  ): Promise<QuestionHealthObservationReportPage> {
+    const limit = QUESTION_HEALTH_POST_USE_MAX_REPORTS;
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT game_sessions.trust_mode,
+              COALESCE(reports.metrics->>'timeMode',
+                       game_sessions.state_snapshot->'settings'->>'timeMode', 'timed') AS time_mode,
+              COALESCE(game_sessions.state_snapshot->'settings'->>'scoringMode',
+                       game_sessions.settings->>'scoringMode', 'accuracy') AS scoring_mode,
+              reports.metrics->'questions' AS questions
+       FROM reports
+       JOIN game_sessions ON game_sessions.workspace_id = reports.workspace_id
+                         AND game_sessions.id = reports.session_id
+       JOIN quiz_versions ON quiz_versions.id = game_sessions.quiz_version_id
+       WHERE reports.workspace_id = $1
+         AND quiz_versions.workspace_id = $1
+         AND quiz_versions.quiz_id = $2
+         AND game_sessions.quiz_version_id = $3
+         AND reports.status = 'ready'
+         AND reports.generated_at IS NOT NULL
+         AND game_sessions.retention_expires_at > $4
+       ORDER BY reports.generated_at DESC, reports.id DESC
+       LIMIT $5`,
+      [workspaceId, quizId, quizVersionId, now, limit + 1],
+    );
+    const reports = result.rows
+      .slice(0, limit)
+      .flatMap((row): QuestionHealthObservationReport[] => {
+        const questions = Array.isArray(row.questions) ? row.questions : [];
+        const parsedTrustMode = TrustModeSchema.safeParse(row.trust_mode);
+        return [
+          {
+            trustMode: parsedTrustMode.success ? parsedTrustMode.data : "learning",
+            timeMode: row.time_mode === "flex" ? "flex" : "timed",
+            scoringMode: row.scoring_mode === "speed" ? "speed" : "accuracy",
+            questions: questions.flatMap((candidate: unknown) => {
+              if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+                return [];
+              const question = candidate as Record<string, unknown>;
+              if (
+                typeof question.questionId !== "string" ||
+                !Number.isSafeInteger(question.responses) ||
+                !Number.isSafeInteger(question.correct) ||
+                Number(question.responses) < 0 ||
+                Number(question.correct) < 0 ||
+                Number(question.correct) > Number(question.responses)
+              ) {
+                return [];
+              }
+              const rawDistribution = question.responseDistribution;
+              const distribution =
+                rawDistribution &&
+                typeof rawDistribution === "object" &&
+                !Array.isArray(rawDistribution) &&
+                (rawDistribution as Record<string, unknown>).kind === "choice" &&
+                Array.isArray((rawDistribution as Record<string, unknown>).buckets)
+                  ? {
+                      kind: "choice" as const,
+                      buckets: (
+                        (rawDistribution as Record<string, unknown>).buckets as unknown[]
+                      ).flatMap((bucket) => {
+                        if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) {
+                          return [];
+                        }
+                        const value = (bucket as Record<string, unknown>).value;
+                        const count = (bucket as Record<string, unknown>).count;
+                        return typeof value === "string" &&
+                          Number.isInteger(count) &&
+                          Number(count) >= 0
+                          ? [{ value, count: Number(count) }]
+                          : [];
+                      }),
+                    }
+                  : undefined;
+              return [
+                {
+                  questionId: question.questionId,
+                  responses: Number(question.responses),
+                  correct: Number(question.correct),
+                  ...(distribution ? { responseDistribution: distribution } : {}),
+                },
+              ];
+            }),
+          },
+        ];
+      });
+    return { reports, hasMoreReports: result.rows.length > limit };
   }
 
   async listReportHistory(
@@ -5918,6 +6851,19 @@ export class PostgresRepository implements Repository {
            FROM quiz_draft_history WHERE workspace_id = ANY($1::uuid[])
            ORDER BY quiz_id, revision`,
         );
+        const questionHealthDismissals = await queryWorkspaceData(
+          `SELECT workspace_id, quiz_id, finding_id, rule_version, ruleset_version,
+                  content_hash, reason, created_at
+           FROM question_health_dismissals WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY workspace_id, quiz_id, finding_id`,
+        );
+        const questionHealthApplications = await queryWorkspaceData(
+          `SELECT workspace_id, quiz_id, application_id, finding_id, rule_version,
+                  ruleset_version, content_hash, source_revision, applied_revision,
+                  request_hash, changes, created_at
+           FROM question_health_applications WHERE workspace_id = ANY($1::uuid[])
+           ORDER BY workspace_id, quiz_id, created_at, application_id`,
+        );
         const folders = await queryWorkspaceData(
           `SELECT id, workspace_id, name, created_at, updated_at
            FROM folders WHERE workspace_id = ANY($1::uuid[]) ORDER BY workspace_id, lower(name), id`,
@@ -6206,6 +7152,8 @@ export class PostgresRepository implements Repository {
               Number(row.draft_schema_version ?? ROUND_DRAFT_SCHEMA_VERSION),
             ),
           })),
+          questionHealthDismissals: questionHealthDismissals.rows,
+          questionHealthApplications: questionHealthApplications.rows,
           quizVersions: quizVersions.rows.map((row) => ({
             ...row,
             content: upcastRoundContent(

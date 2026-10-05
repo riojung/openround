@@ -10,11 +10,16 @@
   },
   "pnpm": {
     "overrides": {
+      "@grpc/grpc-js@>=1.14.0 <1.14.5": "1.14.5",
+      "fast-uri@>=3.0.0 <3.1.8": "3.1.8",
+      "fast-uri@>=4.0.0 <4.1.5": "4.1.5",
+      "ip-address@>=10.0.0 <10.7.1": "10.7.2",
       "tsup>esbuild": "0.28.1"
     }
   },
   "scripts": {
     "build": "turbo run build",
+    "alerts:rehearse": "node scripts/rehearse-alerts.mjs",
     "check:docker-context": "node scripts/check-docker-workspace-deps.mjs",
     "dev": "turbo run dev --parallel",
     "format": "prettier --write .",
@@ -30,9 +35,12 @@
     "product:build": "bash scripts/product-build.sh",
     "service": "bash scripts/service.sh",
     "deploy": "bash scripts/deploy.sh",
+    "evidence:backup-restore:check": "node scripts/check-backup-restore-evidence.mjs",
+    "evidence:target-load": "node scripts/ops/target-load-evidence.mjs",
     "readiness:check": "node scripts/check-release-readiness.mjs",
     "readiness:require:beta": "node scripts/check-release-readiness.mjs --require=single-vm-beta",
     "readiness:require:beta:preflight": "node scripts/check-release-readiness.mjs --require=single-vm-beta-preflight",
+    "research:check": "node scripts/check-phase0-research.mjs",
     "smoke:compose": "tsx tests/smoke/compose.ts",
     "smoke:minio-volume-upgrade": "bash scripts/smoke-minio-volume-upgrade.sh",
     "smoke:multi-process": "tsx tests/smoke/multi-process.ts",
@@ -67,6 +75,7 @@
     "turbo": "2.10.13",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",
-    "vitest": "5.0.0"
+    "vitest": "5.0.0",
+    "yaml": "2.9.1"
   }
 }

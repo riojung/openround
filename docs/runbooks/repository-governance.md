@@ -45,36 +45,104 @@ the release gate complete.
 - Prefer merge commits or squash merges consistently; never publish a release from an unreviewed
   branch tip.
 
+## Release-tag ruleset specifications
+
+Release authority and immutability use two independent rulesets. The creation ruleset
+[`../../.github/rulesets/release-tags.json`](../../.github/rulesets/release-tags.json) grants an
+`always` bypass only to the named release owner so that person can create a new `v*` tag. The
+immutability ruleset
+[`../../.github/rulesets/release-tag-immutability.json`](../../.github/rulesets/release-tag-immutability.json)
+blocks every update, deletion, and non-fast-forward change with **no bypass actors**. Never combine
+these rules: a creation bypass on the immutability ruleset would let the release actor rewrite or
+delete a published tag before any workflow could reject the event.
+
+Both request bodies are committed with `enforcement: disabled` and are not proof that live rules
+exist. Before applying them, confirm the current bodies and repository owner, then create both
+disabled rules:
+
+```bash
+jq -e '
+  .target == "tag" and
+  .enforcement == "disabled" and
+  .conditions.ref_name.include == ["refs/tags/v*"] and
+  [.rules[].type] == ["creation"] and
+  .bypass_actors == [{
+    "actor_id": 1459373,
+    "actor_type": "User",
+    "bypass_mode": "always"
+  }]
+' .github/rulesets/release-tags.json
+test "$(gh api users/riojung --jq .id)" = \
+  "$(jq -r '.bypass_actors[0].actor_id' .github/rulesets/release-tags.json)"
+gh api --method POST repos/riojung/openround/rulesets \
+  --input .github/rulesets/release-tags.json
+
+jq -e '
+  .target == "tag" and
+  .enforcement == "disabled" and
+  .conditions.ref_name.include == ["refs/tags/v*"] and
+  ([.rules[].type] | sort) == ["deletion", "non_fast_forward", "update"] and
+  ([.rules[] | select(.type == "update") | .parameters] == [{
+    "update_allows_fetch_and_merge": false
+  }]) and
+  .bypass_actors == []
+' .github/rulesets/release-tag-immutability.json
+gh api --method POST repos/riojung/openround/rulesets \
+  --input .github/rulesets/release-tag-immutability.json
+```
+
+Do not run either POST command from automation and do not enable the created rules until both
+returned URLs and bodies have been independently reviewed. Tag creation cannot use a
+pull-request-only bypass, so the creation specification grants `always` bypass to the single named
+owner user, `riojung` (GitHub actor ID `1459373`), and never to a repository role. Only that named
+owner may create a `v*` tag while the creation rule is active. The immutability specification has
+no bypass at all, including for the owner, repository administrators, apps, or deploy keys; an
+existing matching tag therefore cannot be moved or deleted through the normal repository API.
+Recovery uses a new reviewed commit and version tag, never mutation of the old tag. The release
+workflow independently checks the initial tag-creation event's immutable sender ID against the
+creation specification, but that workflow is defense in depth rather than the immutability
+boundary.
+
 ## Release controls
 
 1. Confirm `pnpm readiness:require:beta:preflight` succeeds against reviewed evidence. This target
    includes every single-VM beta gate except the signed-release artifact that the tag will create.
+   Every reviewed gate must name one exercised commit, and the release preflight permits the tag
+   commit to differ from it only by `docs/release-readiness.json`.
 2. Confirm the latest `CI`, `Security`, and `Production-path smoke` runs match the candidate
    commit. The release preflight looks up successful runs for the exact tagged commit and rejects
    stale ledger links; retain target-region readiness separately with the deployment evidence.
 3. Create a signed, protected, `v`-prefixed semantic-version tag from `main`. Do not add `+build`
    metadata because the release policy accepts semantic-version tag identities only; images receive
    the commit-derived `production-<full-commit>` tag and are promoted by immutable digest.
-4. Let the release workflow build images, provenance, SBOMs, and scan results. Do not
+4. Let the release workflow build images, provenance, SBOMs, and scan results. After those checks,
+   signature verification, and manifest retention succeed, it creates a **draft**
+   GitHub Release with the bounded evidence set, source archive, and checksum inventory. The
+   workflow never publishes, refreshes, or overwrites that release. A partial draft must be
+   reviewed and removed manually before retrying; corrected evidence requires a new tag. Do not
    retag or use `latest` in production.
 5. Verify signatures and digests before promotion; retain the workflow URL and digest in the
    [signed release candidate record](../evidence/signed-release-candidate.md).
-6. After its manifest digest, image digests, SBOM, SARIF, provenance, and successful Cosign
+6. Review the draft and independently verify its manifest digest, image digests, SBOM, SARIF,
+   provenance, source checksum, and successful Cosign
    verification are retained, open and independently review an evidence-only PR. Its complete tree
    delta from the tagged commit must be only `docs/release-readiness.json`; within that ledger it
    may update only `updatedAt` and move `signed-release` from pending to complete with stable HTTPS
    evidence and the exact tag object, tagged build commit, manifest SHA-256, and server/web image
    digests in `releaseBinding`. Merge it without bypass, then run `pnpm readiness:require:beta` for
-   the final decision.
+   the final decision. Keep the release in draft state for deployment; publication is not a
+   workflow side effect.
 7. Deploy the exact downloaded manifest from that evidence-only descendant. The deployer verifies
    the descendant and binding, fetches the protected `origin/main` and exact tag, and requires the
    operations `HEAD` to equal that fetched main tip. It also requires GitHub to report a valid
    signature for the exact bound annotated tag object and confirms that object's name and target.
    A local, unsigned, recreated, or substituted tag cannot satisfy this gate. Cosign must also match
    the exact release-workflow certificate identity for the bound tag, not merely another semver
-   release tag. The exact-source rule remains in force for every ordinary deployment.
-8. Follow the upgrade canary and rollback runbook. A failed gate requires a new reviewed commit
-   and tag rather than rewriting an existing release.
+   release tag. The exact-source rule remains in force for every ordinary deployment. Follow the
+   upgrade canary and rollback runbook while the release remains a draft.
+8. After the exact deployment and post-deploy verification succeed, a named maintainer may publish
+   the unchanged draft manually. Record the publication actor/time in the signed-release evidence.
+   A failed gate requires a new reviewed commit and tag rather than rewriting an existing release.
 
 ## Audit record
 

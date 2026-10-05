@@ -1,5 +1,6 @@
 import {
   chmod,
+  copyFile,
   mkdir,
   mkdtemp,
   readdir,
@@ -12,10 +13,11 @@ import {
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   HOSTED_DEPLOYMENT_AUTOMATION_FILES,
+  REMOTE_CONFIG_SUMMARY_SCRIPT,
   REMOTE_CURRENT_BUILD_SCRIPT,
   REMOTE_DEACTIVATE_FAILED_CURRENT_SCRIPT,
   REMOTE_DEPLOY_SCRIPT,
@@ -28,12 +30,17 @@ import {
   assertRemoteTargetNotActive,
   main as deployMain,
   resolveReviewedDeploymentInputHashes,
+  runtimeEnvironmentSha256,
+  validateReceiptConfigCheckSummary,
   validateSingleVmRuntimeValues,
   verifyForwardDeploymentAncestry,
   verifySignatures,
 } from "../../scripts/ops/deploy.mjs";
 import {
+  assertConfiguredHostedTarget,
+  assertKnownHostsTarget,
   assertNoEnvironmentKeyOverlap,
+  assertSupportedCosignVersion,
   composeArgv,
   expectedDeploymentConfirmation,
   expectedProductionConfirmation,
@@ -55,13 +62,43 @@ import {
   validateSingleVmConfig,
 } from "../../scripts/ops/lib.mjs";
 import { main as productBuildMain, withPreservedFiles } from "../../scripts/ops/product-build.mjs";
-import { validateReleaseBinding } from "../../scripts/ops/release-acceptance.mjs";
+import {
+  requiredReleaseAssetNames,
+  validateReleaseBinding,
+  validateReleaseTag,
+} from "../../scripts/ops/release-acceptance.mjs";
 import { REMOTE_SERVICE_SCRIPT, main as serviceMain } from "../../scripts/ops/service.mjs";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const buildId = "a".repeat(40);
 const serverDigest = `sha256:${"b".repeat(64)}`;
 const webDigest = `sha256:${"c".repeat(64)}`;
+const stagingTarget = Object.freeze({
+  appHost: "staging.test.openround.ca",
+  mediaHost: "media-staging.test.openround.ca",
+  sshHost: "staging-vm.test.openround.ca",
+});
+const productionTarget = Object.freeze({
+  appHost: "app.test.openround.ca",
+  mediaHost: "media.test.openround.ca",
+  sshHost: "production-vm.test.openround.ca",
+});
+const operationalStagingCheckoutFiles = Object.freeze([
+  ".gitignore",
+  ...HOSTED_DEPLOYMENT_AUTOMATION_FILES,
+  "scripts/check-release-readiness.mjs",
+  "docs/release-readiness.json",
+  "config/deploy/staging.json",
+  "config/deploy/ssh/staging_known_hosts",
+  "compose.single-vm.yaml",
+  "compose.single-vm.observability.yaml",
+  "infra/single-vm/Caddyfile",
+  "infra/single-vm/postgres-init.sh",
+  "infra/observability/alerts.yml",
+  "infra/observability/alertmanager.single-vm.yml",
+  "infra/observability/otel-collector.single-vm.yml",
+  "infra/observability/prometheus.single-vm.yml",
+]);
 
 function stagingConfig() {
   return {
@@ -112,29 +149,31 @@ function productionConfig() {
 
 function singleVmConfig(environment: "staging" | "production" = "staging") {
   const production = environment === "production";
+  const target = production ? productionTarget : stagingTarget;
   return {
     schemaVersion: 1,
     environment,
     deploymentMode: "single-vm",
-    publicWebUrl: production
-      ? "https://app.openround.example"
-      : "https://staging.openround.example",
-    publicApiUrl: production
-      ? "https://app.openround.example"
-      : "https://staging.openround.example",
-    publicMediaUrl: production
-      ? "https://media.openround.example"
-      : "https://media-staging.openround.example",
+    publicWebUrl: `https://${target.appHost}`,
+    publicApiUrl: `https://${target.appHost}`,
+    publicMediaUrl: `https://${target.mediaHost}`,
     imageRepository: "ghcr.io/riojung/openround/openround",
     imagePlatform: "linux/amd64",
     billingMode: production ? "stripe" : "disabled",
     singleVm: {
-      host: production ? "production-vm.openround.example" : "staging-vm.openround.example",
+      host: target.sshHost,
       port: 22,
       user: "openround",
       deployPath: production ? "/opt/openround/production" : "/opt/openround/staging",
-      composeFiles: ["compose.single-vm.yaml"],
-      deploymentFiles: ["infra/single-vm/Caddyfile", "infra/single-vm/postgres-init.sh"],
+      composeFiles: ["compose.single-vm.yaml", "compose.single-vm.observability.yaml"],
+      deploymentFiles: [
+        "infra/single-vm/Caddyfile",
+        "infra/single-vm/postgres-init.sh",
+        "infra/observability/alerts.yml",
+        "infra/observability/alertmanager.single-vm.yml",
+        "infra/observability/otel-collector.single-vm.yml",
+        "infra/observability/prometheus.single-vm.yml",
+      ],
       knownHostsFile: production
         ? "config/deploy/ssh/production_known_hosts"
         : "config/deploy/ssh/staging_known_hosts",
@@ -156,12 +195,11 @@ function singleVmConfig(environment: "staging" | "production" = "staging") {
 }
 
 function singleVmRuntimeEnvironment(environment: "staging" | "production" = "staging") {
-  const domain =
-    environment === "production" ? "app.openround.example" : "staging.openround.example";
+  const target = environment === "production" ? productionTarget : stagingTarget;
   return [
     `OPENROUND_DEPLOYMENT_ENVIRONMENT=${environment}`,
-    `OPENROUND_APP_DOMAIN=${domain}`,
-    `OPENROUND_MEDIA_DOMAIN=${environment === "production" ? "media.openround.example" : "media-staging.openround.example"}`,
+    `OPENROUND_APP_DOMAIN=${target.appHost}`,
+    `OPENROUND_MEDIA_DOMAIN=${target.mediaHost}`,
     "OPENROUND_ACME_EMAIL=ops@openround.example",
     "OPENROUND_SERVER_INGRESS_SUBNET=172.30.255.0/29",
     "OPENROUND_CADDY_PROXY_IP=172.30.255.2",
@@ -176,7 +214,16 @@ function singleVmRuntimeEnvironment(environment: "staging" | "production" = "sta
     "MINIO_APP_SECRET_KEY=minio-app-secret",
     "SMTP_URL=smtps://mailer:mail-secret@smtp.example.com:465",
     "EMAIL_FROM=OpenRound <noreply@example.com>",
+    "METRICS_ENABLED=true",
     "METRICS_TOKEN=metrics-token-with-at-least-24-characters",
+    "OPENROUND_LOG_SHIPPING_MODE=external-host-agent",
+    "TRACING_ENABLED=true",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces",
+    "OPENROUND_OTLP_BACKEND_ENDPOINT=https://telemetry.test.openround.ca",
+    "OPENROUND_OTLP_BACKEND_TOKEN=backend-token-with-at-least-24-characters",
+    "OPENROUND_PAGING_WEBHOOK_URL=https://paging.test.openround.ca/openround",
+    "OPENROUND_WARNING_WEBHOOK_URL=https://warnings.test.openround.ca/openround",
+    "OPENROUND_TICKET_WEBHOOK_URL=https://tickets.test.openround.ca/openround",
     "ADMIN_TOKEN=admin-token-with-at-least-24-characters",
     `BILLING_MODE=${environment === "production" ? "stripe" : "disabled"}`,
     "COMMUNITY_MODE=false",
@@ -188,6 +235,56 @@ function singleVmRuntimeEnvironment(environment: "staging" | "production" = "sta
   ].join("\n");
 }
 
+function receiptConfigCheckSummary(config = singleVmConfig(), receiptBuildId = buildId) {
+  return {
+    valid: true,
+    buildId: receiptBuildId,
+    nodeEnvironment: "production",
+    publicApiUrl: config.publicApiUrl,
+    webOrigin: config.publicWebUrl,
+    communityMode: false,
+    persistence: "postgresql",
+    coordination: "redis-streams",
+    email: "smtp",
+    developmentEmailInbox: "disabled",
+    billing: config.billingMode,
+    media: "clamav",
+    metrics: "protected",
+    logs: "external-host-agent",
+    tracing: "otlp",
+    participantLimit: 250,
+    practicePersonalLinkLimit: 100,
+    presentationResponseWrites: "rollback-compatible",
+    featureFlags: {
+      signups: true,
+      sessionCreation: true,
+      mediaUploads: true,
+      roundExperiences: true,
+      audiencePulse: true,
+      roomChat: true,
+      uxBeta: false,
+      recoveryRehearsal: false,
+      practiceAssignments: false,
+      workspaceShell: false,
+      builderV2: false,
+      presentations: false,
+      groups: false,
+      discover: false,
+      presentationRealtime: false,
+      recoveryPacks: false,
+      questionHealth: false,
+      decisionReplay: false,
+      recoveryTrails: false,
+      conceptHealth: false,
+      extendedQuestionTypes: false,
+      verifiedInstitution: false,
+    },
+    themedInteractionsWorkspaceAllowlistSize: 0,
+    uxBetaWorkspaceAllowlistSize: 0,
+    evidenceFeaturesWorkspaceAllowlistSize: 0,
+  };
+}
+
 function buildManifest(environment = "staging", manifestBuildId = buildId) {
   const repository = "ghcr.io/riojung/openround/openround";
   return {
@@ -197,8 +294,8 @@ function buildManifest(environment = "staging", manifestBuildId = buildId) {
     createdAt: "2026-09-21T00:00:00.000Z",
     nextPublicApiUrl:
       environment === "production"
-        ? "https://app.openround.example"
-        : "https://staging.openround.example",
+        ? `https://${productionTarget.appHost}`
+        : `https://${stagingTarget.appHost}`,
     imagePlatform: "linux/amd64",
     source: { commit: manifestBuildId, dirty: false },
     images: {
@@ -217,6 +314,38 @@ function buildManifest(environment = "staging", manifestBuildId = buildId) {
         signed: true,
       },
     },
+  };
+}
+
+function releaseBindingFixture() {
+  const tag = "v0.9.0";
+  const manifestDigest = `sha256:${"d".repeat(64)}`;
+  return {
+    schemaVersion: 2,
+    tag,
+    tagObject: "e".repeat(40),
+    buildId,
+    githubRelease: {
+      id: 123_456_789,
+      apiUrl: "https://api.github.com/repos/riojung/openround/releases/123456789",
+      htmlUrl: "https://github.com/riojung/openround/releases/tag/v0.9.0",
+      targetCommitish: buildId,
+      draft: true,
+      createdAt: "2026-09-26T12:00:00Z",
+    },
+    manifestDigest,
+    imageDigests: { server: serverDigest, web: webDigest },
+    assets: requiredReleaseAssetNames(tag).map((name, index) => {
+      const id = 800_000 + index;
+      return {
+        id,
+        name,
+        size: 100 + index,
+        digest: name === `openround-${tag}-manifest.json` ? manifestDigest : serverDigest,
+        apiUrl: `https://api.github.com/repos/riojung/openround/releases/assets/${id}`,
+        downloadUrl: `https://github.com/riojung/openround/releases/download/${tag}/${name}`,
+      };
+    }),
   };
 }
 
@@ -302,12 +431,100 @@ async function withReviewedDeploymentGitState<T>(
   }
 }
 
+async function withOperationalStagingGitState<T>(
+  callback: (fixture: {
+    root: string;
+    head: string;
+    parent: string;
+    deployMain: typeof deployMain;
+    serviceMain: typeof serviceMain;
+  }) => Promise<T>,
+) {
+  const artifactsRoot = join(repositoryRoot, "artifacts");
+  await mkdir(artifactsRoot, { recursive: true });
+  const fixtureRoot = await mkdtemp(join(artifactsRoot, "operational staging checkout "));
+  const checkoutRoot = join(fixtureRoot, "checkout");
+  try {
+    await mkdir(checkoutRoot, { recursive: true });
+    await run("git", ["init", "--quiet"], { cwd: checkoutRoot, capture: true });
+    await run("git", ["config", "user.name", "OpenRound Test"], {
+      cwd: checkoutRoot,
+      capture: true,
+    });
+    await run("git", ["config", "user.email", "test@example.invalid"], {
+      cwd: checkoutRoot,
+      capture: true,
+    });
+    await Promise.all(
+      operationalStagingCheckoutFiles.map(async (path) => {
+        const destination = join(checkoutRoot, path);
+        await mkdir(dirname(destination), { recursive: true });
+        await copyFile(join(repositoryRoot, path), destination);
+      }),
+    );
+
+    const keyPath = join(fixtureRoot, "host-key");
+    await run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", keyPath], {
+      capture: true,
+    });
+    const publicKey = (await readFile(`${keyPath}.pub`, "utf8"))
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .join(" ");
+    const configPath = join(checkoutRoot, "config/deploy/staging.json");
+    const knownHostsPath = join(checkoutRoot, "config/deploy/ssh/staging_known_hosts");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.publicWebUrl = `https://${stagingTarget.appHost}`;
+    config.publicApiUrl = `https://${stagingTarget.appHost}`;
+    config.publicMediaUrl = `https://${stagingTarget.mediaHost}`;
+    config.singleVm.host = stagingTarget.sshHost;
+    await Promise.all([
+      writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`),
+      writeFile(knownHostsPath, `${stagingTarget.sshHost} ${publicKey}\n`),
+    ]);
+    await run("git", ["add", "--all"], { cwd: checkoutRoot, capture: true });
+    await run(
+      "git",
+      ["commit", "--quiet", "--no-gpg-sign", "--message", "reviewed operational fixture"],
+      { cwd: checkoutRoot, capture: true },
+    );
+    const parent = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: checkoutRoot, capture: true })
+    ).stdout.trim();
+    await run(
+      "git",
+      ["commit", "--quiet", "--allow-empty", "--no-gpg-sign", "--message", "release source"],
+      { cwd: checkoutRoot, capture: true },
+    );
+    const head = (
+      await run("git", ["rev-parse", "HEAD"], { cwd: checkoutRoot, capture: true })
+    ).stdout.trim();
+    const isolatedDeployModule = (await import(
+      pathToFileURL(join(checkoutRoot, "scripts/ops/deploy.mjs")).href
+    )) as { main: typeof deployMain };
+    const isolatedServiceModule = (await import(
+      pathToFileURL(join(checkoutRoot, "scripts/ops/service.mjs")).href
+    )) as { main: typeof serviceMain };
+    return await callback({
+      root: checkoutRoot,
+      head,
+      parent,
+      deployMain: isolatedDeployModule.main,
+      serviceMain: isolatedServiceModule.main,
+    });
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+}
+
 async function withSignedReleaseAcceptance<T>(
   options: {
     changeOtherGate?: boolean;
     extraChangedPath?: boolean;
     manifestDigestOverride?: string;
     publishAcceptance?: boolean;
+    releasePublished?: boolean;
     serverDigestOverride?: string;
   },
   callback: (fixture: {
@@ -316,8 +533,14 @@ async function withSignedReleaseAcceptance<T>(
     operationsRevision: string;
     manifest: ReturnType<typeof buildManifest>;
     manifestPath: string;
+    acceptedAt: string;
+    publishedAt: string;
+    releaseId: number;
+    tagObject: string;
     trustedRemoteUrls: string[];
     tagObjectLookup: (tagObject: string) => Promise<unknown>;
+    releaseLookup: (releaseId: number) => Promise<unknown>;
+    releaseAssetLookup: (asset: { name: string }) => Promise<Buffer>;
   }) => Promise<T>,
 ) {
   const artifactsRoot = join(repositoryRoot, "artifacts");
@@ -367,6 +590,21 @@ async function withSignedReleaseAcceptance<T>(
         },
       ],
     };
+    const evidenceCandidateLedger = structuredClone(taggedLedger);
+    evidenceCandidateLedger.updatedAt = "2026-09-24";
+    await writeFile(readinessPath, `${JSON.stringify(evidenceCandidateLedger, null, 2)}\n`);
+    await run("git", ["add", "--", "docs/release-readiness.json"], {
+      cwd: root,
+      capture: true,
+    });
+    await run("git", ["commit", "--quiet", "--no-gpg-sign", "--message", "evidence candidate"], {
+      cwd: root,
+      capture: true,
+    });
+    const evidenceCandidateBuildId = await run("git", ["rev-parse", "HEAD"], {
+      cwd: root,
+      capture: true,
+    }).then(({ stdout }) => stdout.trim());
     await writeFile(readinessPath, `${JSON.stringify(taggedLedger, null, 2)}\n`);
     await run("git", ["add", "--", "docs/release-readiness.json"], {
       cwd: root,
@@ -398,22 +636,133 @@ async function withSignedReleaseAcceptance<T>(
     const manifestContent = `${JSON.stringify(manifest, null, 2)}\n`;
     await writeFile(manifestPath, manifestContent);
     const manifestDigest = `sha256:${createHash("sha256").update(manifestContent).digest("hex")}`;
+    const releaseId = 123_456_789;
+    const releaseCreatedAt = "2026-09-26T12:00:00Z";
+    const releaseAssetContent = new Map<string, Buffer>();
+    const preflight = {
+      schemaVersion: 1,
+      tag: "v0.9.0",
+      commit: candidateBuildId,
+      tagObject,
+      evidenceCandidateCommit: evidenceCandidateBuildId,
+      evidenceOnlyDescendant: true,
+      onOriginMain: true,
+      verification: {
+        verified: true,
+        reason: "valid",
+        verifiedAt: "2026-09-26T11:59:00Z",
+      },
+      candidateWorkflows: Object.fromEntries(
+        [
+          ["ci", "CI", ".github/workflows/ci.yml"],
+          ["security", "Security", ".github/workflows/security.yml"],
+          ["productionSmoke", "Production-path-smoke", ".github/workflows/production-smoke.yml"],
+        ].map(([key, workflow, path], index) => [
+          key,
+          {
+            workflow,
+            path,
+            runId: 1_000 + index,
+            runNumber: 100 + index,
+            runAttempt: 1,
+            event: "push",
+            headBranch: "main",
+            status: "completed",
+            conclusion: "success",
+            url: `https://github.com/riojung/openround/actions/runs/${1_000 + index}`,
+            commit: candidateBuildId,
+            startedAt: "2026-09-26T10:00:00Z",
+            completedAt: "2026-09-26T11:00:00Z",
+          },
+        ]),
+      ),
+    };
+    for (const name of requiredReleaseAssetNames("v0.9.0")) {
+      if (name === "SHA256SUMS") continue;
+      const content =
+        name === "openround-v0.9.0-manifest.json"
+          ? Buffer.from(manifestContent)
+          : name === "openround-v0.9.0-preflight.json"
+            ? Buffer.from(`${JSON.stringify(preflight, null, 2)}\n`)
+            : Buffer.from(`fixture ${name}\n`);
+      releaseAssetContent.set(name, content);
+    }
+    const acceptedManifestDigest = options.manifestDigestOverride ?? manifestDigest;
+    const checksumContent = `${[...releaseAssetContent]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, content]) => {
+        const digest =
+          name === "openround-v0.9.0-manifest.json"
+            ? acceptedManifestDigest.slice("sha256:".length)
+            : createHash("sha256").update(content).digest("hex");
+        return `${digest}  ${name}`;
+      })
+      .join("\n")}\n`;
+    releaseAssetContent.set("SHA256SUMS", Buffer.from(checksumContent));
+    const releaseAssets = requiredReleaseAssetNames("v0.9.0").map((name, index) => {
+      const content = releaseAssetContent.get(name)!;
+      const digest =
+        name === "openround-v0.9.0-manifest.json"
+          ? acceptedManifestDigest
+          : `sha256:${createHash("sha256").update(content).digest("hex")}`;
+      const id = 900_000 + index;
+      return {
+        id,
+        name,
+        size: content.length,
+        digest,
+        apiUrl: `https://api.github.com/repos/riojung/openround/releases/assets/${id}`,
+        downloadUrl: `https://github.com/riojung/openround/releases/download/v0.9.0/${name}`,
+      };
+    });
+    const checksumAsset = releaseAssets.find(({ name }) => name === "SHA256SUMS")!;
     const acceptedLedger = structuredClone(taggedLedger);
     const signedRelease = acceptedLedger.gates.find(({ id }) => id === "signed-release")!;
     signedRelease.status = "complete";
-    signedRelease.evidence = ["https://example.test/releases/v0.9.0/evidence"];
+    signedRelease.evidence = [
+      checksumAsset.downloadUrl,
+      checksumAsset.digest,
+      "https://github.com/riojung/openround/actions/runs/999",
+    ];
     delete signedRelease.nextAction;
     Object.assign(signedRelease, {
+      acceptance: {
+        recordVersion: 1,
+        candidateBuildId: evidenceCandidateBuildId,
+        environment: "github-release-draft",
+        startedAt: "2026-09-26T12:00:00Z",
+        completedAt: "2026-09-26T13:00:00Z",
+        acceptedAt: "2026-09-26T14:00:00Z",
+        owner: { role: "maintainer", decision: "accepted" },
+        independentReviewer: {
+          role: "independent-release-reviewer",
+          independent: true,
+          decision: "accepted",
+        },
+        manifest: {
+          url: checksumAsset.downloadUrl,
+          sha256: checksumAsset.digest,
+        },
+      },
       releaseBinding: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         tag: "v0.9.0",
         tagObject,
         buildId: candidateBuildId,
-        manifestDigest: options.manifestDigestOverride ?? manifestDigest,
+        githubRelease: {
+          id: releaseId,
+          apiUrl: `https://api.github.com/repos/riojung/openround/releases/${releaseId}`,
+          htmlUrl: "https://github.com/riojung/openround/releases/tag/untagged-draft-fixture",
+          targetCommitish: candidateBuildId,
+          draft: true,
+          createdAt: releaseCreatedAt,
+        },
+        manifestDigest: acceptedManifestDigest,
         imageDigests: {
           server: options.serverDigestOverride ?? manifest.images.server.digest,
           web: manifest.images.web.digest,
         },
+        assets: releaseAssets,
       },
     });
     if (options.changeOtherGate) acceptedLedger.gates[0].owner = "unreviewed-owner";
@@ -452,6 +801,10 @@ async function withSignedReleaseAcceptance<T>(
       operationsRevision,
       manifest,
       manifestPath,
+      acceptedAt: "2026-09-26T14:00:00Z",
+      publishedAt: "2026-09-26T15:00:00Z",
+      releaseId,
+      tagObject,
       trustedRemoteUrls: [trustedOrigin],
       tagObjectLookup: async (requestedTagObject) => ({
         sha: requestedTagObject,
@@ -459,6 +812,34 @@ async function withSignedReleaseAcceptance<T>(
         object: { type: "commit", sha: candidateBuildId },
         verification: { verified: true, reason: "valid" },
       }),
+      releaseLookup: async (requestedReleaseId) => {
+        if (requestedReleaseId !== releaseId) throw new Error("unexpected release lookup ID");
+        return {
+          id: releaseId,
+          url: `https://api.github.com/repos/riojung/openround/releases/${releaseId}`,
+          html_url: options.releasePublished
+            ? "https://github.com/riojung/openround/releases/tag/v0.9.0"
+            : "https://github.com/riojung/openround/releases/tag/untagged-draft-fixture",
+          tag_name: "v0.9.0",
+          target_commitish: candidateBuildId,
+          name: "OpenRound v0.9.0",
+          body: releaseAssetContent.get("release-notes.md")!.toString("utf8"),
+          draft: options.releasePublished ? false : true,
+          prerelease: false,
+          created_at: releaseCreatedAt,
+          published_at: options.releasePublished ? "2026-09-26T15:00:00Z" : null,
+          assets: releaseAssets.map((asset) => ({
+            id: asset.id,
+            name: asset.name,
+            size: asset.size,
+            digest: asset.digest,
+            url: asset.apiUrl,
+            browser_download_url: asset.downloadUrl,
+            state: "uploaded",
+          })),
+        };
+      },
+      releaseAssetLookup: async ({ name }) => releaseAssetContent.get(name)!,
     });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -550,6 +931,8 @@ describe("operations environment contract", () => {
           root: fixture.root,
           trustedRemoteUrls: fixture.trustedRemoteUrls,
           tagObjectLookup: fixture.tagObjectLookup,
+          releaseLookup: fixture.releaseLookup,
+          releaseAssetLookup: fixture.releaseAssetLookup,
         }),
       ).resolves.toMatchObject({
         tag: "v0.9.0",
@@ -564,16 +947,111 @@ describe("operations environment contract", () => {
     });
   });
 
+  it("permits clean-host redeployment after the unchanged accepted release is published", async () => {
+    await withSignedReleaseAcceptance({ releasePublished: true }, async (fixture) => {
+      const config = {
+        ...singleVmConfig("production"),
+        operationsRevision: fixture.operationsRevision,
+        deploymentInputHashes: {
+          "scripts/ops/deploy.mjs": "d".repeat(64),
+        },
+        manifest: fixture.manifest,
+      };
+      const manifestSha256 = createHash("sha256")
+        .update(await readFile(fixture.manifestPath))
+        .digest("hex");
+      const receipt = {
+        schemaVersion: 2,
+        environment: "production",
+        buildId: fixture.buildId,
+        operation: "deploy",
+        startedAt: "2026-09-26T14:10:00Z",
+        completedAt: "2026-09-26T14:20:00Z",
+        manifest: "artifacts/deploy/production/build-manifest.json",
+        manifestSha256,
+        images: {
+          server: fixture.manifest.images.server.ref,
+          web: fixture.manifest.images.web.ref,
+        },
+        singleVm: {
+          host: config.singleVm.host,
+          projectName: config.singleVm.projectName,
+        },
+        backupReference: "provider-backup-123",
+        configuration: {
+          runtimeEnvironmentSha256: "e".repeat(64),
+          summary: receiptConfigCheckSummary(config, fixture.buildId),
+        },
+        verification: {
+          configuration: true,
+          imageBuildIds: true,
+          migration: "applied",
+          migrationSkipped: false,
+          serverLive: true,
+          serverReady: true,
+          webBuildId: true,
+          mediaLive: true,
+        },
+        operations: {
+          commit: fixture.operationsRevision,
+          files: config.deploymentInputHashes,
+        },
+        release: {
+          githubReleaseId: fixture.releaseId,
+          tag: "v0.9.0",
+          tagObject: fixture.tagObject,
+          acceptedAt: fixture.acceptedAt,
+        },
+      };
+      const baseArguments = {
+        operationsRevision: fixture.operationsRevision,
+        manifest: fixture.manifest,
+        manifestPath: fixture.manifestPath,
+        root: fixture.root,
+        trustedRemoteUrls: fixture.trustedRemoteUrls,
+        tagObjectLookup: fixture.tagObjectLookup,
+        releaseLookup: fixture.releaseLookup,
+        releaseAssetLookup: fixture.releaseAssetLookup,
+      };
+
+      await expect(assertProductionReleaseRevision(baseArguments)).rejects.toThrow(
+        "require explicit redeploy mode",
+      );
+
+      await expect(
+        assertProductionReleaseRevision({
+          ...baseArguments,
+          publishedRedeploy: { receipt, config },
+        }),
+      ).resolves.toMatchObject({ tag: "v0.9.0", buildId: fixture.buildId });
+
+      await expect(
+        assertProductionReleaseRevision({
+          ...baseArguments,
+          publishedRedeploy: {
+            receipt: { ...receipt, manifestSha256: "0".repeat(64) },
+            config,
+          },
+        }),
+      ).rejects.toThrow("manifest does not match");
+
+      await expect(
+        assertProductionReleaseRevision({
+          ...baseArguments,
+          publishedRedeploy: {
+            receipt: {
+              ...receipt,
+              startedAt: "2026-09-26T13:59:00Z",
+            },
+            config,
+          },
+        }),
+      ).rejects.toThrow("start after acceptance");
+    });
+  });
+
   it("rejects array values that stringify to valid release-binding fields", () => {
-    const manifestDigest = `sha256:${"d".repeat(64)}`;
-    const validBinding = {
-      schemaVersion: 1,
-      tag: "v0.9.0",
-      tagObject: "e".repeat(40),
-      buildId,
-      manifestDigest,
-      imageDigests: { server: serverDigest, web: webDigest },
-    };
+    const validBinding = releaseBindingFixture();
     const cases = [
       {
         field: "tag",
@@ -609,6 +1087,25 @@ describe("operations environment contract", () => {
 
     for (const { field, binding } of cases) {
       expect(() => validateReleaseBinding(binding)).toThrow(`releaseBinding.${field} must be`);
+    }
+  });
+
+  it("uses strict SemVer 2.0 release tags without build metadata", () => {
+    for (const tag of ["v0.0.0", "v1.2.3", "v1.2.3-0", "v1.2.3-alpha.1", "v1.2.3-x-y.z"])
+      expect(validateReleaseTag(tag)).toBe(tag);
+
+    for (const tag of [
+      "1.2.3",
+      "v01.2.3",
+      "v1.02.3",
+      "v1.2.03",
+      "v1.2.3-",
+      "v1.2.3-..",
+      "v1.2.3-alpha..1",
+      "v1.2.3-01",
+      "v1.2.3+build.1",
+    ]) {
+      expect(() => validateReleaseTag(tag), tag).toThrow(/strict v-prefixed SemVer 2\.0/);
     }
   });
 
@@ -854,6 +1351,26 @@ describe("operations environment contract", () => {
 });
 
 describe("deployment configuration and manifest validation", () => {
+  it("requires the Cosign 3 signing and verification format", () => {
+    expect(assertSupportedCosignVersion("GitVersion: v3.0.6\n")).toBe("3.0.6");
+    expect(assertSupportedCosignVersion("GitVersion: v3.1.3\n")).toBe("3.1.3");
+    expect(() => assertSupportedCosignVersion("GitVersion: v2.6.5\n")).toThrow(
+      "from 3.0.6 up to, but not including, 4.0.0",
+    );
+    expect(() => assertSupportedCosignVersion("GitVersion: v3.0.5\n")).toThrow(
+      "Cosign 3.0.6 or newer is required",
+    );
+    expect(() => assertSupportedCosignVersion("GitVersion: v3.0.6-rc.1\n")).toThrow(
+      "a stable Cosign 3.0.6 or newer release is required",
+    );
+    expect(() => assertSupportedCosignVersion("GitVersion: v4.0.0+build.1\n")).toThrow(
+      "up to, but not including, 4.0.0",
+    );
+    expect(() => assertSupportedCosignVersion("unknown version")).toThrow(
+      "Unable to determine Cosign version",
+    );
+  });
+
   it("accepts a complete hosted config and rejects target, URL, and production-gate drift", () => {
     expect(validateDeployConfig(stagingConfig(), "staging").environment).toBe("staging");
     expect(validateDeployConfig(productionConfig(), "production").environment).toBe("production");
@@ -876,9 +1393,53 @@ describe("deployment configuration and manifest validation", () => {
     expect(() =>
       validateDeployConfig({ ...productionConfig(), requireSigning: false }, "production"),
     ).toThrow("production must require image signing");
+    expect(() =>
+      validateDeployConfig(
+        { ...productionConfig(), cosignIdentityRegexp: "^(?:https://example\\.test)$" },
+        "production",
+      ),
+    ).toThrow("must use Cosign-compatible RE2 syntax");
     expect(() => validateDeployConfig({ ...stagingConfig(), unexpected: true }, "staging")).toThrow(
       "unsupported key unexpected",
     );
+  });
+
+  it("separates parseable deployment templates from configured hosted targets", () => {
+    const configured = validateDeployConfig(singleVmConfig(), "staging");
+    expect(assertConfiguredHostedTarget(configured)).toBe(configured);
+
+    for (const [field, value] of [
+      ["publicWebUrl", "https://staging.openround.example"],
+      ["publicWebUrl", "https://127.0.0.1"],
+      ["publicWebUrl", "https://[::ffff:127.0.0.1]"],
+      ["publicWebUrl", "https://192.0.2.10"],
+      ["publicApiUrl", "https://api.example.com"],
+      ["publicApiUrl", "https://api.ops.internal"],
+      ["publicMediaUrl", "https://media.local"],
+      ["publicMediaUrl", "https://media.invalid."],
+    ] as const) {
+      expect(() => assertConfiguredHostedTarget({ ...configured, [field]: value })).toThrow(
+        `${field} must not use a reserved example, placeholder, loopback, or unspecified hostname`,
+      );
+    }
+    for (const host of [
+      "replace-me.internal",
+      "0",
+      "127.1",
+      "2130706433",
+      "0x7f000001",
+      "0x7f.1",
+      "203.0.113.10",
+    ]) {
+      expect(() =>
+        assertConfiguredHostedTarget({
+          ...configured,
+          singleVm: { ...configured.singleVm, host },
+        }),
+      ).toThrow(
+        "singleVm.host must not use a reserved example, placeholder, loopback, or unspecified hostname",
+      );
+    }
   });
 
   it("accepts only digest-pinned, internally consistent image manifests", () => {
@@ -889,7 +1450,7 @@ describe("deployment configuration and manifest validation", () => {
         buildId,
         imageRepository: "ghcr.io/riojung/openround/openround",
         imagePlatform: "linux/amd64",
-        publicApiUrl: "https://staging.openround.example",
+        publicApiUrl: `https://${stagingTarget.appHost}`,
       }),
     ).toBe(manifest);
 
@@ -950,6 +1511,18 @@ describe("deployment configuration and manifest validation", () => {
 
     expect(validateFlyRuntimeEnvironment(serverEnvironment, checkedConfig)).toBe(serverEnvironment);
     expect(validateFlyWebEnvironment(webEnvironment, checkedConfig)).toBe(webEnvironment);
+    expect(serverEnvironment.OPENROUND_DEPLOYMENT_ENVIRONMENT).toBe("staging");
+    expect(() =>
+      validateFlyRuntimeEnvironment(
+        { ...serverEnvironment, OPENROUND_DEPLOYMENT_ENVIRONMENT: "production" },
+        checkedConfig,
+      ),
+    ).toThrow("Fly [env] OPENROUND_DEPLOYMENT_ENVIRONMENT must be staging");
+    const missingEnvironment = { ...serverEnvironment };
+    Reflect.deleteProperty(missingEnvironment, "OPENROUND_DEPLOYMENT_ENVIRONMENT");
+    expect(() => validateFlyRuntimeEnvironment(missingEnvironment, checkedConfig)).toThrow(
+      "Fly [env] OPENROUND_DEPLOYMENT_ENVIRONMENT must be staging",
+    );
     expect(() =>
       validateFlyRuntimeEnvironment(
         { ...serverEnvironment, DATABASE_URL: "postgresql://secret" },
@@ -962,6 +1535,29 @@ describe("deployment configuration and manifest validation", () => {
         checkedConfig,
       ),
     ).toThrow("NEXT_PUBLIC_API_URL");
+
+    const productionServerEnvironment = parseFlyTomlEnvironment(
+      await readFile(join(repositoryRoot, "config/deploy/fly/production-server.toml"), "utf8"),
+    );
+    const checkedProductionConfig = validateDeployConfig(
+      {
+        ...productionConfig(),
+        publicWebUrl: "https://openround-ca-web.fly.dev",
+        publicApiUrl: "https://openround-ca-server.fly.dev",
+        imageRepository: "ghcr.io/riojung/openround/openround",
+        fly: {
+          serverApp: "openround-ca-server",
+          webApp: "openround-ca-web",
+          serverConfig: "config/deploy/fly/production-server.toml",
+          webConfig: "config/deploy/fly/production-web.toml",
+        },
+      },
+      "production",
+    );
+    expect(productionServerEnvironment.OPENROUND_DEPLOYMENT_ENVIRONMENT).toBe("production");
+    expect(
+      validateFlyRuntimeEnvironment(productionServerEnvironment, checkedProductionConfig),
+    ).toBe(productionServerEnvironment);
   });
 
   it("validates single-VM targets, strict SSH arguments, and safe runtime values", () => {
@@ -979,7 +1575,7 @@ describe("deployment configuration and manifest validation", () => {
       expect.arrayContaining([
         "StrictHostKeyChecking=yes",
         "UserKnownHostsFile=/reviewed/known_hosts",
-        "openround@staging-vm.openround.example",
+        `openround@${stagingTarget.sshHost}`,
       ]),
     );
     expect(validateSingleVmRuntimeValues(singleVmRuntimeEnvironment(), config)).toBe(true);
@@ -1009,7 +1605,7 @@ describe("deployment configuration and manifest validation", () => {
     expect(() =>
       validateSingleVmRuntimeValues(
         singleVmRuntimeEnvironment().replace(
-          "OPENROUND_APP_DOMAIN=staging.openround.example",
+          `OPENROUND_APP_DOMAIN=${stagingTarget.appHost}`,
           "OPENROUND_APP_DOMAIN=attacker.example",
         ),
         config,
@@ -1036,12 +1632,146 @@ describe("deployment configuration and manifest validation", () => {
     expect(() =>
       validateSingleVmRuntimeValues(
         singleVmRuntimeEnvironment().replace(
-          "OPENROUND_MEDIA_DOMAIN=media-staging.openround.example",
-          "OPENROUND_MEDIA_DOMAIN=staging.openround.example",
+          `OPENROUND_MEDIA_DOMAIN=${stagingTarget.mediaHost}`,
+          `OPENROUND_MEDIA_DOMAIN=${stagingTarget.appHost}`,
         ),
         config,
       ),
     ).toThrow("must match the reviewed media origin");
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace(
+          "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces\n",
+          "",
+        ),
+        config,
+      ),
+    ).toThrow("must contain a non-placeholder value when tracing is enabled");
+    for (const endpoint of [
+      "http://localhost:4318/v1/traces",
+      "https://127.0.0.2:4318/v1/traces",
+      "http://[::1]:4318/v1/traces",
+      "http://0.0.0.0:4318/v1/traces",
+      "http://[::ffff:127.0.0.1]:4318/v1/traces",
+      "http://[::ffff:0.0.0.0]:4318/v1/traces",
+      "http://collector.localhost.:4318/v1/traces",
+      "https://collector.openround.ca.:4318/v1/traces",
+      "https://collector.example/v1/traces",
+    ]) {
+      expect(() =>
+        validateSingleVmRuntimeValues(
+          singleVmRuntimeEnvironment().replace(
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces",
+            `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${endpoint}`,
+          ),
+          config,
+        ),
+      ).toThrow("must not use a reserved, placeholder, loopback, or unspecified address");
+    }
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace(
+          "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces",
+          "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://REPLACE-collector.openround.ca/v1/traces",
+        ),
+        config,
+      ),
+    ).toThrow("must contain a non-placeholder value when tracing is enabled");
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace("TRACING_ENABLED=true", "TRACING_ENABLED=enabled"),
+        config,
+      ),
+    ).toThrow("TRACING_ENABLED must be true or false");
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace(
+          "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces",
+          "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=ftp://collector.test.openround.ca/traces",
+        ),
+        config,
+      ),
+    ).toThrow("must be a credential-free HTTP(S) URL");
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace("METRICS_ENABLED=true", "METRICS_ENABLED=false"),
+        config,
+      ),
+    ).toThrow("METRICS_ENABLED must be true");
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace(
+          "OPENROUND_LOG_SHIPPING_MODE=external-host-agent",
+          "OPENROUND_LOG_SHIPPING_MODE=disabled",
+        ),
+        config,
+      ),
+    ).toThrow("OPENROUND_LOG_SHIPPING_MODE must be external-host-agent");
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace("TRACING_ENABLED=true", "TRACING_ENABLED=false"),
+        config,
+      ),
+    ).toThrow("TRACING_ENABLED must be true");
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace(
+          "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces",
+          "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://collector.openround.ca/v1/traces",
+        ),
+        config,
+      ),
+    ).toThrow("must use the private single-VM collector endpoint");
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace(
+          "OPENROUND_OTLP_BACKEND_ENDPOINT=https://telemetry.test.openround.ca",
+          "OPENROUND_OTLP_BACKEND_ENDPOINT=http://telemetry.test.openround.ca",
+        ),
+        config,
+      ),
+    ).toThrow("OPENROUND_OTLP_BACKEND_ENDPOINT must be a credential-free HTTPS URL");
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace(
+          "OPENROUND_OTLP_BACKEND_ENDPOINT=https://telemetry.test.openround.ca",
+          "OPENROUND_OTLP_BACKEND_ENDPOINT=https://telemetry.test.openround.ca/v1/traces",
+        ),
+        config,
+      ),
+    ).toThrow("must be the OTLP/HTTP base endpoint without a signal suffix");
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace(
+          "OPENROUND_PAGING_WEBHOOK_URL=https://paging.test.openround.ca/openround",
+          "OPENROUND_PAGING_WEBHOOK_URL=https://paging.test.openround.ca./openround",
+        ),
+        config,
+      ),
+    ).toThrow("OPENROUND_PAGING_WEBHOOK_URL must not use a reserved");
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment().replace(
+          "OPENROUND_PAGING_WEBHOOK_URL=https://paging.test.openround.ca/openround",
+          "OPENROUND_PAGING_WEBHOOK_URL=https://paging.example.invalid/openround",
+        ),
+        config,
+      ),
+    ).toThrow("OPENROUND_PAGING_WEBHOOK_URL must not use a reserved");
+    expect(() =>
+      validateSingleVmRuntimeValues(
+        singleVmRuntimeEnvironment()
+          .replace(
+            "OPENROUND_WARNING_WEBHOOK_URL=https://warnings.test.openround.ca/openround",
+            "OPENROUND_WARNING_WEBHOOK_URL=https://paging.test.openround.ca/openround",
+          )
+          .replace(
+            "OPENROUND_TICKET_WEBHOOK_URL=https://tickets.test.openround.ca/openround",
+            "OPENROUND_TICKET_WEBHOOK_URL=https://paging.test.openround.ca/openround",
+          ),
+        config,
+      ),
+    ).toThrow("page, warning, and ticket receiver URLs must be distinct");
     expect(() =>
       validateDeployConfig(
         {
@@ -1069,6 +1799,133 @@ describe("deployment configuration and manifest validation", () => {
     expect(() => assertRemoteRollbackSource("b".repeat(40), buildId)).toThrow(
       "is not the active single-VM release",
     );
+  });
+
+  it("hashes the reviewed runtime input without retaining its secret values", () => {
+    const content = singleVmRuntimeEnvironment();
+    const digest = runtimeEnvironmentSha256(content);
+
+    expect(digest).toMatch(/^[0-9a-f]{64}$/);
+    expect(digest).not.toContain("backend-token");
+    expect(runtimeEnvironmentSha256(content)).toBe(digest);
+    expect(runtimeEnvironmentSha256(`${content}# reviewed change\n`)).not.toBe(digest);
+  });
+
+  it("accepts only the redaction-safe deployed configuration summary", () => {
+    const config = validateDeployConfig(singleVmConfig(), "staging");
+    const summary = receiptConfigCheckSummary(config);
+
+    expect(validateReceiptConfigCheckSummary(summary, config, buildId)).toBe(summary);
+    expect(() =>
+      validateReceiptConfigCheckSummary({ ...summary, metrics: "disabled" }, config, buildId),
+    ).toThrow("unexpected metrics");
+    expect(() =>
+      validateReceiptConfigCheckSummary(
+        { ...summary, databaseUrl: "postgresql://secret@example.test/openround" },
+        config,
+        buildId,
+      ),
+    ).toThrow("unexpected field set");
+    expect(() =>
+      validateReceiptConfigCheckSummary(
+        { ...summary, featureFlags: { ...summary.featureFlags, secret: true } },
+        config,
+        buildId,
+      ),
+    ).toThrow("feature flags contains an unexpected field set");
+  });
+
+  it("requires a valid pinned key for the exact SSH target", async () => {
+    const artifactsRoot = join(repositoryRoot, "artifacts");
+    await mkdir(artifactsRoot, { recursive: true });
+    const fixtureRoot = await mkdtemp(join(artifactsRoot, "known hosts validation "));
+    const keyPath = join(fixtureRoot, "host-key");
+    const revokedKeyPath = join(fixtureRoot, "revoked-host-key");
+    const knownHostsPath = join(fixtureRoot, "known_hosts");
+    try {
+      await Promise.all(
+        [keyPath, revokedKeyPath].map((path) =>
+          run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", path], {
+            capture: true,
+          }),
+        ),
+      );
+      const publicKey = (await readFile(`${keyPath}.pub`, "utf8"))
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .join(" ");
+      const revokedPublicKey = (await readFile(`${revokedKeyPath}.pub`, "utf8"))
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .join(" ");
+      const singleVm = singleVmConfig().singleVm;
+
+      await writeFile(knownHostsPath, `${singleVm.host} ${publicKey}\n`);
+      await expect(assertKnownHostsTarget(knownHostsPath, singleVm)).resolves.toBe(true);
+
+      const uppercaseHost = { ...singleVm, host: singleVm.host.toUpperCase() };
+      await expect(assertKnownHostsTarget(knownHostsPath, uppercaseHost)).resolves.toBe(true);
+
+      await run("ssh-keygen", ["-H", "-f", knownHostsPath], { capture: true });
+      await expect(assertKnownHostsTarget(knownHostsPath, singleVm)).resolves.toBe(true);
+
+      await writeFile(knownHostsPath, `*.test.openround.ca ${publicKey}\n`);
+      await expect(assertKnownHostsTarget(knownHostsPath, singleVm)).rejects.toThrow(
+        `must use an exact host-key pin for ${singleVm.host}`,
+      );
+
+      await writeFile(knownHostsPath, `@cert-authority ${singleVm.host} ${publicKey}\n`);
+      await expect(assertKnownHostsTarget(knownHostsPath, singleVm)).rejects.toThrow(
+        `must use an exact host-key pin for ${singleVm.host}`,
+      );
+
+      await writeFile(knownHostsPath, `# ${singleVm.host} has not been reviewed\n`);
+      await expect(assertKnownHostsTarget(knownHostsPath, singleVm)).rejects.toThrow(
+        `must contain a valid host key for ${singleVm.host}`,
+      );
+
+      await writeFile(knownHostsPath, `other.test.openround.ca ${publicKey}\n`);
+      await expect(assertKnownHostsTarget(knownHostsPath, singleVm)).rejects.toThrow(
+        `must contain a valid host key for ${singleVm.host}`,
+      );
+
+      await writeFile(knownHostsPath, `${singleVm.host} ssh-ed25519 not-valid-base64\n`);
+      await expect(assertKnownHostsTarget(knownHostsPath, singleVm)).rejects.toThrow(
+        `must contain a valid host key for ${singleVm.host}`,
+      );
+
+      await writeFile(knownHostsPath, `@revoked ${singleVm.host} ${publicKey}\n`);
+      await expect(assertKnownHostsTarget(knownHostsPath, singleVm)).rejects.toThrow(
+        `must contain a valid host key for ${singleVm.host}`,
+      );
+
+      await writeFile(
+        knownHostsPath,
+        `${singleVm.host} ${publicKey}\n@revoked ${singleVm.host} ${publicKey}\n`,
+      );
+      await expect(assertKnownHostsTarget(knownHostsPath, singleVm)).rejects.toThrow(
+        `must not revoke a pinned host key for ${singleVm.host}`,
+      );
+
+      await writeFile(
+        knownHostsPath,
+        `${singleVm.host} ${publicKey}\n@revoked ${singleVm.host} ${revokedPublicKey}\n`,
+      );
+      await expect(assertKnownHostsTarget(knownHostsPath, singleVm)).resolves.toBe(true);
+
+      const nonDefaultPort = { ...singleVm, port: 2222 };
+      await writeFile(knownHostsPath, `[${singleVm.host}]:2222 ${publicKey}\n`);
+      await expect(assertKnownHostsTarget(knownHostsPath, nonDefaultPort)).resolves.toBe(true);
+
+      const uppercaseNonDefaultPort = { ...nonDefaultPort, host: singleVm.host.toUpperCase() };
+      await expect(assertKnownHostsTarget(knownHostsPath, uppercaseNonDefaultPort)).resolves.toBe(
+        true,
+      );
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it("requires normal single-VM targets to descend from the active remote build", async () => {
@@ -1101,6 +1958,7 @@ describe("deployment configuration and manifest validation", () => {
       REMOTE_PREPARE_SCRIPT,
       REMOTE_WRITE_SCRIPT,
       REMOTE_CURRENT_BUILD_SCRIPT,
+      REMOTE_CONFIG_SUMMARY_SCRIPT,
       REMOTE_DEACTIVATE_FAILED_CURRENT_SCRIPT,
       REMOTE_DEPLOY_SCRIPT,
       REMOTE_RESTORE_PREVIOUS_SCRIPT,
@@ -1710,13 +2568,38 @@ describe("operations CLI dry runs", () => {
     expect(serviceOutput).not.toContain("--volumes");
   });
 
+  it("rejects checked placeholder targets before hosted build, deploy, or service work", async () => {
+    await expect(
+      productBuildMain([
+        "staging",
+        "--api-url",
+        "https://staging.openround.example",
+        "--registry",
+        "ghcr.io/riojung/openround/openround",
+        "--push",
+        "--dry-run",
+      ]),
+    ).rejects.toThrow(
+      "must not use a reserved example, placeholder, loopback, or unspecified hostname",
+    );
+
+    await withReviewedDeploymentGitState(async () => {
+      await expect(serviceMain(["staging", "status", "--dry-run"])).rejects.toThrow(
+        "must not use a reserved example, placeholder, loopback, or unspecified hostname",
+      );
+      await expect(deployMain(["staging", "--dry-run"])).rejects.toThrow(
+        "must not use a reserved example, placeholder, loopback, or unspecified hostname",
+      );
+    });
+  });
+
   it("uses strict SSH for hosted service control and requires explicit push for hosted builds", async () => {
-    const hostedServiceOutput = await withReviewedDeploymentGitState(() =>
+    const hostedServiceOutput = await withOperationalStagingGitState(({ serviceMain }) =>
       captureStdout(() => serviceMain(["staging", "restart", "--dry-run"])),
     );
     expect(hostedServiceOutput).toContain("ssh -T");
     expect(hostedServiceOutput).toContain("StrictHostKeyChecking=yes");
-    expect(hostedServiceOutput).toContain("openround@staging-vm.openround.example");
+    expect(hostedServiceOutput).toContain(`openround@${stagingTarget.sshHost}`);
     expect(hostedServiceOutput).toContain("openround-staging restart 0");
     expect(hostedServiceOutput).not.toContain(" down ");
     expect(hostedServiceOutput).not.toContain("--volumes");
@@ -1784,63 +2667,52 @@ describe("operations CLI dry runs", () => {
   });
 
   it("validates and prints a complete hosted deployment without invoking providers", async () => {
-    const artifactsRoot = join(repositoryRoot, "artifacts", "deploy", "staging");
-    await mkdir(artifactsRoot, { recursive: true });
-    const fixtureRoot = await mkdtemp(join(artifactsRoot, "operations team's dry run "));
-    const manifestPath = join(fixtureRoot, "reviewed build manifest.json");
-    const runtimePath = join(fixtureRoot, "runtime credentials.env");
-    const migrationPath = join(fixtureRoot, "migration owner's credentials.env");
-    try {
+    const output = await withOperationalStagingGitState(async ({ root, head, deployMain }) => {
+      const fixtureRoot = join(root, "artifacts", "deploy", "staging", "operations dry run");
+      await mkdir(fixtureRoot, { recursive: true });
+      const manifestPath = join(fixtureRoot, "reviewed build manifest.json");
+      const runtimePath = join(fixtureRoot, "runtime credentials.env");
+      const migrationPath = join(fixtureRoot, "migration owner's credentials.env");
       await writeFile(runtimePath, singleVmRuntimeEnvironment(), { mode: 0o600 });
       await writeFile(migrationPath, "DATABASE_MIGRATION_URL=postgres://owner\n", {
         mode: 0o600,
       });
-
-      const output = await withReviewedDeploymentGitState(async ({ head }) => {
-        await writeFile(
+      await writeFile(manifestPath, `${JSON.stringify(buildManifest("staging", head), null, 2)}\n`);
+      return await captureStdout(() =>
+        deployMain([
+          "staging",
+          "--manifest",
           manifestPath,
-          `${JSON.stringify(buildManifest("staging", head), null, 2)}\n`,
-        );
-        return await captureStdout(() =>
-          deployMain([
-            "staging",
-            "--manifest",
-            manifestPath,
-            "--runtime-env",
-            runtimePath,
-            "--migration-env",
-            migrationPath,
-            "--confirm",
-            `staging:${head}`,
-            "--dry-run",
-          ]),
-        );
-      });
-      expect(output).toContain("ssh -T");
-      expect(output.match(/cosign verify/g)).toHaveLength(2);
-      expect(output.lastIndexOf("cosign verify")).toBeLessThan(output.indexOf("ssh -T"));
-      expect(output).toContain("StrictHostKeyChecking=yes");
-      expect(output).toContain("openround@staging-vm.openround.example");
-      expect(output).toContain("/opt/openround/staging");
-      expect(output).toContain("openround-staging");
-      expect(output).not.toContain("owner-secret");
-      expect(output).not.toContain("app-secret");
-      expect(output).toContain("Dry run complete");
-    } finally {
-      await rm(fixtureRoot, { recursive: true, force: true });
-    }
+          "--runtime-env",
+          runtimePath,
+          "--migration-env",
+          migrationPath,
+          "--confirm",
+          `staging:${head}`,
+          "--dry-run",
+        ]),
+      );
+    });
+    expect(output).toContain("ssh -T");
+    expect(output.match(/cosign verify/g)).toHaveLength(2);
+    expect(output.lastIndexOf("cosign verify")).toBeLessThan(output.indexOf("ssh -T"));
+    expect(output).toContain("StrictHostKeyChecking=yes");
+    expect(output).toContain(`openround@${stagingTarget.sshHost}`);
+    expect(output).toContain("/opt/openround/staging");
+    expect(output).toContain("openround-staging");
+    expect(output).not.toContain("owner-secret");
+    expect(output).not.toContain("app-secret");
+    expect(output).toContain("Dry run complete");
   });
 
   it("prints a code-only rollback without accepting or running migration credentials", async () => {
-    const artifactsRoot = join(repositoryRoot, "artifacts", "deploy", "staging");
-    await mkdir(artifactsRoot, { recursive: true });
-    const fixtureRoot = await mkdtemp(join(artifactsRoot, "operations rollback dry run "));
-    const manifestPath = join(fixtureRoot, "rollback build manifest.json");
-    const runtimePath = join(fixtureRoot, "runtime credentials.env");
-    try {
-      await writeFile(runtimePath, singleVmRuntimeEnvironment(), { mode: 0o600 });
-
-      const output = await withReviewedDeploymentGitState(async ({ head, parent }) => {
+    const output = await withOperationalStagingGitState(
+      async ({ root, head, parent, deployMain }) => {
+        const fixtureRoot = join(root, "artifacts", "deploy", "staging", "rollback dry run");
+        await mkdir(fixtureRoot, { recursive: true });
+        const manifestPath = join(fixtureRoot, "rollback build manifest.json");
+        const runtimePath = join(fixtureRoot, "runtime credentials.env");
+        await writeFile(runtimePath, singleVmRuntimeEnvironment(), { mode: 0o600 });
         await writeFile(
           manifestPath,
           `${JSON.stringify(buildManifest("staging", parent), null, 2)}\n`,
@@ -1860,51 +2732,41 @@ describe("operations CLI dry runs", () => {
             "--dry-run",
           ]),
         );
-      });
-      expect(output).toContain("Code rollback selected");
-      expect(output).not.toContain("dist/migrate.js");
-      expect(output).not.toContain("migration credentials");
-      expect(output).toContain("ssh -T");
-      expect(output).not.toContain("flyctl deploy");
-    } finally {
-      await rm(fixtureRoot, { recursive: true, force: true });
-    }
+      },
+    );
+    expect(output).toContain("Code rollback selected");
+    expect(output).not.toContain("dist/migrate.js");
+    expect(output).not.toContain("migration credentials");
+    expect(output).toContain("ssh -T");
+    expect(output).not.toContain("flyctl deploy");
   });
 
   it("rejects deployment credential files outside the target's Docker-ignored subtree", async () => {
-    const artifactsRoot = join(repositoryRoot, "artifacts");
-    await mkdir(artifactsRoot, { recursive: true });
-    const fixtureRoot = await mkdtemp(join(artifactsRoot, "outside target "));
-    const manifestPath = join(fixtureRoot, "manifest.json");
-    const runtimePath = join(fixtureRoot, "runtime.env");
-    const migrationPath = join(fixtureRoot, "migration.env");
-    try {
+    await withOperationalStagingGitState(async ({ root, head, deployMain }) => {
+      const fixtureRoot = join(root, "outside target");
+      await mkdir(fixtureRoot, { recursive: true });
+      const manifestPath = join(fixtureRoot, "manifest.json");
+      const runtimePath = join(fixtureRoot, "runtime.env");
+      const migrationPath = join(fixtureRoot, "migration.env");
       await writeFile(runtimePath, singleVmRuntimeEnvironment(), { mode: 0o600 });
       await writeFile(migrationPath, "DATABASE_MIGRATION_URL=postgres://owner\n", {
         mode: 0o600,
       });
-      await withReviewedDeploymentGitState(async ({ head }) => {
-        await writeFile(
+      await writeFile(manifestPath, `${JSON.stringify(buildManifest("staging", head), null, 2)}\n`);
+      await expect(
+        deployMain([
+          "staging",
+          "--manifest",
           manifestPath,
-          `${JSON.stringify(buildManifest("staging", head), null, 2)}\n`,
-        );
-        await expect(
-          deployMain([
-            "staging",
-            "--manifest",
-            manifestPath,
-            "--runtime-env",
-            runtimePath,
-            "--migration-env",
-            migrationPath,
-            "--confirm",
-            `staging:${head}`,
-            "--dry-run",
-          ]),
-        ).rejects.toThrow("runtime environment file must be inside");
-      });
-    } finally {
-      await rm(fixtureRoot, { recursive: true, force: true });
-    }
+          "--runtime-env",
+          runtimePath,
+          "--migration-env",
+          migrationPath,
+          "--confirm",
+          `staging:${head}`,
+          "--dry-run",
+        ]),
+      ).rejects.toThrow("runtime environment file must be inside");
+    });
   });
 });

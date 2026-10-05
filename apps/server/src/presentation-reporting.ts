@@ -63,7 +63,7 @@ export function generatePresentationReport(input: {
         blockId: block.id,
         blockIndex,
         kind: "content" as const,
-        title: block.title,
+        title: block.textElements.find((element) => element.role === "title")?.text ?? "",
         assessmentStatus: "not_assessed" as const,
       };
     }

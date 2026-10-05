@@ -6,6 +6,8 @@ import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
 import {
   assertCommandAvailable,
+  assertConfiguredHostedTarget,
+  assertKnownHostsTarget,
   composeArgv,
   createPrivateFileSnapshot,
   normalizeEnvironment,
@@ -147,12 +149,14 @@ async function runHostedService(environment, action, parsed, dryRun) {
   if (config.deploymentMode !== "single-vm") {
     throw new Error("Hosted service control requires deploymentMode single-vm");
   }
+  assertConfiguredHostedTarget(config);
   const knownHostsFile = await resolveCheckedRepositoryFile(
     config.singleVm.knownHostsFile,
     repositoryRoot,
     "SSH known-hosts file",
     { requireGitClean: true },
   );
+  await assertKnownHostsTarget(knownHostsFile, config.singleVm);
   const identityFile = await resolveSshIdentityFile(
     parsed.values.get("ssh-identity"),
     repositoryRoot,

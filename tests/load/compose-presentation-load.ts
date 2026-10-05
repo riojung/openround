@@ -5,6 +5,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { io, type Socket } from "socket.io-client";
+import {
+  evaluateTargetLoadThresholds,
+  targetLoadSchemaVersion,
+  targetLoadThresholds,
+  validateTargetLoadArtifact,
+} from "../../scripts/ops/target-load-evidence.mjs";
 import { optionalImmutableBuildId } from "../support/readiness-contract.js";
 
 const baseUrl = (process.env.LOAD_BASE_URL ?? "http://localhost:8080").replace(/\/$/, "");
@@ -20,8 +26,13 @@ const suppliedCreatorCookie = process.env.LOAD_CREATOR_COOKIE?.trim() ?? "";
 const expectedBuildId = optionalImmutableBuildId(process.env, "LOAD_EXPECTED_BUILD_ID");
 const keepData = process.env.LOAD_KEEP_DATA === "true";
 const runId = process.env.LOAD_RUN_ID?.trim() || randomUUID();
-const runnerRegion = process.env.LOAD_RUNNER_REGION?.trim() || null;
+const runnerRegion = process.env.LOAD_RUNNER_REGION?.trim() || "local-compose";
 const outputPath = process.env.LOAD_OUTPUT?.trim();
+const workflowRunId = process.env.GITHUB_RUN_ID?.trim() || null;
+const workflowRunAttempt = process.env.GITHUB_RUN_ATTEMPT
+  ? Number(process.env.GITHUB_RUN_ATTEMPT)
+  : null;
+const executionStartedAt = new Date().toISOString();
 const runFile = promisify(execFile);
 
 if (!Number.isInteger(clientCount) || clientCount < 1 || clientCount > 250) {
@@ -58,6 +69,13 @@ if (restartServer && !enableLocalRollout) {
   throw new Error(
     "RESTART_SERVER requires LOAD_ENABLE_LOCAL_PRESENTATION_ROLLOUT=true so the restarted target is the local Compose server",
   );
+}
+if (
+  (workflowRunId === null) !== (workflowRunAttempt === null) ||
+  (workflowRunAttempt !== null &&
+    (!Number.isSafeInteger(workflowRunAttempt) || workflowRunAttempt < 1))
+) {
+  throw new Error("GITHUB_RUN_ID and a positive GITHUB_RUN_ATTEMPT must be provided together");
 }
 
 interface SocketAck<T> {
@@ -269,10 +287,16 @@ async function waitFor(description: string, condition: () => Promise<boolean>, t
   throw new Error(`Timed out waiting for ${description}`);
 }
 
-function waitForParticipantRevision(socket: Socket, revision: number, timeoutMs = 20_000) {
+function waitForParticipantRevision(
+  socket: Socket,
+  revision: number,
+  onTimeout: () => void,
+  timeoutMs = 20_000,
+) {
   return new Promise<{ snapshot: ParticipantSnapshot; receivedAt: number }>((resolve, reject) => {
     const timeout = setTimeout(() => {
       socket.off("presentation.session.updated", listener);
+      onTimeout();
       reject(new Error(`Presentation revision ${revision} broadcast timed out`));
     }, timeoutMs);
     const listener = (envelope: { payload?: { snapshot?: ParticipantSnapshot } }) => {
@@ -599,7 +623,7 @@ async function main() {
         title: "Presentation production-path load",
         description: "Disposable diagnostic and linked-recheck capacity evidence.",
         experiencePreset: { id: "focus", version: 1 },
-        schemaVersion: 1,
+        schemaVersion: 2,
         blocks: [
           {
             id: diagnosticBlockId,
@@ -629,7 +653,7 @@ async function main() {
       },
       expectedRevision: 0,
       mutationId: randomUUID(),
-      schemaVersion: 1,
+      schemaVersion: 2,
     }),
   });
   await api(`/v1/presentations/${presentation.presentation.id}/publish`, {
@@ -703,8 +727,11 @@ async function main() {
     return { snapshot: acknowledgement.snapshot, commandId };
   };
 
+  let receiptTimeoutCount = 0;
   const diagnosticBroadcasts = participants.map(({ socket }) =>
-    waitForParticipantRevision(socket, 1),
+    waitForParticipantRevision(socket, 1, () => {
+      receiptTimeoutCount += 1;
+    }),
   );
   const diagnosticCommandStartedAt = performance.now();
   const diagnosticOpen = await command(0);
@@ -836,7 +863,11 @@ async function main() {
   await command(2);
   assert.equal(host.phase, "intervention");
 
-  const recheckBroadcasts = participants.map(({ socket }) => waitForParticipantRevision(socket, 4));
+  const recheckBroadcasts = participants.map(({ socket }) =>
+    waitForParticipantRevision(socket, 4, () => {
+      receiptTimeoutCount += 1;
+    }),
+  );
   const recheckCommandStartedAt = performance.now();
   await command(3);
   assert.equal(host.phase, "question_open");
@@ -927,28 +958,49 @@ async function main() {
   assert.ok(participantProjectionChecks > 0, "no participant projections were leak-checked");
 
   const results = {
-    schemaVersion: 1,
+    schemaVersion: targetLoadSchemaVersion,
     runId,
     artifactType: "presentation" as const,
     profile: clientCount,
     target: new URL(baseUrl).origin,
     runnerRegion,
-    deployment: { buildId: deployment.buildId, expectedBuildId },
-    correctness: {
+    workflow: { runId: workflowRunId, runAttempt: workflowRunAttempt },
+    startedAt: executionStartedAt,
+    finishedAt: new Date().toISOString(),
+    build: {
+      expectedBuildId,
+      observedBuildId: deployment.buildId,
+      matched: expectedBuildId !== null && deployment.buildId === expectedBuildId,
+    },
+    counts: {
       requestedParticipants: clientCount,
       joinedParticipants: participants.length,
-      acceptedResponses: report.responseCount,
+      acceptedResponses: answerMs.length,
       expectedResponses: clientCount * 2,
-      duplicateScoreEffects: 0,
-      commandReplayStable: diagnosticDuplicateCommand.snapshot.revision === 1,
-      responseReplayStable: duplicate.responseId === first.diagnosticResponseId,
-      reconnectReceiptRecovered: first.snapshot.responseReceipt !== null,
-      answerKeyLeak: false,
-      participantProjectionChecks,
-      reportReconciled: true,
-      recoveredParticipants: report.recovery[0]?.recovered ?? 0,
+      reportParticipants: report.participantCount,
+      reportResponses: report.responseCount,
+    },
+    correctness: {
+      lostAcceptedResponses: answerMs.length - report.responseCount,
+      duplicateAcceptedResponses: 0,
+      leakageDetected: false,
+      reportReconciled: report.responseCount === answerMs.length,
+    },
+    receipts: {
+      expected: clientCount * 2,
+      received: clientReceiptMs.length,
+      timeoutCount: receiptTimeoutCount,
+      timeoutRate: receiptTimeoutCount / (clientCount * 2),
+    },
+    recovery: {
+      reconnectCompleted: first.snapshot.responseReceipt !== null,
+      reconnectMs,
       processRestart: restartServer ? "recovered" : "not_run",
       coordinationReset: resetValkey ? "recovered" : "not_run",
+    },
+    report: {
+      reconciled: report.responseCount === answerMs.length,
+      availableMs: reportMs,
     },
     latencyMs: {
       join: {
@@ -971,12 +1023,24 @@ async function main() {
         p95: percentile(clientReceiptMs, 0.95),
         max: Math.max(...clientReceiptMs),
       },
-      reconnectSnapshot: reconnectMs,
-      restartRecovery: restartRecoveryMs,
-      coordinationReset: coordinationResetMs,
-      reportAvailable: reportMs,
+    },
+    thresholds: { ...targetLoadThresholds },
+    thresholdsPassed: false,
+    diagnostics: {
+      commandReplayStable: diagnosticDuplicateCommand.snapshot.revision === 1,
+      responseReplayStable: duplicate.responseId === first.diagnosticResponseId,
+      reconnectReceiptRecovered: first.snapshot.responseReceipt !== null,
+      participantProjectionChecks,
+      recoveredParticipants: report.recovery[0]?.recovered ?? 0,
+      restartRecoveryMs,
+      coordinationResetMs,
     },
   };
+  results.thresholdsPassed = evaluateTargetLoadThresholds(results);
+  validateTargetLoadArtifact(results, {
+    artifactType: "presentation",
+    profile: clientCount,
+  });
 
   const serializedResults = `${JSON.stringify(results, null, 2)}\n`;
   if (outputPath) {
@@ -984,32 +1048,12 @@ async function main() {
     await writeFile(outputPath, serializedResults, { encoding: "utf8", mode: 0o600 });
   }
   process.stdout.write(serializedResults);
-
   if (assertPerformance) {
-    assert.ok(
-      results.latencyMs.join.p95 < 500,
-      `Join p95 ${results.latencyMs.join.p95.toFixed(1)} ms exceeded 500 ms`,
-    );
-    assert.ok(
-      results.latencyMs.answerAcknowledgement.p95 < 250,
-      `Answer acknowledgement p95 ${results.latencyMs.answerAcknowledgement.p95.toFixed(1)} ms exceeded 250 ms`,
-    );
-    assert.ok(
-      results.latencyMs.answerAcknowledgement.p99 < 600,
-      `Answer acknowledgement p99 ${results.latencyMs.answerAcknowledgement.p99.toFixed(1)} ms exceeded 600 ms`,
-    );
-    assert.ok(
-      results.latencyMs.clientReceipt.p95 < 500,
-      `Client receipt p95 ${results.latencyMs.clientReceipt.p95.toFixed(1)} ms exceeded 500 ms`,
-    );
-    assert.ok(
-      results.latencyMs.reconnectSnapshot < 2_000,
-      `Reconnect ${results.latencyMs.reconnectSnapshot.toFixed(1)} ms exceeded two seconds`,
-    );
-    assert.ok(
-      results.latencyMs.reportAvailable < 60_000,
-      `Report availability ${results.latencyMs.reportAvailable.toFixed(1)} ms exceeded 60 seconds`,
-    );
+    validateTargetLoadArtifact(results, {
+      artifactType: "presentation",
+      profile: clientCount,
+      enforceThresholds: true,
+    });
   }
 }
 
