@@ -5,24 +5,28 @@ education and workplace learning. Use this index to choose the shortest path for
 
 ## Start here
 
-| I want to…                                                | Read                                                                                         |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Get guidance that matches my enabled workspace            | Sign in and open the in-product `/help` page                                                 |
-| Run OpenRound locally and complete a first round          | [Quick start](quick-start.md)                                                                |
-| Create, host, join, recover, and review understanding     | [User guide](user-guide.md)                                                                  |
-| Understand product behavior and interaction choices       | [Product and experience design](design.md)                                                   |
-| Review current market evidence and the gated roadmap      | [2026 market research and development plan](market-research-and-development-plan-2026-09.md) |
-| Review the 2026 Kahoot-alternatives UX benchmark and plan | [Kahoot-alternatives UX gap plan](kahoot-alternatives-2026-ux-gap-plan.md)                   |
-| Review the competitive position and post-P0 roadmap       | [Competitive strategy and roadmap](competitive-strategy-and-roadmap.md)                      |
-| Understand services, state, storage, and trust boundaries | [Architecture and protocol](architecture.md)                                                 |
-| Integrate with REST or realtime interfaces                | [API and realtime reference](api.md)                                                         |
-| Configure a gated institution pilot                       | [Institution integration guide](institution-integrations.md)                                 |
+| I want to…                                                   | Read                                                                                         |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| Get guidance that matches my enabled workspace               | Sign in and open the in-product `/help` page                                                 |
+| Run OpenRound locally and complete a first round             | [Quick start](quick-start.md)                                                                |
+| Create, host, join, recover, and review understanding        | [User guide](user-guide.md)                                                                  |
+| Position and resize Presentation text, or use layout guides  | [Slide arrangement guide](user-guide.md#arrange-text-on-a-presentation-slide)                |
+| Permanently remove archived work or retained session history | [Deletion guide](user-guide.md#delete-archived-content-and-session-history)                  |
+| Understand product behavior and interaction choices          | [Product and experience design](design.md)                                                   |
+| Review current market evidence and the gated roadmap         | [2026 market research and development plan](market-research-and-development-plan-2026-09.md) |
+| Review the 2026 Kahoot-alternatives UX benchmark and plan    | [Kahoot-alternatives UX gap plan](kahoot-alternatives-2026-ux-gap-plan.md)                   |
+| Review the competitive position and post-P0 roadmap          | [Competitive strategy and roadmap](competitive-strategy-and-roadmap.md)                      |
+| Understand services, state, storage, and trust boundaries    | [Architecture and protocol](architecture.md)                                                 |
+| Integrate with REST or realtime interfaces                   | [API and realtime reference](api.md)                                                         |
+| Configure a gated institution pilot                          | [Institution integration guide](institution-integrations.md)                                 |
 
 ## Build and operate
 
 - [Local operations quick guide](quick-start.md#day-to-day-commands) covers routine profile-aware
   restarts, logs, data-preserving stops, and the boundary between cleanup and an intentional reset.
 - [Implementation status](implementation-status.md) describes what is implemented and what remains a release gate.
+- [Recent contract and deletion upgrades](runbooks/upgrade.md#recent-content-report-and-deletion-upgrades)
+  cover Presentation v2, Report V4, migration 048, and compatible rollback targets.
 - [Release readiness ledger](release-readiness.json) is the machine-validated source of truth for
   single-VM beta and GA promotion gates; [evidence templates](evidence/README.md) cover human and
   provider verification.

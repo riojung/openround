@@ -110,6 +110,17 @@
 - Chromium, WebKit, Firefox, mobile Safari, and mobile Chrome critical flows pass.
 - Recovery interventions/rechecks, cohosting, Q&A moderation, hostile portability imports,
   secure embed, follow-up expiry/revocation/accommodations, and source-authoring review paths pass.
+- For enabled Presentation candidates, legacy v1 reads and v2 save/recovery/history behavior pass;
+  bounded move/resize, inspector/keyboard equivalents, image reservation, overflow guidance, and
+  narrow-screen reading order agree in editor, preview, facilitator, and participant views.
+- For enabled Question Health and Decision Replay candidates, verify revision-fenced
+  dismissal/apply/undo, exact-version/cohort/sample bounds, aggregate-only event capture, retry
+  idempotency, explicit unavailable/truncated timelines, and V1–V4 report/follow-up compatibility.
+- Owner-only archived Library deletion and finished/expired session-history deletion pass with
+  confirmation, tenant isolation, retained-assignment guards, concurrent restore/dependent writes,
+  metadata/media-reference cleanup, socket revocation, and report-worker fencing. Migration 048
+  runs under the migration principal; runtime permissions remain restricted. Include post-cutoff
+  deletion reconciliation in the replacement-host restore rehearsal.
 - All six Round Experience presets pass contrast, keyboard, screen-reader, reduced-motion, 200%
   zoom, phone, projector, and visual-regression checks. Presenter sound begins muted and every cue
   has an equivalent visual state.
