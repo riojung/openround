@@ -13,11 +13,14 @@ import type {
   QuestionHealthRevisionUndoInput,
   QuestionType,
   QuizDraft,
+  ApplyRecoveryPackUpdate,
+  RecoveryPackUpdatePreview,
   RoundCategory,
 } from "@openround/contracts";
 import {
   QuestionHealthRevisionAppliedSchema,
   QuestionHealthRevisionUndoneSchema,
+  RecoveryPackUpdatePreviewSchema,
 } from "@openround/contracts";
 import { CreatorBrand } from "../../../components/brand";
 import { BuilderCommandBar } from "../../../components/editor/builder-command-bar";
@@ -33,6 +36,11 @@ import { QuestionNavigator } from "../../../components/editor/question-navigator
 import { QuestionReusePicker } from "../../../components/editor/question-reuse-picker";
 import { QuestionHealthPanel } from "../../../components/editor/question-health-panel";
 import { PublishedQuestionHealthPanel } from "../../../components/editor/question-health-published-panel";
+import {
+  RecoveryPackUpdatePanel,
+  type RecoveryPackUpdateApplied,
+  type RecoveryPackUpdateUndo,
+} from "../../../components/editor/recovery-pack-update-panel";
 import { ReadinessSummary } from "../../../components/editor/readiness-summary";
 import { ResponseEditor } from "../../../components/editor/response-editor";
 import builderStyles from "../../../components/editor/round-builder.module.css";
@@ -80,6 +88,7 @@ interface EditorProductFeatures {
   practiceAssignments?: boolean;
   workspaceShell: boolean;
   questionHealth?: boolean;
+  recoveryPacks?: boolean;
 }
 
 function newChoices(type: ChoiceQuestionDraft["type"]): ChoiceDraft[] {
@@ -157,7 +166,8 @@ export default function QuizEditorPage() {
   const [recoverySnapshot, setRecoverySnapshot] =
     useState<BuilderRecoverySnapshot<QuizDraft> | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
-  const [healthMutationBusy, setHealthMutationBusy] = useState(false);
+  const [draftMutationBusy, setDraftMutationBusy] = useState(false);
+  const [packMutationRetryable, setPackMutationRetryable] = useState(false);
   const [mediaUploadsEnabled, setMediaUploadsEnabled] = useState(false);
   const [roundExperiencesAvailable, setRoundExperiencesAvailable] = useState(false);
   const [uxBeta, setUxBeta] = useState(false);
@@ -180,6 +190,12 @@ export default function QuizEditorPage() {
   const activeQuizIdRef = useRef(id);
   const healthMutationGeneration = useRef(0);
   const healthMutationBarrier = useRef(false);
+  const packMutationAttempt = useRef<{
+    mutationId: string;
+    capturedJson: string;
+    expectedRevision: number;
+    generation: number;
+  } | null>(null);
   const initialInsertHandled = useRef(false);
   const initialInsertNeedsFocus = useRef(false);
   const firstBlockTracked = useRef(false);
@@ -202,7 +218,17 @@ export default function QuizEditorPage() {
     activeQuizIdRef.current = id;
     healthMutationGeneration.current += 1;
     healthMutationBarrier.current = false;
-    setHealthMutationBusy(false);
+    setDraftMutationBusy(false);
+    packMutationAttempt.current = null;
+    setPackMutationRetryable(false);
+  }, [id]);
+
+  useEffect(() => {
+    activeQuizIdRef.current = id;
+    return () => {
+      healthMutationGeneration.current += 1;
+      activeQuizIdRef.current = "";
+    };
   }, [id]);
 
   const enqueueSave = useCallback(
@@ -243,22 +269,30 @@ export default function QuizEditorPage() {
     [id, uxBeta],
   );
 
-  async function runHealthDraftMutation<
+  async function runAuthoritativeDraftMutation<
     T extends { quiz: { id: string; draft: QuizDraft; draftRevision: number } },
   >(
     expectedRevision: number,
     send: () => Promise<T>,
     accept?: (response: T) => boolean,
+    packMutationId?: string,
   ): Promise<T> {
     const mutationGeneration = healthMutationGeneration.current;
     const isCurrentRound = () =>
       activeQuizIdRef.current === id && healthMutationGeneration.current === mutationGeneration;
-    const capturedJson = lastSavedJson.current;
+    const retrying = Boolean(
+      packMutationId &&
+      packMutationAttempt.current?.mutationId === packMutationId &&
+      packMutationAttempt.current.generation === mutationGeneration &&
+      packMutationAttempt.current.expectedRevision === expectedRevision,
+    );
+    const capturedJson = retrying
+      ? packMutationAttempt.current!.capturedJson
+      : lastSavedJson.current;
     if (
       !canEdit ||
-      saveConflict ||
-      saveState !== "saved" ||
-      healthMutationBarrier.current ||
+      draftMutationBusy ||
+      (!retrying && (saveConflict || saveState !== "saved" || healthMutationBarrier.current)) ||
       !matchesSavedHealthDraft(
         latestDraftRef.current,
         capturedJson,
@@ -266,11 +300,21 @@ export default function QuizEditorPage() {
         expectedRevision,
       )
     ) {
-      throw new Error("Save the current draft and review the finding again before applying it.");
+      throw new Error(
+        "Save or reload the current draft and review the change again before applying it.",
+      );
     }
 
+    if (packMutationId && !retrying)
+      packMutationAttempt.current = {
+        mutationId: packMutationId,
+        capturedJson,
+        expectedRevision,
+        generation: mutationGeneration,
+      };
     healthMutationBarrier.current = true;
-    setHealthMutationBusy(true);
+    setDraftMutationBusy(true);
+    setPackMutationRetryable(false);
     setSaveState("saving");
     let sent = false;
     let adopted = false;
@@ -320,6 +364,8 @@ export default function QuizEditorPage() {
       setQuiz(latest);
       loadDraft(latest.draft);
       setSaveState("saved");
+      setSaveConflict(false);
+      if (packMutationId) packMutationAttempt.current = null;
       void clearBuilderRecovery(recoveryKey);
       adopted = true;
       return response;
@@ -337,10 +383,18 @@ export default function QuizEditorPage() {
       } else {
         setSaveState("saved");
       }
+      if (packMutationId) {
+        const retryable =
+          sent &&
+          !(caught instanceof ApiClientError && caught.status >= 400 && caught.status < 500) &&
+          mayAdoptHealthDraft(latestDraftRef.current, capturedJson);
+        setPackMutationRetryable(retryable);
+        if (!retryable) packMutationAttempt.current = null;
+      }
       throw caught;
     } finally {
       if (isCurrentRound()) {
-        setHealthMutationBusy(false);
+        setDraftMutationBusy(false);
         if (!adopted && !preserveLocalDraft) healthMutationBarrier.current = false;
       }
     }
@@ -350,7 +404,7 @@ export default function QuizEditorPage() {
     findingId: string,
     input: QuestionHealthRevisionApplyInput,
   ): Promise<QuestionHealthRevisionApplied> {
-    return runHealthDraftMutation(
+    return runAuthoritativeDraftMutation(
       input.draftRevision,
       async () =>
         QuestionHealthRevisionAppliedSchema.parse(
@@ -367,7 +421,7 @@ export default function QuizEditorPage() {
     applicationId: string,
     input: QuestionHealthRevisionUndoInput,
   ): Promise<void> {
-    await runHealthDraftMutation(
+    await runAuthoritativeDraftMutation(
       input.expectedRevision,
       async () =>
         QuestionHealthRevisionUndoneSchema.parse(
@@ -377,6 +431,117 @@ export default function QuizEditorPage() {
           ),
         ),
       (response) => response.applicationId === applicationId,
+    );
+  }
+
+  async function reviewRecoveryPackUpdate(insertionId: string): Promise<RecoveryPackUpdatePreview> {
+    if (
+      saveConflict ||
+      healthMutationBarrier.current ||
+      draftMutationBusy ||
+      !latestDraftRef.current
+    ) {
+      throw new Error("Finish saving or reload this Round before reviewing a Pack update.");
+    }
+    const generation = healthMutationGeneration.current;
+    const isCurrent = () =>
+      activeQuizIdRef.current === id && healthMutationGeneration.current === generation;
+    const captured = latestDraftRef.current;
+    const capturedJson = JSON.stringify(captured);
+    healthMutationBarrier.current = true;
+    latestSaveRevision.current += 1;
+    setDraftMutationBusy(true);
+    setSaveState("saving");
+    let ready = false;
+    try {
+      await saveQueue.current;
+      if (!isCurrent() || !mayAdoptHealthDraft(latestDraftRef.current, capturedJson)) {
+        throw new Error("The active Round or local draft changed before the Pack review.");
+      }
+      if (lastSavedJson.current !== capturedJson) {
+        if (!canEdit) throw new Error("Reload the saved Round before reviewing a Pack update.");
+        const result = await enqueueSave(captured);
+        if (!isCurrent()) throw new Error("The active Round changed while its draft was saving.");
+        setQuiz(result.quiz);
+      }
+      if (!mayAdoptHealthDraft(latestDraftRef.current, capturedJson)) {
+        throw new Error("Local changes were made while saving. Review the latest draft again.");
+      }
+      ready = true;
+      const response = await apiFetch<{ review: unknown }>("/v1/recovery-packs/update-review", {
+        method: "POST",
+        body: JSON.stringify({ quizId: id, insertionId }),
+      });
+      const review = RecoveryPackUpdatePreviewSchema.parse(response.review);
+      if (
+        !isCurrent() ||
+        review.quizId !== id ||
+        review.insertionId !== insertionId ||
+        review.draftRevision !== serverRevision.current ||
+        !matchesSavedHealthDraft(
+          latestDraftRef.current,
+          capturedJson,
+          serverRevision.current,
+          review.draftRevision,
+        )
+      ) {
+        throw new Error(
+          "The Round changed during review. Reload or review its latest saved draft.",
+        );
+      }
+      return review;
+    } catch (caught) {
+      if (isCurrent() && !ready) {
+        if (caught instanceof ApiClientError && caught.code === "STALE_DRAFT")
+          setSaveConflict(true);
+        setSaveState(
+          caught instanceof ApiClientError && caught.code === "STALE_DRAFT" ? "conflict" : "error",
+        );
+      }
+      throw caught;
+    } finally {
+      if (isCurrent()) {
+        healthMutationBarrier.current = false;
+        setDraftMutationBusy(false);
+        if (ready) setSaveState("saved");
+      }
+    }
+  }
+
+  async function applyRecoveryPackUpdate(
+    input: ApplyRecoveryPackUpdate,
+  ): Promise<RecoveryPackUpdateApplied> {
+    if (!productFeatures?.recoveryPacks) throw new Error("Pack update authoring is not enabled.");
+    return runAuthoritativeDraftMutation(
+      input.expectedRevision,
+      () =>
+        apiFetch<RecoveryPackUpdateApplied>("/v1/recovery-packs/update", {
+          method: "POST",
+          body: JSON.stringify(input),
+        }),
+      (response) =>
+        response.undo.sourceRevision === input.expectedRevision &&
+        response.undo.appliedRevision === response.quiz.draftRevision,
+      input.mutationId,
+    );
+  }
+
+  async function undoRecoveryPackUpdate(input: RecoveryPackUpdateUndo): Promise<void> {
+    await runAuthoritativeDraftMutation(
+      input.expectedRevision,
+      () =>
+        apiFetch<{ quiz: QuizRecord }>(
+          `/v1/quizzes/${id}/history/${input.sourceRevision}/restore`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              expectedRevision: input.expectedRevision,
+              mutationId: input.mutationId,
+            }),
+          },
+        ),
+      undefined,
+      input.mutationId,
     );
   }
 
@@ -554,17 +719,17 @@ export default function QuizEditorPage() {
         });
     }, 700);
     return () => window.clearTimeout(timeout);
-  }, [canEdit, draft, enqueueSave, healthMutationBusy, recoveryKey, saveConflict]);
+  }, [canEdit, draft, enqueueSave, draftMutationBusy, recoveryKey, saveConflict]);
 
   useEffect(() => {
-    if (healthMutationBusy || !healthMutationBarrier.current || !draft || saveConflict) return;
+    if (draftMutationBusy || !healthMutationBarrier.current || !draft || saveConflict) return;
     if (JSON.stringify(draft) === lastSavedJson.current) {
       healthMutationBarrier.current = false;
       return;
     }
     setSaveConflict(true);
     setSaveState("conflict");
-  }, [draft, healthMutationBusy, saveConflict]);
+  }, [draft, draftMutationBusy, saveConflict]);
 
   useEffect(() => {
     const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
@@ -787,6 +952,8 @@ export default function QuizEditorPage() {
       setQuiz(latest);
       loadDraft(latest.draft);
       setSaveConflict(false);
+      packMutationAttempt.current = null;
+      setPackMutationRetryable(false);
       setSaveState("saved");
       void clearBuilderRecovery(recoveryKey);
     } catch (caught) {
@@ -1009,6 +1176,8 @@ export default function QuizEditorPage() {
       insertion.diagnosticQuestionId === question?.id ||
       insertion.recheckQuestionId === question?.id,
   );
+  const recoveryPackReferenceContent =
+    recoveryPackInsertion?.updateBaseline?.content ?? recoveryPackInsertion?.originalContent;
   const linkedRecheck =
     question?.linkedRecheckQuestionId && draft
       ? draft.questions.find((candidate) => candidate.id === question.linkedRecheckQuestionId)
@@ -1032,12 +1201,39 @@ export default function QuizEditorPage() {
     entitlements?.maxPublishedQuizzes !== undefined &&
     publishedQuizCount >= entitlements.maxPublishedQuizzes,
   );
+  const packUpdatePanels = draft?.recoveryPackInsertions?.map((insertion) => (
+    <RecoveryPackUpdatePanel
+      key={`${id}:${insertion.id}`}
+      quizId={id}
+      insertionId={insertion.id}
+      title={(insertion.updateBaseline?.content ?? insertion.originalContent).title}
+      referenceContent={insertion.updateBaseline?.content ?? insertion.originalContent}
+      canEdit={canEdit}
+      featureEnabled={Boolean(productFeatures?.recoveryPacks)}
+      currentDraftRevision={serverRevision.current}
+      draftSignature={JSON.stringify(draft)}
+      draftSaved={
+        saveState === "saved" && !saveConflict && JSON.stringify(draft) === lastSavedJson.current
+      }
+      mutationBusy={draftMutationBusy}
+      receiptRetryable={
+        packMutationRetryable &&
+        packMutationAttempt.current !== null &&
+        packMutationAttempt.current.expectedRevision === serverRevision.current &&
+        packMutationAttempt.current.capturedJson === JSON.stringify(draft)
+      }
+      onReview={reviewRecoveryPackUpdate}
+      onApply={applyRecoveryPackUpdate}
+      onUndo={undoRecoveryPackUpdate}
+    />
+  ));
+  const mutationFieldsetStyle = { border: 0, padding: 0, margin: 0, minWidth: 0 };
 
   if (!uxBeta) {
     const draftGuidance = readinessIssues[0];
 
     return (
-      <>
+      <fieldset disabled={draftMutationBusy} style={mutationFieldsetStyle}>
         <header className="shell topbar">
           <CreatorBrand productFeatures={productFeatures} />
           <div className="button-row">
@@ -1205,6 +1401,7 @@ export default function QuizEditorPage() {
               are in use. Archive a published set or compare plans before publishing this draft.
             </p>
           ) : null}
+          {packUpdatePanels}
           {!draft ? (
             <p>{t("delivery.common.loading")}</p>
           ) : (
@@ -1406,12 +1603,16 @@ export default function QuizEditorPage() {
             </>
           )}
         </main>
-      </>
+      </fieldset>
     );
   }
 
   return (
-    <div className={builderStyles.builder}>
+    <fieldset
+      className={builderStyles.builder}
+      disabled={draftMutationBusy}
+      style={mutationFieldsetStyle}
+    >
       <BuilderCommandBar
         assignHref={
           practiceAssignmentsAvailable && quiz?.status === "published" && quiz.currentVersionId
@@ -1593,19 +1794,20 @@ export default function QuizEditorPage() {
                   quizId={id}
                   versionId={quiz?.currentVersionId ?? null}
                 />
-                {recoveryPackInsertion ? (
+                {packUpdatePanels}
+                {recoveryPackInsertion && recoveryPackReferenceContent ? (
                   <details className="notice" lang="en-CA">
                     <summary>
-                      Recovery Pack facilitator references:{" "}
-                      {recoveryPackInsertion.originalContent.title}
+                      Recovery Pack facilitator references: {recoveryPackReferenceContent.title}
                       {" · version "}
-                      {recoveryPackInsertion.packVersion}
+                      {recoveryPackInsertion.updateBaseline?.packVersion ??
+                        recoveryPackInsertion.packVersion}
                     </summary>
                     <p>
                       These cards are the frozen references copied with this Pack. Local checkpoint
                       edits do not update them. Live card playback is not available yet.
                     </p>
-                    {recoveryPackInsertion.originalContent.interventions.map((card) => (
+                    {recoveryPackReferenceContent.interventions.map((card) => (
                       <section key={card.id}>
                         <h3>{card.title}</h3>
                         <p style={{ whiteSpace: "pre-wrap" }}>{card.body}</p>
@@ -1869,6 +2071,6 @@ export default function QuizEditorPage() {
           </>
         )}
       </main>
-    </div>
+    </fieldset>
   );
 }

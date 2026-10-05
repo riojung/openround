@@ -121,6 +121,7 @@ interface QuizDraftMutationReceipt {
   resultingRevision: number;
   draftHash: string;
   questionHealthUndoApplicationId?: string | null;
+  recoveryPackUpdateSourceRevision?: number | null;
   createdAt: Date;
 }
 
@@ -946,6 +947,14 @@ export class MemoryRepository implements Repository {
     const draft = upcastRoundDraft(input.draft, input.schemaVersion);
     const quiz = this.quizzes.get(input.quizId);
     if (!quiz || quiz.workspaceId !== input.workspaceId) return null;
+    if (
+      input.recoveryPackUpdateSourceRevision !== undefined &&
+      (!Number.isSafeInteger(input.recoveryPackUpdateSourceRevision) ||
+        input.recoveryPackUpdateSourceRevision < 0 ||
+        input.recoveryPackUpdateSourceRevision !== input.expectedRevision)
+    ) {
+      throw new QuizDraftMutationConflictError(input.mutationId);
+    }
     const mutationKey = `${input.workspaceId}:${input.mutationId}`;
     const retry = this.quizDraftMutations.get(mutationKey);
     if (retry) {
@@ -954,7 +963,9 @@ export class MemoryRepository implements Repository {
         retry.expectedRevision !== input.expectedRevision ||
         retry.draftHash !== input.draftHash ||
         (retry.questionHealthUndoApplicationId ?? null) !==
-          (input.questionHealthUndo?.applicationId ?? null)
+          (input.questionHealthUndo?.applicationId ?? null) ||
+        (retry.recoveryPackUpdateSourceRevision ?? null) !==
+          (input.recoveryPackUpdateSourceRevision ?? null)
       ) {
         throw new QuizDraftMutationConflictError(input.mutationId);
       }
@@ -979,7 +990,10 @@ export class MemoryRepository implements Repository {
     }
 
     const meaningful = JSON.stringify(normalizeQuizRecord(quiz).draft) !== JSON.stringify(draft);
-    if (input.questionHealthApplication && !meaningful) {
+    if (
+      (input.questionHealthApplication || input.recoveryPackUpdateSourceRevision !== undefined) &&
+      !meaningful
+    ) {
       throw new QuizDraftMutationConflictError(input.mutationId);
     }
     const updatedAt = new Date();
@@ -994,6 +1008,7 @@ export class MemoryRepository implements Repository {
       resultingRevision,
       draftHash: input.draftHash,
       questionHealthUndoApplicationId: input.questionHealthUndo?.applicationId ?? null,
+      recoveryPackUpdateSourceRevision: input.recoveryPackUpdateSourceRevision ?? null,
       createdAt: updatedAt,
     });
     if (!meaningful) return structuredClone(normalizeQuizRecord(quiz));
@@ -1189,6 +1204,15 @@ export class MemoryRepository implements Repository {
         )
         .map((application) => application.sourceRevision),
     );
+    for (const receipt of this.quizDraftMutations.values()) {
+      if (
+        receipt.quizId === quizId &&
+        receipt.resultingRevision === currentRevision &&
+        receipt.recoveryPackUpdateSourceRevision != null
+      ) {
+        protectedSourceRevisions.add(receipt.recoveryPackUpdateSourceRevision);
+      }
+    }
     const snapshots = [...this.quizDraftHistory.entries()]
       .filter(([, snapshot]) => snapshot.quizId === quizId)
       .sort((left, right) => right[1].revision - left[1].revision);
@@ -1239,7 +1263,8 @@ export class MemoryRepository implements Repository {
         retry.expectedRevision !== input.expectedRevision ||
         retry.draftHash !== `restore:${input.historyRevision}` ||
         (retry.questionHealthUndoApplicationId ?? null) !==
-          (input.questionHealthUndo?.applicationId ?? null)
+          (input.questionHealthUndo?.applicationId ?? null) ||
+        retry.recoveryPackUpdateSourceRevision != null
       ) {
         throw new QuizDraftMutationConflictError(input.mutationId);
       }

@@ -12,9 +12,10 @@ function uniqueMediaIds(mediaIds: Array<string | null | undefined>) {
 export function quizMediaIds(content: QuizDraft) {
   return uniqueMediaIds([
     ...content.questions.map((question) => question.mediaId),
-    ...(content.recoveryPackInsertions ?? []).flatMap((insertion) =>
-      recoveryPackMediaIds(insertion.originalContent),
-    ),
+    ...(content.recoveryPackInsertions ?? []).flatMap((insertion) => [
+      ...recoveryPackMediaIds(insertion.originalContent),
+      ...(insertion.updateBaseline ? recoveryPackMediaIds(insertion.updateBaseline.content) : []),
+    ]),
   ]);
 }
 

@@ -182,16 +182,69 @@ Pack references. Cross-workspace imports with private baseline media return an e
 failure instead of altering the baseline under an unchanged hash.
 
 Still pending for the Recovery Pack epic: live intervention-card playback; insertion into
-Presentation, practice, and Companion; three-way update review and explicit acceptance UI;
-source-authoring proposals and content-hash-bound citation approval; QTI/CSV Pack exports with loss
-reports; and real preparation-time/quality validation. The stored original snapshot supports the
-next update-review slice but is not itself an implemented update workflow.
+Presentation, practice, and Companion; source-authoring proposals and content-hash-bound citation
+approval; QTI/CSV Pack exports with loss reports; and real preparation-time/quality validation.
+The Round update workflow is described in the next checkpoint.
 
 Verification includes memory/PostgreSQL conformance, tenant isolation, media and account-deletion
 races, receipt recovery, native roundtrips, type/lint checks, and production builds. Browser workflows
 pass desktop Chromium, Android Chrome, and iPhone WebKit with automated accessibility checks,
 lost-save-acknowledgement retry, and feature-disabled reads/export/delete. Local Firefox could not
 launch because its temporary profile folder was unavailable; its workflow remains unverified here.
+
+## Recovery Pack Round update review — 2026-10-05
+
+The next incremental slice adds authenticated three-way review between the accepted source
+baseline, local diagnostic/recheck copies, and the latest immutable published Pack. The initial
+insertion metadata and `originalContent` remain unchanged; an optional hash-validated
+`updateBaseline` records the accepted source version for the next comparison. Cards, citations,
+concept metadata, and the delayed probe are reviewed alongside checkpoint changes.
+
+Unchanged local copies default to accepting changed source questions. Local-only changes default
+to keeping the local copy; conflicts and deleted copies require explicit keep/replace choices.
+Deletion is never silently undone. Replacements keep destination question IDs, rebuild the linked
+pair's source relationships, and record the selected source provenance. Kept copies retain their
+actual earlier provenance. This is whole-checkpoint review, not automatic field-level merging.
+Restoring a deleted recheck cannot silently change an unlinked diagnostic marked keep-local:
+the review requires an explicit linked diagnostic replacement before enabling that restoration.
+The server independently rejects incomplete, misordered, or shared restored pairs without saving
+a revision; context-only acceptance still preserves deliberately unfinished local drafts.
+
+`POST /v1/recovery-packs/update-review` reads an authoritative saved Round revision;
+`POST /v1/recovery-packs/update` accepts the reviewed version, expected revision, mutation ID, and
+bounded role choices. Applying creates one idempotent draft revision and never edits a published
+Round or Pack. The browser drains pending autosaves, fences review/application adoption, and
+retains mutation IDs for lost-acknowledgement retries. A concurrently published Pack version is
+not silently substituted for the reviewed one. Source identity uses immutable version IDs rather
+than increasing version numbers: restoring and republishing existing Pack content can legitimately
+make an earlier version current again, which the review displays explicitly.
+
+Undo uses the existing Round history restore with the applied revision as its expected revision,
+so later edits cannot be overwritten. Migration `051_recovery_pack_update_undo.sql` protects the
+pre-update source snapshot while its application is current, including a previously inactive
+Round whose snapshot is older than 30 days. This is not permanent application history: replay and
+older restores remain subject to the existing bounded Round history/receipt retention.
+
+Migration `050_recovery_pack_update_media.sql` retains media from both original and accepted
+baselines across draft, history, and published snapshots, including probe-only media. Native Round
+JSON uses version 4 after an update baseline exists; imports still accept versions 1–3, preserve
+both snapshots, and remap only destination IDs. Inaccessible baseline media fails import instead
+of changing evidence under an unchanged hash. No new learner data or live-path behavior is added.
+
+Apply stays behind `FEATURE_RECOVERY_PACKS` and the workspace allowlist. Existing reference reads,
+comparisons, exports, and revision-fenced undo remain available after disable. These source-level
+checks do not close partner-evidence, independent accessibility/privacy/security, or release gates.
+
+Verification passed the bounded-worker package suite (including 215 contract, 334 server, 87 memory
+database, and 361 web tests), 44 isolated PostgreSQL tests, support checks, lint, typecheck, formatting,
+and production builds. The environment-gated server multi-writer test remains skipped in that
+package run. Eight new update-review browser scenarios passed across desktop Chromium, Android
+Chromium, and iPhone WebKit, with zero automated accessibility findings in the core journey; existing
+Question Health and Pack foundation browser regressions also passed. Manual assistive-technology
+and independent review evidence remain separate requirements.
+The session-ordering unit tests disable only background process-metric collectors, whose sampling
+intervals otherwise survive fake-clock transitions and block subsequent retries while catching up;
+service-metric assertions and production collectors are unchanged.
 
 ## Access/resilience provisional slice
 

@@ -1607,9 +1607,11 @@ export async function registerRoutes(
     // A Pack baseline is immutable evidence, unlike portable destination question media. Never
     // strip its media IDs under an unchanged hash or grant access to another workspace's media.
     const baselineMediaIds = new Set(
-      (result.draft.recoveryPackInsertions ?? []).flatMap(({ originalContent }) =>
-        [originalContent.diagnostic, originalContent.recheck, originalContent.delayedProbe].flatMap(
-          (question) => (question?.mediaId ? [question.mediaId] : []),
+      (result.draft.recoveryPackInsertions ?? []).flatMap(({ originalContent, updateBaseline }) =>
+        [originalContent, ...(updateBaseline ? [updateBaseline.content] : [])].flatMap((content) =>
+          [content.diagnostic, content.recheck, content.delayedProbe].flatMap((question) =>
+            question?.mediaId ? [question.mediaId] : [],
+          ),
         ),
       ),
     );

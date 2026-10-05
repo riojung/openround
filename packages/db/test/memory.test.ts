@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { expectRecoveryPackDraftUndoConformance } from "./support/recovery-pack-draft-undo-conformance.js";
 import type { Report } from "@openround/contracts";
 import { applyHostCommand, createGameState } from "@openround/game-engine";
 import {
@@ -62,6 +63,14 @@ async function finalizedMediaForCleanup(
 }
 
 describe("memory repository", () => {
+  it("keeps old Recovery Pack update sources immediately undoable and fences stale undo", async () => {
+    await expectRecoveryPackDraftUndoConformance({
+      repository: new MemoryRepository(),
+      workspaceId: randomUUID(),
+      editorId: randomUUID(),
+    });
+  });
+
   it("persists replay events atomically and freezes the session capture setting", async () => {
     const repository = new MemoryRepository();
     const sessionId = randomUUID();

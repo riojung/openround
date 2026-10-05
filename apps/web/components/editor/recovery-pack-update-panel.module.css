@@ -1,0 +1,72 @@
+.panel {
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+}
+.panel summary {
+  cursor: pointer;
+  font-weight: 750;
+}
+.status {
+  min-height: 1.5em;
+}
+.item {
+  border-top: 1px solid var(--ui-border);
+  margin-top: 20px;
+  padding-top: 6px;
+}
+.comparison {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.contextComparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.question {
+  min-width: 0;
+  background: var(--ui-surface-soft);
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  padding: 12px;
+}
+.question h3,
+.question h4 {
+  margin-top: 0;
+}
+.question dt {
+  font-weight: 700;
+  margin-top: 10px;
+}
+.question dd {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+.question pre {
+  max-width: 100%;
+  overflow: auto;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
+.prompt {
+  white-space: pre-wrap;
+}
+.undo {
+  margin-top: 16px;
+}
+.references {
+  margin-bottom: 16px;
+}
+@media (max-width: 1050px) {
+  .comparison,
+  .contextComparison {
+    grid-template-columns: 1fr;
+  }
+}

@@ -324,6 +324,8 @@ export interface QuizDraftUpdate {
   draftHash: string;
   questionHealthApplication?: QuestionHealthApplicationWrite;
   questionHealthUndo?: { applicationId: string; requestId: string };
+  /** Preserve the pre-update snapshot while this accepted Recovery Pack edit is current. */
+  recoveryPackUpdateSourceRevision?: number;
 }
 
 export interface StoredSession {
