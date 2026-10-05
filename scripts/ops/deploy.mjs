@@ -7,14 +7,18 @@ import { join, relative, resolve } from "node:path";
 import process from "node:process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, URL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import {
   assertCommandAvailable,
+  assertConfiguredHostedTarget,
   assertFullGitSha,
+  assertKnownHostsTarget,
   assertNoEnvironmentKeyOverlap,
   assertPathWithin,
   assertPrivateIgnoredEnvFile,
   createPrivateFileSnapshot,
   ensureIgnoredEnvFile,
+  isPlaceholderHostedHostname,
   isHostedEnvironment,
   normalizeEnvironment,
   parseCliArguments,
@@ -31,7 +35,13 @@ import {
   validateFlyWebEnvironment,
   validateRollbackConfirmation,
 } from "./lib.mjs";
-import { validateSignedReleaseLedgerTransition } from "./release-acceptance.mjs";
+import {
+  validateAcceptedGithubRelease,
+  validatePublishedGithubRelease,
+  validateReleaseChecksums,
+  validateReleasePreflightEvidence,
+  validateSignedReleaseLedgerTransition,
+} from "./release-acceptance.mjs";
 import { main as serviceMain } from "./service.mjs";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -39,6 +49,7 @@ const staleLockAgeMilliseconds = 30 * 60 * 1_000;
 export const HOSTED_DEPLOYMENT_AUTOMATION_FILES = Object.freeze([
   "scripts/deploy.sh",
   "scripts/ops/deploy.mjs",
+  "scripts/ops/evidence-acceptance.mjs",
   "scripts/ops/lib.mjs",
   "scripts/ops/release-acceptance.mjs",
   "scripts/ops/service.mjs",
@@ -56,6 +67,12 @@ const TRUSTED_PRODUCTION_RELEASE_WORKFLOW_IDENTITY_PREFIX =
   "https://github.com/riojung/openround/.github/workflows/release.yml@refs/tags/";
 const TRUSTED_PRODUCTION_RELEASE_TAG_API =
   "https://api.github.com/repos/riojung/openround/git/tags/";
+const TRUSTED_PRODUCTION_RELEASE_API = "https://api.github.com/repos/riojung/openround/releases/";
+const TRUSTED_PRODUCTION_RELEASE_ASSET_API =
+  "https://api.github.com/repos/riojung/openround/releases/assets/";
+const MAX_RELEASE_METADATA_ASSET_BYTES = 1024 * 1024;
+const MAX_PRIOR_DEPLOYMENT_RECEIPT_BYTES = 64 * 1024;
+const SHA256_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
 function usage() {
   return `Usage: scripts/deploy.sh development [--dry-run]
@@ -66,7 +83,9 @@ function usage() {
 Production additionally requires --backup-reference REFERENCE. Use --recover-lock only after
 verifying the recorded local owner is gone and the lock is stale. A rollback requires --rollback,
 --rollback-from CURRENT_BUILD_ID, and the exact rollback confirmation shown by the command contract;
-it omits the owner migration credential and never reverses schema.`;
+it omits the owner migration credential and never reverses schema. Redeploying an unchanged
+published production release additionally requires --published-release-redeploy,
+--prior-deployment-receipt PATH, and --prior-deployment-receipt-sha256 sha256:DIGEST.`;
 }
 
 function configFileName(environment) {
@@ -93,6 +112,316 @@ async function sha256File(path) {
   return createHash("sha256")
     .update(await readFile(path))
     .digest("hex");
+}
+
+async function readBuildManifestSnapshot(path, validationOptions) {
+  let source;
+  let parsed;
+  try {
+    source = await readFile(path);
+    parsed = JSON.parse(source.toString("utf8"));
+  } catch (error) {
+    throw new Error(`Could not read valid JSON from ${path}`, { cause: error });
+  }
+  return {
+    manifest: validateBuildManifest(parsed, validationOptions),
+    sha256: createHash("sha256").update(source).digest("hex"),
+  };
+}
+
+export function runtimeEnvironmentSha256(content) {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+const configCheckSummaryKeys = Object.freeze([
+  "valid",
+  "buildId",
+  "nodeEnvironment",
+  "publicApiUrl",
+  "webOrigin",
+  "communityMode",
+  "persistence",
+  "coordination",
+  "email",
+  "developmentEmailInbox",
+  "billing",
+  "media",
+  "metrics",
+  "logs",
+  "tracing",
+  "participantLimit",
+  "practicePersonalLinkLimit",
+  "presentationResponseWrites",
+  "featureFlags",
+  "themedInteractionsWorkspaceAllowlistSize",
+  "uxBetaWorkspaceAllowlistSize",
+  "evidenceFeaturesWorkspaceAllowlistSize",
+]);
+const configCheckFeatureKeys = Object.freeze([
+  "signups",
+  "sessionCreation",
+  "mediaUploads",
+  "roundExperiences",
+  "audiencePulse",
+  "roomChat",
+  "uxBeta",
+  "recoveryRehearsal",
+  "practiceAssignments",
+  "workspaceShell",
+  "builderV2",
+  "presentations",
+  "groups",
+  "discover",
+  "presentationRealtime",
+  "recoveryPacks",
+  "questionHealth",
+  "decisionReplay",
+  "recoveryTrails",
+  "conceptHealth",
+  "extendedQuestionTypes",
+  "verifiedInstitution",
+]);
+
+function assertExactObjectKeys(value, expected, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const actual = Object.keys(value).sort();
+  const required = [...expected].sort();
+  if (actual.length !== required.length || actual.some((key, index) => key !== required[index])) {
+    throw new Error(`${label} contains an unexpected field set`);
+  }
+}
+
+export function validateReceiptConfigCheckSummary(summary, config, buildId) {
+  assertExactObjectKeys(summary, configCheckSummaryKeys, "configuration summary");
+  assertExactObjectKeys(
+    summary.featureFlags,
+    configCheckFeatureKeys,
+    "configuration feature flags",
+  );
+  const expected = {
+    valid: true,
+    buildId,
+    nodeEnvironment: "production",
+    publicApiUrl: config.publicApiUrl,
+    webOrigin: config.publicWebUrl,
+    communityMode: false,
+    persistence: "postgresql",
+    coordination: "redis-streams",
+    email: "smtp",
+    developmentEmailInbox: "disabled",
+    billing: config.billingMode,
+    media: "clamav",
+    metrics: "protected",
+    logs: "external-host-agent",
+    tracing: "otlp",
+  };
+  for (const [key, value] of Object.entries(expected)) {
+    if (summary[key] !== value) {
+      throw new Error(`The deployed configuration summary returned unexpected ${key}`);
+    }
+  }
+  for (const key of configCheckFeatureKeys) {
+    if (typeof summary.featureFlags[key] !== "boolean") {
+      throw new Error(`The deployed configuration summary returned invalid feature flag ${key}`);
+    }
+  }
+  for (const key of [
+    "participantLimit",
+    "practicePersonalLinkLimit",
+    "themedInteractionsWorkspaceAllowlistSize",
+    "uxBetaWorkspaceAllowlistSize",
+    "evidenceFeaturesWorkspaceAllowlistSize",
+  ]) {
+    if (!Number.isInteger(summary[key]) || summary[key] < 0) {
+      throw new Error(`The deployed configuration summary returned invalid ${key}`);
+    }
+  }
+  if (!new Set(["concurrent", "rollback-compatible"]).has(summary.presentationResponseWrites)) {
+    throw new Error(
+      "The deployed configuration summary returned invalid presentationResponseWrites",
+    );
+  }
+  return summary;
+}
+
+function canonicalTimestamp(value, label) {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) ||
+    Number.isNaN(Date.parse(value))
+  ) {
+    throw new Error(`${label} must be a canonical UTC timestamp`);
+  }
+  return Date.parse(value);
+}
+
+export function validatePublishedReleaseRedeployReceipt(
+  receipt,
+  { binding, acceptedAt, publishedAt, manifest, manifestSha256, operationsRevision, config },
+) {
+  assertExactObjectKeys(
+    receipt,
+    [
+      "schemaVersion",
+      "environment",
+      "buildId",
+      "operation",
+      "startedAt",
+      "completedAt",
+      "manifest",
+      "manifestSha256",
+      "images",
+      "singleVm",
+      "backupReference",
+      "configuration",
+      "verification",
+      "operations",
+      "release",
+    ],
+    "prior production deployment receipt",
+  );
+  if (
+    receipt.schemaVersion !== 2 ||
+    receipt.environment !== "production" ||
+    receipt.buildId !== binding.buildId ||
+    receipt.operation !== "deploy" ||
+    typeof receipt.manifest !== "string" ||
+    !receipt.manifest ||
+    typeof receipt.backupReference !== "string" ||
+    !receipt.backupReference
+  ) {
+    throw new Error("Prior deployment receipt is not a successful production deployment");
+  }
+  const started = canonicalTimestamp(receipt.startedAt, "prior deployment startedAt");
+  const completed = canonicalTimestamp(receipt.completedAt, "prior deployment completedAt");
+  const accepted = canonicalTimestamp(acceptedAt, "signed-release acceptance acceptedAt");
+  const published = canonicalTimestamp(publishedAt, "GitHub release publishedAt");
+  if (started < accepted || completed < started || completed >= published) {
+    throw new Error(
+      "Prior deployment receipt must start after acceptance and complete before publication",
+    );
+  }
+  if (receipt.manifestSha256 !== manifestSha256) {
+    throw new Error("Prior deployment receipt manifest does not match the accepted release");
+  }
+  assertExactObjectKeys(receipt.images, ["server", "web"], "prior deployment images");
+  if (
+    receipt.images.server !== manifest.images.server.ref ||
+    receipt.images.web !== manifest.images.web.ref
+  ) {
+    throw new Error("Prior deployment receipt images do not match the accepted release");
+  }
+  assertExactObjectKeys(receipt.singleVm, ["host", "projectName"], "prior deployment target");
+  if (
+    receipt.singleVm.host !== config.singleVm.host ||
+    receipt.singleVm.projectName !== config.singleVm.projectName
+  ) {
+    throw new Error(
+      "Prior deployment receipt target does not match the reviewed production target",
+    );
+  }
+  assertExactObjectKeys(
+    receipt.configuration,
+    ["runtimeEnvironmentSha256", "summary"],
+    "prior deployment configuration",
+  );
+  if (!/^[a-f0-9]{64}$/.test(String(receipt.configuration.runtimeEnvironmentSha256 ?? ""))) {
+    throw new Error("Prior deployment receipt runtime environment digest is invalid");
+  }
+  validateReceiptConfigCheckSummary(receipt.configuration.summary, config, manifest.buildId);
+  assertExactObjectKeys(
+    receipt.verification,
+    [
+      "configuration",
+      "imageBuildIds",
+      "migration",
+      "migrationSkipped",
+      "serverLive",
+      "serverReady",
+      "webBuildId",
+      "mediaLive",
+    ],
+    "prior deployment verification",
+  );
+  const expectedVerification = {
+    configuration: true,
+    imageBuildIds: true,
+    migration: "applied",
+    migrationSkipped: false,
+    serverLive: true,
+    serverReady: true,
+    webBuildId: true,
+    mediaLive: true,
+  };
+  if (!isDeepStrictEqual(receipt.verification, expectedVerification)) {
+    throw new Error("Prior deployment receipt does not prove successful post-deploy verification");
+  }
+  assertExactObjectKeys(receipt.operations, ["commit", "files"], "prior deployment operations");
+  if (
+    receipt.operations.commit !== operationsRevision ||
+    !isDeepStrictEqual(receipt.operations.files, config.deploymentInputHashes)
+  ) {
+    throw new Error("Prior deployment receipt operations inputs do not match the accepted release");
+  }
+  assertExactObjectKeys(
+    receipt.release,
+    ["githubReleaseId", "tag", "tagObject", "acceptedAt"],
+    "prior deployment release binding",
+  );
+  if (
+    receipt.release.githubReleaseId !== binding.githubRelease.id ||
+    receipt.release.tag !== binding.tag ||
+    receipt.release.tagObject !== binding.tagObject ||
+    receipt.release.acceptedAt !== acceptedAt
+  ) {
+    throw new Error(
+      "Prior deployment receipt release identity does not match the accepted release",
+    );
+  }
+  return receipt;
+}
+
+export async function readPublishedReleaseRedeployReceipt(
+  path,
+  expectedDigest,
+  root = repositoryRoot,
+) {
+  if (!SHA256_DIGEST_PATTERN.test(String(expectedDigest ?? ""))) {
+    throw new Error("--prior-deployment-receipt-sha256 must be a sha256 digest");
+  }
+  const receiptsRoot = join(root, "artifacts", "deploy", "production", "receipts");
+  const selected = assertPathWithin(
+    resolve(root, path ?? ""),
+    receiptsRoot,
+    "prior deployment receipt",
+  );
+  const [receiptsRootReal, selectedReal, metadata] = await Promise.all([
+    realpath(receiptsRoot),
+    realpath(selected),
+    lstat(selected),
+  ]);
+  if (
+    receiptsRootReal !== receiptsRoot ||
+    selectedReal !== selected ||
+    !metadata.isFile() ||
+    metadata.isSymbolicLink() ||
+    metadata.size < 2 ||
+    metadata.size > MAX_PRIOR_DEPLOYMENT_RECEIPT_BYTES
+  ) {
+    throw new Error("Prior deployment receipt must be a bounded regular file without symlinks");
+  }
+  const source = await readFile(selectedReal);
+  const digest = `sha256:${createHash("sha256").update(source).digest("hex")}`;
+  if (digest !== expectedDigest) {
+    throw new Error("Prior deployment receipt SHA-256 does not match the reviewed evidence");
+  }
+  try {
+    return { receipt: JSON.parse(source.toString("utf8")), digest };
+  } catch (error) {
+    throw new Error("Prior deployment receipt must contain valid JSON", { cause: error });
+  }
 }
 
 async function currentOperationsRevision() {
@@ -150,6 +479,65 @@ export async function fetchPublishedReleaseTagObject(tagObject) {
   }
 }
 
+function githubApiHeaders(accept = "application/vnd.github+json") {
+  const headers = {
+    Accept: accept,
+    "User-Agent": "OpenRound-production-deploy",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  return headers;
+}
+
+export async function fetchAcceptedGithubRelease(releaseId) {
+  let response;
+  try {
+    response = await fetch(`${TRUSTED_PRODUCTION_RELEASE_API}${releaseId}`, {
+      headers: githubApiHeaders(),
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    throw new Error("Could not verify the accepted GitHub release", { cause: error });
+  }
+  if (!response.ok) {
+    throw new Error(`GitHub could not verify the accepted release (HTTP ${response.status})`);
+  }
+  try {
+    return await response.json();
+  } catch (error) {
+    throw new Error("GitHub returned invalid release verification data", { cause: error });
+  }
+}
+
+export async function fetchPublishedReleaseAsset(asset) {
+  let response;
+  try {
+    response = await fetch(`${TRUSTED_PRODUCTION_RELEASE_ASSET_API}${asset.id}`, {
+      headers: githubApiHeaders("application/octet-stream"),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    throw new Error(`Could not download accepted GitHub release asset ${asset.name}`, {
+      cause: error,
+    });
+  }
+  if (!response.ok) {
+    throw new Error(
+      `GitHub could not download accepted release asset ${asset.name} (HTTP ${response.status})`,
+    );
+  }
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_RELEASE_METADATA_ASSET_BYTES) {
+    throw new Error(`Accepted GitHub release asset ${asset.name} exceeds the metadata size limit`);
+  }
+  const content = Buffer.from(await response.arrayBuffer());
+  if (content.length === 0 || content.length > MAX_RELEASE_METADATA_ASSET_BYTES) {
+    throw new Error(`Accepted GitHub release asset ${asset.name} has an invalid metadata size`);
+  }
+  return content;
+}
+
 function assertPublishedReleaseTagObject(payload, binding, buildId) {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     throw new Error("GitHub returned invalid release tag verification data");
@@ -173,9 +561,13 @@ export async function assertProductionReleaseRevision({
   operationsRevision,
   manifest,
   manifestPath,
+  manifestSha256,
   root = repositoryRoot,
   trustedRemoteUrls = TRUSTED_PRODUCTION_RELEASE_REMOTE_URLS,
   tagObjectLookup = fetchPublishedReleaseTagObject,
+  releaseLookup = fetchAcceptedGithubRelease,
+  releaseAssetLookup = fetchPublishedReleaseAsset,
+  publishedRedeploy,
 }) {
   assertFullGitSha(operationsRevision, "operations HEAD");
   assertFullGitSha(manifest.buildId, "release build ID");
@@ -191,9 +583,13 @@ export async function assertProductionReleaseRevision({
     await readFile(checkedReadinessPath, "utf8"),
     "Release readiness ledger",
   );
+  const resolvedManifestSha256 = manifestSha256 ?? (await sha256File(manifestPath));
+  if (!/^[a-f0-9]{64}$/.test(resolvedManifestSha256)) {
+    throw new Error("release manifest SHA-256 is invalid");
+  }
   const expected = {
     buildId: manifest.buildId,
-    manifestDigest: `sha256:${await sha256File(manifestPath)}`,
+    manifestDigest: `sha256:${resolvedManifestSha256}`,
   };
   if (operationsRevision === manifest.buildId) {
     throw new Error(
@@ -228,6 +624,7 @@ export async function assertProductionReleaseRevision({
     "Tagged release readiness ledger",
   );
   const binding = validateSignedReleaseLedgerTransition(taggedLedger, acceptedLedger, expected);
+  const signedReleaseGate = acceptedLedger.gates.find((gate) => gate?.id === "signed-release");
 
   if (binding.imageDigests.server !== manifest.images.server.digest) {
     throw new Error("Signed release acceptance server digest does not match the build manifest");
@@ -270,8 +667,70 @@ export async function assertProductionReleaseRevision({
   }
   const publishedTagObject = await tagObjectLookup(binding.tagObject);
   assertPublishedReleaseTagObject(publishedTagObject, binding, manifest.buildId);
+  const acceptedRelease = await releaseLookup(binding.githubRelease.id);
+  const acceptedAt = signedReleaseGate.acceptance.acceptedAt;
+  if (acceptedRelease.draft === true) {
+    if (publishedRedeploy) {
+      throw new Error(
+        "Published-release redeploy proof cannot be used while the release is a draft",
+      );
+    }
+    validateAcceptedGithubRelease(acceptedRelease, binding, acceptedAt);
+  } else {
+    if (!publishedRedeploy) {
+      throw new Error(
+        "Published production releases require explicit redeploy mode and a reviewed prior deployment receipt",
+      );
+    }
+    validatePublishedGithubRelease(acceptedRelease, binding, acceptedAt);
+    validatePublishedReleaseRedeployReceipt(publishedRedeploy.receipt, {
+      binding,
+      acceptedAt,
+      publishedAt: acceptedRelease.published_at,
+      manifest,
+      manifestSha256: resolvedManifestSha256,
+      operationsRevision,
+      config: publishedRedeploy.config,
+    });
+  }
+
+  const loadAcceptedAsset = async (name) => {
+    const asset = binding.assets.find((candidate) => candidate.name === name);
+    const content = await releaseAssetLookup(asset);
+    if (
+      !Buffer.isBuffer(content) &&
+      !(content instanceof Uint8Array) &&
+      typeof content !== "string"
+    ) {
+      throw new Error(`Accepted GitHub release asset ${name} lookup returned invalid content`);
+    }
+    const bytes = typeof content === "string" ? Buffer.from(content) : Buffer.from(content);
+    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    if (digest !== asset.digest || bytes.length !== asset.size) {
+      throw new Error(`Accepted GitHub release asset ${name} bytes do not match releaseBinding`);
+    }
+    return bytes;
+  };
+
+  const checksums = await loadAcceptedAsset("SHA256SUMS");
+  validateReleaseChecksums(checksums, binding);
+  const preflightName = `openround-${binding.tag}-preflight.json`;
+  const preflightContent = await loadAcceptedAsset(preflightName);
+  let preflight;
+  try {
+    preflight = JSON.parse(preflightContent.toString("utf8"));
+  } catch (error) {
+    throw new Error("Accepted GitHub release preflight asset is not valid JSON", { cause: error });
+  }
+  validateReleasePreflightEvidence(
+    preflight,
+    binding,
+    signedReleaseGate.acceptance.candidateBuildId,
+  );
   return {
     ...binding,
+    acceptedAt,
+    releaseState: acceptedRelease.draft === true ? "draft" : "published",
     certificateIdentity: `${TRUSTED_PRODUCTION_RELEASE_WORKFLOW_IDENTITY_PREFIX}${binding.tag}`,
   };
 }
@@ -369,18 +828,34 @@ async function writeReceipt({
   buildId,
   config,
   manifestPath,
+  manifestSha256,
   backup,
   startedAt,
   rollback,
   rollbackFrom,
+  runtimeEnvironmentDigest,
+  configCheckSummary,
+  releaseAcceptance,
 }) {
+  if (!/^[a-f0-9]{64}$/.test(String(manifestSha256 ?? ""))) {
+    throw new Error("Deployment receipt requires the snapshotted manifest SHA-256");
+  }
+  if (!/^[a-f0-9]{64}$/.test(String(runtimeEnvironmentDigest ?? ""))) {
+    throw new Error("Deployment receipt requires the runtime environment SHA-256");
+  }
+  if (config.deploymentMode === "single-vm" && !configCheckSummary) {
+    throw new Error("Single-VM deployment receipt requires the deployed configuration summary");
+  }
+  if (environment === "production" && !rollback && !releaseAcceptance) {
+    throw new Error("Production deployment receipt requires the accepted release binding");
+  }
   const completedAt = new Date().toISOString();
   const timestamp = completedAt.replaceAll(":", "-");
   const directory = join(repositoryRoot, "artifacts", "deploy", environment, "receipts");
   await mkdir(directory, { recursive: true });
   const path = join(directory, `${timestamp}-${buildId}.json`);
   const receipt = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     environment,
     buildId,
     operation: rollback ? "rollback" : "deploy",
@@ -388,6 +863,7 @@ async function writeReceipt({
     startedAt,
     completedAt,
     manifest: relative(repositoryRoot, manifestPath),
+    manifestSha256,
     images: {
       server: config.manifest.images.server.ref,
       web: config.manifest.images.web.ref,
@@ -401,6 +877,10 @@ async function writeReceipt({
         }
       : { fly: { serverApp: config.fly.serverApp, webApp: config.fly.webApp } }),
     ...(backup ? { backupReference: backup } : {}),
+    configuration: {
+      runtimeEnvironmentSha256: runtimeEnvironmentDigest,
+      ...(configCheckSummary ? { summary: configCheckSummary } : {}),
+    },
     verification: {
       configuration: true,
       imageBuildIds: true,
@@ -415,6 +895,16 @@ async function writeReceipt({
       commit: config.operationsRevision,
       files: config.deploymentInputHashes,
     },
+    ...(releaseAcceptance
+      ? {
+          release: {
+            githubReleaseId: releaseAcceptance.githubRelease.id,
+            tag: releaseAcceptance.tag,
+            tagObject: releaseAcceptance.tagObject,
+            acceptedAt: releaseAcceptance.acceptedAt,
+          },
+        }
+      : {}),
   };
   const temporary = `${path}.tmp-${process.pid}`;
   await writeFile(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o644 });
@@ -779,6 +1269,19 @@ export const REMOTE_CURRENT_BUILD_SCRIPT = [
   'printf "%s\\n" "$build"',
 ].join("\n");
 
+export const REMOTE_CONFIG_SUMMARY_SCRIPT = [
+  "set -eu",
+  'base="$1"',
+  'expected="$2"',
+  'build=$(cat "$base/current-build" 2>/dev/null || true)',
+  '[ "$build" = "$expected" ] || { echo "Active build changed before configuration evidence capture" >&2; exit 75; }',
+  'current=$(readlink "$base/current" 2>/dev/null || true)',
+  '[ "$current" = "releases/$expected" ] || { echo "Active release pointer disagrees with build state" >&2; exit 75; }',
+  'summary="$base/$current/.config-check-summary.json"',
+  '[ -f "$summary" ] && [ ! -L "$summary" ] || { echo "Configuration summary is missing or unsafe" >&2; exit 66; }',
+  'cat "$summary"',
+].join("\n");
+
 export const REMOTE_DEPLOY_SCRIPT = [
   "set -eu",
   'base="$1"',
@@ -933,7 +1436,10 @@ export const REMOTE_DEPLOY_SCRIPT = [
   'load_release "$release"',
   'docker compose --env-file "$release/.env" config --quiet',
   'docker compose --env-file "$release/.env" pull',
-  'docker compose --env-file "$release/.env" run --rm --no-deps server node dist/config-check.js',
+  'config_summary="$release/.config-check-summary.json"',
+  'docker compose --env-file "$release/.env" run --rm --no-deps server node dist/config-check.js > "$config_summary.tmp"',
+  'chmod 600 "$config_summary.tmp"',
+  'mv -f "$config_summary.tmp" "$config_summary"',
   'server_build=$(docker compose --env-file "$release/.env" run --rm --no-deps --entrypoint /bin/cat server /app/BUILD_ID)',
   '[ "$server_build" = "$build" ] || { echo "Server image BUILD_ID does not match release" >&2; exit 67; }',
   'web_build=$(docker compose --env-file "$release/.env" run --rm --no-deps --entrypoint /bin/cat web /app/BUILD_ID)',
@@ -1133,6 +1639,29 @@ async function readRemoteCurrentBuild(
   return buildId;
 }
 
+async function readRemoteConfigCheckSummary(
+  config,
+  knownHostsFile,
+  identityFile,
+  buildId,
+  interruptGuard,
+) {
+  const result = await sshRun(
+    config,
+    knownHostsFile,
+    identityFile,
+    ["sh", "-c", REMOTE_CONFIG_SUMMARY_SCRIPT, "--", config.singleVm.deployPath, buildId],
+    { capture: true, interruptGuard },
+  );
+  let summary;
+  try {
+    summary = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error("The deployed configuration summary was not valid JSON", { cause: error });
+  }
+  return validateReceiptConfigCheckSummary(summary, config, buildId);
+}
+
 export function assertRemoteTargetNotActive(currentBuildId, targetBuildId) {
   if (currentBuildId && currentBuildId === targetBuildId) {
     throw new Error(`Build ${targetBuildId} is already the active single-VM release`);
@@ -1183,6 +1712,7 @@ async function resolveSingleVmFiles(config, identityPath) {
     "SSH known-hosts file",
     { requireGitClean: true },
   );
+  await assertKnownHostsTarget(knownHostsFile, config.singleVm);
   const identityFile = await resolveSshIdentityFile(identityPath, repositoryRoot);
   const knownHostsContent = await readFile(knownHostsFile);
   const deploymentFiles = new Map();
@@ -1234,6 +1764,81 @@ function environmentFileValue(content, key) {
 const PLAIN_DNS_HOSTNAME_PATTERN =
   /^(?=.{1,253}$)(?!-)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
 
+function validateHostedTracingValues(content) {
+  const tracingEnabled = environmentFileValue(content, "TRACING_ENABLED") ?? "false";
+  if (!new Set(["true", "false"]).has(tracingEnabled)) {
+    throw new Error("TRACING_ENABLED must be true or false");
+  }
+  if (tracingEnabled === "false") return;
+
+  const endpoint = environmentFileValue(content, "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT");
+  if (!endpoint || endpoint.toLowerCase().includes("replace-")) {
+    throw new Error(
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must contain a non-placeholder value when tracing is enabled",
+    );
+  }
+  let url;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new Error("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must be a valid HTTP(S) URL");
+  }
+  if (
+    !new Set(["http:", "https:"]).has(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must be a credential-free HTTP(S) URL without a query or fragment",
+    );
+  }
+  if (isPlaceholderHostedHostname(url.hostname)) {
+    throw new Error(
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must not use a reserved, placeholder, loopback, or unspecified address for a hosted deployment",
+    );
+  }
+}
+
+function validateHostedHttpsRuntimeUrl(content, key, { allowQuery = false } = {}) {
+  const value = environmentFileValue(content, key);
+  if (!value || value.toLowerCase().includes("replace-")) {
+    throw new Error(`${key} must contain a non-placeholder value`);
+  }
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${key} must be a valid HTTPS URL`);
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.hash ||
+    (!allowQuery && url.search)
+  ) {
+    throw new Error(
+      `${key} must be a credential-free HTTPS URL${allowQuery ? " without a fragment" : " without a query or fragment"}`,
+    );
+  }
+  if (isPlaceholderHostedHostname(url.hostname)) {
+    throw new Error(
+      `${key} must not use a reserved, placeholder, loopback, or unspecified address`,
+    );
+  }
+  if (
+    key === "OPENROUND_OTLP_BACKEND_ENDPOINT" &&
+    /\/v1\/(?:traces|metrics)\/?$/i.test(url.pathname)
+  ) {
+    throw new Error(
+      "OPENROUND_OTLP_BACKEND_ENDPOINT must be the OTLP/HTTP base endpoint without a signal suffix",
+    );
+  }
+  return url;
+}
+
 export function validateSingleVmRuntimeValues(content, config) {
   const deploymentEnvironment = environmentFileValue(content, "OPENROUND_DEPLOYMENT_ENVIRONMENT");
   if (deploymentEnvironment !== config.environment) {
@@ -1269,6 +1874,7 @@ export function validateSingleVmRuntimeValues(content, config) {
     "SMTP_URL",
     "EMAIL_FROM",
     "METRICS_TOKEN",
+    "OPENROUND_OTLP_BACKEND_TOKEN",
     "ADMIN_TOKEN",
   ]) {
     const value = environmentFileValue(content, key);
@@ -1296,6 +1902,35 @@ export function validateSingleVmRuntimeValues(content, config) {
   if (environmentFileValue(content, "COMMUNITY_MODE") !== "false") {
     throw new Error("COMMUNITY_MODE must be false for a hosted single-VM deployment");
   }
+  if (environmentFileValue(content, "METRICS_ENABLED") !== "true") {
+    throw new Error("METRICS_ENABLED must be true for a hosted single-VM deployment");
+  }
+  if (environmentFileValue(content, "OPENROUND_LOG_SHIPPING_MODE") !== "external-host-agent") {
+    throw new Error(
+      "OPENROUND_LOG_SHIPPING_MODE must be external-host-agent for a hosted single-VM deployment",
+    );
+  }
+  validateHostedTracingValues(content);
+  if (environmentFileValue(content, "TRACING_ENABLED") !== "true") {
+    throw new Error("TRACING_ENABLED must be true for a hosted single-VM deployment");
+  }
+  if (
+    environmentFileValue(content, "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") !==
+    "http://otel-collector:4318/v1/traces"
+  ) {
+    throw new Error(
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must use the private single-VM collector endpoint",
+    );
+  }
+  validateHostedHttpsRuntimeUrl(content, "OPENROUND_OTLP_BACKEND_ENDPOINT");
+  const alertReceiverUrls = [
+    "OPENROUND_PAGING_WEBHOOK_URL",
+    "OPENROUND_WARNING_WEBHOOK_URL",
+    "OPENROUND_TICKET_WEBHOOK_URL",
+  ].map((key) => validateHostedHttpsRuntimeUrl(content, key, { allowQuery: true }).href);
+  if (new Set(alertReceiverUrls).size !== alertReceiverUrls.length) {
+    throw new Error("page, warning, and ticket receiver URLs must be distinct");
+  }
   return true;
 }
 
@@ -1304,7 +1939,7 @@ async function deploySingleVm({ environment, parsed, dryRun, config }) {
     repositoryRoot,
     parsed.values.get("manifest") ?? `artifacts/deploy/${environment}/build-manifest.json`,
   );
-  const manifest = await readStrictJson(manifestPath, validateBuildManifest, {
+  const { manifest, sha256: manifestSha256 } = await readBuildManifestSnapshot(manifestPath, {
     environment,
     imageRepository: config.imageRepository,
     imagePlatform: config.imagePlatform,
@@ -1329,6 +1964,32 @@ async function deploySingleVm({ environment, parsed, dryRun, config }) {
     if (rollbackFrom) throw new Error("--rollback-from requires --rollback");
     validateDeploymentConfirmation(parsed.values.get("confirm"), environment, manifest.buildId);
   }
+  const publishedRedeployRequested = parsed.flags.has("published-release-redeploy");
+  const priorReceiptPath = parsed.values.get("prior-deployment-receipt");
+  const priorReceiptDigest = parsed.values.get("prior-deployment-receipt-sha256");
+  if (
+    publishedRedeployRequested !== Boolean(priorReceiptPath) ||
+    publishedRedeployRequested !== Boolean(priorReceiptDigest)
+  ) {
+    throw new Error(
+      "Published-release redeploy requires the explicit mode, prior receipt path, and reviewed receipt SHA-256 together",
+    );
+  }
+  if (publishedRedeployRequested && (environment !== "production" || rollback)) {
+    throw new Error("Published-release redeploy is valid only for forward production deployments");
+  }
+  const { knownHostsContent, identityFile, deploymentFiles, deploymentInputHashes } =
+    await resolveSingleVmFiles(config, parsed.values.get("ssh-identity"));
+  config.deploymentInputHashes = {
+    ...config.deploymentInputHashes,
+    ...deploymentInputHashes,
+  };
+  const publishedRedeploy = publishedRedeployRequested
+    ? {
+        ...(await readPublishedReleaseRedeployReceipt(priorReceiptPath, priorReceiptDigest)),
+        config,
+      }
+    : undefined;
   if (!rollback) {
     const productionAcceptance =
       environment === "production" && config.requireSigning && config.requireReadinessGate;
@@ -1337,6 +1998,8 @@ async function deploySingleVm({ environment, parsed, dryRun, config }) {
         operationsRevision: config.operationsRevision,
         manifest,
         manifestPath,
+        manifestSha256,
+        publishedRedeploy,
       });
     } else if (config.operationsRevision !== manifest.buildId) {
       throw new Error(
@@ -1393,12 +2056,6 @@ async function deploySingleVm({ environment, parsed, dryRun, config }) {
     backup = backupReference(parsed.values.get("backup-reference"));
   }
 
-  const { knownHostsContent, identityFile, deploymentFiles, deploymentInputHashes } =
-    await resolveSingleVmFiles(config, parsed.values.get("ssh-identity"));
-  config.deploymentInputHashes = {
-    ...config.deploymentInputHashes,
-    ...deploymentInputHashes,
-  };
   await assertOperationsRevision(config.operationsRevision);
   for (const command of [
     "ssh",
@@ -1424,6 +2081,7 @@ async function deploySingleVm({ environment, parsed, dryRun, config }) {
 
   const runtimeContent = runtimeEnv.content;
   validateSingleVmRuntimeValues(runtimeContent, config);
+  const runtimeEnvironmentDigest = runtimeEnvironmentSha256(runtimeContent);
 
   const knownHostsSnapshot = await createPrivateFileSnapshot(knownHostsContent, "known_hosts");
   const knownHostsFile = knownHostsSnapshot.path;
@@ -1535,10 +2193,17 @@ async function deploySingleVm({ environment, parsed, dryRun, config }) {
       process.stdout.write("Code rollback selected; forward-only database migration is skipped.\n");
     }
     if (!dryRun) {
+      let configCheckSummary;
       try {
         await waitForDeploymentHealth(config, manifest.buildId);
         await waitForWebBuild(config, manifest.buildId);
         await waitForMediaHealth(config);
+        configCheckSummary = await readRemoteConfigCheckSummary(
+          config,
+          knownHostsFile,
+          identityFile,
+          manifest.buildId,
+        );
       } catch (error) {
         if (previousBuildId) {
           try {
@@ -1581,10 +2246,14 @@ async function deploySingleVm({ environment, parsed, dryRun, config }) {
         buildId: manifest.buildId,
         config,
         manifestPath,
+        manifestSha256,
         backup,
         startedAt,
         rollback,
         rollbackFrom,
+        runtimeEnvironmentDigest,
+        configCheckSummary,
+        releaseAcceptance: productionReleaseAcceptance,
       });
       process.stdout.write(`Deployment receipt: ${receipt}\n`);
     } else {
@@ -1633,6 +2302,7 @@ async function deployHosted({ environment, parsed, dryRun }) {
     { requireGitClean: true },
   );
   const config = await readStrictJson(configPath, validateDeployConfig, environment);
+  assertConfiguredHostedTarget(config);
   const reviewedAutomationFiles = [
     ...HOSTED_DEPLOYMENT_AUTOMATION_FILES,
     ...(config.requireReadinessGate ? READINESS_GATE_INPUT_FILES : []),
@@ -1645,6 +2315,13 @@ async function deployHosted({ environment, parsed, dryRun }) {
   if (config.deploymentMode === "single-vm") {
     await deploySingleVm({ environment, parsed, dryRun, config });
     return;
+  }
+  if (
+    parsed.flags.has("published-release-redeploy") ||
+    parsed.values.has("prior-deployment-receipt") ||
+    parsed.values.has("prior-deployment-receipt-sha256")
+  ) {
+    throw new Error("Published-release redeploy proof is supported only for single-VM production");
   }
   const expectedServerConfig = `config/deploy/fly/${environment}-server.toml`;
   const serverConfigPath = await resolveCheckedRepositoryFile(
@@ -1680,7 +2357,7 @@ async function deployHosted({ environment, parsed, dryRun }) {
     repositoryRoot,
     parsed.values.get("manifest") ?? `artifacts/deploy/${environment}/build-manifest.json`,
   );
-  const manifest = await readStrictJson(manifestPath, validateBuildManifest, {
+  const { manifest, sha256: manifestSha256 } = await readBuildManifestSnapshot(manifestPath, {
     environment,
     imageRepository: config.imageRepository,
     imagePlatform: config.imagePlatform,
@@ -1747,6 +2424,7 @@ async function deployHosted({ environment, parsed, dryRun }) {
   );
   await ensureIgnoredEnvFile(runtimeEnv, repositoryRoot, "runtime");
   if (migrationEnv) await ensureIgnoredEnvFile(migrationEnv, repositoryRoot, "migration");
+  const runtimeEnvironmentDigest = runtimeEnvironmentSha256(runtimeEnv.content);
 
   let backup;
   if (environment === "production") {
@@ -1861,10 +2539,12 @@ async function deployHosted({ environment, parsed, dryRun }) {
         buildId: manifest.buildId,
         config,
         manifestPath,
+        manifestSha256,
         backup,
         startedAt,
         rollback,
         rollbackFrom,
+        runtimeEnvironmentDigest,
       });
       process.stdout.write(`Deployment receipt: ${receipt}\n`);
     } else {
@@ -1890,8 +2570,17 @@ export async function main(argv = process.argv.slice(2)) {
       "profile",
       "rollback-from",
       "ssh-identity",
+      "prior-deployment-receipt",
+      "prior-deployment-receipt-sha256",
     ],
-    booleanOptions: ["dry-run", "no-build", "rollback", "recover-lock", "help"],
+    booleanOptions: [
+      "dry-run",
+      "no-build",
+      "rollback",
+      "recover-lock",
+      "published-release-redeploy",
+      "help",
+    ],
   });
   if (parsed.flags.has("help")) {
     process.stdout.write(`${usage()}\n`);
@@ -1919,12 +2608,20 @@ export async function main(argv = process.argv.slice(2)) {
       "backup-reference",
       "rollback-from",
       "ssh-identity",
+      "prior-deployment-receipt",
+      "prior-deployment-receipt-sha256",
     ];
     if (hostedOptions.some((option) => parsed.values.has(option))) {
       throw new Error("Hosted deployment options are not valid for development");
     }
-    if (parsed.flags.has("rollback") || parsed.flags.has("recover-lock")) {
-      throw new Error("--rollback and --recover-lock are valid only for hosted environments");
+    if (
+      parsed.flags.has("rollback") ||
+      parsed.flags.has("recover-lock") ||
+      parsed.flags.has("published-release-redeploy")
+    ) {
+      throw new Error(
+        "--rollback, --recover-lock, and --published-release-redeploy are valid only for hosted environments",
+      );
     }
     await serviceMain([
       "--environment",

@@ -23,6 +23,7 @@ import {
   type PresentationSessionCreateInput,
   type PresentationSessionCredentialRecord,
   type PresentationSessionCredentialRole,
+  type PresentationSessionDeletion,
   type PresentationSessionParticipantRecord,
   type PresentationSessionRecord,
   type PresentationSessionReportCompletion,
@@ -51,8 +52,44 @@ export class MemoryPresentationSessionRepository
   >();
 
   constructor(
-    private readonly liveRooms: Pick<Repository, "claimLiveRoomCode" | "releaseLiveRoomCode">,
+    private readonly liveRooms: Pick<Repository, "claimLiveRoomCode" | "releaseLiveRoomCode"> & {
+      assertWorkspaceLiveSessionCreationAllowed?: (workspaceId: string) => void;
+      isLibraryArtifactDeleted?: (
+        workspaceId: string,
+        artifactType: "round" | "presentation",
+        artifactId: string,
+      ) => boolean;
+    },
   ) {}
+
+  private assertWorkspaceMutationAllowed(workspaceId: string) {
+    this.liveRooms.assertWorkspaceLiveSessionCreationAllowed?.(workspaceId);
+  }
+
+  isLibraryArtifactReferenced(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    return (
+      artifactType === "presentation" &&
+      [...this.sessions.values()].some(
+        (session) => session.workspaceId === workspaceId && session.presentationId === artifactId,
+      )
+    );
+  }
+
+  private assertPresentationExists(session: PresentationSessionRecord) {
+    if (
+      this.liveRooms.isLibraryArtifactDeleted?.(
+        session.workspaceId,
+        "presentation",
+        session.presentationId,
+      )
+    ) {
+      throw new Error("Presentation not found");
+    }
+  }
 
   exportAccount({ ownedWorkspaceIds }: MemoryRepositoryLifecycleContext) {
     const sessions = [...this.sessions.values()].filter((session) =>
@@ -100,7 +137,8 @@ export class MemoryPresentationSessionRepository
   }
 
   private async deleteSessionTree(sessionId: string) {
-    await this.liveRooms.releaseLiveRoomCode("presentation", sessionId);
+    // Remove every record synchronously before releasing the code so no suspended mutation or
+    // report worker can republish retained room data while deletion is in progress.
     this.sessions.delete(sessionId);
     const participantIds = new Set<string>();
     for (const [id, participant] of this.participants) {
@@ -129,6 +167,7 @@ export class MemoryPresentationSessionRepository
         this.reportJobs.delete(id);
       }
     }
+    await this.liveRooms.releaseLiveRoomCode("presentation", sessionId);
   }
 
   private enqueueReport(session: PresentationSessionRecord) {
@@ -157,19 +196,32 @@ export class MemoryPresentationSessionRepository
     });
   }
 
-  async listSessions(workspaceId: string, now = new Date()) {
+  async listSessions(workspaceId: string, now = new Date(), includeExpired = false) {
     return [...this.sessions.values()]
       .filter(
         (session) =>
           session.workspaceId === workspaceId &&
-          (session.status !== "active" || session.liveExpiresAt > now),
+          (includeExpired || session.status !== "active" || session.liveExpiresAt > now),
       )
       .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
       .map(clone);
   }
 
+  async deleteSession(
+    workspaceId: string,
+    sessionId: string,
+    now = new Date(),
+  ): Promise<PresentationSessionDeletion> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.workspaceId !== workspaceId) return { status: "not_found" };
+    if (session.status === "active" && session.liveExpiresAt > now) return { status: "active" };
+    await this.deleteSessionTree(sessionId);
+    return { status: "deleted" };
+  }
+
   async createSession(input: PresentationSessionCreateInput) {
     const normalized = normalizeSession(input);
+    this.assertWorkspaceMutationAllowed(normalized.workspaceId);
     await this.liveRooms.claimLiveRoomCode({
       code: normalized.code,
       workspaceId: normalized.workspaceId,
@@ -179,7 +231,10 @@ export class MemoryPresentationSessionRepository
       createdAt: normalized.createdAt,
     });
     try {
+      this.assertWorkspaceMutationAllowed(normalized.workspaceId);
+      this.assertPresentationExists(normalized);
       this.sessions.set(input.id, clone(normalized));
+      this.enqueueReport(normalized);
       if (normalized.status !== "active" || normalized.liveExpiresAt <= new Date()) {
         await this.liveRooms.releaseLiveRoomCode(
           "presentation",
@@ -187,7 +242,6 @@ export class MemoryPresentationSessionRepository
           normalized.finishedAt ?? normalized.updatedAt,
         );
       }
-      this.enqueueReport(normalized);
       return clone(normalized);
     } catch (error) {
       this.sessions.delete(normalized.id);
@@ -203,6 +257,7 @@ export class MemoryPresentationSessionRepository
     credential: PresentationSessionCredentialRecord,
   ) {
     const normalized = normalizeSession(input);
+    this.assertWorkspaceMutationAllowed(normalized.workspaceId);
     if (
       credential.workspaceId !== normalized.workspaceId ||
       credential.sessionId !== normalized.id
@@ -223,8 +278,11 @@ export class MemoryPresentationSessionRepository
       createdAt: normalized.createdAt,
     });
     try {
+      this.assertWorkspaceMutationAllowed(normalized.workspaceId);
+      this.assertPresentationExists(normalized);
       this.sessions.set(normalized.id, clone(normalized));
       this.credentials.set(credential.id, clone(credential));
+      this.enqueueReport(normalized);
       if (normalized.status !== "active" || normalized.liveExpiresAt <= new Date()) {
         await this.liveRooms.releaseLiveRoomCode(
           "presentation",
@@ -232,7 +290,6 @@ export class MemoryPresentationSessionRepository
           normalized.finishedAt ?? normalized.updatedAt,
         );
       }
-      this.enqueueReport(normalized);
       return { session: clone(normalized), credential: clone(credential) };
     } catch (error) {
       this.sessions.delete(normalized.id);
@@ -268,6 +325,7 @@ export class MemoryPresentationSessionRepository
   private async applyTransition(input: PresentationSessionTransitionInput, commandId?: string) {
     const session = this.sessions.get(input.sessionId);
     if (!session || session.workspaceId !== input.workspaceId) return null;
+    this.assertWorkspaceMutationAllowed(input.workspaceId);
     if (session.revision !== input.expectedRevision) {
       throw new PresentationSessionConflictError(input.expectedRevision, session.revision);
     }
@@ -290,9 +348,6 @@ export class MemoryPresentationSessionRepository
           : session.retentionExpiresAt,
     };
     this.sessions.set(updated.id, updated);
-    if (updated.status !== "active") {
-      await this.liveRooms.releaseLiveRoomCode("presentation", updated.id, now);
-    }
     const event: PresentationSessionTimelineRecord = {
       ...input.event,
       id: randomUUID(),
@@ -319,6 +374,9 @@ export class MemoryPresentationSessionRepository
     // memory worker can run concurrently while this async method is suspended, so enqueueing
     // before the final timeline record would diverge from PostgreSQL transaction semantics.
     if (becomingFinished) this.enqueueReport(updated);
+    if (updated.status !== "active") {
+      await this.liveRooms.releaseLiveRoomCode("presentation", updated.id, now);
+    }
     return clone(updated);
   }
 
@@ -357,12 +415,11 @@ export class MemoryPresentationSessionRepository
     participantLimit: number,
   ): Promise<PresentationParticipantJoin> {
     const session = this.sessions.get(input.sessionId);
-    if (
-      !session ||
-      session.workspaceId !== input.workspaceId ||
-      session.status !== "active" ||
-      input.joinedAt >= session.liveExpiresAt
-    ) {
+    if (!session || session.workspaceId !== input.workspaceId) {
+      return { status: "closed" };
+    }
+    this.assertWorkspaceMutationAllowed(input.workspaceId);
+    if (session.status !== "active" || input.joinedAt >= session.liveExpiresAt) {
       return { status: "closed" };
     }
     const participantCount = [...this.participants.values()].filter(
@@ -456,9 +513,11 @@ export class MemoryPresentationSessionRepository
       }
     }
     const session = this.sessions.get(input.sessionId);
+    if (!session || session.workspaceId !== input.workspaceId) {
+      return { status: "phase_closed" };
+    }
+    this.assertWorkspaceMutationAllowed(input.workspaceId);
     if (
-      !session ||
-      session.workspaceId !== input.workspaceId ||
       ![...this.participants.values()].some(
         (participant) =>
           participant.workspaceId === input.workspaceId &&
@@ -695,6 +754,10 @@ export class MemoryPresentationSessionRepository
   }
 
   async createCredential(input: PresentationSessionCredentialRecord) {
+    const session = this.sessions.get(input.sessionId);
+    if (!session || session.workspaceId !== input.workspaceId) {
+      throw new Error("Presentation session does not exist");
+    }
     if ([...this.credentials.values()].some(({ tokenHash }) => tokenHash === input.tokenHash)) {
       throw new Error("Presentation session credential already exists");
     }

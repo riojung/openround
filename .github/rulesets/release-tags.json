@@ -1,0 +1,19 @@
+{
+  "name": "Restrict v release tag creation",
+  "target": "tag",
+  "enforcement": "disabled",
+  "bypass_actors": [
+    {
+      "actor_id": 1459373,
+      "actor_type": "User",
+      "bypass_mode": "always"
+    }
+  ],
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/tags/v*"],
+      "exclude": []
+    }
+  },
+  "rules": [{ "type": "creation" }]
+}

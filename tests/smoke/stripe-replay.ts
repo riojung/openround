@@ -8,6 +8,7 @@ async function main() {
   const browserOrigin = required("STRIPE_REHEARSAL_ORIGIN").replace(/\/$/, "");
   const creatorCookie = required("STRIPE_REHEARSAL_CREATOR_COOKIE");
   const webhookSecret = required("STRIPE_REHEARSAL_WEBHOOK_SECRET");
+  const expectedBuildId = required("STRIPE_REHEARSAL_EXPECTED_BUILD_ID");
   const outputPath =
     process.env.STRIPE_REHEARSAL_OUTPUT?.trim() || "artifacts/readiness/stripe-replay.json";
   const runId = randomUUID();
@@ -19,6 +20,18 @@ async function main() {
     "Stripe rehearsal requires an HTTPS origin",
   );
   assert.ok(!/[\r\n]/.test(creatorCookie), "creator cookie must not contain line breaks");
+  assert.match(
+    expectedBuildId,
+    /^[0-9a-f]{40}$/,
+    "STRIPE_REHEARSAL_EXPECTED_BUILD_ID must be a full Git commit",
+  );
+  if (process.env.GITHUB_SHA) {
+    assert.equal(
+      process.env.GITHUB_SHA,
+      expectedBuildId,
+      "workflow commit must match STRIPE_REHEARSAL_EXPECTED_BUILD_ID",
+    );
+  }
 
   function required(name: string) {
     const value = process.env[name]?.trim();
@@ -47,6 +60,24 @@ async function main() {
       `${path} returned ${response.status}: ${body.slice(0, 300)}`,
     );
     return JSON.parse(body) as T;
+  }
+
+  async function verifyLiveBuild(stage: "start" | "finish") {
+    const response = await request(`${baseUrl}/health/live`);
+    const body = await response.text();
+    assert.equal(
+      response.status,
+      200,
+      `${stage} /health/live returned ${response.status}: ${body.slice(0, 300)}`,
+    );
+    const health = JSON.parse(body) as { buildId?: unknown; status?: unknown };
+    assert.equal(health.status, "ok", `${stage} /health/live status must be ok`);
+    assert.equal(
+      health.buildId,
+      expectedBuildId,
+      `${stage} /health/live build does not match STRIPE_REHEARSAL_EXPECTED_BUILD_ID`,
+    );
+    return { checkedAt: new Date().toISOString(), buildId: expectedBuildId, status: "ok" as const };
   }
 
   function signedHeader(payload: string) {
@@ -98,28 +129,29 @@ async function main() {
     mode: "disabled" | "stripe";
   }
 
-  const identity = await authenticated<{ creator: { workspaceId: string } }>("/v1/auth/me");
-  const workspaceId = identity.creator.workspaceId;
-  const initial = await authenticated<BillingStatus>("/v1/billing/status");
-  assert.equal(initial.mode, "stripe", "staging billing mode must be stripe");
-  assert.equal(
-    initial.billing.plan,
-    "free",
-    "use a dedicated free-plan workspace for the destructive billing rehearsal",
-  );
-
+  const healthAtStart = await verifyLiveBuild("start");
   const created = Math.floor(Date.now() / 1_000);
-  const subscription = {
-    id: `sub_openround_${runId}`,
-    object: "subscription",
-    customer: `cus_openround_${runId}`,
-    metadata: { workspaceId },
-    status: "canceled",
-  };
+  let subscription: Record<string, unknown> | undefined;
   let cleanupRequired = false;
   let rehearsalError: unknown;
 
   try {
+    const identity = await authenticated<{ creator: { workspaceId: string } }>("/v1/auth/me");
+    const workspaceId = identity.creator.workspaceId;
+    const initial = await authenticated<BillingStatus>("/v1/billing/status");
+    assert.equal(initial.mode, "stripe", "staging billing mode must be stripe");
+    assert.equal(
+      initial.billing.plan,
+      "free",
+      "use a dedicated free-plan workspace for the destructive billing rehearsal",
+    );
+    subscription = {
+      id: `sub_openround_${runId}`,
+      object: "subscription",
+      customer: `cus_openround_${runId}`,
+      metadata: { workspaceId },
+      status: "canceled",
+    };
     const checkout = event("checkout.session.completed", created, {
       id: `cs_openround_${runId}`,
       object: "checkout.session",
@@ -173,7 +205,8 @@ async function main() {
     rehearsalError = error;
   }
 
-  if (cleanupRequired) {
+  let cleanupError: unknown;
+  if (cleanupRequired && subscription) {
     try {
       const cleanupCreated = Math.max(created, Math.floor(Date.now() / 1_000));
       const cleanup = event(
@@ -189,18 +222,29 @@ async function main() {
       );
       const restored = await authenticated<BillingStatus>("/v1/billing/status");
       assert.equal(restored.billing.plan, "free", "failure cleanup did not restore the free plan");
-    } catch (cleanupError) {
-      if (rehearsalError) {
-        throw new AggregateError(
-          [rehearsalError, cleanupError],
-          "Stripe rehearsal failed and its synthetic entitlement cleanup also failed",
-        );
-      }
-      throw cleanupError;
+    } catch (error) {
+      cleanupError = error;
     }
   }
 
-  if (rehearsalError) throw rehearsalError;
+  let healthAtFinish: Awaited<ReturnType<typeof verifyLiveBuild>> | undefined;
+  let healthError: unknown;
+  try {
+    healthAtFinish = await verifyLiveBuild("finish");
+  } catch (error) {
+    healthError = error;
+  }
+  const failures = [rehearsalError, cleanupError, healthError].filter(
+    (error) => error !== undefined,
+  );
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(
+      failures,
+      "Stripe rehearsal, cleanup, or final immutable-build verification failed",
+    );
+  }
+  assert.ok(healthAtFinish, "final immutable-build verification did not complete");
 
   const evidence = {
     schemaVersion: 1,
@@ -208,6 +252,12 @@ async function main() {
     commit: process.env.GITHUB_SHA ?? null,
     target: new URL(baseUrl).origin,
     runId,
+    build: {
+      expectedBuildId,
+      start: healthAtStart,
+      finish: healthAtFinish,
+      stable: healthAtStart.buildId === healthAtFinish.buildId,
+    },
     checks: {
       signedCheckoutApplied: true,
       duplicateWasIdempotent: true,

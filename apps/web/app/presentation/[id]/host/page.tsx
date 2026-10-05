@@ -78,6 +78,7 @@ function PresentationHostSetupContent() {
   const [presentation, setPresentation] = useState<PresentationRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [timeMode, setTimeMode] = useState<"timed" | "flex">("timed");
   const liveCreationAvailable = productFeatures?.presentationRealtime === true;
 
   useEffect(() => {
@@ -98,7 +99,10 @@ function PresentationHostSetupContent() {
         controlToken?: string;
       }>("/v1/presentation-sessions", {
         method: "POST",
-        body: JSON.stringify({ presentationId: id }),
+        body: JSON.stringify({
+          presentationId: id,
+          ...(productFeatures?.liveFlexMode && timeMode === "flex" ? { timeMode: "flex" } : {}),
+        }),
       });
       const sessionId = snapshot.sessionId ?? snapshot.id;
       if (!sessionId) throw new Error("Presentation session identifier is missing");
@@ -147,6 +151,22 @@ function PresentationHostSetupContent() {
           <p className="error" role="alert">
             {t("live.presentationHost.publishFirst")}
           </p>
+        ) : null}
+        {productFeatures?.liveFlexMode ? (
+          <label className="field" htmlFor="presentation-time-mode">
+            <span>{t("live.common.timeMode")}</span>
+            <select
+              className="select"
+              disabled={busy || !liveCreationAvailable}
+              id="presentation-time-mode"
+              onChange={(event) => setTimeMode(event.target.value as "timed" | "flex")}
+              value={timeMode}
+            >
+              <option value="timed">{t("live.common.timedMode")}</option>
+              <option value="flex">{t("live.common.flexMode")}</option>
+            </select>
+            <small className="muted">{t("live.common.flexSetupHelp")}</small>
+          </label>
         ) : null}
         <PresentationSessionCreationControls
           busy={busy}

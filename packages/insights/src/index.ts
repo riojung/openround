@@ -6,6 +6,14 @@ import {
   type ResponsePayload,
 } from "@openround/contracts";
 
+export const CHECKPOINT_INSIGHT_RULESET_VERSION = "checkpoint-insight-v1" as const;
+
+export {
+  evaluateQuestionHealth,
+  QUESTION_HEALTH_MAX_FINDINGS,
+  QUESTION_HEALTH_RULESET_VERSION,
+} from "./question-health";
+
 export interface InsightResponse {
   response: ResponsePayload;
   correct: boolean;

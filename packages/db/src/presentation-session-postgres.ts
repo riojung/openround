@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import type { PostgresRepository } from "./postgres.js";
+import { WorkspaceDeletionInProgressError } from "./types.js";
 import {
   PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL,
   mapCredential,
@@ -26,6 +27,7 @@ import {
   type PresentationSessionCreateInput,
   type PresentationSessionCredentialRecord,
   type PresentationSessionCredentialRole,
+  type PresentationSessionDeletion,
   type PresentationSessionParticipantRecord,
   type PresentationSessionRecord,
   type PresentationSessionReportCompletion,
@@ -63,6 +65,16 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     } finally {
       client.release();
     }
+  }
+
+  private async assertWorkspaceMutationAllowed(client: PoolClient, workspaceId: string) {
+    const eligible = await client.query(
+      `SELECT id FROM workspaces
+        WHERE id = $1 AND deletion_started_at IS NULL
+        FOR SHARE`,
+      [workspaceId],
+    );
+    if (!eligible.rows[0]) throw new WorkspaceDeletionInProgressError(workspaceId);
   }
 
   private async responseAcknowledgementState(
@@ -185,12 +197,19 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
   private async insertSession(client: PoolClient, input: PresentationSessionCreateInput) {
     const normalized = normalizeSession(input);
     const result = await client.query(
-      `INSERT INTO presentation_live_sessions
+      `WITH eligible_workspace AS (
+         SELECT id FROM workspaces
+         WHERE id = $2 AND deletion_started_at IS NULL
+         FOR SHARE
+       )
+       INSERT INTO presentation_live_sessions
         (id, workspace_id, presentation_id, presentation_version_id, title, content_snapshot,
          join_code, status, phase, current_block_index, revision, settings, trust_mode,
          event_seq, question_opened_at, question_closes_at, created_by,
          created_at, updated_at, finished_at, live_expires_at, retention_expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+       SELECT $1, eligible_workspace.id, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+              $17,$18,$19,$20,$21,$22
+       FROM eligible_workspace
        RETURNING *`,
       [
         normalized.id,
@@ -217,6 +236,9 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
         normalized.retentionExpiresAt,
       ],
     );
+    if (!result.rows[0]) {
+      throw new WorkspaceDeletionInProgressError(normalized.workspaceId);
+    }
     return mapSession(result.rows[0]!);
   }
 
@@ -239,17 +261,44 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     return mapCredential(result.rows[0]!);
   }
 
-  async listSessions(workspaceId: string, now = new Date()) {
+  async listSessions(workspaceId: string, now = new Date(), includeExpired = false) {
     return this.transaction(workspaceId, async (client) => {
       const result = await client.query(
         `SELECT session.*, ${PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL} AS event_seq
            FROM presentation_live_sessions session
           WHERE session.workspace_id = $1
-            AND (session.status <> 'active' OR session.live_expires_at > $2)
+            AND ($3 OR session.status <> 'active' OR session.live_expires_at > $2)
           ORDER BY session.created_at DESC`,
-        [workspaceId, now],
+        [workspaceId, now, includeExpired],
       );
       return result.rows.map(mapSession);
+    });
+  }
+
+  async deleteSession(
+    workspaceId: string,
+    sessionId: string,
+    now = new Date(),
+  ): Promise<PresentationSessionDeletion> {
+    return this.transaction(workspaceId, async (client) => {
+      // Fence transitions and child writes with the parent row lock. The terminal check and
+      // cascading delete belong to one workspace-scoped transaction.
+      const locked = await client.query(
+        `SELECT status, live_expires_at FROM presentation_live_sessions
+          WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+        [workspaceId, sessionId],
+      );
+      const session = locked.rows[0];
+      if (!session) return { status: "not_found" };
+      if (session.status === "active" && new Date(session.live_expires_at) > now) {
+        return { status: "active" };
+      }
+      // Child foreign keys and the live-room-code trigger remove the entire durable room.
+      await client.query(
+        "DELETE FROM presentation_live_sessions WHERE workspace_id = $1 AND id = $2",
+        [workspaceId, sessionId],
+      );
+      return { status: "deleted" };
     });
   }
 
@@ -346,6 +395,7 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
         };
       }
     }
+    await this.assertWorkspaceMutationAllowed(client, input.workspaceId);
     const locked = await client.query(
       "SELECT * FROM presentation_live_sessions WHERE workspace_id = $1 AND id = $2 FOR UPDATE",
       [input.workspaceId, input.sessionId],
@@ -490,6 +540,7 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     participantLimit: number,
   ): Promise<PresentationParticipantJoin> {
     return this.transaction(input.workspaceId, async (client) => {
+      await this.assertWorkspaceMutationAllowed(client, input.workspaceId);
       const locked = await client.query(
         `SELECT status, $3::timestamptz < live_expires_at AS live_open
          FROM presentation_live_sessions
@@ -654,6 +705,8 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
           ? { status: "idempotency_conflict", response: prior }
           : { status: "duplicate", response: prior };
       }
+
+      await this.assertWorkspaceMutationAllowed(client, input.workspaceId);
 
       if (this.options.concurrentResponseWrites) {
         // Enable only after every serving binary reads the commit-visible aggregate fence. The

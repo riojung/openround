@@ -91,8 +91,7 @@ export function presentationParticipantBlock(block: PresentationBlock | null) {
       id: block.id,
       kind: block.kind,
       layout: block.layout,
-      title: block.title,
-      body: block.body,
+      textElements: block.textElements.map((element) => ({ ...element })),
       mediaId: block.mediaId,
       mediaAlt: block.mediaAlt,
     };
@@ -199,8 +198,7 @@ function presentationRealtimeBlock(
       id: block.id,
       kind: block.kind,
       layout: block.layout,
-      title: block.title,
-      body: block.body,
+      textElements: block.textElements.map((element) => ({ ...element })),
       mediaId: block.mediaId,
       mediaAlt: block.mediaAlt,
     };
@@ -494,5 +492,6 @@ export function buildPresentationListSnapshot(
     createdAt: session.createdAt.toISOString(),
     updatedAt: session.updatedAt.toISOString(),
     finishedAt: session.finishedAt?.toISOString() ?? null,
+    liveExpiresAt: session.liveExpiresAt.toISOString(),
   };
 }

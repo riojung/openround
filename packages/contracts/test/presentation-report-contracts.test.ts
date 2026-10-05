@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { PresentationReportEnvelopeSchema, PresentationReportV1Schema } from "../src/index";
+import {
+  PresentationReportEnvelopeSchema,
+  PresentationReportV1Schema,
+  PresentationReportWithSessionContextEnvelopeSchema,
+} from "../src/index";
 
 function reportFixture() {
   const sessionId = randomUUID();
@@ -75,6 +79,33 @@ describe("Presentation report contracts", () => {
       status: "finished",
       trustMode: "learning",
     });
+  });
+
+  it("keeps stored V1 and its default envelope strict while opting into session context", () => {
+    const legacy = reportFixture();
+    expect(PresentationReportV1Schema.parse(legacy)).not.toHaveProperty("timeMode");
+    expect(PresentationReportV1Schema.safeParse({ ...legacy, timeMode: "flex" }).success).toBe(
+      false,
+    );
+    expect(
+      PresentationReportEnvelopeSchema.parse({ reportStatus: "ready", report: legacy }),
+    ).toEqual({ reportStatus: "ready", report: legacy });
+    for (const timeMode of ["timed", "flex"] as const) {
+      expect(
+        PresentationReportWithSessionContextEnvelopeSchema.parse({
+          reportStatus: "ready",
+          report: legacy,
+          sessionContext: { timeMode },
+        }),
+      ).toMatchObject({ report: legacy, sessionContext: { timeMode } });
+    }
+    expect(
+      PresentationReportEnvelopeSchema.safeParse({
+        reportStatus: "ready",
+        report: legacy,
+        sessionContext: { timeMode: "flex" },
+      }).success,
+    ).toBe(false);
   });
 
   it("keeps queue state separate from the finished session status", () => {

@@ -2,11 +2,34 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
 async function repositoryFile(path: string) {
   return readFile(join(repositoryRoot, path), "utf8");
+}
+
+type WorkflowStep = {
+  env?: Record<string, string>;
+  name?: string;
+  run?: string;
+  uses?: string;
+  with?: Record<string, unknown>;
+};
+
+type WorkflowJob = {
+  env?: Record<string, string>;
+  "runs-on"?: string | string[];
+  steps?: WorkflowStep[];
+};
+
+function workflowJobs(source: string) {
+  const workflow = parse(source) as { jobs?: Record<string, WorkflowJob> };
+  if (!workflow.jobs) {
+    throw new Error("Expected workflow jobs");
+  }
+  return workflow.jobs;
 }
 
 describe("Phase 0 evidence contract", () => {
@@ -49,7 +72,9 @@ describe("Phase 0 evidence contract", () => {
       13,
     );
     expect(status).toMatch(/Phase 0 exit remains open with thirteen gates/);
-    expect(plan).toMatch(/thirteen gates remain, primarily awaiting external or human evidence/);
+    expect(plan).toMatch(
+      /thirteen release-readiness gates remain, primarily awaiting external or human evidence/,
+    );
     expect(decision).toMatch(
       /Selected Phase 1 branch \(access\/companion\/measured failure\/pending\): Pending/,
     );
@@ -84,6 +109,108 @@ describe("Phase 0 evidence contract", () => {
     }
     expect(gate).toMatchObject({ status: "pending", evidence: [] });
     expect(gate?.criterion).toMatch(/50- and 250-client Round and Presentation/);
+    expect(workflow).toContain("target-region-evidence-bundle.json");
+    expect(workflow).toContain("scripts/ops/target-load-evidence.mjs bundle");
+    expect(runbook).toContain("exactly these four build- and region-matched");
+    expect(template).toContain("target-load schema version 2");
+  });
+
+  it("binds target load and Stripe replay to immutable evidence identities", async () => {
+    const [workflowSource, stripeReplay, loadDockerfile, runbook, targetTemplate, billingTemplate] =
+      await Promise.all([
+        repositoryFile(".github/workflows/staging-readiness.yml"),
+        repositoryFile("tests/smoke/stripe-replay.ts"),
+        repositoryFile("tests/load/Dockerfile"),
+        repositoryFile("docs/runbooks/staging-readiness.md"),
+        repositoryFile("docs/evidence/target-region-load.md"),
+        repositoryFile("docs/evidence/live-billing-rehearsal.md"),
+      ]);
+    const jobs = workflowJobs(workflowSource);
+    const load = jobs["target-region-load"];
+    const stripe = jobs["stripe-replay"];
+
+    expect(load?.env?.LOAD_EXPECTED_BUILD_ID).toBe("${{ github.sha }}");
+    expect(load?.env?.LOAD_SATURATION_EVIDENCE_REFERENCE).toContain(
+      "OPENROUND_TARGET_SATURATION_EVIDENCE_REFERENCE",
+    );
+    expect(load?.env?.LOAD_DURABLE_ARCHIVE_REFERENCE).toContain(
+      "OPENROUND_TARGET_DURABLE_ARCHIVE_REFERENCE",
+    );
+    const bundleStep = load?.steps?.find(
+      ({ name }) => name === "Validate and bind target-region evidence bundle",
+    );
+    expect(bundleStep?.run).toContain("--round-50");
+    expect(bundleStep?.run).toContain("--presentation-50");
+    expect(bundleStep?.run).toContain("--round-250");
+    expect(bundleStep?.run).toContain("--presentation-250");
+    expect(bundleStep?.run).toContain("--saturation-reference");
+    expect(bundleStep?.run).toContain("--durable-archive-reference");
+    const upload = load?.steps?.find(
+      ({ name }) => name === "Upload target-region load and soak evidence",
+    );
+    expect(upload?.with?.["retention-days"]).toBe(90);
+
+    expect(stripe?.env?.STRIPE_REHEARSAL_EXPECTED_BUILD_ID).toBe("${{ github.sha }}");
+    expect(stripeReplay).toContain('verifyLiveBuild("start")');
+    expect(stripeReplay).toContain('verifyLiveBuild("finish")');
+    expect(stripeReplay).toContain("expectedBuildId");
+    expect(loadDockerfile).toContain(
+      "COPY scripts/ops/target-load-evidence.mjs scripts/ops/target-load-evidence.mjs",
+    );
+    expect(targetTemplate).toMatch(/not runner metrics/i);
+    expect(runbook).toContain("## Billing-mode rehearsal sequence");
+    expect(runbook).toMatch(/provider-originated test checkout/);
+    expect(runbook).toMatch(/newly\s+reviewed signed billing-disabled build\/config/);
+    expect(billingTemplate).toMatch(/remain Pending until the manual provider criteria pass/);
+  });
+
+  it("attests the Node 24-compatible target-region runner without claiming runtime discovery", async () => {
+    const [template, runbook, readinessWorkflow, imageWorkflow] = await Promise.all([
+      repositoryFile("docs/evidence/target-region-load.md"),
+      repositoryFile("docs/runbooks/staging-readiness.md"),
+      repositoryFile(".github/workflows/staging-readiness.yml"),
+      repositoryFile(".github/workflows/staging-images.yml"),
+    ]);
+
+    const readinessJobs = workflowJobs(readinessWorkflow);
+    const targetRegionJob = readinessJobs["target-region-load"];
+    expect(targetRegionJob?.["runs-on"]).toEqual([
+      "self-hosted",
+      "single-vm-staging",
+      "actions-runner-2-327-1-plus",
+    ]);
+    const provenanceStep = targetRegionJob?.steps?.find(
+      ({ name }) => name === "Capture load-generator provenance",
+    );
+    expect(provenanceStep?.run).toContain('minimumRequiredVersion: "2.327.1"');
+    expect(provenanceStep?.run).toContain('versionAttestationLabel: "actions-runner-2-327-1-plus"');
+    expect(provenanceStep?.run).toMatch(
+      /requiredLabels: \[\s+"self-hosted",\s+"single-vm-staging",\s+"actions-runner-2-327-1-plus",\s+\]/,
+    );
+
+    for (const workflow of [readinessWorkflow, imageWorkflow]) {
+      const mainCandidateSteps = workflowJobs(workflow)["main-candidate"]?.steps ?? [];
+      const setupNodeIndex = mainCandidateSteps.findIndex(({ uses }) =>
+        uses?.startsWith("actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"),
+      );
+      const firstInlineNodeIndex = mainCandidateSteps.findIndex(({ run }) =>
+        run?.split("\n").some((line) => /^\s*node(?:\s|$)/.test(line)),
+      );
+      expect(setupNodeIndex).toBeGreaterThan(-1);
+      expect(firstInlineNodeIndex).toBeGreaterThan(-1);
+      expect(setupNodeIndex).toBeLessThan(firstInlineNodeIndex);
+      expect(mainCandidateSteps[setupNodeIndex]?.with?.["node-version"]).toBe(22);
+    }
+
+    expect(runbook).toMatch(/Actions\s+Runner `2\.327\.1` or newer/);
+    expect(runbook).toContain("bin/Runner.Listener --version");
+    expect(runbook).toContain("reviewed attestation, not runtime discovery");
+    expect(template).toContain("Installed Actions Runner version");
+    expect(template).toContain(
+      "Runner-version command output/checksum or inventory evidence reference",
+    );
+    expect(template).toContain("`actions-runner-2-327-1-plus` label applied after version review");
+    expect(template).toContain("Automatic-update/current-release verification");
   });
 
   it("keeps support readiness inside the beta-preflight operations gate", async () => {
@@ -205,8 +332,8 @@ describe("Phase 0 evidence contract", () => {
       "Phase 0 independent reviewer decision",
       "Frozen in-scope cohort/version and observation cutoff",
       "In-scope records by final disposition",
-      "Frozen primary facilitator cohort",
-      "Same-segment reserve order and substitutions with reasons",
+      "Frozen initial primary facilitator cohort",
+      "Same-segment reserve order and substitutions with predeclared reason codes",
       "Stable partner workflow IDs with a reviewed timing/connectivity exclusion",
       "Independent reviewer decision",
     ]) {

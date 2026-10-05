@@ -2,9 +2,15 @@
 
 Research date: 2026-09-17
 
-> **Current priority note (2026-09-23):** This document remains the historical strategy baseline
-> for the Recovery Loop. The broader current market scan and evidence-gated post-beta priorities are
-> in the [2026 market research and development plan](market-research-and-development-plan-2026-09.md).
+> **Current implementation checkpoint (2026-10-04):** The strategy and competitor claims below keep
+> their original research dates. PRs #60–69 have since added gated whole-room flex timing, the first
+> Question Health workflow, aggregate Session Decision Replay, bounded text-box placement/resizing
+> for Presentations, and owner-only deletion of archived Library content and finished/expired
+> session history. These are implemented code slices, not evidence that public rollout or product
+> usefulness gates have passed. The remaining frontier is evidence and release readiness, individual
+> time accommodations, accessible team delivery, selected response breadth, a browser slide
+> companion, and contract-gated institutional services. See the [2026 market research and
+> development plan](market-research-and-development-plan-2026-09.md) for current sequencing.
 
 This document uses public product and pricing material as market evidence. It is a product strategy
 and delivery plan, not a claim that planned capabilities already exist. Prices, limits, provider
@@ -21,10 +27,26 @@ cross-Round question reuse as an independent snapshot with fresh IDs and remappe
 links; it is not a synchronized question bank. Statements below describing those capabilities as
 absent should be read as historical audit findings.
 
-The current product frontier is live time-flex, hosted capacity evidence, team discussion delivery,
-short-text/rank response types, slide companion workflows, and contract-gated NRPS/AGS. The
-Single-VM beta remains blocked by deployment, operational, accessibility, security, legal, device,
-and design-partner evidence rather than a missing P0 feature epic.
+The current product frontier is validating implemented whole-room flex, Question Health, and
+Session Decision Replay; closing hosted-capacity and release-readiness evidence; and deciding from
+observed need whether to add individual time accommodations, team discussion delivery,
+short-text/rank response types, or a browser slide companion. NRPS/AGS remains contract-gated. The
+Single-VM beta is gated by deployment, operational, accessibility, security, legal, device, and
+design-partner evidence rather than by an unfinished P0 feature epic.
+
+## Current implementation checkpoint — 2026-10-04
+
+Merged PRs #60–69 extend the 2026-09-19 implementation update. Code availability and public
+readiness remain separate: several features are default-off or workspace-allowlisted, and their
+usefulness and accessibility evidence is still open.
+
+| Shipped code slice                                  | Current boundary                                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Whole-room flex timing for Rounds and Presentations | No countdown; the facilitator closes the response window. Gated by `FEATURE_LIVE_FLEX_MODE` and workspace allowlisting. Private participant-specific extra-time passes remain deferred.                                                                                                              |
+| Question Health advice                              | Deterministic advice, persistent dismiss/reopen, facilitator-approved draft edits with same-revision undo, immutable published-version analysis, and exact-version aggregate post-use observations are implemented. Usefulness and retained-revision thresholds remain unmeasured; rollout is gated. |
+| Session Decision Replay                             | New sessions can capture aggregate facilitator-decision events in durable state and show a read-only Report V4 timeline. Older report versions remain readable but have no replay. Rollout and partner-value evidence remain open.                                                                   |
+| Bounded Presentation slide editing                  | Text boxes can be placed and resized within a 16:9 slide, with guides, keyboard controls, and an image-safe region. This is not a freeform design canvas, PPTX editor, or slide companion.                                                                                                           |
+| Archived content and session deletion               | Workspace owners can confirm permanent deletion of archived Rounds/Presentations and finished or expired session history. Retained sessions and practice assignments block content deletion.                                                                                                         |
 
 ## Executive decision
 
@@ -148,24 +170,23 @@ Thresholds must be workspace-configurable later, but the first release should us
 tested defaults. Recommendations must never be generated from demographic or cross-session learner
 profiles.
 
-## What to build, and what not to chase
+## Strategy backlog and current disposition
 
-| Priority | Capability                                                                                                                                            | Reason                                                                                 |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Now      | Confidence alongside an answer                                                                                                                        | Creates a signal competitors rarely make central and needs no persistent identity      |
-| Now      | Choice-specific misconception labels and feedback                                                                                                     | Turns distributions into an actionable diagnosis                                       |
-| Now      | Linked rechecks and intervention tracking                                                                                                             | Implements the differentiated recovery loop                                            |
-| Now      | Recovery report and CSV/JSON export                                                                                                                   | Makes the outcome inspectable and useful after the session                             |
-| Now      | Multi-select, numeric, and unscored rating/poll items                                                                                                 | Covers common formative checks without becoming a presentation suite                   |
-| Next     | Co-facilitator role and handoff                                                                                                                       | Reduces live-session operational risk and supports moderation                          |
-| Next     | Bulk paste, CSV, and QTI import/export                                                                                                                | Lowers switching cost and reinforces openness/data portability                         |
-| Next     | Folders, tags, concept tags, and reusable checkpoint sets                                                                                             | Supports repeat use without a public marketplace                                       |
-| Next     | Time-flex mode and account-free accommodation passes                                                                                                  | Improves access while preserving guest participation                                   |
-| Next     | Signed self-paced follow-up links                                                                                                                     | Extends recovery after the room without creating child accounts                        |
-| Later    | LTI 1.3 Advantage, institutional SSO/SCIM, and optional roster/grade passback                                                                         | Required for institutional scale, but high-cost and contract-sensitive                 |
-| Later    | Moderated anonymous question parking lot                                                                                                              | Useful for higher education/workplace sessions after moderation safeguards exist       |
-| Later    | Source-grounded AI authoring with citations and human approval                                                                                        | Saves authoring time only after import, evaluation, privacy, and cost controls exist   |
-| Defer    | Full slide editor, public content marketplace, persistent avatar/reward profiles, native apps, generic chat assistant, and 1,000-player single events | Incumbents have strong advantages here and these do not strengthen the recovery thesis |
+The priority labels preserve the original 2026-09-17 strategy order. The current status column
+prevents already-shipped work from reading as pending implementation.
+
+| Original priority     | Capability                                                                                                                                                     | Current status                           | Remaining boundary or next decision                                                                                                    |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Now                   | Confidence, misconception labels, linked rechecks, interventions, and recovery reports                                                                         | Implemented                              | Validate comprehension, accessibility, and evidence quality with facilitators.                                                         |
+| Now                   | Multi-select, numeric, rating, and poll responses                                                                                                              | Implemented                              | Add exact-match short text or rank/order only if observed sessions establish demand.                                                   |
+| Next                  | Cohost role and handoff                                                                                                                                        | Implemented                              | Complete cofacilitation usability and hosted rollout evidence.                                                                         |
+| Next                  | Bulk paste, CSV/QTI import/export, folders, tags, and reusable checkpoint sets                                                                                 | Implemented                              | Reuse creates independent snapshots; a versioned Recovery Pack with update review remains a candidate.                                 |
+| Next                  | Whole-room flex timing                                                                                                                                         | Implemented behind a feature gate        | Validate the no-countdown, facilitator-closed flow. Individual time passes remain deferred for privacy, fairness, and reveal research. |
+| Next                  | Signed self-paced follow-up links and standalone assignments                                                                                                   | Implemented                              | Validate hosted use and retention; do not imply learner accounts or gradebook semantics.                                               |
+| Now, evidence pending | Question Health advice and Session Decision Replay                                                                                                             | Implemented as bounded, gated slices     | Measure advice usefulness, accepted revisions, report comprehension, and whether the replay changes facilitator decisions.             |
+| Later                 | LTI 1.3 Advantage, institutional SSO/SCIM, and optional roster/grade passback                                                                                  | Foundations only                         | Contract, privacy, certification, and named-pilot gates remain.                                                                        |
+| Later                 | Browser slide companion                                                                                                                                        | Not implemented as a production workflow | Prototype only if observed deck use and context-switching meet the evidence gate.                                                      |
+| Defer                 | Full freeform slide editor, public content marketplace, persistent avatar/reward profiles, native apps, generic chat assistant, and 1,000-player single events | Deliberate non-goals                     | Bounded text-box placement is implemented; broader design tools do not strengthen the recovery thesis.                                 |
 
 ## Technical design
 
@@ -235,9 +256,10 @@ live recommendations must remain fast, explainable, testable, and available to s
 - Reports default to aggregates; participant rows continue to use ephemeral aliases unless the
   operator has an approved identified workflow.
 - Participant-specific feedback is projected only to that participant and the authorized host.
-- Time-flex mode keeps checkpoints host-locked instead of pressuring participants with a speed
-  countdown. A later signed accommodation pass may alter an individual's deadline without creating
-  an account, but reveal timing and fairness require usability testing first.
+- Whole-room time-flex keeps checkpoints host-locked instead of pressuring participants with a
+  speed countdown. The gated implementation is available for Rounds and Presentations. A later
+  signed accommodation pass may alter an individual's deadline without creating an account, but
+  reveal timing, fairness, privacy, and usability still require a separate decision.
 - Every new response type must pass keyboard, screen-reader, zoom, contrast, reduced-motion, touch,
   and no-shared-display acceptance under WCAG 2.2 AA.
 
@@ -251,9 +273,9 @@ live recommendations must remain fast, explainable, testable, and available to s
 
 ## Phased implementation plan
 
-The schedule assumes one full-time engineer plus fractional product/design, accessibility,
-security, and research support. It starts after the current P0 branch is merged and does not replace
-the existing single-VM production-readiness gates.
+The following is the original schedule, not the current implementation queue. It assumed one
+full-time engineer plus fractional product/design, accessibility, security, and research support;
+the separate single-VM production-readiness gates still apply.
 
 | Phase                           |      Timing | Scope                                                                                                                                                                                           | Exit gate                                                                                                                                                                            |
 | ------------------------------- | ----------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

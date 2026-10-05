@@ -8,6 +8,7 @@ import {
 
 const current: SessionSettings = {
   audienceLimit: 80,
+  timeMode: "flex",
   scoringMode: "speed",
   resultVisibility: "leaderboard",
   allowLateJoin: false,
@@ -25,6 +26,7 @@ describe("setup recipes", () => {
     ).toEqual({
       settings: {
         audienceLimit: 50,
+        timeMode: "flex",
         scoringMode: "accuracy",
         resultVisibility: "private",
         allowLateJoin: true,
@@ -42,7 +44,11 @@ describe("setup recipes", () => {
         maxParticipants: 100,
         roundExperiencesAvailable: true,
       }),
-    ).toMatchObject({ experiencePreset: "spark", presenterSoundEnabled: false });
+    ).toMatchObject({
+      settings: { timeMode: "timed", scoringMode: "speed" },
+      experiencePreset: "spark",
+      presenterSoundEnabled: false,
+    });
     expect(
       resolveSetupRecipe("competition", current, {
         segment: "education",

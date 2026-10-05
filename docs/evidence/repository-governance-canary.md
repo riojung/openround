@@ -44,6 +44,31 @@ a check from an older commit, or a manually overridden result does not satisfy t
 | `sbom`                         |                        | Pending |
 | `codeql`                       |                        | Pending |
 
+## Release-tag rule snapshot
+
+The branch canary does not prove release-tag protection. Record separate API exports after the
+reviewed `.github/rulesets/release-tags.json` creation specification and
+`.github/rulesets/release-tag-immutability.json` immutability specification are both applied and
+activated.
+
+- Active release-tag creation ruleset URL/ID:
+- Active release-tag immutability ruleset URL/ID:
+- Creation configuration export checksum:
+- Immutability configuration export checksum:
+- Named owner actor ID verified against `riojung`:
+
+| Required control                                             | Configuration/audit evidence | Result  |
+| ------------------------------------------------------------ | ---------------------------- | ------- |
+| Pattern is exactly `refs/tags/v*`                            |                              | Pending |
+| Release-tag creation is restricted to named owner `riojung`  |                              | Pending |
+| Creation ruleset contains only the creation restriction      |                              | Pending |
+| Release-tag deletion is blocked                              |                              | Pending |
+| Non-fast-forward release-tag updates are blocked             |                              | Pending |
+| All release-tag updates are blocked                          |                              | Pending |
+| Immutability ruleset has no bypass actor                     |                              | Pending |
+| Test tag creation is denied for a non-release actor          |                              | Pending |
+| Test tag deletion/update is denied for the release actor too |                              | Pending |
+
 ## Canary sequence
 
 | Observation                                                            | Evidence reference | Result                  |
