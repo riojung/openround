@@ -37,12 +37,20 @@ interface PresentationSessionSummary {
   participantCount: number;
   responseCount: number;
   createdAt: string;
+  liveExpiresAt?: string;
+}
+
+function presentationSessionStatus(session: PresentationSessionSummary) {
+  return session.liveExpiresAt && new Date(session.liveExpiresAt).getTime() <= Date.now()
+    ? "expired"
+    : session.status;
 }
 
 function SessionsContent() {
   const router = useRouter();
   const { locale, t } = useLocale();
-  const { canEdit, productFeatures } = useWorkspace();
+  const { creator, canEdit, productFeatures } = useWorkspace();
+  const canDelete = creator?.role === "owner";
   const presentationsEnabled = productFeatures?.presentations === true;
   const [artifactType, setArtifactType] = useState<ArtifactFilter>("all");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -58,10 +66,12 @@ function SessionsContent() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [busyId, setBusyId] = useState("");
+  const [deletingId, setDeletingId] = useState("");
   const [error, setError] = useState("");
   const queryKey = `${artifactType}\u0000${status}\u0000${quizId}\u0000${fromDate}\u0000${toDate}`;
   const activeQueryKey = useRef(queryKey);
   const loadMoreController = useRef<AbortController | null>(null);
+  const deletedSessionIds = useRef(new Set<string>());
   activeQueryKey.current = queryKey;
 
   const fetchPage = useCallback(
@@ -88,7 +98,11 @@ function SessionsContent() {
     ])
       .then(([roundResponse, presentationResponse]) => {
         setRounds(roundResponse.quizzes);
-        setPresentationSessions(presentationResponse.sessions);
+        setPresentationSessions(
+          presentationResponse.sessions.filter(
+            (session) => !deletedSessionIds.current.has(session.id),
+          ),
+        );
       })
       .catch(() => undefined);
   }, [presentationsEnabled]);
@@ -96,7 +110,7 @@ function SessionsContent() {
   const visiblePresentationSessions = presentationSessions.filter((session) => {
     if (artifactType === "round") return false;
     if (quizId !== "all") return false;
-    if (status !== "all" && status !== session.status) return false;
+    if (status !== "all" && status !== presentationSessionStatus(session)) return false;
     const createdAt = new Date(session.createdAt).getTime();
     if (fromDate && createdAt < new Date(`${fromDate}T00:00:00`).getTime()) return false;
     if (toDate && createdAt > new Date(`${toDate}T23:59:59.999`).getTime()) return false;
@@ -116,7 +130,11 @@ function SessionsContent() {
     void fetchPage(undefined, controller.signal)
       .then((response) => {
         if (controller.signal.aborted || activeQueryKey.current !== requestedQueryKey) return;
-        setSessions(artifactType === "presentation" ? [] : response.items);
+        setSessions(
+          artifactType === "presentation"
+            ? []
+            : response.items.filter((session) => !deletedSessionIds.current.has(session.id)),
+        );
         setNextCursor(artifactType === "presentation" ? null : response.nextCursor);
       })
       .catch((caught) => {
@@ -146,7 +164,10 @@ function SessionsContent() {
     try {
       const response = await fetchPage(requestedCursor, controller.signal);
       if (controller.signal.aborted || activeQueryKey.current !== requestedQueryKey) return;
-      setSessions((current) => [...current, ...response.items]);
+      setSessions((current) => [
+        ...current,
+        ...response.items.filter((session) => !deletedSessionIds.current.has(session.id)),
+      ]);
       setNextCursor(response.nextCursor);
     } catch (caught) {
       if (controller.signal.aborted || activeQueryKey.current !== requestedQueryKey) return;
@@ -172,6 +193,44 @@ function SessionsContent() {
     } catch (caught) {
       setError(humanError(caught));
       setBusyId("");
+    }
+  }
+
+  async function deleteSession(
+    session: { id: string; title: string },
+    artifact: Exclude<ArtifactFilter, "all">,
+  ) {
+    if (
+      !canDelete ||
+      busyId ||
+      !window.confirm(t("pages.sessions.deleteConfirm", { title: session.title }))
+    )
+      return;
+    setBusyId(session.id);
+    setDeletingId(session.id);
+    setError("");
+    try {
+      const path = artifact === "presentation" ? "presentation-sessions" : "sessions";
+      await apiFetch(`/v1/${path}/${session.id}`, { method: "DELETE" });
+      deletedSessionIds.current.add(session.id);
+      setSessions((current) => current.filter((item) => item.id !== session.id));
+      setPresentationSessions((current) => current.filter((item) => item.id !== session.id));
+      try {
+        const credentialKinds =
+          artifact === "presentation"
+            ? ["presentation-host", "presentation-participant", "presentation-companion"]
+            : ["host", "participant", "presenter", "presenter-policy", "presenter-origins", "code"];
+        for (const kind of credentialKinds) {
+          window.sessionStorage.removeItem(`openround:${kind}:${session.id}`);
+        }
+      } catch {
+        // Browser storage may be unavailable; deletion has already revoked durable credentials.
+      }
+    } catch (caught) {
+      setError(humanError(caught));
+    } finally {
+      setBusyId("");
+      setDeletingId("");
     }
   }
 
@@ -281,8 +340,8 @@ function SessionsContent() {
                     })}
                   </p>
                 </div>
-                <span className={styles.status} data-tone={session.status}>
-                  {t(`pages.common.status.${session.status}`)}
+                <span className={styles.status} data-tone={presentationSessionStatus(session)}>
+                  {sessionStatusLabel(presentationSessionStatus(session), t)}
                 </span>
               </div>
               <div className={styles.metricGrid}>
@@ -310,7 +369,7 @@ function SessionsContent() {
                 </div>
               </div>
               <div className={styles.listCardActions}>
-                {session.status === "active" && canEdit ? (
+                {presentationSessionStatus(session) === "active" && canEdit ? (
                   <Link
                     className="button small-button"
                     href={`/presentation-session/${session.id}/host`}
@@ -330,6 +389,18 @@ function SessionsContent() {
                 >
                   {t("pages.sessions.viewPresentation")}
                 </Link>
+                {presentationSessionStatus(session) !== "active" && canDelete ? (
+                  <button
+                    className="button-quiet small-button"
+                    disabled={Boolean(busyId)}
+                    onClick={() => void deleteSession(session, "presentation")}
+                    type="button"
+                  >
+                    {deletingId === session.id
+                      ? t("pages.sessions.deleting")
+                      : t("pages.sessions.delete")}
+                  </button>
+                ) : null}
               </div>
             </article>
           ))}
@@ -412,6 +483,18 @@ function SessionsContent() {
                 >
                   {t("pages.sessions.viewRound")}
                 </Link>
+                {session.status !== "active" && canDelete ? (
+                  <button
+                    className="button-quiet small-button"
+                    disabled={Boolean(busyId)}
+                    onClick={() => void deleteSession(session, "round")}
+                    type="button"
+                  >
+                    {deletingId === session.id
+                      ? t("pages.sessions.deleting")
+                      : t("pages.sessions.delete")}
+                  </button>
+                ) : null}
               </div>
             </article>
           ))}

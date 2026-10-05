@@ -561,7 +561,8 @@
   background: var(--ui-surface-hover);
 }
 
-.moreMenuPanel .dangerAction {
+.moreMenuPanel .dangerAction,
+.bulkActions .dangerAction {
   color: var(--ui-danger-text);
 }
 

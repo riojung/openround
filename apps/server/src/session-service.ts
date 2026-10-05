@@ -63,6 +63,8 @@ import { createPendingReport } from "./reporting.js";
 import type { MetricsService } from "./metrics.js";
 import { entitlementsFor, retentionExpiry } from "./entitlements.js";
 import { ProductEventDispatcher, type ProductEventInput } from "./product-events.js";
+import { evidenceWorkspaceFeatureEnabled } from "./workspace-rollout.js";
+import { decisionEventsForTransition } from "./session-decision-replay.js";
 
 export interface SessionMutation {
   state: GameState;
@@ -650,9 +652,10 @@ export class SessionService {
     events: EngineEvent[],
     expectedVersion: number,
     report?: Report,
+    decisionEvents: Parameters<Repository["saveSession"]>[3] = [],
   ) {
     session.updatedAt = new Date();
-    await this.repository.saveSession(session, expectedVersion, report);
+    await this.repository.saveSession(session, expectedVersion, report, decisionEvents);
     this.active.set(session.id, session);
     this.metrics.setActiveSessions(this.active.size);
     await Promise.allSettled([
@@ -682,7 +685,12 @@ export class SessionService {
     const existing = this.timers.get(session.id);
     if (existing) clearTimeout(existing);
     this.timers.delete(session.id);
-    if (session.state.phase !== "question_open" || !session.state.deadlineMs) return;
+    if (
+      session.state.phase !== "question_open" ||
+      session.state.settings.timeMode === "flex" ||
+      session.state.deadlineMs === null
+    )
+      return;
     const delay = Math.max(0, session.state.deadlineMs - Date.now());
     const deadlineMs = session.state.deadlineMs;
     const timer = setTimeout(
@@ -702,20 +710,51 @@ export class SessionService {
       await this.flushAnswersReceivedBy(sessionId, deadlineMs);
       await this.mutate(sessionId, "deadline", async () => {
         const session = await this.loadSessionForMutation(sessionId);
-        if (!session || session.state.phase !== "question_open") return;
+        if (
+          !session ||
+          session.state.phase !== "question_open" ||
+          session.state.settings.timeMode === "flex" ||
+          session.state.deadlineMs === null
+        )
+          return;
         if (session.state.deadlineMs && Date.now() < session.state.deadlineMs) {
           this.scheduleDeadline(session);
           return;
         }
+        const priorState = session.state;
+        const lockTimeMs = Date.now();
         const result = applyHostCommand(session.state, {
           action: "lock",
           commandId: `deadline:${session.state.roundId}`,
           expectedVersion: session.state.version,
-          nowMs: Date.now(),
+          nowMs: lockTimeMs,
           newRoundId: randomUUID,
         });
         session.state = result.state;
-        await this.save(session, result.events, result.state.version - 1);
+        const decisionEvents = session.decisionReplayEnabled
+          ? decisionEventsForTransition({
+              before: priorState,
+              after: result.state,
+              engineEvents: result.events,
+              action: "deadline",
+              commandId: `deadline:${priorState.roundId}`,
+              occurredAt: new Date(lockTimeMs),
+            })
+          : [];
+        try {
+          await this.save(
+            session,
+            result.events,
+            result.state.version - 1,
+            undefined,
+            decisionEvents,
+          );
+        } catch (error) {
+          session.state = priorState;
+          this.active.delete(session.id);
+          this.metrics.setActiveSessions(this.active.size);
+          throw error;
+        }
         this.recordSessionProductEvents(
           session.workspaceId,
           this.lifecycleProductEvents(result.events, new Date(deadlineMs)),
@@ -738,6 +777,12 @@ export class SessionService {
   ): Promise<{ sessionId: string; code: string; hostToken: string; snapshot: SessionSnapshot }> {
     if (creator.role === "viewer") {
       throw new SessionError("UNAUTHORIZED", "Viewers cannot host live rounds");
+    }
+    if (
+      settings.timeMode === "flex" &&
+      !evidenceWorkspaceFeatureEnabled(this.config, creator.workspaceId, "liveFlexMode")
+    ) {
+      throw new SessionError("NOT_FOUND", "Flex sessions are not available in this workspace");
     }
     if (settings.trustMode === "verified") {
       throw new SessionError(
@@ -808,6 +853,11 @@ export class SessionService {
           hostId: creator.userId,
           hostTokenHash: hashToken(hostToken),
           trustMode: settings.trustMode ?? "learning",
+          decisionReplayEnabled: evidenceWorkspaceFeatureEnabled(
+            this.config,
+            creator.workspaceId,
+            "decisionReplay",
+          ),
           state: createGameState({
             sessionId,
             code,
@@ -1610,10 +1660,24 @@ export class SessionService {
                 }
                 const report =
                   session.state.phase === "finished"
-                    ? createPendingReport(session.state, session.retentionExpiresAt)
+                    ? createPendingReport(
+                        session.state,
+                        session.retentionExpiresAt,
+                        session.decisionReplayEnabled ?? false,
+                      )
                     : undefined;
+                const decisionEvents = session.decisionReplayEnabled
+                  ? decisionEventsForTransition({
+                      before: priorState,
+                      after: session.state,
+                      engineEvents: result.events,
+                      action: input.action,
+                      commandId: input.commandId,
+                      occurredAt: commandTime,
+                    })
+                  : [];
                 try {
-                  await this.save(session, result.events, expectedVersion, report);
+                  await this.save(session, result.events, expectedVersion, report, decisionEvents);
                 } catch (error) {
                   session.state = priorState;
                   session.retentionExpiresAt = priorRetentionExpiresAt;

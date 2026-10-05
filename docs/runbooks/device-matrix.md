@@ -13,7 +13,9 @@ in for the reviewed single-VM staging candidate.
 3. Name a test owner and an independent reviewer. Create stable run IDs and a private evidence
    index that contains no room code, cookie, participant alias, or response content.
 4. Create one reviewed Round and one reviewed Presentation containing a scorable block, reveal,
-   intervention, and linked recheck. Keep the content and settings identical across devices.
+   intervention, and linked recheck. Include a content slide with a moved/resized title, multiple
+   text boxes, and an image. Record enabled flex, Question Health, and Decision Replay flags when
+   they are in the candidate. Keep the content and settings identical across devices.
 
 ## Execute each device row
 
@@ -32,6 +34,14 @@ For each real device/network combination:
    ready-report counts. Confirm retries did not create duplicate accepted answers.
 6. Repeat the steps for the other artifact type. Record captive-portal, firewall, proxy, VPN,
    WebSocket, QR-permission, and fallback observations.
+7. Compare the customized content slide in authoring preview, facilitator, and participant views.
+   Check touch/keyboard and inspector placement controls on supported authoring devices, image
+   clearance, legible overflow, and narrow top-to-bottom/left-to-right reading order. Reopen the
+   saved slide and confirm its geometry persists.
+8. For enabled replay/flex candidates, verify host-closed flex responses and the ready report's
+   captured decision timeline without inventing earlier history. Delete a synthetic finished or
+   expired session, then archive/delete its unreferenced source through the owner UI. Check
+   confirmation focus/status and stale browser/back-navigation behavior; old credentials must fail.
 
 ## Thirty-device lobby
 

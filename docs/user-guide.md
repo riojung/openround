@@ -6,12 +6,19 @@ do not need accounts.
 
 For a local first run, complete the [quick start](quick-start.md) first.
 
+The default Community setup uses the classic Round workflow. The professional workspace and
+Presentation builder require operator-enabled beta flags and a workspace allowlist. Live
+Presentations, whole-room flex timing, Question Health, and decision replay have additional
+workspace rollout gates. A feature described here may therefore be absent from your deployment;
+see [optional beta configuration](quick-start.md#optional-beta-workflows). These controls do not
+mean that public production or institutional readiness gates have passed.
+
 ## Roles and screens
 
 | Role               | Main job                                                       | Access                                        |
 | ------------------ | -------------------------------------------------------------- | --------------------------------------------- |
 | Workspace owner    | Manage people, billing, deletion, content, rounds, and reports | Full workspace                                |
-| Editor             | Create Rounds, host sessions, and use reports                  | No membership, billing, or workspace deletion |
+| Editor             | Create Rounds, host sessions, and use reports                  | No membership, billing, or permanent deletion |
 | Viewer             | Review content and reports                                     | Read only                                     |
 | Session cohost     | Help control one assigned live round                           | Revocable round-scoped credential             |
 | Presenter          | Show a clean room-facing display                               | Separate read-only credential                 |
@@ -82,6 +89,43 @@ Select **Preview** to inspect the participant experience, then **Publish**. Publ
 immutable version. Editing afterward changes only the draft until it is published again; an
 active round always retains the version it started with.
 
+### Review Question Health
+
+When Question Health is enabled in the professional Round builder, expand **Question Health ·
+advisory** and select **Review saved draft**. Wait for **Saved** first: the review describes one
+saved draft revision and becomes stale after an edit. Each finding identifies the question and
+field, explains the observed evidence, and suggests an action. Checks include duplicate or
+overlapping choices, length cues, missing distractor feedback, explanations or citations, mobile
+density, conflicting question settings, and linked-recheck wording or concepts. They are
+deterministic authoring advice and do not block publishing.
+
+Owners and editors can choose a reason and **Dismiss finding**, then **Reopen finding** later. The
+decision is shared in the workspace and applies only while the relevant content and rules match;
+editing that content can make the finding appear again. Saved decisions remain available to review
+and reopen if an operator pauses new Question Health reviews.
+
+For a supported finding, choose **Prepare draft revision**, write the proposed replacement, and
+select **Preview before/after** before **Apply to saved draft**. A settings correction can align an
+opinion question's scoring and confidence settings. Other findings still require normal
+manual editing. Apply changes only the draft. **Undo this revision** restores that one change
+while it is still the current saved revision; another edit makes that undo unavailable. Review the
+result, preview it, and publish explicitly when ready.
+
+After publishing, **Question Health · published version (read-only)** offers **Review published
+version** against that exact immutable version. It does not change the version or its existing
+sessions. **Edit matching question in current draft** opens the matching draft question when it
+still exists; publish the revised draft to use it in future sessions.
+
+In the same panel, **Review post-use observations** summarizes retained completed-session reports
+for that exact published version. It examines at most the 250 most recent eligible reports and
+keeps trust mode, timed/flex mode, and speed/accuracy scoring groups separate. A question needs at
+least 20 responses in each included session. Cross-session accuracy variation is flagged only
+after at least three compatible sessions and a range of at least 30 percentage points; unused
+distractors require complete retained choice-count evidence. Ratings, polls, opinion questions,
+and linked rechecks are excluded from these main-question checks. These aggregates suggest where
+to review wording or instruction; they do not establish cause, create learner profiles, or prove
+long-term learning. No eligible observations yet is a normal state.
+
 ### Source-grounded authoring assistant
 
 When an operator configures an approved provider, expand **Draft checkpoints from a trusted
@@ -100,6 +144,62 @@ to creators; participant/session data is never sent in authoring prompts. If the
 assistant is disabled, the deployment sends no source to a model. Hosted Free allows three jobs
 per month, Hosted Pro allows 100, and a community operator controls provider access.
 
+## Create and host a Presentation
+
+When Presentations are enabled for your workspace, select **Create**, then **Presentation**. Add
+content slides and interactive question blocks, or copy questions from a published Round. Copied
+questions are independent; later source edits do not synchronize. Wait for **Saved**, inspect
+**Preview**, and **Publish** an immutable version before hosting. Speaker notes and source
+citations remain private authoring/facilitator information.
+
+Live Presentation creation requires its separate realtime rollout gate. Select **Host**, create a
+session from the published version, and share its code or direct link. Advance through content
+slides and open, close, reveal, or recheck interactive questions using the controls offered for
+the current phase. Participants receive complete slide content and question controls on their
+own devices. When live flex mode is also enabled, choose **Flex** during setup to remove question
+countdowns and deadlines for the whole room; the host closes responses. The live code expires
+after 24 hours independently of how long session history is retained.
+
+### Arrange text on a Presentation slide
+
+Content slides support up to eight text elements total: exactly one title and up to seven text
+boxes. The title accepts up to 160 characters; each text box accepts up to 4,000. Select a title
+or text box on the canvas to edit it, or use **Content** in the inspector. Choose **Add text box** to
+add another text element. Drag its move handle to position it on the bounded 16:9 canvas. Drag the
+selected element's corner handle to change its width and height. With either handle focused, arrow
+keys move or resize by 1% of the slide; hold Shift for 5%. **Show layout guides** in the **Layout**
+inspector displays a 10% grid, safe margins, and alignment cues. The inspector also provides
+horizontal and vertical position, width, and height as percentages for precise adjustment.
+Adding text to an unchanged starter arrangement creates additional rows or columns. Once placement
+is customized, adding a text box preserves the existing rectangles and looks for an empty area.
+
+**Position on slide** provides nine quick region arrangements, stacking text in that region.
+Use **Move up** and **Move down** to exchange positions and reading order within a region. The title
+stays on the slide, while other text boxes can be removed. Resize a box if a fit warning appears;
+overflowing text remains scrollable in preview and delivery. Narrow screens show complete text in
+a single reading column rather than shrinking it to the desktop rectangles.
+
+Custom text rectangles may overlap each other; the editor warns about the overlap rather than
+rejecting the arrangement. The attached image area remains protected.
+
+The six structured layouts—**Title**, **Title + body**, **Media**, **Quote**, **Section**, and
+**Callout**—provide starting arrangements and visual styles. Applying one resets text positions to
+that layout's defaults, and **Undo** restores the previous arrangement.
+The canvas, preview, facilitator view, and participant view share the same slide arrangement, with
+narrow screens reading top to bottom and left to right.
+
+Attached images keep their preset placement. The guides mark a reserved **Image area**; attaching
+an image reflows starter text and adjusts custom text boxes that intersect that area. Moving or
+resizing text keeps it clear of the image. Removing an image restores starter text space while
+preserving customized arrangements.
+Region shortcuts use neighboring slots when the image occupies the requested region, keeping
+multiple text boxes stacked in order.
+
+Bounded positioning, resizing, and layout guides are in scope. Rotation, shapes, detailed font
+styling, and a full freeform design canvas remain deferred.
+
+## Organize and manage the Library
+
 ### Import, export, folders, and tags
 
 Use folders, tags, and search to organize the library. Imports support bulk paste, CSV, versioned
@@ -110,6 +210,30 @@ types and omitted media are reported.
 
 Export a checkpoint set as OpenRound JSON, formula-safe UTF-8 CSV, or QTI ZIP. Hosted portability
 exports require Pro; community deployments do not impose an application paywall.
+
+### Delete archived content and session history
+
+Workspace owners can permanently delete archived Rounds and Presentations in **Library**.
+Filter by **Archived**, open an item's **More** menu, and choose **Delete permanently**.
+To delete several archived items, select them and choose **Delete (N)** in the selection bar.
+With a mixed selection, only the archived items are included. Confirm before deletion; canceling
+keeps every item. Deletion removes all drafts, published versions, recovery history, favorites,
+and group links for the item and cannot be undone. **Restore** remains available while an item
+is archived.
+
+An item with retained sessions or practice assignments cannot be deleted. Delete its associated
+sessions first; content used by retained practice assignments must stay archived until those
+assignments are removed by retention cleanup.
+
+In **Sessions**, owners can choose **Delete session** for a finished or expired Round or
+Presentation session. Confirmation permanently removes that session's responses, report, and
+linked follow-ups. The source Round or Presentation remains in the Library. Active rooms must
+finish or expire before the session list offers deletion. Editors and viewers cannot permanently
+delete content or sessions.
+
+Live access expiry does not immediately remove retained session history. An **Expired** session
+can remain listed for its retention period, but cannot be resumed. Deleting its history also
+removes the retained-session reference that otherwise prevents deletion of its source item.
 
 ### Choose a Round Experience
 
@@ -137,8 +261,11 @@ muted and duplicates visual status rather than carrying unique information.
 
 ## Host a live round
 
-Select **Host** on a published set. Review audience, scoring, result visibility, late joining,
-nickname policy, Round Experience, presenter sound, and Q&A settings before creating the room.
+Select **Host** on a published set. Review audience, response timing, scoring, result visibility,
+late joining, nickname policy, Round Experience, presenter sound, and Q&A settings before creating
+the room. Timed is the default. An allowlisted workspace with live flex mode enabled can choose
+**Flex** for a whole room: no response countdown or deadline, no speed scoring, and the host
+decides when to close each question. The choice is frozen when the session is created.
 OpenRound then issues a seven-digit code, direct link, downloadable QR, and one-time host
 credential.
 
@@ -158,10 +285,12 @@ access instead of sharing the host credential.
 
 ### Run the Recovery Loop
 
-1. **Start round** opens the main checkpoint using a server-owned deadline.
+1. **Start round** opens the main checkpoint. Timed rooms use a server-owned deadline; flex rooms
+   stay open until the host closes responses.
 2. Participants answer and optionally report confidence. An answer is complete only after
    **Answer received and saved**.
-3. Lock at the deadline or select **Lock answers** early.
+3. In a timed room, let the deadline close responses or select **Lock answers** early. In a flex
+   room, select **Lock answers** when participants have had enough time.
 4. Review the measured participation, correctness, confidence, and misconception signals. Every
    insight card shows the threshold and measurement behind its suggestion; it is guidance, not an
    automated judgment.
@@ -170,9 +299,10 @@ access instead of sharing the host credential.
 6. Run the linked recheck, or use a same-checkpoint revote when no linked recheck exists.
 7. Finish the recovery branch before showing standings or moving to the next main checkpoint.
 
-Pause and resume preserve server time. Reconnect restores the exact lobby, checkpoint,
-intervention, or recheck state. Open checkpoint payloads never expose answer keys, explanations,
-misconception labels, private citations, or response distributions.
+Pause and resume preserve remaining server time in timed rooms; flex rooms remain untimed.
+Reconnect restores the exact lobby, checkpoint, intervention, or recheck state. Open checkpoint
+payloads never expose answer keys, explanations, misconception labels, private citations, or
+response distributions.
 
 ## Audience Pulse and room chat
 
@@ -249,13 +379,24 @@ interventions, linked-recheck recovery, separately labelled revote improvement, 
 concepts, participation, response time, the frozen experience, aggregate Pulse distributions,
 conversation/moderation counts, Q&A, and participant-private feedback.
 
+For Rounds created while decision replay capture is enabled, report v4 adds **Decision replay**.
+Its **Facilitator decisions** timeline records the insight measurements and recommendation shown
+at lock, including the rule version, plus answer reveal, intervention start/finish, recheck or
+revote opening, question advance, and session finish. These are recorded server events; the report
+does not infer actions from answers or record audio/video. Capture is frozen at session creation,
+so enabling it later does not reconstruct an older session. Existing captured sessions retain it
+when new capture is paused. A missing or partial timeline is labelled explicitly; capture is
+bounded to 5,000 events per session. Replay is descriptive context, not evidence that an action
+caused recovery, and is included in the versioned report exports.
+
 Linked recovery always displays its numerator, denominator, evidence type, and a small-sample
 warning. It means initially incorrect participants who answered both checks and later answered the
 linked recheck correctly. It is session evidence, not proof of long-term learning.
 
-Download versioned JSON or formula-safe UTF-8 CSV where the edition permits it. Use **Delete
-session and report** to permanently remove the session tree. Hosted Free defaults to 30-day report
-retention, Hosted Pro to 365 days, and community operators configure their own default.
+Download versioned JSON or formula-safe UTF-8 CSV where the edition permits it. Workspace owners
+can use **Delete session and report** to permanently remove the session tree. Hosted Free defaults
+to 30-day report retention, Hosted Pro to 365 days, and community operators configure their own
+default.
 
 The standard report stays aggregate-first and does not embed raw chat or participant-level signal
 history. An authorized owner, editor, or viewer can open the interaction transcript; only an
@@ -333,7 +474,8 @@ text and set the corresponding policy version.
 ## Accessibility and facilitation
 
 - Prefer accuracy mode for formative learning; use speed only when speed has instructional value.
-- Use time-flex follow-up or accommodation passes where timing is not part of the construct.
+- Where enabled, use whole-room **Flex** for host-led live questions. Use time-flex follow-up or
+  accommodation passes for self-paced work where timing is not part of the construct.
 - Keep prompts concise, but put every essential fact and answer label on participant devices.
 - Never rely on colour, position, a projector, or an image alone.
 - Test keyboard operation, screen readers, 200% zoom, reduced motion, contrast, and the actual
@@ -342,19 +484,23 @@ text and set the corresponding policy version.
 
 ## Troubleshooting
 
-| Message or symptom                                      | Meaning and response                                                                 |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| **Invalid code**                                        | Check all seven digits; the round may have ended or expired.                         |
-| **Session is not accepting participants**               | The lobby is locked, late join is off, or the round ended.                           |
-| **Time expired before the server received that answer** | The authoritative deadline passed before receipt.                                    |
-| **This tab does not have the host credential**          | Return to the original host tab or issue a new scoped staff credential.              |
-| **Reconnecting…**                                       | Leave the tab open; the client requests an authoritative snapshot.                   |
-| **Room chat is closed**                                 | The host must enable chat for this session; Pulse may still be available.            |
-| **You are sending messages too quickly**                | Wait for the displayed slow-mode/rate-limit interval, then retry once.               |
-| Pulse totals are hidden                                 | Fewer than five unique participants have signalled in the current context.           |
-| Report says **Finalizing…**                             | Wait up to 60 seconds, then ask the operator to inspect report jobs.                 |
-| Authoring says **disabled**                             | The operator has not configured an approved provider; no source is sent.             |
-| An authoring proposal **needs attention**               | Review its extraction/provider message and submit a corrected source or retry later. |
+| Message or symptom                                      | Meaning and response                                                                        |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| **Invalid code**                                        | Check all seven digits; the round may have ended or expired.                                |
+| **Session is not accepting participants**               | The lobby is locked, late join is off, or the round ended.                                  |
+| **Time expired before the server received that answer** | The timed room's authoritative deadline passed before receipt. Flex rooms have no deadline. |
+| **This tab does not have the host credential**          | Return to the original host tab or issue a new scoped staff credential.                     |
+| **Reconnecting…**                                       | Leave the tab open; the client requests an authoritative snapshot.                          |
+| **Room chat is closed**                                 | The host must enable chat for this session; Pulse may still be available.                   |
+| **You are sending messages too quickly**                | Wait for the displayed slow-mode/rate-limit interval, then retry once.                      |
+| Pulse totals are hidden                                 | Fewer than five unique participants have signalled in the current context.                  |
+| Report says **Finalizing…**                             | Wait up to 60 seconds, then ask the operator to inspect report jobs.                        |
+| Authoring says **disabled**                             | The operator has not configured an approved provider; no source is sent.                    |
+| An authoring proposal **needs attention**               | Review its extraction/provider message and submit a corrected source or retry later.        |
+| Question Health review is stale                         | Wait for the latest draft to show **Saved**, then review that saved revision again.         |
+| **Undo this revision** is unavailable                   | Another draft revision has followed the applied change; use normal editing instead.         |
+| No post-use observations yet                            | No retained report meets the per-question sample requirement for that version and group.    |
+| Decision replay is missing or partial                   | Older sessions lack captured events, or bounded capture omitted events; do not infer them.  |
 
 Operators should continue with the [production readiness checklist](runbooks/production-readiness.md)
 and [incident response runbook](runbooks/incident-response.md).

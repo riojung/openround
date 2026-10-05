@@ -272,6 +272,10 @@ const liveDeliveryEnglishMessages = {
   "live.common.connected": "Connected",
   "live.common.connecting": "Connecting…",
   "live.common.dashboard": "Dashboard",
+  "live.common.flexMode": "Flex — facilitator closes responses",
+  "live.common.flexOpen": "No countdown. The facilitator closes responses.",
+  "live.common.flexSetupHelp":
+    "Flex has no response deadline or speed scoring. The facilitator closes each question.",
   "live.common.joinedCount": "{count} joined",
   "live.common.leaderboard": "Leaderboard",
   "live.common.notScored": "Not scored",
@@ -280,6 +284,8 @@ const liveDeliveryEnglishMessages = {
   "live.common.responses": "Responses",
   "live.common.saving": "Saving…",
   "live.common.sessions": "Sessions",
+  "live.common.timeMode": "Response timing",
+  "live.common.timedMode": "Timed — question deadline",
   "live.common.updating": "Updating…",
   "live.presentationHost.backEditor": "Back to editor",
   "live.presentationHost.description":

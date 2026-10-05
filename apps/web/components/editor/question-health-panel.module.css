@@ -1,0 +1,333 @@
+.panel {
+  margin-block: 14px;
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  background: var(--ui-surface-raised);
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.publishedPanel {
+  border-inline-start: 4px solid var(--ui-accent);
+}
+
+.publishedPanel .finding button {
+  justify-self: start;
+  margin-top: 5px;
+}
+
+.publishedPanel .finding button:focus-visible {
+  outline: 3px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.provenance {
+  color: var(--ui-text-subtle);
+  font-size: 0.8rem;
+}
+
+.provenance summary {
+  min-height: 38px;
+  font-size: 0.8rem;
+}
+
+.provenance p {
+  margin: 4px 0;
+}
+
+.provenance code {
+  overflow-wrap: anywhere;
+}
+
+.panel summary {
+  min-height: 44px;
+  cursor: pointer;
+  color: var(--ui-text-strong);
+  font-weight: 780;
+  padding: 12px 14px;
+}
+
+.panel summary:focus-visible {
+  outline: 3px solid var(--ui-accent);
+  outline-offset: -3px;
+}
+
+.content {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--ui-border);
+  padding: 12px 14px 16px;
+}
+
+.description,
+.status,
+.count {
+  margin: 0;
+  color: var(--ui-text-subtle);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.results {
+  display: grid;
+  gap: 8px;
+}
+
+.findings {
+  display: grid;
+  max-height: min(42vh, 480px);
+  gap: 9px;
+  overflow: auto;
+  margin: 0;
+  padding: 0 4px 0 0;
+}
+
+.finding {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--ui-border);
+  border-inline-start: 3px solid var(--ui-warning-text);
+  border-radius: 8px;
+  background: var(--ui-surface-soft);
+  padding: 10px;
+}
+
+.finding strong {
+  color: var(--ui-text-strong);
+  font-size: 0.9rem;
+}
+
+.finding p {
+  margin: 0;
+  color: var(--ui-text-subtle);
+  font-size: 0.83rem;
+  line-height: 1.45;
+}
+
+.finding p span {
+  color: var(--ui-text-strong);
+  font-weight: 700;
+}
+
+.finding small {
+  overflow-wrap: anywhere;
+  color: var(--ui-text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+}
+
+.dismissControls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.undoNotice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-surface-soft);
+  padding: 10px;
+  color: var(--ui-text-strong);
+  font-size: 0.84rem;
+}
+
+.revisionControls,
+.revisionEditor,
+.revisionDiff {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.revisionControls {
+  margin-block: 5px;
+  border-top: 1px solid var(--ui-border);
+  padding-top: 9px;
+}
+
+.revisionControls > button,
+.revisionEditor > button,
+.revisionDiff > button {
+  justify-self: start;
+}
+
+.revisionEditor label {
+  display: grid;
+  gap: 5px;
+  color: var(--ui-text-strong);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.revisionEditor textarea {
+  min-height: 88px;
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  background: var(--ui-surface-raised);
+  color: var(--ui-text-strong);
+  padding: 8px;
+  font: inherit;
+  font-weight: 400;
+}
+
+.revisionDiff {
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-surface-raised);
+  padding: 10px;
+}
+
+.revisionDiff > strong {
+  font-size: 0.85rem;
+}
+
+.revisionDiff ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.revisionDiff li > span {
+  overflow-wrap: anywhere;
+  color: var(--ui-text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+}
+
+.diffValues {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.diffValues del,
+.diffValues ins {
+  min-height: 42px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  padding: 7px;
+  color: var(--ui-text-strong);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  text-decoration: none;
+  white-space: pre-wrap;
+}
+
+.diffValues del {
+  border-inline-start: 3px solid var(--ui-warning-text);
+}
+
+.diffValues ins {
+  border-inline-start: 3px solid var(--ui-accent);
+}
+
+.diffHeading {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ui-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.revisionControls button:focus-visible,
+.revisionEditor textarea:focus-visible,
+.undoNotice button:focus-visible {
+  outline: 3px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.dismissControls label {
+  grid-column: 1 / -1;
+  color: var(--ui-text-strong);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.dismissControls select {
+  min-height: 38px;
+  min-width: 0;
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  background: var(--ui-surface-raised);
+  color: var(--ui-text-strong);
+  padding: 6px 8px;
+}
+
+.dismissControls select:focus-visible,
+.dismissControls button:focus-visible,
+.dismissedFinding button:focus-visible {
+  outline: 3px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.dismissedGroup {
+  border-top: 1px solid var(--ui-border);
+  padding-top: 9px;
+}
+
+.dismissedGroup > summary {
+  min-height: 38px;
+  cursor: pointer;
+  color: var(--ui-text-strong);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.dismissedGroup > summary:focus-visible {
+  outline: 3px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.dismissedFinding {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-surface-soft);
+  padding: 10px;
+}
+
+.dismissedFinding strong {
+  color: var(--ui-text-strong);
+  font-size: 0.88rem;
+}
+
+.dismissedFinding p,
+.dismissedFinding small {
+  display: block;
+  margin: 4px 0 0;
+  color: var(--ui-text-subtle);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 560px) {
+  .dismissControls,
+  .dismissedFinding {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .dismissControls label {
+    grid-column: 1;
+  }
+
+  .diffValues {
+    grid-template-columns: 1fr;
+  }
+}

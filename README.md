@@ -45,6 +45,15 @@ workspace roles and plan entitlements, not a rollout allowlist. Institution inte
 provider configuration plus a per-workspace contract policy. Their presence in the repository is
 not a launch or readiness claim.
 
+Current optional beta workflows include whole-room flex timing, advisory **Question Health**
+reviews of saved drafts and published versions, aggregate post-use observations, and a report
+**Decision replay** of recorded facilitator actions. Presentations combine interactive questions
+with structured content slides, bounded text positioning and resizing, and shared preview/live
+rendering. Workspace owners can also permanently delete archived Library items and finished or
+expired session history, subject to retained-use checks. See the [user guide](docs/user-guide.md)
+for the workflows and the [quick start's beta configuration](docs/quick-start.md#optional-beta-workflows)
+for their deployment gates.
+
 ## Quick start
 
 You need Docker Desktop or Docker Engine with Docker Compose v2, at least 2 GB of available memory,

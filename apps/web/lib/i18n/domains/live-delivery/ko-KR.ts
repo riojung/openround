@@ -272,6 +272,10 @@ const messages = {
   "live.common.connected": "연결됨",
   "live.common.connecting": "연결 ...",
   "live.common.dashboard": "대시보드",
+  "live.common.flexMode": "유연 모드 — 진행자가 응답 마감",
+  "live.common.flexOpen": "카운트다운이 없습니다. 진행자가 응답을 마감합니다.",
+  "live.common.flexSetupHelp":
+    "유연 모드에는 응답 마감 시간이나 속도 점수가 없습니다. 진행자가 각 질문을 마감합니다.",
   "live.common.joinedCount": "{count} 가입",
   "live.common.leaderboard": "순위표",
   "live.common.notScored": "평가 없음",
@@ -280,6 +284,8 @@ const messages = {
   "live.common.responses": "응답",
   "live.common.saving": "저장...",
   "live.common.sessions": "세션",
+  "live.common.timeMode": "응답 시간 설정",
+  "live.common.timedMode": "시간 제한 — 질문 마감 시간",
   "live.common.updating": "업데이트 중…",
   "live.presentationHost.backEditor": "편집기로 돌아가기",
   "live.presentationHost.description":

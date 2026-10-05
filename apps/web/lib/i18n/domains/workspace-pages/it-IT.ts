@@ -310,6 +310,7 @@ const messages = {
   "pages.home.sessions.empty": "Nessuna sessione ospitata ancora.",
   "pages.home.sessions.eyebrow": "Consegna",
   "pages.library.action.archive": "Archivio",
+  "pages.library.action.delete": "Eliminati",
   "pages.library.action.duplicate": "Duplicato",
   "pages.library.action.restore": "Ripristina",
   "pages.library.actionComplete": "{count} {type} {action}.",
@@ -323,6 +324,12 @@ const messages = {
   "pages.library.clear": "Chiaro",
   "pages.library.createPresentation": "Crea presentazione",
   "pages.library.createRound": "Crea giro",
+  "pages.library.delete": "Elimina definitivamente",
+  "pages.library.deleteConfirm":
+    "Eliminare definitivamente «{title}», comprese tutte le bozze e le versioni pubblicate? Questa azione non può essere annullata.",
+  "pages.library.deleteCount": "Elimina ({count})",
+  "pages.library.deleteManyConfirm":
+    "Eliminare definitivamente {count} elementi archiviati selezionati, comprese tutte le bozze e le versioni pubblicate? Questa azione non può essere annullata.",
   "pages.library.deselectResults": "Deseleziona i risultati",
   "pages.library.destinationFolder": "Cartella di destinazione",
   "pages.library.duplicate": "Duplicato",
@@ -436,6 +443,10 @@ const messages = {
   "pages.sessions.artifactType": "Tipo di artefatto",
   "pages.sessions.blockProgress": "Blocca il progresso",
   "pages.sessions.currentResponses": "Risposte attuali",
+  "pages.sessions.delete": "Elimina sessione",
+  "pages.sessions.deleteConfirm":
+    "Eliminare definitivamente la sessione «{title}», le sue risposte, il rapporto e le attività di follow-up collegate? Questa azione non può essere annullata.",
+  "pages.sessions.deleting": "Eliminazione…",
   "pages.sessions.emptyDescription":
     "Ospita un round o una presentazione pubblicata e la relativa sessione live verrà visualizzata qui.",
   "pages.sessions.emptyFiltered": "Non sono presenti sessioni {status} in quest'area di lavoro.",

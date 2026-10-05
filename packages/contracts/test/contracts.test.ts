@@ -25,18 +25,97 @@ import {
   ProductEventNameSchema,
   PublicFeaturesSchema,
   PublishQuizRequestSchema,
+  QuestionHealthDismissalInputSchema,
+  QuestionHealthPublishedResultSchema,
+  QuestionHealthResultSchema,
   QuizContentSchema,
   QuizDraftSchema,
   QuestionSchema,
   ResponseDistributionSchema,
   RoundFilterOptionsResponseSchema,
+  SessionSettingsSchema,
   SessionSnapshotSchema,
+  SessionDecisionEventSchema,
+  ReportV3Schema,
   SyncRequestSchema,
   UpdateQuizRequestSchema,
   WorkspaceProductFeaturesSchema,
 } from "../src/index.js";
 
 describe("public contracts", () => {
+  it("validates bounded, versioned Question Health findings", () => {
+    const result = QuestionHealthResultSchema.parse({
+      quizId: randomUUID(),
+      draftRevision: 3,
+      rulesetVersion: "1.0.0",
+      evaluatedQuestionCount: 1,
+      findings: [
+        {
+          id: `qh-${randomUUID()}`,
+          ruleId: "question.missing_citation",
+          ruleVersion: 1,
+          rulesetVersion: "1.0.0",
+          severity: "advisory",
+          questionId: randomUUID(),
+          fieldPath: "questions.0.sourceCitations",
+          contentHash: "a".repeat(64),
+          reason: "No source citation is attached.",
+          evidence: "The citation list is empty.",
+          recommendedAction: "Attach a reviewed citation.",
+        },
+      ],
+      findingsTruncated: false,
+    });
+    expect(result.findings).toHaveLength(1);
+    expect(result.dismissals).toEqual([]);
+    expect(
+      QuestionHealthResultSchema.safeParse({
+        ...result,
+        findings: [{ ...result.findings[0], contentHash: "not-a-content-hash" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("limits Question Health dismissal feedback to bounded reason codes", () => {
+    const input = {
+      draftRevision: 3,
+      ruleVersion: 1,
+      rulesetVersion: "1.0.0",
+      contentHash: "b".repeat(64),
+      reason: "intentional_choice",
+    };
+    expect(QuestionHealthDismissalInputSchema.parse(input)).toEqual(input);
+    expect(
+      QuestionHealthDismissalInputSchema.safeParse({ ...input, reason: "freeform explanation" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("binds published Question Health findings to immutable version provenance", () => {
+    const result = QuestionHealthPublishedResultSchema.parse({
+      quizId: randomUUID(),
+      rulesetVersion: "1.0.0",
+      evaluatedQuestionCount: 1,
+      findings: [],
+      findingsTruncated: false,
+      source: "published",
+      version: {
+        id: randomUUID(),
+        number: 2,
+        contentHash: "a".repeat(64),
+        publishedAt: new Date().toISOString(),
+        sourceDraftRevision: null,
+      },
+    });
+    expect(result.version.number).toBe(2);
+    expect(
+      QuestionHealthPublishedResultSchema.safeParse({
+        ...result,
+        version: { ...result.version, contentHash: "not-a-hash" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("defaults legacy reports to Learning mode", () => {
     expect(
       LegacyReportSchema.parse({
@@ -53,8 +132,88 @@ describe("public contracts", () => {
         },
         questions: [],
         participants: [],
-      }).trustMode,
-    ).toBe("learning");
+      }),
+    ).toMatchObject({
+      trustMode: "learning",
+      timeMode: "timed",
+      decisionReplayAvailable: false,
+    });
+  });
+
+  it("keeps decision replay aggregate-only and old report schemas explicitly unavailable", () => {
+    const legacyV3 = ReportV3Schema.parse({
+      id: randomUUID(),
+      sessionId: randomUUID(),
+      schemaVersion: 3,
+      status: "ready",
+      generatedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      metrics: {
+        participantCount: 0,
+        completedCount: 0,
+        answerCount: 0,
+        accuracyPercent: 0,
+      },
+      questions: [],
+      participants: [],
+      initialAccuracy: { correct: 0, responses: 0, percent: 0 },
+      confidenceMatrix: [],
+      misconceptions: [],
+      interventions: [],
+      recovery: [],
+      unresolvedConcepts: [],
+      participation: { participants: 0, respondents: 0, percent: 0 },
+      responseTime: { responses: 0, medianMs: null, p95Ms: null },
+      qna: { questions: 0, answered: 0, unresolved: 0 },
+      participantFeedback: [],
+      evidenceNote: "Session evidence only.",
+      experience: { category: "general", preset: { id: "focus", version: 1 } },
+      audiencePulse: {
+        uniqueParticipants: 0,
+        events: 0,
+        bySignal: { got_it: 0, unsure: 0, need_example: 0, too_fast: 0 },
+        contexts: [],
+      },
+      conversation: {
+        messages: 0,
+        uniqueContributors: 0,
+        reactions: 0,
+        reports: 0,
+        removed: 0,
+        moderationActions: 0,
+        peakMessagesPerMinute: 0,
+        transcriptAvailable: false,
+      },
+    });
+    expect(legacyV3.decisionReplayAvailable).toBe(false);
+
+    const event = {
+      seq: 1,
+      occurredAt: new Date().toISOString(),
+      type: "insight_shown",
+      roundId: randomUUID(),
+      questionId: randomUUID(),
+      sampleSize: 3,
+      activeParticipantCount: 5,
+      recommendationCode: "low_participation",
+      ruleSetVersion: "checkpoint-insight-v1",
+    } as const;
+    expect(SessionDecisionEventSchema.parse(event)).toEqual(event);
+    expect(
+      SessionDecisionEventSchema.safeParse({ ...event, participantId: randomUUID() }).success,
+    ).toBe(false);
+  });
+
+  it("defaults existing live Round settings to timed mode", () => {
+    expect(
+      SessionSettingsSchema.parse({
+        audienceLimit: 20,
+        scoringMode: "speed",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      }).timeMode,
+    ).toBe("timed");
   });
 
   it("accepts every presentation-session error emitted by the API", () => {
@@ -191,10 +350,27 @@ describe("public contracts", () => {
         builderV2: true,
         presentations: false,
         presentationRealtime: false,
+        liveFlexMode: false,
         groups: true,
         discover: false,
       }),
     ).toMatchObject({ workspaceShell: true, presentations: false, groups: true });
+    expect(
+      WorkspaceProductFeaturesSchema.parse({
+        roundExperiences: true,
+        audiencePulse: true,
+        roomChat: true,
+        uxBeta: true,
+        recoveryRehearsal: false,
+        practiceAssignments: false,
+        workspaceShell: true,
+        builderV2: true,
+        presentations: false,
+        presentationRealtime: false,
+        groups: true,
+        discover: false,
+      }).liveFlexMode,
+    ).toBe(false);
     expect(
       WorkspaceProductFeaturesSchema.safeParse({
         roundExperiences: true,
@@ -961,18 +1137,33 @@ describe("public contracts", () => {
 
   it("keeps presentation drafts autosaveable while enforcing publish accessibility", () => {
     const mediaId = randomUUID();
+    const slideId = randomUUID();
     const draft = {
       title: "Accessible presentation",
       description: "",
       experiencePreset: { id: "focus" as const, version: 1 as const },
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       blocks: [
         {
-          id: randomUUID(),
+          id: slideId,
           kind: "content" as const,
           layout: "media" as const,
-          title: "Evidence",
-          body: "",
+          textElements: [
+            {
+              id: `${slideId}:title`,
+              role: "title" as const,
+              text: "Evidence",
+              region: "top_center" as const,
+              order: 0,
+            },
+            {
+              id: `${slideId}:body`,
+              role: "body" as const,
+              text: "",
+              region: "middle_center" as const,
+              order: 0,
+            },
+          ],
           mediaId,
           mediaAlt: null,
           speakerNotes: "",
