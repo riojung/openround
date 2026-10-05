@@ -17,6 +17,8 @@ import {
   conceptKeysFromText,
   recoveryPackDraftFromPair,
   recoveryPackPairs,
+  recoveryPackRoundHref,
+  recoveryPackTargetId,
 } from "../../lib/recovery-packs";
 import { clientUuid } from "../../lib/uuid";
 import styles from "./recovery-packs.module.css";
@@ -190,6 +192,7 @@ function PackLibrary() {
     : "";
   const currentSource = sourceVersion?.roundId === sourceId ? sourceVersion : null;
   const pairs = currentSource ? recoveryPackPairs(currentSource.content.questions) : [];
+  const targetHref = recoveryPackRoundHref(targetId);
 
   async function run(label: string, action: () => Promise<string | void>) {
     if (running.current) return;
@@ -252,7 +255,9 @@ function PackLibrary() {
     if (!selected?.currentVersionId || !targetId || !writable) return;
     const key = `${selected.currentVersionId}:${targetId}`;
     if (retryInsert.current?.key !== key) {
-      const latest = await apiFetch<{ quiz: RoundRecord }>(`/v1/quizzes/${targetId}`);
+      const latest = await apiFetch<{ quiz: RoundRecord }>(
+        `/v1/quizzes/${encodeURIComponent(targetId)}`,
+      );
       if (!alive.current) return;
       retryInsert.current = {
         key,
@@ -714,7 +719,14 @@ function PackLibrary() {
                             value={targetId}
                             disabled={Boolean(busy)}
                             onChange={(event) => {
-                              setTargetId(event.target.value);
+                              const candidate = recoveryPackTargetId(event.target.value);
+                              setTargetId(
+                                rounds.some(
+                                  (round) => round.id === candidate && round.status !== "archived",
+                                )
+                                  ? candidate
+                                  : "",
+                              );
                               retryInsert.current = null;
                             }}
                           >
@@ -736,8 +748,8 @@ function PackLibrary() {
                         >
                           Insert into Round draft
                         </button>
-                        {targetId ? (
-                          <Link className={styles.builderLink} href={`/quiz/${targetId}`}>
+                        {targetHref ? (
+                          <Link className={styles.builderLink} href={targetHref}>
                             Open destination Round builder
                           </Link>
                         ) : null}

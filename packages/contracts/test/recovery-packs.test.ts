@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   CreateRecoveryPackSchema,
   InsertRecoveryPackSchema,
+  OpenRoundCheckpointSetExportSchema,
   PublishRecoveryPackSchema,
   QuestionDraftSchema,
   QuestionSchema,
@@ -10,9 +11,12 @@ import {
   QuizDraftSchema,
   RecoveryPackContentSchema,
   RecoveryPackDraftSchema,
+  RecoveryPackInsertionSchema,
   RecoveryPackJsonSchema,
   RecoveryPackSourceSchema,
   UpdateRecoveryPackSchema,
+  recoveryPackContentHash,
+  type RecoveryPackContent,
   type RecoveryPackDraft,
 } from "../src/index.js";
 
@@ -87,6 +91,31 @@ function provenance() {
     role: "diagnostic" as const,
     contentHash,
   };
+}
+
+function insertion(content = RecoveryPackContentSchema.parse(pack())) {
+  return {
+    id: randomUUID(),
+    packId: randomUUID(),
+    packVersionId: randomUUID(),
+    packVersion: 1,
+    contentHash: createHash("sha256").update(JSON.stringify(content)).digest("hex"),
+    diagnosticQuestionId: randomUUID(),
+    recheckQuestionId: randomUUID(),
+    originalContent: content,
+  };
+}
+
+function reversePropertyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reversePropertyOrder);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .reverse()
+        .map(([key, item]) => [key, reversePropertyOrder(item)]),
+    );
+  }
+  return value;
 }
 
 describe("Recovery Pack authoring and publication contracts", () => {
@@ -372,7 +401,7 @@ describe("Recovery Pack provenance and interchange contracts", () => {
       packId: source.packId,
       packVersionId: source.packVersionId,
       packVersion: source.packVersion,
-      contentHash,
+      contentHash: recoveryPackContentHash(content),
       diagnosticQuestionId: diagnostic.id,
       recheckQuestionId: recheck.id,
       originalContent: content,
@@ -435,6 +464,146 @@ describe("Recovery Pack provenance and interchange contracts", () => {
     expect(
       RecoveryPackSourceSchema.safeParse({ ...provenance(), role: "intervention" }).success,
     ).toBe(false);
+  });
+});
+
+describe("Recovery Pack insertion baseline integrity", () => {
+  it("matches the existing Node publication hash for strict parsed content and UTF-8 text", () => {
+    const draft = pack();
+    draft.title = "回復 🧠 — café";
+    draft.interventions[0]!.body = "Évidence: compare the same units. \u{1F9E0}";
+    const content = RecoveryPackContentSchema.parse(draft);
+    const snapshot = insertion(content);
+    expect(recoveryPackContentHash(content)).toBe(snapshot.contentHash);
+    expect(RecoveryPackInsertionSchema.parse(snapshot)).toEqual(snapshot);
+  });
+
+  it.each([
+    [
+      "intervention body",
+      (content: RecoveryPackContent) => {
+        content.interventions[0]!.body = "Altered baseline instruction";
+      },
+    ],
+    [
+      "diagnostic prompt",
+      (content: RecoveryPackContent) => {
+        content.diagnostic.prompt = "An altered diagnostic prompt?";
+      },
+    ],
+    [
+      "recheck explanation",
+      (content: RecoveryPackContent) => {
+        content.recheck.explanation = "Altered answer rationale";
+      },
+    ],
+    [
+      "delayed probe",
+      (content: RecoveryPackContent) => {
+        content.delayedProbe!.prompt = "An altered delayed transfer scenario?";
+      },
+    ],
+    [
+      "source item ID",
+      (content: RecoveryPackContent) => {
+        content.interventions[0]!.id = randomUUID();
+      },
+    ],
+    [
+      "citation excerpt",
+      (content: RecoveryPackContent) => {
+        content.citations[0]!.excerpt = "An altered cited excerpt.";
+      },
+    ],
+  ])("rejects a changed %s carrying the previous published hash", (_name, alter) => {
+    const snapshot = insertion();
+    const changed = structuredClone(snapshot.originalContent);
+    alter(changed);
+    // Isolate digest validation: the altered content still meets all publication rules.
+    expect(RecoveryPackContentSchema.safeParse(changed).success).toBe(true);
+    const result = RecoveryPackInsertionSchema.safeParse({ ...snapshot, originalContent: changed });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual([
+        expect.objectContaining({
+          path: ["contentHash"],
+          message: "The Recovery Pack baseline does not match its content hash",
+        }),
+      ]);
+    }
+    for (const schema of [QuizDraftSchema, QuizContentSchema]) {
+      expect(
+        schema.safeParse({
+          title: "Round",
+          questions: [question("Diagnostic?")],
+          recoveryPackInsertions: [{ ...snapshot, originalContent: changed }],
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("normalizes object property ordering without changing published hash semantics", () => {
+    const snapshot = insertion();
+    const reordered = reversePropertyOrder(snapshot.originalContent);
+    expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(snapshot.originalContent));
+    expect(recoveryPackContentHash(reordered)).toBe(snapshot.contentHash);
+    expect(RecoveryPackInsertionSchema.parse({ ...snapshot, originalContent: reordered })).toEqual(
+      snapshot,
+    );
+  });
+
+  it("hashes schema defaults and trimmed text exactly as publication does", () => {
+    const content = RecoveryPackContentSchema.parse(pack());
+    const withDefaultedFields = {
+      ...content,
+      title: `  ${content.title}  `,
+      schemaVersion: undefined,
+      description: undefined,
+      misconceptionKeys: undefined,
+      citations: undefined,
+      delayedProbe: undefined,
+    };
+    const parsed = RecoveryPackContentSchema.parse(withDefaultedFields);
+    const snapshot = insertion(parsed);
+    expect(recoveryPackContentHash(withDefaultedFields)).toBe(snapshot.contentHash);
+    expect(
+      RecoveryPackInsertionSchema.parse({ ...snapshot, originalContent: withDefaultedFields })
+        .originalContent,
+    ).toEqual(parsed);
+  });
+
+  it("round-trips valid snapshots through native v3 JSON, including reordered JSONB-like objects", () => {
+    const snapshot = insertion();
+    const checkpointSet = {
+      title: "Round",
+      questions: [question("Diagnostic?")],
+      recoveryPackInsertions: [snapshot],
+    };
+    const exported = OpenRoundCheckpointSetExportSchema.parse({
+      format: "openround.checkpoint-set",
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      checkpointSet,
+    });
+    expect(
+      OpenRoundCheckpointSetExportSchema.parse(
+        reversePropertyOrder(JSON.parse(JSON.stringify(exported))),
+      ),
+    ).toEqual(exported);
+  });
+
+  it("checks baseline integrity without claiming external source identity or approval verification", () => {
+    const snapshot = insertion();
+    expect(
+      RecoveryPackInsertionSchema.parse({
+        ...snapshot,
+        packId: randomUUID(),
+        packVersionId: randomUUID(),
+      }).originalContent,
+    ).toEqual(snapshot.originalContent);
+    expect(() =>
+      recoveryPackContentHash({ ...snapshot.originalContent, interventions: [] }),
+    ).toThrow();
   });
 });
 

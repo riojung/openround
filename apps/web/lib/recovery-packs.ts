@@ -1,8 +1,20 @@
 import {
+  InsertRecoveryPackSchema,
   QUESTION_TYPE_REGISTRY,
   type QuestionDraft,
   type RecoveryPackDraft,
 } from "@openround/contracts";
+
+/** Destination IDs come from a DOM selection; reject non-UUID values before using them. */
+export function recoveryPackTargetId(value: string) {
+  const parsed = InsertRecoveryPackSchema.shape.quizId.safeParse(value);
+  return parsed.success ? parsed.data : "";
+}
+
+export function recoveryPackRoundHref(value: string) {
+  const id = recoveryPackTargetId(value);
+  return id ? `/quiz/${encodeURIComponent(id)}` : null;
+}
 
 export function recoveryPackPairs(questions: readonly QuestionDraft[]) {
   const ids = questions.map((question) => question.id);

@@ -9,6 +9,8 @@ import {
   conceptKeysFromText,
   recoveryPackDraftFromPair,
   recoveryPackPairs,
+  recoveryPackRoundHref,
+  recoveryPackTargetId,
 } from "./recovery-packs";
 
 const main: QuestionDraft = {
@@ -37,6 +39,21 @@ const recheck: QuestionDraft = {
 };
 
 describe("Recovery Pack authoring", () => {
+  it("allows only UUID destination IDs and constructs a bounded local navigation path", () => {
+    expect(recoveryPackTargetId(main.id)).toBe(main.id);
+    expect(recoveryPackRoundHref(main.id)).toBe(`/quiz/${main.id}`);
+    for (const value of [
+      "",
+      "../admin",
+      "javascript:alert(1)",
+      "<img src=x onerror=alert(1)>",
+      `${main.id}?redirect=//example.com`,
+      `${main.id}/preview`,
+    ]) {
+      expect(recoveryPackTargetId(value)).toBe("");
+      expect(recoveryPackRoundHref(value)).toBeNull();
+    }
+  });
   it("selects only unambiguous scored main/recheck pairs", () => {
     expect(recoveryPackPairs([main, recheck])).toEqual([{ diagnostic: main, recheck }]);
     expect(recoveryPackPairs([main])).toEqual([]);

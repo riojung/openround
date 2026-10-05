@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { RecoveryPackContentSchema, type QuizDraft } from "@openround/contracts";
+import {
+  recoveryPackContentHash,
+  RecoveryPackContentSchema,
+  type QuizDraft,
+} from "@openround/contracts";
 import { checkpointSetCsv, importCheckpointSet, openRoundJson } from "../src/portability.js";
 
 function linkedDraft(): QuizDraft {
@@ -105,7 +109,7 @@ describe("checkpoint-set portability", () => {
         packId: randomUUID(),
         packVersionId: randomUUID(),
         packVersion: 1,
-        contentHash: "a".repeat(64),
+        contentHash: recoveryPackContentHash(content),
         diagnosticQuestionId: source.questions[0]!.id,
         recheckQuestionId: source.questions[1]!.id,
         originalContent: content,

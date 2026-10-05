@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   QuizDraftSchema,
   RecoveryPackJsonSchema,
+  type QuizDraft,
   type RecoveryPackDraft,
 } from "@openround/contracts";
 import {
@@ -150,6 +151,68 @@ async function publish(app: FastifyInstance, cookie: string, content = draft()) 
 }
 
 describe("Recovery Pack API", () => {
+  it("rejects altered frozen baselines through both Round save APIs and native v3 import", async () => {
+    const { app, cookie, repository, workspaceId } = await setup();
+    repository.plans.set(workspaceId, "pro");
+    const { version } = await publish(app, cookie);
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/quizzes",
+      headers: { cookie },
+      payload: { title: "Frozen baseline Round" },
+    });
+    const quizId = created.json<{ quiz: { id: string } }>().quiz.id;
+    const inserted = await app.inject({
+      method: "POST",
+      url: "/v1/recovery-packs/insert",
+      headers: { cookie },
+      payload: { quizId, packVersionId: version.id, expectedRevision: 0, mutationId: randomUUID() },
+    });
+    expect(inserted.statusCode).toBe(200);
+    const originalDraft = inserted.json<{ quiz: { draft: QuizDraft } }>().quiz.draft;
+    const exported = JSON.parse(openRoundJson(originalDraft)) as { checkpointSet: QuizDraft };
+    const initialCount = (await repository.listQuizzes(workspaceId)).length;
+    for (const role of ["intervention", "checkpoint"] as const) {
+      const altered = structuredClone(originalDraft);
+      const baseline = altered.recoveryPackInsertions![0]!.originalContent;
+      if (role === "intervention") baseline.interventions[0]!.body = "Altered facilitator guidance";
+      else baseline.recheck.prompt = "Altered recheck scenario";
+      const legacy = await app.inject({
+        method: "PATCH",
+        url: `/v1/quizzes/${quizId}`,
+        headers: { cookie },
+        payload: { draft: altered, expectedDraftRevision: 1 },
+      });
+      expect(legacy.statusCode).toBe(400);
+      const modern = await app.inject({
+        method: "PUT",
+        url: `/v1/quizzes/${quizId}/draft`,
+        headers: { cookie },
+        payload: {
+          draft: altered,
+          expectedRevision: 1,
+          schemaVersion: 1,
+          mutationId: randomUUID(),
+        },
+      });
+      expect(modern.statusCode).toBe(400);
+      const imported = await app.inject({
+        method: "POST",
+        url: "/v1/quizzes/import",
+        headers: { cookie },
+        payload: {
+          format: "openround_json",
+          data: JSON.stringify({ ...exported, checkpointSet: altered }),
+        },
+      });
+      expect(imported.statusCode).toBe(422);
+      const stored = await repository.getQuiz(workspaceId, quizId);
+      expect(stored?.draftRevision).toBe(1);
+      expect(stored?.draft).toEqual(originalDraft);
+      expect((await repository.listQuizzes(workspaceId)).length).toBe(initialCount);
+    }
+  });
+
   it("accepts bounded multi-byte Packs and keeps inserted Rounds editable through both editor APIs", async () => {
     const { app, cookie } = await setup();
     const content = largeDraft();

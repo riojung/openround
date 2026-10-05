@@ -104,7 +104,22 @@ async function recoveryPackWorkflow(page: Page) {
   await expect(page.getByRole("button", { name: "Publish saved draft" })).toBeEnabled();
   await page.getByRole("button", { name: "Publish saved draft" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Pack published" })).toBeVisible();
+  const destination = page.getByLabel("Destination Round draft");
+  const unsafeId = '<img src=x onerror="alert(1)">';
+  await destination.evaluate((select, value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = "Invalid destination";
+    select.append(option);
+  }, unsafeId);
+  await destination.selectOption(unsafeId);
+  await expect(page.getByRole("link", { name: "Open destination Round builder" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Insert into Round draft" })).toBeDisabled();
   await page.getByLabel("Destination Round draft").selectOption(target.id);
+  await expect(page.getByRole("link", { name: "Open destination Round builder" })).toHaveAttribute(
+    "href",
+    `/quiz/${target.id}`,
+  );
   await page.getByRole("button", { name: "Insert into Round draft" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Published Pack inserted" }),

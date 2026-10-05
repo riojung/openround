@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 
 export {
   clampContentSlideFrame,
@@ -982,17 +984,40 @@ export const RecoveryPackContentSchema = RecoveryPackDraftSchema.extend({
 });
 export type RecoveryPackContent = z.infer<typeof RecoveryPackContentSchema>;
 
+function hashParsedRecoveryPackContent(content: RecoveryPackContent) {
+  return bytesToHex(sha256(new TextEncoder().encode(JSON.stringify(content))));
+}
+
+/**
+ * Hash the strict parsed representation, matching immutable Pack publication in Node and
+ * normalizing property order after JSON/JSONB round-trips. This is an integrity check, not proof
+ * that a claimed source Pack/version exists or that its citation approvals were granted.
+ */
+export function recoveryPackContentHash(content: unknown): string {
+  return hashParsedRecoveryPackContent(RecoveryPackContentSchema.parse(content));
+}
+
 /** Frozen source baseline; destination copies remain usable after source deletion. */
-export const RecoveryPackInsertionSchema = z.object({
-  id: z.string().uuid(),
-  packId: z.string().uuid(),
-  packVersionId: z.string().uuid(),
-  packVersion: z.number().int().positive(),
-  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
-  diagnosticQuestionId: z.string().uuid(),
-  recheckQuestionId: z.string().uuid(),
-  originalContent: RecoveryPackContentSchema,
-});
+export const RecoveryPackInsertionSchema = z
+  .object({
+    id: z.string().uuid(),
+    packId: z.string().uuid(),
+    packVersionId: z.string().uuid(),
+    packVersion: z.number().int().positive(),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    diagnosticQuestionId: z.string().uuid(),
+    recheckQuestionId: z.string().uuid(),
+    originalContent: RecoveryPackContentSchema,
+  })
+  .superRefine((insertion, context) => {
+    if (hashParsedRecoveryPackContent(insertion.originalContent) !== insertion.contentHash) {
+      context.addIssue({
+        code: "custom",
+        path: ["contentHash"],
+        message: "The Recovery Pack baseline does not match its content hash",
+      });
+    }
+  });
 
 export const CreateRecoveryPackSchema = z.object({ draft: RecoveryPackDraftSchema });
 export const UpdateRecoveryPackSchema = z.object({
