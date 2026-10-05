@@ -24,3 +24,37 @@
 
 Never copy tokens, cookies, participant nicknames, chat bodies, participant-linked Pulse signals,
 answer content, email addresses, or full billing events into chat or incident documents.
+
+## Phase 0 support rehearsal
+
+Run this exercise only during an approved window against the exact build used for the staging,
+telemetry, and paging evidence. Name the primary/backup responders, incident commander, technical
+escalation contact, support owner, communications owner, and independent reviewer before starting.
+Keep personal contact details and provider endpoints in the private operations system.
+
+1. Submit a synthetic support report that says a facilitator cannot start a new room while an
+   existing room remains active. Record its unique private ticket reference and intake time.
+2. Have the support owner acknowledge it through the normal route, classify it using the severity
+   rubric, collect only redaction-safe build/request identifiers, and hand it to the technical
+   responder. No rehearsal participant may use an out-of-band shortcut unavailable to beta users.
+3. Correlate the report to metrics, a trace ID, and a request ID in their real backends. Inject and
+   resolve unique `page`, `warning`, and `ticket` alerts with the guarded alert-rehearsal command;
+   keep the default 45-second firing interval (it exceeds Alertmanager's 30-second `group_wait`) and
+   independently record which named role received each route and its receipt time.
+4. Post an initial incident update through the real support/status communication path. State the
+   affected capability, existing-room safety, workaround if any, owner, and next update time
+   without claiming a root cause prematurely.
+5. Disable **new session creation** through the audited runtime control and verify the public
+   effective state. Confirm the existing synthetic room can still answer, acknowledge, reconnect,
+   finish, and reconcile its report. Do not use a kill switch that interrupts active games.
+6. Restore the capability, verify a new synthetic room can be created, reconcile both reports, and
+   close the support ticket plus status communication through their normal paths.
+7. Revoke exercise credentials and remove synthetic data according to retention policy. Record
+   detection, acknowledgement, handoff, communication, mitigation, restore, and closure times;
+   route receipts; build ID; redacted artifact hashes; failures; reruns; and follow-up issues.
+
+The exercise passes only when every route reaches its intended human-owned destination, support
+handles the report end to end, telemetry correlation works, the kill switch preserves the active
+room, restoration succeeds, no severity-1/2 defect remains, and both the operations owner and an
+independent reviewer accept the record. Script acceptance proves only that Alertmanager accepted
+the injection and resolution requests; it does not prove delivery to a human.

@@ -1,4 +1,5 @@
 import type { PresentationContent, PresentationDraft } from "@openround/contracts";
+import type { LibraryArtifactDeletionResult } from "./types.js";
 
 export interface PresentationRecord {
   id: string;
@@ -91,6 +92,10 @@ export interface PresentationRepository {
     presentationId: string,
     folderId: string | null,
   ): Promise<PresentationRecord | null>;
+  deletePresentation(
+    workspaceId: string,
+    presentationId: string,
+  ): Promise<LibraryArtifactDeletionResult>;
   archivePresentation(
     workspaceId: string,
     presentationId: string,

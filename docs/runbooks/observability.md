@@ -13,21 +13,56 @@ host, or participant credentials.
 
 Set `TRACING_ENABLED=true` and an explicit, credential-free HTTP(S)
 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`—normally ending in `/v1/traces`—to export HTTP, Fastify,
-session join, answer, and host-command spans. A hosted endpoint may not use a reserved,
-placeholder, loopback, or unspecified address; leaving the endpoint blank is valid only while
-tracing is disabled. Configure authentication at a private collector or proxy boundary rather than
-embedding credentials, query parameters, or fragments in the URL. Health and metrics scrapes are
-omitted from traces. Hosted spans identify the reviewed deployment environment and use the
+session join, answer, and host-command spans. For the supported single-VM target this value must be
+`http://otel-collector:4318/v1/traces`; it is private Compose traffic, not the provider endpoint.
+Other hosted targets reject reserved, placeholder, loopback, and unspecified destinations.
+Configure authentication at a private collector or proxy boundary rather than embedding
+credentials, query parameters, or fragments in the application URL. Health and metrics scrapes
+are omitted from traces. Hosted spans identify the reviewed deployment environment and use the
 immutable OpenRound build ID as their service version, regardless of an operator-supplied generic
 OTel service-version value.
 Validate export during deployment; `pnpm smoke:tracing` verifies the application path against a
 local temporary collector but does not test a production backend.
 
-The single-VM profile does not bundle or silently enable a collector. Select the backend,
-authentication boundary, retention, residency, ownership, and failure behavior before setting
-`TRACING_ENABLED=true`; otherwise leave tracing disabled and keep the readiness gate open.
+The hosted single-VM profile ships `compose.single-vm.observability.yaml`. It starts digest-pinned
+OpenTelemetry Collector, Prometheus, and Alertmanager containers. The collector receives
+application traces, scrapes `http://server:4000/metrics` with the bearer token, and exports both
+signals to the explicitly configured HTTPS OTLP/HTTP backend with
+`OPENROUND_OTLP_BACKEND_TOKEN`. Prometheus independently scrapes the same protected private route
+to evaluate `infra/observability/alerts.yml`, then sends alerts to Alertmanager over an internal
+network. Alertmanager reads page, warning, and ticket receiver URLs from files in a mode-`0700`
+tmpfs directory; the resolved URLs are neither checked in nor placed in its configuration file.
 
-`infra/observability/otel-collector.example.yml` is a validated production starting point. It
+The `telemetry` and `monitoring` networks are internal. The collector and Alertmanager each join a
+separate egress network for the reviewed backend or receivers. OTLP receivers are not published.
+Collector health (`13133`), Prometheus (`9090`), and Alertmanager (`9093`) bind to host loopback
+only. A digest-pinned, networkless BusyBox init container installs the static `wget` used by the
+distroless collector's health check; the check probes the live `13133` endpoint rather than merely
+re-validating configuration. Prometheus renders the deployment label from the reviewed
+`OPENROUND_DEPLOYMENT_ENVIRONMENT`, so staging and production signals cannot share a hard-coded
+label. Do not expose those ports directly. Hosted validation requires
+`METRICS_ENABLED=true`, `TRACING_ENABLED=true`, the exact private application trace endpoint, a
+non-placeholder HTTPS backend base endpoint, its token, and three non-placeholder HTTPS receiver
+URLs. The deployment waits for the three containers' health checks and rejects a server
+configuration summary that does not report protected metrics, external host-agent log shipping,
+and OTLP tracing.
+
+The bundled overlay intentionally does not collect container logs. It has no Docker socket and no
+host/container-log mount. Hosted single-VM deployment therefore requires
+`OPENROUND_LOG_SHIPPING_MODE=external-host-agent`: install a separately managed, least-privilege
+host agent that ships the server's structured stdout to the selected log backend. The deployed
+configuration receipt records only `logs: external-host-agent`, never an agent credential or
+backend URL. This is an operator attestation, not delivery proof; the staging readiness observer
+must find the exact synthetic `x-request-id` in the real backend before the remote probe passes.
+
+Choose and review the telemetry backend, authentication boundary, retention, residency, ownership,
+outage behavior, and alert receivers before deployment. The repository intentionally supplies no
+provider URL. Parsing, container health, and a successful deployment do not prove that the external
+backend retained telemetry or request logs, or that a human received an alert; verify them end to
+end and retain the real rehearsal references.
+
+`infra/observability/otel-collector.example.yml` remains a validated starting point for a
+non-single-VM platform. It
 accepts application OTLP, scrapes the HTTPS metrics endpoint with its bearer token, batches both
 signals, and exports them to an authenticated OTLP backend. Supply all five `OPENROUND_*`
 environment values through the platform secret/configuration service, keep receiver ports private,
@@ -119,14 +154,13 @@ password before use and never expose these ports directly to the internet. Prome
 days locally by default; change `OPENROUND_PROMETHEUS_RETENTION` only after sizing disk and backup
 expectations.
 
-This profile is a reproducible validation and self-hosting baseline, not evidence of hosted
-monitoring. It deliberately has no active paging receiver, because a silent or example destination
-would create false confidence. `infra/observability/alertmanager.example.yml` maps `page`,
-`warning`, and `ticket` labels to separate placeholder webhook receivers. Copy it into the private
-deployment configuration, replace every `.example.invalid` destination through the operations
-secret workflow, and run `pnpm test:alert-routing` before deployment. A production deployment must
-send the same rules to its managed Prometheus-compatible service, protect metrics transport, and
-rehearse each route end to end with a named responder. Alert delivery alone does not close the
+This local profile is a reproducible validation baseline, not evidence of hosted monitoring. It
+deliberately has no active paging receiver, because a silent or example destination would create
+false confidence. `infra/observability/alertmanager.example.yml` maps `page`, `warning`, and
+`ticket` labels to separate placeholder webhook receivers for non-single-VM platform evaluation.
+The hosted single-VM overlay uses `alertmanager.single-vm.yml` and secret-backed `url_file`
+receivers instead. Run `pnpm test:alert-routing`, protect metrics transport, and rehearse each
+hosted route end to end with a named responder. Alert delivery alone does not close the
 beta-preflight gate: activate the named support rota, incident and escalation ownership, and public
 status, security, privacy, and support contacts, then exercise support intake, triage, escalation,
 communication, mitigation, and closure for the same exact build candidate.
@@ -134,10 +168,12 @@ communication, mitigation, and closure for the same exact build candidate.
 CI runs `pnpm test:alerts`, `pnpm test:alert-routing`, and `pnpm test:collector-config`. The first
 executes `promtool test rules` against
 `infra/observability/alerts.test.yml`. The fixture feeds synthetic failure series into every rule
-and verifies all 18 alert names, hold periods, severity labels, summaries, and runbook annotations.
-The routing check verifies that each severity reaches exactly its intended receiver, while the
-collector check parses the pinned template. These catch configuration regressions; none proves
-delivery to a human-owned paging destination. Record that separately with the
+and verifies the checked-in alert names, hold periods, severity labels, summaries, and runbook
+annotations.
+The routing check parses the hosted Prometheus and Alertmanager configurations and verifies that
+each severity reaches exactly its intended receiver. The collector check parses both the generic
+and single-VM pinned templates. These catch configuration regressions; none proves delivery to a
+human-owned paging destination. Record that separately with the
 [operations rehearsal template](../evidence/operations-rehearsal.md).
 
 ## Initial alert candidates

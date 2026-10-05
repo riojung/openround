@@ -135,6 +135,7 @@ describe("game engine", () => {
     });
     expect(upgradedCurrentState.stateSchemaVersion).toBe(5);
     expect(upgradedCurrentState.settings.trustMode).toBe("learning");
+    expect(upgradedCurrentState.settings.timeMode).toBe("timed");
     expect(upgradedCurrentState.participants[fallbackParticipant.id]?.avatarId).toBe(
       fallbackAvatar,
     );
@@ -391,6 +392,109 @@ describe("game engine", () => {
     });
     expect(resumed.state.phase).toBe("question_open");
     expect(resumed.state.deadlineMs).toBe(27_000);
+  });
+
+  it("keeps flex questions open until host close without speed scoring or a countdown", () => {
+    const { state: source, correctId } = fixture();
+    const state = createGameState({
+      sessionId: randomUUID(),
+      code: "1234567",
+      quiz: source.quiz,
+      settings: { ...source.settings, timeMode: "flex", scoringMode: "speed" },
+    });
+    const slowerId = "00000000-0000-4000-8000-000000000001";
+    const fasterId = "00000000-0000-4000-8000-000000000002";
+    expect(
+      leaderboard({
+        ...state,
+        participants: {
+          [slowerId]: {
+            ...participant(slowerId),
+            score: 1_000,
+            correctCount: 1,
+            acceptedResponseMs: 50_000,
+          },
+          [fasterId]: {
+            ...participant(fasterId),
+            score: 1_000,
+            correctCount: 1,
+            acceptedResponseMs: 1_000,
+          },
+        },
+      }).map(({ id }) => id),
+    ).toEqual([slowerId, fasterId]);
+    const learner = participant();
+    const joined = addParticipant(state, learner);
+    const started = applyHostCommand(joined.state, {
+      action: "start",
+      commandId: randomUUID(),
+      expectedVersion: joined.state.version,
+      nowMs: 1_000,
+      newRoundId: randomUUID,
+    });
+    expect(started.state.settings).toMatchObject({ timeMode: "flex", scoringMode: "accuracy" });
+    expect(started.state.deadlineMs).toBeNull();
+    expect(started.state.rounds[started.state.roundId!]?.deadlineMs).toBeNull();
+    expect(
+      snapshotForRole(started.state, { role: "participant", participantId: learner.id }),
+    ).toMatchObject({
+      deadline: null,
+      settings: { timeMode: "flex", scoringMode: "accuracy" },
+    });
+
+    const paused = applyHostCommand(started.state, {
+      action: "pause",
+      commandId: randomUUID(),
+      expectedVersion: started.state.version,
+      nowMs: 11_000,
+      newRoundId: randomUUID,
+    });
+    expect(paused.state.pausedRemainingMs).toBeNull();
+    expect(() =>
+      acceptAnswer(paused.state, {
+        answerId: randomUUID(),
+        participantId: learner.id,
+        roundId: paused.state.roundId!,
+        choiceId: correctId,
+        idempotencyKey: randomUUID(),
+        nowMs: 12_000,
+      }),
+    ).toThrow(EngineError);
+    const resumed = applyHostCommand(paused.state, {
+      action: "resume",
+      commandId: randomUUID(),
+      expectedVersion: paused.state.version,
+      nowMs: 60_000,
+      newRoundId: randomUUID,
+    });
+    expect(resumed.state.deadlineMs).toBeNull();
+    const answered = acceptAnswer(resumed.state, {
+      answerId: randomUUID(),
+      participantId: learner.id,
+      roundId: resumed.state.roundId!,
+      choiceId: correctId,
+      idempotencyKey: randomUUID(),
+      nowMs: 3_600_000,
+    });
+    expect(answered.answer.score).toBe(1_000);
+    const locked = applyHostCommand(answered.state, {
+      action: "lock",
+      commandId: randomUUID(),
+      expectedVersion: answered.state.version,
+      nowMs: 3_601_000,
+      newRoundId: randomUUID,
+    });
+    expect(locked.state.rounds[locked.state.roundId!]?.lockedAtMs).toBe(3_601_000);
+    expect(() =>
+      acceptAnswer(locked.state, {
+        answerId: randomUUID(),
+        participantId: learner.id,
+        roundId: locked.state.roundId!,
+        choiceId: correctId,
+        idempotencyKey: randomUUID(),
+        nowMs: 3_602_000,
+      }),
+    ).toThrow(EngineError);
   });
 
   it("never exposes answer keys or facilitator metadata in participant questions", () => {
@@ -1131,6 +1235,7 @@ describe("game engine", () => {
     expect(upgraded.stateSchemaVersion).toBe(5);
     expect(upgraded.settings).toMatchObject({
       trustMode: "learning",
+      timeMode: "timed",
       resultVisibility: "leaderboard",
     });
     expect(upgraded.experienceTheme).toMatchObject({
@@ -1143,5 +1248,17 @@ describe("game engine", () => {
       confidence: null,
     });
     expect(upgraded.participants[participantId]?.avatarId).toBe(avatarIdForSeed(participantId));
+  });
+
+  it("resolves a version 5 session without an explicit time mode as timed", () => {
+    const { state } = fixture();
+    const legacy = structuredClone(state) as typeof state;
+    legacy.stateSchemaVersion = 5;
+    delete (legacy.settings as Partial<typeof legacy.settings>).timeMode;
+
+    const upgraded = upgradeGameState(legacy);
+    expect(upgraded.stateSchemaVersion).toBe(5);
+    expect(upgraded.settings.timeMode).toBe("timed");
+    expect(upgraded.settings.scoringMode).toBe("speed");
   });
 });

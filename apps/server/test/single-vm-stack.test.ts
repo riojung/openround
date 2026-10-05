@@ -50,6 +50,17 @@ describe("single-VM security boundaries", () => {
     expect(compose).not.toContain("mc admin policy info local openround-media");
   });
 
+  it("expires abandoned media candidates and permits committed-object tagging", () => {
+    for (const profile of [communityCompose, compose]) {
+      expect(profile).toContain('"ID": "expire-abandoned-quarantine-uploads"');
+      expect(profile).toContain('"ID": "expire-abandoned-finalization-candidates"');
+      expect(profile).toContain('{ "Key": "openround-finalization-state", "Value": "temporary" }');
+      expect(profile).toContain('"Expiration": { "Days": 7 }');
+      expect(profile).toContain("mc ilm rule import");
+    }
+    expect(compose).toContain('"s3:PutObjectTagging"');
+  });
+
   it("uses immutable multi-profile images for MinIO and its ownership helper", () => {
     for (const profile of [communityCompose, compose]) {
       expect(profile.split(`image: ${minioImage}`).length - 1).toBe(2);

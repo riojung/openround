@@ -2,15 +2,22 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   ChoiceDraft,
   Entitlements,
   ExperiencePresetId,
   QuestionDraft,
+  QuestionHealthRevisionApplied,
+  QuestionHealthRevisionApplyInput,
+  QuestionHealthRevisionUndoInput,
   QuestionType,
   QuizDraft,
   RoundCategory,
+} from "@openround/contracts";
+import {
+  QuestionHealthRevisionAppliedSchema,
+  QuestionHealthRevisionUndoneSchema,
 } from "@openround/contracts";
 import { CreatorBrand } from "../../../components/brand";
 import { BuilderCommandBar } from "../../../components/editor/builder-command-bar";
@@ -24,6 +31,8 @@ import {
 } from "../../../components/editor/question-inspector";
 import { QuestionNavigator } from "../../../components/editor/question-navigator";
 import { QuestionReusePicker } from "../../../components/editor/question-reuse-picker";
+import { QuestionHealthPanel } from "../../../components/editor/question-health-panel";
+import { PublishedQuestionHealthPanel } from "../../../components/editor/question-health-published-panel";
 import { ReadinessSummary } from "../../../components/editor/readiness-summary";
 import { ResponseEditor } from "../../../components/editor/response-editor";
 import builderStyles from "../../../components/editor/round-builder.module.css";
@@ -46,6 +55,11 @@ import {
   type QuestionReuseSource,
 } from "../../../lib/question-reuse";
 import { roundReadinessIssues, type RoundReadinessIssue } from "../../../lib/round-readiness";
+import {
+  matchesLatestHealthDraft,
+  matchesSavedHealthDraft,
+  mayAdoptHealthDraft,
+} from "../../../lib/question-health-draft-sync";
 import { retryWithBackoff } from "../../../lib/retry";
 import { clientUuid } from "../../../lib/uuid";
 import { recordAuthoringEvent } from "../../../components/workspace/product-events";
@@ -65,6 +79,7 @@ interface EditorProductFeatures {
   builderV2: boolean;
   practiceAssignments?: boolean;
   workspaceShell: boolean;
+  questionHealth?: boolean;
 }
 
 function newChoices(type: ChoiceQuestionDraft["type"]): ChoiceDraft[] {
@@ -142,6 +157,7 @@ export default function QuizEditorPage() {
   const [recoverySnapshot, setRecoverySnapshot] =
     useState<BuilderRecoverySnapshot<QuizDraft> | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
+  const [healthMutationBusy, setHealthMutationBusy] = useState(false);
   const [mediaUploadsEnabled, setMediaUploadsEnabled] = useState(false);
   const [roundExperiencesAvailable, setRoundExperiencesAvailable] = useState(false);
   const [uxBeta, setUxBeta] = useState(false);
@@ -160,6 +176,10 @@ export default function QuizEditorPage() {
   const latestSaveRevision = useRef(0);
   const serverRevision = useRef(0);
   const lastSavedJson = useRef("");
+  const latestDraftRef = useRef<QuizDraft | null>(null);
+  const activeQuizIdRef = useRef(id);
+  const healthMutationGeneration = useRef(0);
+  const healthMutationBarrier = useRef(false);
   const initialInsertHandled = useRef(false);
   const initialInsertNeedsFocus = useRef(false);
   const firstBlockTracked = useRef(false);
@@ -172,6 +192,18 @@ export default function QuizEditorPage() {
     : 0;
   const selectedMediaId = draft?.questions[selectedIndex]?.mediaId ?? null;
   const recoveryKey = `round:${id}`;
+
+  useLayoutEffect(() => {
+    latestDraftRef.current = draft;
+  }, [draft]);
+
+  useLayoutEffect(() => {
+    if (activeQuizIdRef.current === id) return;
+    activeQuizIdRef.current = id;
+    healthMutationGeneration.current += 1;
+    healthMutationBarrier.current = false;
+    setHealthMutationBusy(false);
+  }, [id]);
 
   const enqueueSave = useCallback(
     (candidate: QuizDraft) => {
@@ -211,6 +243,143 @@ export default function QuizEditorPage() {
     [id, uxBeta],
   );
 
+  async function runHealthDraftMutation<
+    T extends { quiz: { id: string; draft: QuizDraft; draftRevision: number } },
+  >(
+    expectedRevision: number,
+    send: () => Promise<T>,
+    accept?: (response: T) => boolean,
+  ): Promise<T> {
+    const mutationGeneration = healthMutationGeneration.current;
+    const isCurrentRound = () =>
+      activeQuizIdRef.current === id && healthMutationGeneration.current === mutationGeneration;
+    const capturedJson = lastSavedJson.current;
+    if (
+      !canEdit ||
+      saveConflict ||
+      saveState !== "saved" ||
+      healthMutationBarrier.current ||
+      !matchesSavedHealthDraft(
+        latestDraftRef.current,
+        capturedJson,
+        serverRevision.current,
+        expectedRevision,
+      )
+    ) {
+      throw new Error("Save the current draft and review the finding again before applying it.");
+    }
+
+    healthMutationBarrier.current = true;
+    setHealthMutationBusy(true);
+    setSaveState("saving");
+    let sent = false;
+    let adopted = false;
+    let preserveLocalDraft = false;
+    try {
+      await saveQueue.current;
+      if (!isCurrentRound())
+        throw new Error("The active Round changed before the revision was sent.");
+      if (
+        lastSavedJson.current !== capturedJson ||
+        !matchesSavedHealthDraft(
+          latestDraftRef.current,
+          capturedJson,
+          serverRevision.current,
+          expectedRevision,
+        )
+      ) {
+        throw new Error("The saved draft changed. Review this finding again before applying it.");
+      }
+
+      sent = true;
+      const response = await send();
+      if (!isCurrentRound())
+        throw new Error("The active Round changed while the revision was saving.");
+      if (
+        response.quiz.id !== id ||
+        response.quiz.draftRevision <= expectedRevision ||
+        (accept && !accept(response))
+      ) {
+        throw new Error("The server draft has changed. Reload it before continuing.");
+      }
+      const { quiz: latest } = await apiFetch<{ quiz: QuizRecord }>(`/v1/quizzes/${id}`);
+      if (!isCurrentRound())
+        throw new Error("The active Round changed while the revision was loading.");
+      if (latest.id !== id || !matchesLatestHealthDraft(response.quiz, latest)) {
+        throw new Error("The server draft changed again. Reload it before continuing.");
+      }
+      if (!mayAdoptHealthDraft(latestDraftRef.current, capturedJson)) {
+        preserveLocalDraft = true;
+        throw new Error(
+          "The revision was saved, but local edits were made while it was applying. Your local work is preserved; reload or copy it before continuing.",
+        );
+      }
+
+      serverRevision.current = latest.draftRevision;
+      lastSavedJson.current = JSON.stringify(latest.draft);
+      setQuiz(latest);
+      loadDraft(latest.draft);
+      setSaveState("saved");
+      void clearBuilderRecovery(recoveryKey);
+      adopted = true;
+      return response;
+    } catch (caught) {
+      if (!isCurrentRound()) throw caught;
+      if (
+        sent &&
+        !(caught instanceof ApiClientError && [400, 401, 403, 404, 422].includes(caught.status))
+      ) {
+        preserveLocalDraft = true;
+      }
+      if (preserveLocalDraft) {
+        setSaveConflict(true);
+        setSaveState("conflict");
+      } else {
+        setSaveState("saved");
+      }
+      throw caught;
+    } finally {
+      if (isCurrentRound()) {
+        setHealthMutationBusy(false);
+        if (!adopted && !preserveLocalDraft) healthMutationBarrier.current = false;
+      }
+    }
+  }
+
+  async function applyHealthSuggestion(
+    findingId: string,
+    input: QuestionHealthRevisionApplyInput,
+  ): Promise<QuestionHealthRevisionApplied> {
+    return runHealthDraftMutation(
+      input.draftRevision,
+      async () =>
+        QuestionHealthRevisionAppliedSchema.parse(
+          await apiFetch<unknown>(
+            `/v1/quizzes/${id}/question-health/findings/${encodeURIComponent(findingId)}/apply`,
+            { method: "POST", body: JSON.stringify(input) },
+          ),
+        ),
+      (response) => response.appliedRevision === response.quiz.draftRevision,
+    );
+  }
+
+  async function undoHealthSuggestion(
+    applicationId: string,
+    input: QuestionHealthRevisionUndoInput,
+  ): Promise<void> {
+    await runHealthDraftMutation(
+      input.expectedRevision,
+      async () =>
+        QuestionHealthRevisionUndoneSchema.parse(
+          await apiFetch<unknown>(
+            `/v1/quizzes/${id}/question-health/applications/${encodeURIComponent(applicationId)}/undo`,
+            { method: "POST", body: JSON.stringify(input) },
+          ),
+        ),
+      (response) => response.applicationId === applicationId,
+    );
+  }
+
   useEffect(() => {
     apiFetch<{ mediaUploads: boolean }>("/v1/features")
       .then(({ mediaUploads }) => setMediaUploadsEnabled(mediaUploads))
@@ -231,6 +400,7 @@ export default function QuizEditorPage() {
 
   useEffect(() => {
     loaded.current = false;
+    healthMutationBarrier.current = false;
     latestSaveRevision.current += 1;
     setRecoverySnapshot(null);
     setSaveConflict(false);
@@ -353,6 +523,7 @@ export default function QuizEditorPage() {
     const serialized = JSON.stringify(draft);
     if (serialized === lastSavedJson.current) return;
     void saveBuilderRecovery(recoveryKey, serverRevision.current, draft);
+    if (healthMutationBarrier.current) return;
     if (saveConflict) return;
     const revision = ++latestSaveRevision.current;
     setSaveState("saving");
@@ -383,7 +554,17 @@ export default function QuizEditorPage() {
         });
     }, 700);
     return () => window.clearTimeout(timeout);
-  }, [canEdit, draft, enqueueSave, recoveryKey, saveConflict]);
+  }, [canEdit, draft, enqueueSave, healthMutationBusy, recoveryKey, saveConflict]);
+
+  useEffect(() => {
+    if (healthMutationBusy || !healthMutationBarrier.current || !draft || saveConflict) return;
+    if (JSON.stringify(draft) === lastSavedJson.current) {
+      healthMutationBarrier.current = false;
+      return;
+    }
+    setSaveConflict(true);
+    setSaveState("conflict");
+  }, [draft, healthMutationBusy, saveConflict]);
 
   useEffect(() => {
     const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
@@ -595,6 +776,7 @@ export default function QuizEditorPage() {
   }
 
   async function reloadLatestDraft() {
+    healthMutationBarrier.current = true;
     setSaveState("saving");
     setError("");
     setErrorIsRaw(false);
@@ -606,11 +788,12 @@ export default function QuizEditorPage() {
       loadDraft(latest.draft);
       setSaveConflict(false);
       setSaveState("saved");
-      await clearBuilderRecovery(recoveryKey);
+      void clearBuilderRecovery(recoveryKey);
     } catch (caught) {
       setError(humanError(caught));
       setErrorIsRaw(true);
       setSaveState("error");
+      healthMutationBarrier.current = false;
     }
   }
 
@@ -811,6 +994,13 @@ export default function QuizEditorPage() {
       return;
     }
     window.setTimeout(() => document.getElementById("quiz-title")?.focus(), 0);
+  }
+
+  function openPublishedFindingInDraft(questionId: string) {
+    if (!draft?.questions.some((candidate) => candidate.id === questionId)) return;
+    setSelectedQuestionId(questionId);
+    if (window.matchMedia("(max-width: 760px)").matches) setQuestionMapCollapsed(true);
+    window.setTimeout(() => document.getElementById("prompt")?.focus(), 0);
   }
 
   const question = draft?.questions[selectedIndex];
@@ -1374,6 +1564,29 @@ export default function QuizEditorPage() {
                   entityLabel="Round"
                   issues={readinessIssues}
                   onSelectIssue={focusReadinessIssue}
+                />
+                <QuestionHealthPanel
+                  key={id}
+                  canEdit={canEdit}
+                  currentDraftRevision={serverRevision.current}
+                  draftSaved={
+                    saveState === "saved" &&
+                    !saveConflict &&
+                    JSON.stringify(draft) === lastSavedJson.current
+                  }
+                  featureEnabled={Boolean(productFeatures?.questionHealth)}
+                  onApplySuggestion={applyHealthSuggestion}
+                  onUndoSuggestion={undoHealthSuggestion}
+                  quizId={id}
+                />
+                <PublishedQuestionHealthPanel
+                  key={`${id}:${quiz?.currentVersionId ?? "unpublished"}`}
+                  canEdit={canEdit}
+                  draftQuestionIds={new Set(draft.questions.map((candidate) => candidate.id))}
+                  featureEnabled={Boolean(productFeatures?.questionHealth)}
+                  onOpenDraftQuestion={openPublishedFindingInDraft}
+                  quizId={id}
+                  versionId={quiz?.currentVersionId ?? null}
                 />
                 <section
                   aria-label={t("delivery.builder.question", { number: selectedIndex + 1 })}

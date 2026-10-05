@@ -621,7 +621,13 @@ export default function PlayerPage() {
                 of {formatNumber(locale, snapshot.questionCount)}
               </span>
               {snapshot.phase === "question_open" ? (
-                <Countdown deadline={snapshot.deadline} />
+                snapshot.settings.timeMode === "flex" ? (
+                  <span className="muted" lang={locale} role="status">
+                    {t("live.common.flexOpen")}
+                  </span>
+                ) : (
+                  <Countdown deadline={snapshot.deadline} />
+                )
               ) : null}
             </div>
             <h1 lang="" style={{ fontSize: "clamp(2rem, 7vw, 4rem)" }}>

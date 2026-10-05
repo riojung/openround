@@ -50,6 +50,23 @@ export class MemoryLibraryMetadataRepository
 {
   readonly favorites = new Map<string, LibraryFavoriteRecord>();
 
+  constructor(private readonly repository?: Pick<MemoryRepository, "hasLibraryArtifact">) {}
+
+  deleteLibraryArtifactMetadata(
+    workspaceId: string,
+    artifactType: LibraryArtifactType,
+    artifactId: string,
+  ) {
+    for (const [key, favorite] of this.favorites) {
+      if (
+        favorite.workspaceId === workspaceId &&
+        favorite.artifactType === artifactType &&
+        favorite.artifactId === artifactId
+      )
+        this.favorites.delete(key);
+    }
+  }
+
   exportAccount({ userId }: MemoryRepositoryLifecycleContext) {
     return {
       libraryFavorites: [...this.favorites.values()]
@@ -86,6 +103,11 @@ export class MemoryLibraryMetadataRepository
       this.favorites.delete(key);
       return null;
     }
+    if (
+      this.repository &&
+      !this.repository.hasLibraryArtifact(input.workspaceId, input.artifactType, input.artifactId)
+    )
+      return null;
     const existing = this.favorites.get(key);
     if (existing) return structuredClone(existing);
     const favorite: LibraryFavoriteRecord = {
@@ -154,6 +176,13 @@ export class PostgresLibraryMetadataRepository implements LibraryMetadataReposit
         );
         return null;
       }
+      const artifact = await client.query(
+        input.artifactType === "round"
+          ? "SELECT id FROM quizzes WHERE workspace_id = $1 AND id = $2 FOR KEY SHARE"
+          : "SELECT id FROM presentations WHERE workspace_id = $1 AND id = $2 FOR KEY SHARE",
+        [input.workspaceId, input.artifactId],
+      );
+      if (!artifact.rows[0]) return null;
       const result = await client.query(
         `INSERT INTO library_favorites
            (workspace_id, user_id, artifact_type, artifact_id, created_at)
@@ -175,7 +204,7 @@ export function createLibraryMetadataRepository(repository: Repository): Library
   if (repository instanceof MemoryRepository) {
     return repository.getOrCreateLifecycleExtension(
       "library-metadata",
-      () => new MemoryLibraryMetadataRepository(),
+      () => new MemoryLibraryMetadataRepository(repository),
     );
   }
   return new MemoryLibraryMetadataRepository();

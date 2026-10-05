@@ -1,5 +1,15 @@
 import { z } from "zod";
 
+export {
+  clampContentSlideFrame,
+  contentSlideMediaFrame,
+  fitContentSlideFrameAroundMedia,
+  regionContentSlideFrames,
+  regionForContentSlideFrame,
+  resolveContentSlideFrames,
+  starterContentSlideFrames,
+} from "./slide-geometry";
+
 function isHttpOrHttpsUrl(value: string) {
   try {
     return ["http:", "https:"].includes(new URL(value).protocol);
@@ -18,6 +28,8 @@ export const errorCodes = [
   "ANSWER_INVALID",
   "ENTITLEMENT_LIMIT",
   "UNAUTHORIZED",
+  "ARTIFACT_NOT_ARCHIVED",
+  "ARTIFACT_IN_USE",
   "RATE_LIMITED",
   "NOT_FOUND",
   "VALIDATION_ERROR",
@@ -109,6 +121,8 @@ export const WorkspaceProductFeaturesSchema = z.object({
   builderV2: z.boolean(),
   presentations: z.boolean(),
   presentationRealtime: z.boolean(),
+  liveFlexMode: z.boolean().default(false),
+  questionHealth: z.boolean().default(false),
   groups: z.boolean(),
   discover: z.boolean(),
 });
@@ -555,6 +569,237 @@ export const QuestionDraftSchema = z.union([
 ]);
 export type QuestionDraft = z.infer<typeof QuestionDraftSchema>;
 
+export const QUESTION_HEALTH_RULE_IDS = [
+  "choice.duplicate",
+  "choice.overlap",
+  "choice.length_cue",
+  "choice.missing_rationale",
+  "question.missing_explanation",
+  "question.missing_citation",
+  "question.dense_content",
+  "question.configuration_mismatch",
+  "recheck.same_prompt",
+  "recheck.concept_mismatch",
+] as const;
+export const QuestionHealthRuleIdSchema = z.enum(QUESTION_HEALTH_RULE_IDS);
+export type QuestionHealthRuleId = z.infer<typeof QuestionHealthRuleIdSchema>;
+
+export const QuestionHealthFindingSchema = z.object({
+  id: z.string().min(1).max(500),
+  ruleId: QuestionHealthRuleIdSchema,
+  ruleVersion: z.number().int().positive().max(99),
+  rulesetVersion: z.string().min(1).max(32),
+  severity: z.literal("advisory"),
+  questionId: z.string().uuid(),
+  fieldPath: z.string().min(1).max(500),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  reason: z.string().min(1).max(1_000),
+  evidence: z.string().min(1).max(1_000),
+  recommendedAction: z.string().min(1).max(1_000),
+});
+export type QuestionHealthFinding = z.infer<typeof QuestionHealthFindingSchema>;
+
+export const QuestionHealthDismissalReasonSchema = z.enum([
+  "false_positive",
+  "intentional_choice",
+  "will_address_later",
+]);
+export type QuestionHealthDismissalReason = z.infer<typeof QuestionHealthDismissalReasonSchema>;
+
+export const QuestionHealthDismissalSchema = z.object({
+  findingId: z.string().min(1).max(500),
+  ruleVersion: z.number().int().positive().max(99),
+  rulesetVersion: z.string().min(1).max(32),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  reason: QuestionHealthDismissalReasonSchema,
+  createdAt: z.string().datetime(),
+});
+export type QuestionHealthDismissal = z.infer<typeof QuestionHealthDismissalSchema>;
+
+export const QuestionHealthDismissalInputSchema = QuestionHealthDismissalSchema.omit({
+  findingId: true,
+  createdAt: true,
+}).extend({ draftRevision: z.number().int().nonnegative() });
+export type QuestionHealthDismissalInput = z.infer<typeof QuestionHealthDismissalInputSchema>;
+
+export const QuestionHealthDismissalIdentitySchema = QuestionHealthDismissalSchema.omit({
+  reason: true,
+  createdAt: true,
+}).extend({ draftRevision: z.number().int().nonnegative() });
+export type QuestionHealthDismissalIdentity = z.infer<typeof QuestionHealthDismissalIdentitySchema>;
+
+export const QuestionHealthResultSchema = z.object({
+  quizId: z.string().uuid(),
+  draftRevision: z.number().int().nonnegative(),
+  rulesetVersion: z.string().min(1).max(32),
+  evaluatedQuestionCount: z.number().int().nonnegative().max(200),
+  findings: z.array(QuestionHealthFindingSchema).max(1_000),
+  findingsTruncated: z.boolean(),
+  dismissals: z.array(QuestionHealthDismissalSchema).max(1_000).default([]),
+});
+export type QuestionHealthResult = z.infer<typeof QuestionHealthResultSchema>;
+
+/** Findings for one immutable published Round version; draft dismissals never apply here. */
+export const QuestionHealthPublishedResultSchema = QuestionHealthResultSchema.omit({
+  draftRevision: true,
+  dismissals: true,
+}).extend({
+  source: z.literal("published"),
+  version: z.object({
+    id: z.string().uuid(),
+    number: z.number().int().positive(),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    publishedAt: z.string().datetime(),
+    sourceDraftRevision: z.number().int().nonnegative().nullable(),
+  }),
+});
+export type QuestionHealthPublishedResult = z.infer<typeof QuestionHealthPublishedResultSchema>;
+
+/** Aggregate-only post-use evidence for one exact published Round version. */
+export const QUESTION_HEALTH_POST_USE_MAX_REPORTS = 250;
+
+export const QuestionHealthPostUseSignalSchema = z.discriminatedUnion("ruleId", [
+  z.object({
+    id: z.string().min(1).max(500),
+    ruleId: z.literal("choice.unused_after_use"),
+    ruleVersion: z.literal(1),
+    severity: z.literal("advisory"),
+    questionId: z.string().uuid(),
+    choiceId: z.string().uuid(),
+    evidence: z.string().min(1).max(1_000),
+    recommendedAction: z.string().min(1).max(1_000),
+  }),
+  z.object({
+    id: z.string().min(1).max(500),
+    ruleId: z.literal("question.session_instability"),
+    ruleVersion: z.literal(1),
+    severity: z.literal("advisory"),
+    questionId: z.string().uuid(),
+    evidence: z.string().min(1).max(1_000),
+    recommendedAction: z.string().min(1).max(1_000),
+  }),
+]);
+export type QuestionHealthPostUseSignal = z.infer<typeof QuestionHealthPostUseSignalSchema>;
+
+export const QuestionHealthPostUseObservationSchema = z.object({
+  questionId: z.string().uuid(),
+  questionPosition: z.number().int().positive(),
+  sample: z.object({
+    sessions: z.number().int().positive(),
+    responses: z.number().int().min(20),
+    minimumResponsesPerSession: z.literal(20),
+  }),
+  correct: z.number().int().nonnegative(),
+  accuracyPercent: z.number().min(0).max(100),
+  sessionAccuracyRange: z
+    .object({
+      minPercent: z.number().min(0).max(100),
+      maxPercent: z.number().min(0).max(100),
+    })
+    .nullable(),
+  signals: z.array(QuestionHealthPostUseSignalSchema).max(200),
+});
+export type QuestionHealthPostUseObservation = z.infer<
+  typeof QuestionHealthPostUseObservationSchema
+>;
+
+export const QuestionHealthPostUseResultSchema = z.object({
+  quizId: z.string().uuid(),
+  source: z.literal("published"),
+  rulesetVersion: z.literal("post-use-1.0.0"),
+  version: QuestionHealthPublishedResultSchema.shape.version,
+  eligibility: z.object({
+    minimumResponsesPerSession: z.literal(20),
+    instabilityMinimumSessions: z.literal(3),
+    instabilityThresholdPercentagePoints: z.literal(30),
+  }),
+  history: z.object({
+    maxReports: z.literal(QUESTION_HEALTH_POST_USE_MAX_REPORTS),
+    reportsIncluded: z.number().int().min(0).max(QUESTION_HEALTH_POST_USE_MAX_REPORTS),
+    hasMoreReports: z.boolean(),
+  }),
+  cohorts: z
+    .array(
+      z.object({
+        trustMode: z.enum(["learning", "verified"]),
+        timeMode: z.enum(["timed", "flex"]),
+        scoringMode: z.enum(["accuracy", "speed"]),
+        questions: z.array(QuestionHealthPostUseObservationSchema).max(200),
+      }),
+    )
+    .max(100),
+  evidenceNote: z.string().min(1).max(1_000),
+});
+export type QuestionHealthPostUseResult = z.infer<typeof QuestionHealthPostUseResultSchema>;
+
+/** Only narrowly-scoped, facilitator-reviewed edits may be applied from a health finding. */
+export const QuestionHealthRevisionActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("align_opinion_settings") }),
+  z.object({ kind: z.literal("set_explanation"), value: z.string().trim().min(1).max(1_000) }),
+  z.object({ kind: z.literal("set_choice_feedback"), value: z.string().trim().min(1).max(500) }),
+  z.object({ kind: z.literal("set_choice_label"), value: z.string().trim().min(1).max(180) }),
+  z.object({ kind: z.literal("set_prompt"), value: z.string().trim().min(1).max(500) }),
+  z.object({ kind: z.literal("set_recheck_prompt"), value: z.string().trim().min(1).max(500) }),
+]);
+export type QuestionHealthRevisionAction = z.infer<typeof QuestionHealthRevisionActionSchema>;
+
+export const QuestionHealthRevisionPreviewInputSchema = QuestionHealthDismissalInputSchema.omit({
+  reason: true,
+}).extend({ action: QuestionHealthRevisionActionSchema });
+export type QuestionHealthRevisionPreviewInput = z.infer<
+  typeof QuestionHealthRevisionPreviewInputSchema
+>;
+
+export const QuestionHealthRevisionApplyInputSchema =
+  QuestionHealthRevisionPreviewInputSchema.extend({ mutationId: z.string().uuid() });
+export type QuestionHealthRevisionApplyInput = z.infer<
+  typeof QuestionHealthRevisionApplyInputSchema
+>;
+
+export const QuestionHealthRevisionUndoInputSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  mutationId: z.string().uuid(),
+});
+export type QuestionHealthRevisionUndoInput = z.infer<typeof QuestionHealthRevisionUndoInputSchema>;
+
+export const QuestionHealthRevisionChangeSchema = z.object({
+  fieldPath: z.string().min(1).max(500),
+  before: z.union([z.string(), z.number(), z.null()]),
+  after: z.union([z.string(), z.number(), z.null()]),
+});
+export type QuestionHealthRevisionChange = z.infer<typeof QuestionHealthRevisionChangeSchema>;
+
+export const QuestionHealthRevisionPreviewSchema = z.object({
+  findingId: z.string().min(1).max(500),
+  draftRevision: z.number().int().nonnegative(),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  changes: z.array(QuestionHealthRevisionChangeSchema).min(1).max(2),
+});
+export type QuestionHealthRevisionPreview = z.infer<typeof QuestionHealthRevisionPreviewSchema>;
+
+/** The API returns the complete QuizRecord; this schema checks the fields needed by the editor. */
+const QuestionHealthRevisionQuizSchema = z
+  .object({
+    id: z.string().uuid(),
+    draft: z.lazy(() => QuizDraftSchema),
+    draftRevision: z.number().int().nonnegative(),
+  })
+  .passthrough();
+
+export const QuestionHealthRevisionAppliedSchema = z.object({
+  quiz: QuestionHealthRevisionQuizSchema,
+  applicationId: z.string().uuid(),
+  appliedRevision: z.number().int().nonnegative(),
+  changes: z.array(QuestionHealthRevisionChangeSchema).min(1).max(2),
+});
+export type QuestionHealthRevisionApplied = z.infer<typeof QuestionHealthRevisionAppliedSchema>;
+
+export const QuestionHealthRevisionUndoneSchema = z.object({
+  quiz: QuestionHealthRevisionQuizSchema,
+  applicationId: z.string().uuid(),
+});
+export type QuestionHealthRevisionUndone = z.infer<typeof QuestionHealthRevisionUndoneSchema>;
+
 const CommonQuestionSchema = CommonQuestionDraftSchema.extend({
   prompt: z.string().trim().min(1, "Enter the checkpoint prompt").max(500),
 });
@@ -867,6 +1112,9 @@ export function questionDelivery(question: Pick<QuestionDraft, "delivery">) {
 export const ScoringModeSchema = z.enum(["accuracy", "speed"]);
 export type ScoringMode = z.infer<typeof ScoringModeSchema>;
 
+export const RoundTimeModeSchema = z.enum(["timed", "flex"]);
+export type RoundTimeMode = z.infer<typeof RoundTimeModeSchema>;
+
 export const ResultVisibilitySchema = z.enum(["private", "leaderboard"]);
 export type ResultVisibility = z.infer<typeof ResultVisibilitySchema>;
 
@@ -875,6 +1123,7 @@ export type TrustMode = z.infer<typeof TrustModeSchema>;
 
 export const SessionSettingsSchema = z.object({
   audienceLimit: z.number().int().min(1).max(250),
+  timeMode: RoundTimeModeSchema.default("timed"),
   scoringMode: ScoringModeSchema,
   resultVisibility: ResultVisibilitySchema,
   allowLateJoin: z.boolean(),
@@ -995,6 +1244,21 @@ export const InsightActionSchema = z.enum([
 ]);
 export type InsightAction = z.infer<typeof InsightActionSchema>;
 
+export const CheckpointInsightRecommendationCodeSchema = z.enum([
+  "insufficient_sample",
+  "low_participation",
+  "high_confidence_error",
+  "dominant_misconception",
+  "low_correctness",
+  "split_understanding",
+  "correct_but_uncertain",
+  "continue",
+  "opinion_result",
+]);
+export type CheckpointInsightRecommendationCode = z.infer<
+  typeof CheckpointInsightRecommendationCodeSchema
+>;
+
 export const CheckpointInsightSchema = z.object({
   sampleSize: z.number().int().nonnegative(),
   activeParticipantCount: z.number().int().nonnegative(),
@@ -1011,7 +1275,7 @@ export const CheckpointInsightSchema = z.object({
     })
     .nullable(),
   recommendation: z.object({
-    code: z.string(),
+    code: CheckpointInsightRecommendationCodeSchema,
     action: InsightActionSchema,
     title: z.string(),
     reason: z.string(),
@@ -2271,10 +2535,91 @@ const ReportParticipantSchema = z.object({
   answerCount: z.number().int().nonnegative(),
 });
 
+const SessionDecisionEventBaseShape = {
+  seq: z.number().int().positive(),
+  occurredAt: z.string().datetime(),
+};
+
+export const SessionDecisionEventSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("insight_shown"),
+      roundId: z.string().uuid(),
+      questionId: z.string().uuid(),
+      sampleSize: z.number().int().nonnegative(),
+      activeParticipantCount: z.number().int().nonnegative(),
+      recommendationCode: CheckpointInsightRecommendationCodeSchema,
+      ruleSetVersion: z.string().regex(/^checkpoint-insight-v[1-9][0-9]*$/),
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("answer_revealed"),
+      roundId: z.string().uuid(),
+      questionId: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("intervention_started"),
+      roundId: z.string().uuid(),
+      interventionType: InterventionTypeSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("intervention_finished"),
+      roundId: z.string().uuid(),
+      interventionType: InterventionTypeSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("recheck_opened"),
+      sourceRoundId: z.string().uuid(),
+      roundId: z.string().uuid(),
+      questionId: z.string().uuid(),
+      kind: z.enum(["linked_recheck", "revote"]),
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("question_advanced"),
+      fromRoundId: z.string().uuid(),
+      toRoundId: z.string().uuid(),
+      questionId: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("session_finished"),
+      reason: z.enum(["host_ended", "completed"]),
+    })
+    .strict(),
+  z
+    .object({
+      ...SessionDecisionEventBaseShape,
+      type: z.literal("capture_truncated"),
+      reason: z.literal("event_limit"),
+    })
+    .strict(),
+]);
+export type SessionDecisionEvent = z.infer<typeof SessionDecisionEventSchema>;
+export const MAX_SESSION_DECISION_EVENTS = 5_000;
+
 const ReportBaseShape = {
   id: z.string().uuid(),
   sessionId: z.string().uuid(),
   trustMode: TrustModeSchema.default("learning"),
+  timeMode: RoundTimeModeSchema.default("timed"),
+  decisionReplayAvailable: z.boolean().default(false),
   status: z.enum(["pending", "ready", "failed"]),
   generatedAt: z.string().datetime().nullable(),
   expiresAt: z.string().datetime(),
@@ -2400,14 +2745,28 @@ export const ReportV3Schema = ReportV2Schema.extend({
   }),
 });
 
-export const ReportSchema = z.union([ReportV3Schema, ReportV2Schema, LegacyReportSchema]);
+export const ReportV4Schema = ReportV3Schema.extend({
+  schemaVersion: z.literal(4),
+  decisionReplayAvailable: z.boolean(),
+  decisionReplayComplete: z.boolean(),
+  decisionTimeline: z.array(SessionDecisionEventSchema).max(MAX_SESSION_DECISION_EVENTS + 1),
+});
+
+export const ReportSchema = z.union([
+  ReportV4Schema,
+  ReportV3Schema,
+  ReportV2Schema,
+  LegacyReportSchema,
+]);
 /** Input aliases preserve compatibility while schema parsing resolves the trust-mode default. */
 export type Report = z.input<typeof ReportSchema>;
 export type ReportV2 = z.input<typeof ReportV2Schema>;
 export type ReportV3 = z.input<typeof ReportV3Schema>;
+export type ReportV4 = z.input<typeof ReportV4Schema>;
 export type ResolvedReport = z.output<typeof ReportSchema>;
 export type ResolvedReportV2 = z.output<typeof ReportV2Schema>;
 export type ResolvedReportV3 = z.output<typeof ReportV3Schema>;
+export type ResolvedReportV4 = z.output<typeof ReportV4Schema>;
 
 export const FollowupTimeModeSchema = z.enum(["timed", "flex"]);
 export type FollowupTimeMode = z.infer<typeof FollowupTimeModeSchema>;
@@ -2583,6 +2942,68 @@ export const ContentSlideLayoutSchema = z.enum([
 ]);
 export type ContentSlideLayout = z.infer<typeof ContentSlideLayoutSchema>;
 
+export const ContentSlideRegionSchema = z.enum([
+  "top_left",
+  "top_center",
+  "top_right",
+  "middle_left",
+  "middle_center",
+  "middle_right",
+  "bottom_left",
+  "bottom_center",
+  "bottom_right",
+]);
+export type ContentSlideRegion = z.infer<typeof ContentSlideRegionSchema>;
+
+export const ContentSlideFrameSchema = z
+  .object({
+    x: z.number().finite().min(0).max(100),
+    y: z.number().finite().min(0).max(100),
+    width: z.number().finite().min(12).max(100),
+    height: z.number().finite().min(6).max(100),
+  })
+  .superRefine((frame, context) => {
+    if (frame.x + frame.width > 100) {
+      context.addIssue({
+        code: "custom",
+        path: ["width"],
+        message: "Text elements must fit within the slide width",
+      });
+    }
+    if (frame.y + frame.height > 100) {
+      context.addIssue({
+        code: "custom",
+        path: ["height"],
+        message: "Text elements must fit within the slide height",
+      });
+    }
+  });
+export type ContentSlideFrame = z.infer<typeof ContentSlideFrameSchema>;
+
+const ContentSlideTitleElementSchema = z.object({
+  id: z.string().trim().min(1).max(200),
+  role: z.literal("title"),
+  text: z.string().trim().max(160),
+  region: ContentSlideRegionSchema,
+  order: z.number().int().min(0).max(7),
+  frame: ContentSlideFrameSchema.optional(),
+});
+
+const ContentSlideBodyElementSchema = z.object({
+  id: z.string().trim().min(1).max(200),
+  role: z.literal("body"),
+  text: z.string().trim().max(4_000),
+  region: ContentSlideRegionSchema,
+  order: z.number().int().min(0).max(7),
+  frame: ContentSlideFrameSchema.optional(),
+});
+
+export const ContentSlideTextElementSchema = z.discriminatedUnion("role", [
+  ContentSlideTitleElementSchema,
+  ContentSlideBodyElementSchema,
+]);
+export type ContentSlideTextElement = z.infer<typeof ContentSlideTextElementSchema>;
+
 const PastedAuthoringSourceSchema = z.object({
   sourceType: z.literal("pasted_text"),
   sourceName: z.string().trim().min(1).max(200).default("Pasted source"),
@@ -2749,8 +3170,7 @@ const ContentSlideDraftFields = {
   id: z.string().uuid(),
   kind: z.literal("content"),
   layout: ContentSlideLayoutSchema,
-  title: z.string().trim().max(160),
-  body: z.string().trim().max(4_000),
+  textElements: z.array(ContentSlideTextElementSchema).min(1).max(8),
   mediaId: z.string().uuid().nullable(),
   mediaAlt: z.string().trim().max(300).nullable(),
   speakerNotes: z.string().trim().max(2_000),
@@ -2759,15 +3179,54 @@ const ContentSlideDraftFields = {
 };
 
 /** Draft slides retain bounded storage shape while allowing incomplete accessibility metadata. */
-export const ContentSlideDraftSchema = z.object(ContentSlideDraftFields);
+export const ContentSlideDraftSchema = z
+  .object(ContentSlideDraftFields)
+  .superRefine((slide, ctx) => {
+    const titles = slide.textElements.filter((element) => element.role === "title");
+    if (titles.length !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Every content slide must have exactly one title element",
+        path: ["textElements"],
+      });
+    }
+    const ids = new Set<string>();
+    const locations = new Set<string>();
+    for (const [index, element] of slide.textElements.entries()) {
+      if (ids.has(element.id)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Every text element needs a unique ID",
+          path: ["textElements", index, "id"],
+        });
+      }
+      ids.add(element.id);
+      const location = `${element.region}:${element.order}`;
+      if (locations.has(location)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Text elements in the same region need a unique order",
+          path: ["textElements", index, "order"],
+        });
+      }
+      locations.add(location);
+    }
+  });
 export type ContentSlideDraft = z.infer<typeof ContentSlideDraftSchema>;
 
 export const ContentSlideSchema = z.object(ContentSlideDraftFields).superRefine((slide, ctx) => {
-  if (!slide.title && !slide.body && !slide.mediaId) {
+  if (!slide.textElements.some((element) => element.text.trim()) && !slide.mediaId) {
     ctx.addIssue({
       code: "custom",
       message: "Add a title, body, or image to this slide",
-      path: ["title"],
+      path: ["textElements"],
+    });
+  }
+  if (!ContentSlideDraftSchema.safeParse(slide).success) {
+    ctx.addIssue({
+      code: "custom",
+      message: "This slide has invalid text elements",
+      path: ["textElements"],
     });
   }
   if (slide.mediaId && !slide.mediaAlt?.trim()) {
@@ -2920,7 +3379,7 @@ export const PresentationDraftSchema = z
     title: z.string().trim().max(160),
     description: z.string().trim().max(1_000).default(""),
     experiencePreset: ExperiencePresetRefSchema.default({ id: "focus", version: 1 }),
-    schemaVersion: z.literal(1).default(1),
+    schemaVersion: z.literal(2).default(2),
     sourceDisclosure: PresentationSourceDisclosureSchema.optional(),
     blocks: z.array(PresentationBlockDraftSchema).max(200),
   })
@@ -2932,7 +3391,7 @@ export const PresentationContentSchema = z
     title: z.string().trim().min(1, "Enter a presentation title").max(160),
     description: z.string().trim().max(1_000).default(""),
     experiencePreset: ExperiencePresetRefSchema.default({ id: "focus", version: 1 }),
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     sourceDisclosure: PresentationSourceDisclosureSchema.optional(),
     blocks: z.array(PresentationBlockSchema).min(1).max(200),
   })
@@ -2959,6 +3418,71 @@ export const PresentationContentSchema = z
   });
 export type PresentationContent = z.infer<typeof PresentationContentSchema>;
 
+const legacyRegionByLayout = {
+  title: "middle_center",
+  title_body: "middle_center",
+  media: "top_center",
+  quote: "middle_center",
+  section: "middle_center",
+  callout: "top_center",
+} as const;
+
+/** Shared by persisted artifacts and browser recovery before validating the v2 contract. */
+export function migratePresentationV1(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const presentation = value as { blocks?: unknown; [key: string]: unknown };
+  if (!Array.isArray(presentation.blocks)) return { ...presentation, schemaVersion: 2 };
+  return {
+    ...presentation,
+    schemaVersion: 2,
+    blocks: presentation.blocks.map((rawBlock) => {
+      if (!rawBlock || typeof rawBlock !== "object" || Array.isArray(rawBlock)) return rawBlock;
+      const block = rawBlock as {
+        id?: unknown;
+        kind?: unknown;
+        layout?: unknown;
+        title?: unknown;
+        body?: unknown;
+        [key: string]: unknown;
+      };
+      if (block.kind !== "content" || "textElements" in block) return rawBlock;
+      const layout =
+        typeof block.layout === "string" && block.layout in legacyRegionByLayout
+          ? (block.layout as keyof typeof legacyRegionByLayout)
+          : "title_body";
+      const blockId = typeof block.id === "string" ? block.id : "legacy-slide";
+      const title = typeof block.title === "string" ? block.title : "";
+      const body = typeof block.body === "string" ? block.body : "";
+      const retained = { ...block };
+      delete retained.title;
+      delete retained.body;
+      const bodyRegion =
+        layout === "title_body" || layout === "media" || layout === "callout"
+          ? "middle_center"
+          : "bottom_center";
+      return {
+        ...retained,
+        textElements: [
+          {
+            id: `${blockId}:title`,
+            role: "title",
+            text: title,
+            region: legacyRegionByLayout[layout],
+            order: 0,
+          },
+          {
+            id: `${blockId}:body`,
+            role: "body",
+            text: body,
+            region: bodyRegion,
+            order: bodyRegion === legacyRegionByLayout[layout] ? 1 : 0,
+          },
+        ],
+      };
+    }),
+  };
+}
+
 export const CreatePresentationSchema = z.object({
   title: z.string().trim().min(1).max(160),
   description: z.string().trim().max(1_000).default(""),
@@ -2968,7 +3492,7 @@ export const PresentationDraftMutationSchema = z.object({
   draft: PresentationDraftSchema,
   expectedRevision: z.number().int().nonnegative(),
   mutationId: z.string().uuid(),
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
 });
 export type PresentationDraftMutation = z.infer<typeof PresentationDraftMutationSchema>;
 
@@ -3036,10 +3560,19 @@ export const PresentationLiveContentBlockSchema = z
     id: z.string().uuid(),
     kind: z.literal("content"),
     layout: ContentSlideLayoutSchema,
-    title: z.string().max(160),
-    body: z.string().max(4_000),
+    textElements: z.array(ContentSlideTextElementSchema).min(1).max(8),
     mediaId: z.string().uuid().nullable(),
     mediaAlt: z.string().max(300).nullable(),
+  })
+  .superRefine((block, ctx) => {
+    const parsed = ContentSlideDraftSchema.safeParse({ ...block, speakerNotes: "" });
+    if (!parsed.success) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Live content slides must contain valid text element positions",
+        path: ["textElements"],
+      });
+    }
   })
   .strict();
 export type PresentationLiveContentBlock = z.infer<typeof PresentationLiveContentBlockSchema>;
@@ -3455,6 +3988,7 @@ export const PresentationRestV1SessionListItemSchema = z
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
     finishedAt: z.string().datetime().nullable(),
+    liveExpiresAt: z.string().datetime().optional(),
   })
   .strict()
   .superRefine((snapshot, ctx) => {
@@ -3605,6 +4139,7 @@ export type PresentationCommand = z.infer<typeof PresentationCommandSchema>;
 
 export const CreatePresentationSessionSchema = z.object({
   presentationId: z.string().uuid(),
+  timeMode: PresentationTimeModeSchema.default("timed"),
 });
 
 export const AdvancePresentationSessionSchema = z.object({
@@ -3879,3 +4414,12 @@ export const PresentationReportEnvelopeSchema = z
     }
   });
 export type PresentationReportEnvelope = z.infer<typeof PresentationReportEnvelopeSchema>;
+
+/** Opt-in session context keeps the persisted V1 report and original REST envelope unchanged. */
+export const PresentationReportWithSessionContextEnvelopeSchema =
+  PresentationReportEnvelopeSchema.safeExtend({
+    sessionContext: z.object({ timeMode: PresentationTimeModeSchema }).strict(),
+  });
+export type PresentationReportWithSessionContextEnvelope = z.infer<
+  typeof PresentationReportWithSessionContextEnvelopeSchema
+>;

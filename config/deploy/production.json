@@ -13,8 +13,15 @@
     "port": 22,
     "user": "openround",
     "deployPath": "/opt/openround/production",
-    "composeFiles": ["compose.single-vm.yaml"],
-    "deploymentFiles": ["infra/single-vm/Caddyfile", "infra/single-vm/postgres-init.sh"],
+    "composeFiles": ["compose.single-vm.yaml", "compose.single-vm.observability.yaml"],
+    "deploymentFiles": [
+      "infra/single-vm/Caddyfile",
+      "infra/single-vm/postgres-init.sh",
+      "infra/observability/alerts.yml",
+      "infra/observability/alertmanager.single-vm.yml",
+      "infra/observability/otel-collector.single-vm.yml",
+      "infra/observability/prometheus.single-vm.yml"
+    ],
     "knownHostsFile": "config/deploy/ssh/production_known_hosts",
     "projectName": "openround-production"
   },

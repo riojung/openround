@@ -40,22 +40,20 @@ if (
 }
 
 interface GameLoadResult {
-  clients: number;
+  counts: {
+    reportResponses: number;
+  };
   correctness: {
-    acceptedAnswers: number;
-    duplicateScoreEffects: number;
-    answerKeyLeak: boolean;
-    reconnectReplayComplete: boolean;
-    processRestart: "recovered" | "not_run";
+    duplicateAcceptedResponses: number;
+    leakageDetected: boolean;
   };
   latencyMs: {
     join: { p50: number; p95: number };
     answerAcknowledgement: { p50: number; p95: number; p99: number };
-    questionBroadcast: { p95: number; max: number };
-    reconnectSnapshot: number;
-    restartRecovery: number | null;
-    reportAvailable: number;
+    clientReceipt: { p50: number; p95: number; max: number };
   };
+  report: { availableMs: number };
+  recovery: { reconnectCompleted: boolean; reconnectMs: number };
 }
 
 function runSession(index: number, startAtMs: number, answerAtMs: number) {
@@ -142,12 +140,12 @@ async function main() {
 
   const totalClients = sessionCount * clientsPerSession;
   assert.equal(
-    sessions.reduce((total, result) => total + result.correctness.acceptedAnswers, 0),
+    sessions.reduce((total, result) => total + result.counts.reportResponses, 0),
     totalClients,
   );
-  assert.ok(sessions.every((result) => result.correctness.duplicateScoreEffects === 0));
-  assert.ok(sessions.every((result) => !result.correctness.answerKeyLeak));
-  assert.ok(sessions.every((result) => result.correctness.reconnectReplayComplete));
+  assert.ok(sessions.every((result) => result.correctness.duplicateAcceptedResponses === 0));
+  assert.ok(sessions.every((result) => !result.correctness.leakageDetected));
+  assert.ok(sessions.every((result) => result.recovery.reconnectCompleted));
 
   const maximum = (select: (result: GameLoadResult) => number) => Math.max(...sessions.map(select));
   const result = {
@@ -167,9 +165,9 @@ async function main() {
       joinP95: maximum((session) => session.latencyMs.join.p95),
       answerAcknowledgementP95: maximum((session) => session.latencyMs.answerAcknowledgement.p95),
       answerAcknowledgementP99: maximum((session) => session.latencyMs.answerAcknowledgement.p99),
-      questionBroadcastP95: maximum((session) => session.latencyMs.questionBroadcast.p95),
-      reconnectSnapshot: maximum((session) => session.latencyMs.reconnectSnapshot),
-      reportAvailable: maximum((session) => session.latencyMs.reportAvailable),
+      questionBroadcastP95: maximum((session) => session.latencyMs.clientReceipt.p95),
+      reconnectSnapshot: maximum((session) => session.recovery.reconnectMs),
+      reportAvailable: maximum((session) => session.report.availableMs),
     },
   };
 

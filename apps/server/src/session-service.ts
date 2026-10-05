@@ -25,10 +25,12 @@ import {
   SessionCodeConflictError,
   SessionNotActiveError,
   SessionVersionConflictError,
+  WorkspaceDeletionInProgressError,
   type AudienceOutboxRecord,
   type CreatorContext,
   type ParticipantRecord,
   type Repository,
+  type SessionInvalidationTarget,
   type SessionStaffCredentialRecord,
   type SessionStaffCredentialReplacement,
   type StoredSession,
@@ -61,6 +63,8 @@ import { createPendingReport } from "./reporting.js";
 import type { MetricsService } from "./metrics.js";
 import { entitlementsFor, retentionExpiry } from "./entitlements.js";
 import { ProductEventDispatcher, type ProductEventInput } from "./product-events.js";
+import { evidenceWorkspaceFeatureEnabled } from "./workspace-rollout.js";
+import { decisionEventsForTransition } from "./session-decision-replay.js";
 
 export interface SessionMutation {
   state: GameState;
@@ -301,7 +305,8 @@ export class SessionService {
 
   private async mutate<T>(
     sessionId: string,
-    operation: "answer" | "deadline" | "delete" | "disconnect" | "host" | "join" | "resume",
+    operation:
+      "answer" | "create" | "deadline" | "delete" | "disconnect" | "host" | "join" | "resume",
     work: () => Promise<T>,
   ): Promise<T> {
     return this.exclusive(sessionId, async () => {
@@ -387,6 +392,14 @@ export class SessionService {
       return null;
     }
     const cached = await this.cache.get(sessionId);
+    // Check after the last asynchronous cache read. If deletion fenced the workspace while this
+    // load was in flight, do not republish the now-deleted session into the process-local cache.
+    if (await this.repository.workspaceDeletionStarted(persisted.workspaceId)) {
+      this.active.delete(sessionId);
+      this.metrics.setActiveSessions(this.active.size);
+      await this.cache.delete(sessionId).catch(() => undefined);
+      return null;
+    }
     persisted.state = upgradeGameState(persisted.state);
     if (cached && cached.version >= persisted.state.version) {
       persisted.state = upgradeGameState(cached);
@@ -402,6 +415,12 @@ export class SessionService {
     const active = this.active.get(sessionId);
     if (active) {
       if (active.expiresAt.getTime() <= Date.now()) {
+        this.active.delete(sessionId);
+        this.metrics.setActiveSessions(this.active.size);
+        await this.cache.delete(sessionId).catch(() => undefined);
+        return null;
+      }
+      if (await this.repository.workspaceDeletionStarted(active.workspaceId)) {
         this.active.delete(sessionId);
         this.metrics.setActiveSessions(this.active.size);
         await this.cache.delete(sessionId).catch(() => undefined);
@@ -633,9 +652,10 @@ export class SessionService {
     events: EngineEvent[],
     expectedVersion: number,
     report?: Report,
+    decisionEvents: Parameters<Repository["saveSession"]>[3] = [],
   ) {
     session.updatedAt = new Date();
-    await this.repository.saveSession(session, expectedVersion, report);
+    await this.repository.saveSession(session, expectedVersion, report, decisionEvents);
     this.active.set(session.id, session);
     this.metrics.setActiveSessions(this.active.size);
     await Promise.allSettled([
@@ -665,7 +685,12 @@ export class SessionService {
     const existing = this.timers.get(session.id);
     if (existing) clearTimeout(existing);
     this.timers.delete(session.id);
-    if (session.state.phase !== "question_open" || !session.state.deadlineMs) return;
+    if (
+      session.state.phase !== "question_open" ||
+      session.state.settings.timeMode === "flex" ||
+      session.state.deadlineMs === null
+    )
+      return;
     const delay = Math.max(0, session.state.deadlineMs - Date.now());
     const deadlineMs = session.state.deadlineMs;
     const timer = setTimeout(
@@ -685,20 +710,51 @@ export class SessionService {
       await this.flushAnswersReceivedBy(sessionId, deadlineMs);
       await this.mutate(sessionId, "deadline", async () => {
         const session = await this.loadSessionForMutation(sessionId);
-        if (!session || session.state.phase !== "question_open") return;
+        if (
+          !session ||
+          session.state.phase !== "question_open" ||
+          session.state.settings.timeMode === "flex" ||
+          session.state.deadlineMs === null
+        )
+          return;
         if (session.state.deadlineMs && Date.now() < session.state.deadlineMs) {
           this.scheduleDeadline(session);
           return;
         }
+        const priorState = session.state;
+        const lockTimeMs = Date.now();
         const result = applyHostCommand(session.state, {
           action: "lock",
           commandId: `deadline:${session.state.roundId}`,
           expectedVersion: session.state.version,
-          nowMs: Date.now(),
+          nowMs: lockTimeMs,
           newRoundId: randomUUID,
         });
         session.state = result.state;
-        await this.save(session, result.events, result.state.version - 1);
+        const decisionEvents = session.decisionReplayEnabled
+          ? decisionEventsForTransition({
+              before: priorState,
+              after: result.state,
+              engineEvents: result.events,
+              action: "deadline",
+              commandId: `deadline:${priorState.roundId}`,
+              occurredAt: new Date(lockTimeMs),
+            })
+          : [];
+        try {
+          await this.save(
+            session,
+            result.events,
+            result.state.version - 1,
+            undefined,
+            decisionEvents,
+          );
+        } catch (error) {
+          session.state = priorState;
+          this.active.delete(session.id);
+          this.metrics.setActiveSessions(this.active.size);
+          throw error;
+        }
         this.recordSessionProductEvents(
           session.workspaceId,
           this.lifecycleProductEvents(result.events, new Date(deadlineMs)),
@@ -721,6 +777,12 @@ export class SessionService {
   ): Promise<{ sessionId: string; code: string; hostToken: string; snapshot: SessionSnapshot }> {
     if (creator.role === "viewer") {
       throw new SessionError("UNAUTHORIZED", "Viewers cannot host live rounds");
+    }
+    if (
+      settings.timeMode === "flex" &&
+      !evidenceWorkspaceFeatureEnabled(this.config, creator.workspaceId, "liveFlexMode")
+    ) {
+      throw new SessionError("NOT_FOUND", "Flex sessions are not available in this workspace");
     }
     if (settings.trustMode === "verified") {
       throw new SessionError(
@@ -791,6 +853,11 @@ export class SessionService {
           hostId: creator.userId,
           hostTokenHash: hashToken(hostToken),
           trustMode: settings.trustMode ?? "learning",
+          decisionReplayEnabled: evidenceWorkspaceFeatureEnabled(
+            this.config,
+            creator.workspaceId,
+            "decisionReplay",
+          ),
           state: createGameState({
             sessionId,
             code,
@@ -805,30 +872,35 @@ export class SessionService {
           createdAt: now,
           updatedAt: now,
         };
-        await this.repository.createSession(session);
-        retained = true;
-        await this.cache.set(session.state, ttlMs / 1_000).catch(() => undefined);
-        this.active.set(session.id, session);
-        this.metrics.setActiveSessions(this.active.size);
-        this.recordSessionProductEvents(
-          session.workspaceId,
-          [
-            {
-              name: "host_setup_completed",
-              occurredAt: now.toISOString(),
-              dimensions: { artifactType: "round" },
-            },
-          ],
-          creator.segment,
-        );
-        return {
-          sessionId,
-          code,
-          hostToken,
-          snapshot: snapshotForRole(session.state, { role: "host" }),
-        };
+        return await this.mutate(sessionId, "create", async () => {
+          await this.repository.createSession(session);
+          retained = true;
+          await this.cache.set(session.state, ttlMs / 1_000).catch(() => undefined);
+          this.active.set(session.id, session);
+          this.metrics.setActiveSessions(this.active.size);
+          this.recordSessionProductEvents(
+            session.workspaceId,
+            [
+              {
+                name: "host_setup_completed",
+                occurredAt: now.toISOString(),
+                dimensions: { artifactType: "round" },
+              },
+            ],
+            creator.segment,
+          );
+          return {
+            sessionId,
+            code,
+            hostToken,
+            snapshot: snapshotForRole(session.state, { role: "host" }),
+          };
+        });
       } catch (error) {
         if (error instanceof SessionCodeConflictError) continue;
+        if (error instanceof WorkspaceDeletionInProgressError) {
+          throw new SessionError("CONFLICT", "This workspace is being deleted");
+        }
         throw error;
       } finally {
         if (reserved && !retained) {
@@ -1044,6 +1116,9 @@ export class SessionService {
         );
       } catch (error) {
         session.state = priorState;
+        if (error instanceof WorkspaceDeletionInProgressError) {
+          throw new SessionError("CONFLICT", "This workspace is being deleted");
+        }
         throw error;
       }
       this.active.set(session.id, session);
@@ -1476,6 +1551,9 @@ export class SessionService {
           }
         } catch (error) {
           session.state = priorState;
+          if (error instanceof WorkspaceDeletionInProgressError) {
+            throw new SessionError("CONFLICT", "This workspace is being deleted");
+          }
           throw error;
         }
         this.active.set(session.id, session);
@@ -1582,10 +1660,24 @@ export class SessionService {
                 }
                 const report =
                   session.state.phase === "finished"
-                    ? createPendingReport(session.state, session.retentionExpiresAt)
+                    ? createPendingReport(
+                        session.state,
+                        session.retentionExpiresAt,
+                        session.decisionReplayEnabled ?? false,
+                      )
                     : undefined;
+                const decisionEvents = session.decisionReplayEnabled
+                  ? decisionEventsForTransition({
+                      before: priorState,
+                      after: session.state,
+                      engineEvents: result.events,
+                      action: input.action,
+                      commandId: input.commandId,
+                      occurredAt: commandTime,
+                    })
+                  : [];
                 try {
-                  await this.save(session, result.events, expectedVersion, report);
+                  await this.save(session, result.events, expectedVersion, report, decisionEvents);
                 } catch (error) {
                   session.state = priorState;
                   session.retentionExpiresAt = priorRetentionExpiresAt;
@@ -1782,6 +1874,37 @@ export class SessionService {
       .map((result) => result.reason);
     if (failures.length > 0) {
       throw new AggregateError(failures, "One or more session cache entries could not be deleted");
+    }
+  }
+
+  async invalidateWorkspaceDeletion(targets: SessionInvalidationTarget[]) {
+    const uniqueTargets = [
+      ...new Map(targets.map((target) => [target.sessionId, target])).values(),
+    ];
+    const results = await Promise.allSettled(
+      uniqueTargets.map((target) =>
+        this.mutate(target.sessionId, "delete", async () => {
+          const cleanup = await Promise.allSettled([
+            this.cache.releaseSessionCode(target.code, target.sessionId),
+            this.invalidate([target.sessionId]),
+          ]);
+          const failures = cleanup
+            .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+            .map((result) => result.reason);
+          if (failures.length > 0) {
+            throw new AggregateError(
+              failures,
+              `Session ${target.sessionId} could not be invalidated for workspace deletion`,
+            );
+          }
+        }),
+      ),
+    );
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason);
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "Workspace session invalidation did not complete");
     }
   }
 

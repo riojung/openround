@@ -11,6 +11,9 @@ the approved private operations system and link only a redacted record or checks
 - Server and web image digests:
 - Signed staging manifest workflow/artifact URL:
 - Deployment configuration fingerprint or checksum (no values):
+- Deployer-original receipt SHA-256 and protected reference:
+- Remote-probe receipt SHA-256 comparison result:
+- Independent manifest/runtime-input hash reconciliation result:
 - Provider, region, machine class, and resource-limit inventory reference:
 - GitHub environment and protection-rule reference:
 - Operations owner:
@@ -60,6 +63,7 @@ whose readiness check is degraded keeps this record pending.
 - Media upload, malware scan, private delivery, and deletion result:
 - Creator authentication and synthetic workspace result:
 - Redaction review result:
+- Receipt source authenticity (`external-review-required` until independently reconciled):
 - Failures, retries, exclusions, and linked issues:
 
 The hosted remote probe establishes deployment correctness only. Record the four target-region load
@@ -69,6 +73,8 @@ delivery and off-host restoration in their own gates.
 ## Acceptance
 
 - Exact candidate is deployed from the signed protected-workflow manifest:
+- Deployer-original receipt checksum matches the remote probe and its claimed manifest/runtime
+  inputs were independently reconciled:
 - All required services are healthy with no local/degraded substitution:
 - TLS, build fencing, configuration preflight, SMTP, private media, metrics, and tracing pass:
 - No database, Valkey, MinIO administration, metrics endpoint, or Docker socket is public:

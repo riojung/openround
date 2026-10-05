@@ -1,0 +1,30 @@
+{
+  "$schema": "./phase0-research-aggregate.schema.json",
+  "schemaVersion": 1,
+  "campaign": {
+    "protocolVersion": "example-not-frozen",
+    "cohortVersion": "example-not-frozen",
+    "cohortFrozen": false,
+    "primaryCohortFrozen": false,
+    "cutoffUtc": null,
+    "evidenceReferences": []
+  },
+  "facilitators": [],
+  "cohortSubstitutions": [],
+  "sessions": [],
+  "usability": [],
+  "measuredFailures": [],
+  "aggregateReview": {
+    "researchOwnerDecision": "pending",
+    "independentReviewerDecision": "pending",
+    "evidenceReferences": []
+  },
+  "declaredDecisions": {
+    "phase0Gate": "pending",
+    "acquisitionSegment": "pending",
+    "accessGate": "pending",
+    "companionGate": "pending",
+    "phase1Branch": "pending",
+    "measuredFailureId": null
+  }
+}
