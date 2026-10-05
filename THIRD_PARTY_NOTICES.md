@@ -19,24 +19,24 @@ This file is not legal advice.
 
 | Package                                    | Version          | Project                                                                                                                                      |
 | ------------------------------------------ | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| @aws-sdk/checksums                         | 3.1001.0         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/checksums)                                                   |
-| @aws-sdk/client-s3                         | 3.1132.0         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/clients/client-s3)                                                             |
-| @aws-sdk/core                              | 3.978.0          | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/core)                                                        |
-| @aws-sdk/credential-provider-env           | 3.972.71         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-env)                                     |
-| @aws-sdk/credential-provider-http          | 3.972.73         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-http)                                    |
-| @aws-sdk/credential-provider-ini           | 3.973.16         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-ini)                                     |
-| @aws-sdk/credential-provider-login         | 3.972.78         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-login)                                   |
-| @aws-sdk/credential-provider-node          | 3.972.83         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-node)                                    |
-| @aws-sdk/credential-provider-process       | 3.972.71         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-process)                                 |
-| @aws-sdk/credential-provider-sso           | 3.973.15         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-sso)                                     |
-| @aws-sdk/credential-provider-web-identity  | 3.972.77         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-web-identity)                            |
-| @aws-sdk/middleware-sdk-s3                 | 3.972.76         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/middleware-sdk-s3)                                           |
-| @aws-sdk/nested-clients                    | 3.997.45         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/nested-clients)                                                       |
-| @aws-sdk/s3-request-presigner              | 3.1132.0         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/s3-request-presigner)                                                 |
-| @aws-sdk/signature-v4-multi-region         | 3.996.46         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/signature-v4-multi-region)                                            |
-| @aws-sdk/token-providers                   | 3.1129.0         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/token-providers)                                                      |
-| @aws-sdk/types                             | 3.974.5          | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/types)                                                       |
-| @aws-sdk/xml-builder                       | 3.972.40         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/xml-builder)                                                 |
+| @aws-sdk/checksums                         | 3.1001.1         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/checksums)                                                   |
+| @aws-sdk/client-s3                         | 3.1141.0         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/clients/client-s3)                                                             |
+| @aws-sdk/core                              | 3.978.1          | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/core)                                                        |
+| @aws-sdk/credential-provider-env           | 3.972.72         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-env)                                     |
+| @aws-sdk/credential-provider-http          | 3.972.74         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-http)                                    |
+| @aws-sdk/credential-provider-ini           | 3.973.17         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-ini)                                     |
+| @aws-sdk/credential-provider-login         | 3.972.79         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-login)                                   |
+| @aws-sdk/credential-provider-node          | 3.972.84         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-node)                                    |
+| @aws-sdk/credential-provider-process       | 3.972.72         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-process)                                 |
+| @aws-sdk/credential-provider-sso           | 3.973.16         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-sso)                                     |
+| @aws-sdk/credential-provider-web-identity  | 3.972.78         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-web-identity)                            |
+| @aws-sdk/middleware-sdk-s3                 | 3.972.77         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/middleware-sdk-s3)                                           |
+| @aws-sdk/nested-clients                    | 3.997.46         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/nested-clients)                                                       |
+| @aws-sdk/s3-request-presigner              | 3.1141.0         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/s3-request-presigner)                                                 |
+| @aws-sdk/signature-v4-multi-region         | 3.996.47         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/signature-v4-multi-region)                                            |
+| @aws-sdk/token-providers                   | 3.1138.0         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/token-providers)                                                      |
+| @aws-sdk/types                             | 3.974.6          | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/types)                                                       |
+| @aws-sdk/xml-builder                       | 3.972.41         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/xml-builder)                                                 |
 | @aws/lambda-invoke-store                   | 0.3.0            | [Project page](https://github.com/awslabs/aws-lambda-invoke-store)                                                                           |
 | @grpc/grpc-js                              | 1.14.5           | [Project page](https://grpc.io/)                                                                                                             |
 | @grpc/proto-loader                         | 0.8.1            | [Project page](https://grpc.io/)                                                                                                             |
@@ -74,12 +74,12 @@ This file is not legal advice.
 | @opentelemetry/semantic-conventions        | 1.43.0           | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/semantic-conventions)                                            |
 | @playwright/test                           | 1.63.0           | [Project page](https://playwright.dev)                                                                                                       |
 | @prometheus-io/client                      | 0.16.1           | [Project page](https://github.com/prometheus/client_js)                                                                                      |
-| @smithy/core                               | 3.34.1           | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/core)                                                     |
+| @smithy/core                               | 3.35.1           | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/core)                                                     |
 | @smithy/credential-provider-imds           | 4.5.2            | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/credential-provider-imds)                                 |
 | @smithy/fetch-http-handler                 | 5.8.0            | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/fetch-http-handler)                                       |
 | @smithy/node-http-handler                  | 4.12.1           | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/node-http-handler)                                        |
-| @smithy/signature-v4                       | 5.7.3            | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/signature-v4)                                             |
-| @smithy/types                              | 4.18.0           | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/types)                                                    |
+| @smithy/signature-v4                       | 5.7.4            | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/signature-v4)                                             |
+| @smithy/types                              | 4.19.0           | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/types)                                                    |
 | @swc/helpers                               | 0.5.23           | [Project page](https://swc.rs)                                                                                                               |
 | baseline-browser-mapping                   | 2.11.23          | [Project page](https://github.com/web-platform-dx/baseline-browser-mapping#readme)                                                           |
 | cluster-key-slot                           | 1.1.1            | [Project page](https://github.com/Salakar/cluster-key-slot#readme)                                                                           |
@@ -166,7 +166,7 @@ This file is not legal advice.
 | @fastify/cors                         | 11.3.0              | [Project page](https://github.com/fastify/fastify-cors#readme)                                      |
 | @fastify/error                        | 4.2.0               | [Project page](https://github.com/fastify/fastify-error#readme)                                     |
 | @fastify/fast-json-stringify-compiler | 5.1.0               | [Project page](https://github.com/fastify/fast-json-stringify-compiler#readme)                      |
-| @fastify/formbody                     | 8.0.2               | [Project page](https://github.com/fastify/fastify-formbody#readme)                                  |
+| @fastify/formbody                     | 9.0.0               | [Project page](https://github.com/fastify/fastify-formbody#readme)                                  |
 | @fastify/forwarded                    | 3.0.2               | [Project page](https://github.com/fastify/forwarded#readme)                                         |
 | @fastify/helmet                       | 13.1.1              | [Project page](https://github.com/fastify/fastify-helmet#readme)                                    |
 | @fastify/merge-json-schemas           | 0.2.1               | [Project page](https://github.com/fastify/merge-json-schemas#readme)                                |
@@ -186,8 +186,8 @@ This file is not legal advice.
 | @socket.io/component-emitter          | 3.1.2               | [Project page](https://github.com/socketio/emitter#readme)                                          |
 | @socket.io/redis-streams-adapter      | 0.3.1               | [Project page](https://github.com/socketio/socket.io-redis-streams-adapter#readme)                  |
 | @types/cors                           | 2.8.19              | [Project page](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/cors)           |
-| @types/node                           | 26.5.1              | [Project page](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node)           |
-| @types/ws                             | 8.18.1              | [Project page](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/ws)             |
+| @types/node                           | 26.5.1, 26.6.3      | [Project page](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node)           |
+| @types/ws                             | 8.18.2              | [Project page](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/ws)             |
 | abstract-logging                      | 2.0.1               | [Project page](https://github.com/jsumners/abstract-logging#readme)                                 |
 | accepts                               | 1.3.8               | [Project page](https://github.com/jshttp/accepts#readme)                                            |
 | ajv                                   | 8.20.0              | [Project page](https://ajv.js.org)                                                                  |
@@ -198,7 +198,6 @@ This file is not legal advice.
 | atomic-sleep                          | 1.0.0               | [Project page](https://github.com/davidmarkclements/atomic-sleep#readme)                            |
 | avvio                                 | 9.3.0               | [Project page](https://github.com/fastify/avvio#readme)                                             |
 | balanced-match                        | 4.0.4               | [Project page](https://github.com/juliangruber/balanced-match#readme)                               |
-| base64id                              | 2.0.0               | [Project page](https://github.com/faeldt/base64id#readme)                                           |
 | bintrees                              | 1.0.2               | [Project page](https://github.com/vadimg/js_bintrees#readme)                                        |
 | bowser                                | 2.14.1              | [Project page](https://github.com/bowser-js/bowser)                                                 |
 | brace-expansion                       | 5.0.12              | [Project page](https://github.com/juliangruber/brace-expansion#readme)                              |
@@ -217,8 +216,8 @@ This file is not legal advice.
 | dequal                                | 2.0.3               | [Project page](https://github.com/lukeed/dequal#readme)                                             |
 | dom-serializer                        | 3.1.1               | [Project page](https://github.com/cheeriojs/dom-serializer#readme)                                  |
 | emoji-regex                           | 8.0.0               | [Project page](https://mths.be/emoji-regex)                                                         |
-| engine.io                             | 6.6.10              | [Project page](https://github.com/socketio/socket.io/tree/main/packages/engine.io#readme)           |
-| engine.io-client                      | 6.6.6               | [Project page](https://github.com/socketio/socket.io/tree/main/packages/engine.io-client#readme)    |
+| engine.io                             | 6.6.11              | [Project page](https://github.com/socketio/socket.io/tree/main/packages/engine.io#readme)           |
+| engine.io-client                      | 6.6.7               | [Project page](https://github.com/socketio/socket.io/tree/main/packages/engine.io-client#readme)    |
 | engine.io-parser                      | 5.2.3               | [Project page](https://github.com/socketio/socket.io/tree/main/packages/engine.io-parser#readme)    |
 | es-module-lexer                       | 3.0.2               | [Project page](https://github.com/guybedford/es-module-lexer#readme)                                |
 | escalade                              | 3.2.0               | [Project page](https://github.com/lukeed/escalade#readme)                                           |
@@ -230,7 +229,7 @@ This file is not legal advice.
 | fast-xml-builder                      | 1.3.1               | [Project page](https://github.com/NaturalIntelligence/fast-xml-builder#readme)                      |
 | fast-xml-parser                       | 5.11.1              | [Project page](https://github.com/NaturalIntelligence/fast-xml-parser#readme)                       |
 | fastify                               | 5.12.5              | [Project page](https://fastify.dev/)                                                                |
-| fastify-plugin                        | 5.1.0, 6.0.0        | [Project page](https://github.com/fastify/fastify-plugin#readme)                                    |
+| fastify-plugin                        | 6.0.0               | [Project page](https://github.com/fastify/fastify-plugin#readme)                                    |
 | fastify-raw-body                      | 6.0.1               | [Project page](https://github.com/Eomm/fastify-raw-body#readme)                                     |
 | find-my-way                           | 9.9.0               | [Project page](https://github.com/delvedor/find-my-way#readme)                                      |
 | forwarded-parse                       | 2.1.2               | [Project page](https://github.com/lpinca/forwarded-parse)                                           |
@@ -297,9 +296,9 @@ This file is not legal advice.
 | sanitize-html                         | 2.17.7              | [Project page](https://github.com/apostrophecms/apostrophe/tree/main/packages/sanitize-html#readme) |
 | scheduler                             | 0.28.0              | [Project page](https://react.dev/)                                                                  |
 | set-cookie-parser                     | 2.7.2               | [Project page](https://github.com/nfriedly/set-cookie-parser)                                       |
-| socket.io                             | 4.8.3               | [Project page](https://github.com/socketio/socket.io/tree/main/packages/socket.io#readme)           |
+| socket.io                             | 4.8.4               | [Project page](https://github.com/socketio/socket.io/tree/main/packages/socket.io#readme)           |
 | socket.io-adapter                     | 2.5.8               | [Project page](https://github.com/socketio/socket.io/tree/main/packages/socket.io-adapter#readme)   |
-| socket.io-client                      | 4.8.3               | [Project page](https://github.com/socketio/socket.io/tree/main/packages/socket.io-client#readme)    |
+| socket.io-client                      | 4.8.4               | [Project page](https://github.com/socketio/socket.io/tree/main/packages/socket.io-client#readme)    |
 | socket.io-parser                      | 4.2.7               | [Project page](https://github.com/socketio/socket.io/tree/main/packages/socket.io-client#readme)    |
 | sonic-boom                            | 4.2.1               | [Project page](https://github.com/pinojs/sonic-boom#readme)                                         |
 | standard-as-callback                  | 2.1.0               | [Project page](https://github.com/luin/asCallback#readme)                                           |
@@ -330,7 +329,7 @@ This file is not legal advice.
 
 | Package    | Version | Project                                 |
 | ---------- | ------- | --------------------------------------- |
-| nodemailer | 10.0.10 | [Project page](https://nodemailer.com/) |
+| nodemailer | 10.0.11 | [Project page](https://nodemailer.com/) |
 
 ## Services in the community Compose profile
 
