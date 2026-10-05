@@ -121,6 +121,28 @@ describe("Question Health prototype", () => {
     expect(changedMismatch?.contentHash).not.toBe(firstMismatch?.contentHash);
   });
 
+  it("invalidates a finding when its attached media changes", () => {
+    const source = question(1, {
+      explanation: "",
+      mediaId: id(301),
+      mediaAlt: "Diagram of a wetland",
+    });
+    const initial = evaluateQuestionHealth(quiz([source])).findings.find(
+      (finding) => finding.ruleId === "question.missing_explanation",
+    )!;
+    const repeated = evaluateQuestionHealth(quiz([structuredClone(source)])).findings.find(
+      (finding) => finding.ruleId === "question.missing_explanation",
+    )!;
+    const replacement = evaluateQuestionHealth(
+      quiz([{ ...source, mediaId: id(302) }]),
+    ).findings.find((finding) => finding.ruleId === "question.missing_explanation")!;
+
+    expect(repeated.id).toBe(initial.id);
+    expect(repeated.contentHash).toBe(initial.contentHash);
+    expect(replacement.id).not.toBe(initial.id);
+    expect(replacement.contentHash).not.toBe(initial.contentHash);
+  });
+
   it("records useful/not-useful judgments and bounded outcomes", () => {
     const findings = evaluateQuestionHealth(
       quiz([

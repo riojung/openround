@@ -11,6 +11,7 @@ async function repositoryFile(path: string) {
 }
 
 type WorkflowStep = {
+  env?: Record<string, string>;
   name?: string;
   run?: string;
   uses?: string;
@@ -18,6 +19,7 @@ type WorkflowStep = {
 };
 
 type WorkflowJob = {
+  env?: Record<string, string>;
   "runs-on"?: string | string[];
   steps?: WorkflowStep[];
 };
@@ -70,7 +72,9 @@ describe("Phase 0 evidence contract", () => {
       13,
     );
     expect(status).toMatch(/Phase 0 exit remains open with thirteen gates/);
-    expect(plan).toMatch(/thirteen gates remain, primarily awaiting external or human evidence/);
+    expect(plan).toMatch(
+      /thirteen release-readiness gates remain, primarily awaiting external or human evidence/,
+    );
     expect(decision).toMatch(
       /Selected Phase 1 branch \(access\/companion\/measured failure\/pending\): Pending/,
     );
@@ -105,6 +109,59 @@ describe("Phase 0 evidence contract", () => {
     }
     expect(gate).toMatchObject({ status: "pending", evidence: [] });
     expect(gate?.criterion).toMatch(/50- and 250-client Round and Presentation/);
+    expect(workflow).toContain("target-region-evidence-bundle.json");
+    expect(workflow).toContain("scripts/ops/target-load-evidence.mjs bundle");
+    expect(runbook).toContain("exactly these four build- and region-matched");
+    expect(template).toContain("target-load schema version 2");
+  });
+
+  it("binds target load and Stripe replay to immutable evidence identities", async () => {
+    const [workflowSource, stripeReplay, loadDockerfile, runbook, targetTemplate, billingTemplate] =
+      await Promise.all([
+        repositoryFile(".github/workflows/staging-readiness.yml"),
+        repositoryFile("tests/smoke/stripe-replay.ts"),
+        repositoryFile("tests/load/Dockerfile"),
+        repositoryFile("docs/runbooks/staging-readiness.md"),
+        repositoryFile("docs/evidence/target-region-load.md"),
+        repositoryFile("docs/evidence/live-billing-rehearsal.md"),
+      ]);
+    const jobs = workflowJobs(workflowSource);
+    const load = jobs["target-region-load"];
+    const stripe = jobs["stripe-replay"];
+
+    expect(load?.env?.LOAD_EXPECTED_BUILD_ID).toBe("${{ github.sha }}");
+    expect(load?.env?.LOAD_SATURATION_EVIDENCE_REFERENCE).toContain(
+      "OPENROUND_TARGET_SATURATION_EVIDENCE_REFERENCE",
+    );
+    expect(load?.env?.LOAD_DURABLE_ARCHIVE_REFERENCE).toContain(
+      "OPENROUND_TARGET_DURABLE_ARCHIVE_REFERENCE",
+    );
+    const bundleStep = load?.steps?.find(
+      ({ name }) => name === "Validate and bind target-region evidence bundle",
+    );
+    expect(bundleStep?.run).toContain("--round-50");
+    expect(bundleStep?.run).toContain("--presentation-50");
+    expect(bundleStep?.run).toContain("--round-250");
+    expect(bundleStep?.run).toContain("--presentation-250");
+    expect(bundleStep?.run).toContain("--saturation-reference");
+    expect(bundleStep?.run).toContain("--durable-archive-reference");
+    const upload = load?.steps?.find(
+      ({ name }) => name === "Upload target-region load and soak evidence",
+    );
+    expect(upload?.with?.["retention-days"]).toBe(90);
+
+    expect(stripe?.env?.STRIPE_REHEARSAL_EXPECTED_BUILD_ID).toBe("${{ github.sha }}");
+    expect(stripeReplay).toContain('verifyLiveBuild("start")');
+    expect(stripeReplay).toContain('verifyLiveBuild("finish")');
+    expect(stripeReplay).toContain("expectedBuildId");
+    expect(loadDockerfile).toContain(
+      "COPY scripts/ops/target-load-evidence.mjs scripts/ops/target-load-evidence.mjs",
+    );
+    expect(targetTemplate).toMatch(/not runner metrics/i);
+    expect(runbook).toContain("## Billing-mode rehearsal sequence");
+    expect(runbook).toMatch(/provider-originated test checkout/);
+    expect(runbook).toMatch(/newly\s+reviewed signed billing-disabled build\/config/);
+    expect(billingTemplate).toMatch(/remain Pending until the manual provider criteria pass/);
   });
 
   it("attests the Node 24-compatible target-region runner without claiming runtime discovery", async () => {
@@ -275,8 +332,8 @@ describe("Phase 0 evidence contract", () => {
       "Phase 0 independent reviewer decision",
       "Frozen in-scope cohort/version and observation cutoff",
       "In-scope records by final disposition",
-      "Frozen primary facilitator cohort",
-      "Same-segment reserve order and substitutions with reasons",
+      "Frozen initial primary facilitator cohort",
+      "Same-segment reserve order and substitutions with predeclared reason codes",
       "Stable partner workflow IDs with a reviewed timing/connectivity exclusion",
       "Independent reviewer decision",
     ]) {

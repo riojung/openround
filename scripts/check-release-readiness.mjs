@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import {
+  assertStableEvidenceReference,
+  validateIndependentGateAcceptance,
+  validatePhase0ReadinessGateInventory,
+  validateReviewedCandidateBuildConsistency,
+} from "./ops/evidence-acceptance.mjs";
 import { validateAcceptedReleaseLedger } from "./ops/release-acceptance.mjs";
 
 const fileUrl = new URL("../docs/release-readiness.json", import.meta.url);
@@ -33,8 +39,21 @@ for (const gate of ledger.gates) {
     `${gate.id}: criterion must be specific`,
   );
   assert.ok(Array.isArray(gate.evidence), `${gate.id}: evidence must be an array`);
+  assert.equal(
+    new Set(gate.evidence).size,
+    gate.evidence.length,
+    `${gate.id}: evidence references must be unique`,
+  );
+  for (const [index, reference] of gate.evidence.entries()) {
+    assertStableEvidenceReference(reference, `${gate.id}: evidence[${index}]`);
+  }
   if (gate.status === "complete") {
     assert.ok(gate.evidence.length > 0, `${gate.id}: completed gates require evidence`);
+    assert.equal(
+      gate.nextAction,
+      undefined,
+      `${gate.id}: completed gates must not retain a nextAction`,
+    );
   }
   if (gate.status === "pending" || gate.status === "blocked") {
     assert.ok(
@@ -51,10 +70,16 @@ for (const gate of ledger.gates) {
       );
     }
   }
+  validateIndependentGateAcceptance(gate);
 }
 
+validatePhase0ReadinessGateInventory(ledger.gates);
+
 const signedRelease = ledger.gates.find((gate) => gate.id === "signed-release");
-if (signedRelease?.status === "complete") validateAcceptedReleaseLedger(ledger);
+validateReviewedCandidateBuildConsistency(ledger.gates);
+if (signedRelease?.status === "complete") {
+  validateAcceptedReleaseLedger(ledger);
+}
 
 const statusCounts = Object.fromEntries(
   [...allowedStatuses].map((status) => [
@@ -63,21 +88,6 @@ const statusCounts = Object.fromEntries(
   ]),
 );
 
-const betaGates = ledger.gates.filter((gate) => gate.requiredFor.includes("single-vm-beta"));
-assert.ok(betaGates.length > 0, "no gates are defined for target single-vm-beta");
-for (const gate of betaGates) {
-  if (gate.id === "signed-release") {
-    assert.ok(
-      !gate.requiredFor.includes("single-vm-beta-preflight"),
-      "signed-release must not be required for single-vm-beta-preflight",
-    );
-  } else {
-    assert.ok(
-      gate.requiredFor.includes("single-vm-beta-preflight"),
-      `${gate.id}: single-vm-beta gates except signed-release must be required for single-vm-beta-preflight`,
-    );
-  }
-}
 process.stdout.write(`Release readiness ledger is valid: ${JSON.stringify(statusCounts)}\n`);
 
 if (requiredTarget) {

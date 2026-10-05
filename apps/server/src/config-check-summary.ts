@@ -19,6 +19,7 @@ export function createConfigCheckSummary(config: AppConfig) {
         ? "protected"
         : "unprotected"
       : "disabled",
+    logs: config.OPENROUND_LOG_SHIPPING_MODE,
     tracing: config.TRACING_ENABLED ? "otlp" : "disabled",
     participantLimit: config.MAX_SESSION_PARTICIPANTS,
     practicePersonalLinkLimit: config.MAX_PRACTICE_PERSONAL_LINKS,
@@ -41,6 +42,7 @@ export function createConfigCheckSummary(config: AppConfig) {
       groups: config.FEATURE_GROUPS,
       discover: config.FEATURE_DISCOVER,
       presentationRealtime: config.FEATURE_PRESENTATION_REALTIME,
+      liveFlexMode: config.FEATURE_LIVE_FLEX_MODE,
       recoveryPacks: config.FEATURE_RECOVERY_PACKS,
       questionHealth: config.FEATURE_QUESTION_HEALTH,
       decisionReplay: config.FEATURE_DECISION_REPLAY,

@@ -33,8 +33,10 @@ import {
   SessionCodeConflictError,
   SessionNotActiveError,
   SessionVersionConflictError,
+  WorkspaceDeletionInProgressError,
 } from "../src/types.js";
 import { discoverMigrations, runMigrations } from "../src/migrations.js";
+import { createLibraryDeletionFixture } from "./support/library-deletion-fixtures.js";
 import { expectPresentationSessionRepositoryConformance } from "./support/presentation-session-conformance.js";
 
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
@@ -198,7 +200,14 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
           verificationClient.query<{ count: string; maximum: number }>(
             "SELECT count(*) AS count, max(version) AS maximum FROM _openround_migrations",
           ),
-        ).resolves.toMatchObject({ rows: [{ count: "40", maximum: 40 }] });
+        ).resolves.toMatchObject({
+          rows: [
+            {
+              count: String(migrations.length),
+              maximum: migrations.at(-1)!.version,
+            },
+          ],
+        });
 
         await expect(
           verificationClient.query(
@@ -285,7 +294,7 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
             },
           },
         ],
-      } satisfies PresentationDraft;
+      } as unknown as PresentationDraft;
       const fixtures = [
         {
           sessionId: randomUUID(),
@@ -573,6 +582,84 @@ describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
   });
 });
 
+describe.skipIf(!adminUrl)("PostgreSQL media cleanup migration", () => {
+  it("backfills old finalized media directly into the final sweep", async () => {
+    const schema = `openround_cleanup_${randomUUID().replaceAll("-", "")}`;
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const preCleanupDirectory = await mkdtemp(join(tmpdir(), "openround-pre-cleanup-"));
+    const adminPool = new Pool({ connectionString: adminUrl });
+    let isolatedPool: Pool | undefined;
+
+    try {
+      const migrations = await discoverMigrations(migrationsDirectory);
+      for (const migration of migrations.filter(({ version }) => version <= 42)) {
+        await writeFile(join(preCleanupDirectory, migration.fileName), migration.sql);
+      }
+      await adminPool.query(`CREATE SCHEMA "${schema}"`);
+      const isolatedUrl = new URL(adminUrl!);
+      isolatedUrl.searchParams.set("options", `-csearch_path=${schema},public`);
+      isolatedPool = new Pool({ connectionString: isolatedUrl.toString(), max: 1 });
+      await runMigrations(isolatedPool, preCleanupDirectory);
+      await isolatedPool.query("SELECT set_config('app.system_access', 'on', false)");
+
+      const ownerId = randomUUID();
+      const workspaceId = randomUUID();
+      const oldId = randomUUID();
+      const recentId = randomUUID();
+      const legacyId = randomUUID();
+      const oldFinalizedAt = new Date(Date.now() - 8 * 24 * 60 * 60_000);
+      const recentFinalizedAt = new Date(Date.now() - 2 * 24 * 60 * 60_000);
+      await isolatedPool.query("INSERT INTO users (id, email) VALUES ($1, $2)", [
+        ownerId,
+        `cleanup-${ownerId}@example.com`,
+      ]);
+      await isolatedPool.query(
+        "INSERT INTO workspaces (id, name, segment, owner_id) VALUES ($1, 'Cleanup upgrade', 'workplace', $2)",
+        [workspaceId, ownerId],
+      );
+      for (const [id, finalizedAt] of [
+        [oldId, oldFinalizedAt],
+        [recentId, recentFinalizedAt],
+        [legacyId, null],
+      ] as const) {
+        await isolatedPool.query(
+          `INSERT INTO media_assets
+             (id, workspace_id, object_key, mime_type, size_bytes, scan_status,
+              alt_text, created_at, finalized_at)
+           VALUES ($1, $2, $3, 'image/png', 128, 'clean', 'A chart', $4, $5)`,
+          [id, workspaceId, `media/${workspaceId}/${id}.png`, oldFinalizedAt, finalizedAt],
+        );
+      }
+
+      await runMigrations(isolatedPool, migrationsDirectory);
+      const migrated = await isolatedPool.query<{
+        id: string;
+        object_cleanup_pass: number;
+        object_cleanup_due_at: Date | null;
+        cleanup_due_now: boolean | null;
+      }>(
+        `SELECT id, object_cleanup_pass, object_cleanup_due_at,
+                object_cleanup_due_at <= now() AS cleanup_due_now
+         FROM media_assets WHERE id = ANY($1::uuid[])`,
+        [[oldId, recentId, legacyId]],
+      );
+      const byId = new Map(migrated.rows.map((row) => [row.id, row]));
+      expect(byId.get(oldId)).toMatchObject({ object_cleanup_pass: 1, cleanup_due_now: true });
+      expect(byId.get(recentId)).toMatchObject({ object_cleanup_pass: 0 });
+      expect(byId.get(recentId)?.object_cleanup_due_at).toEqual(recentFinalizedAt);
+      expect(byId.get(legacyId)).toMatchObject({
+        object_cleanup_pass: 0,
+        object_cleanup_due_at: null,
+      });
+    } finally {
+      await isolatedPool?.end();
+      await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      await adminPool.end();
+      await rm(preCleanupDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
 describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
   let repository: PostgresRepository;
   let runtimePool: Pool;
@@ -642,6 +729,14 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 38, name: "presentation_concurrent_event_sequence" },
       { version: 39, name: "presentation_event_sequence_compatibility" },
       { version: 40, name: "presentation_event_sequence_compatibility_backfill" },
+      { version: 41, name: "media_deletion_tombstone" },
+      { version: 42, name: "workspace_deletion_cleanup" },
+      { version: 43, name: "bounded_media_object_cleanup" },
+      { version: 44, name: "round_flex_deadlines" },
+      { version: 45, name: "question_health_dismissals" },
+      { version: 46, name: "question_health_applications" },
+      { version: 47, name: "session_decision_replay" },
+      { version: 48, name: "library_artifact_deletion" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -651,7 +746,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const bootstrapped = await migrationRepository.pool.query<{ count: string }>(
       "SELECT count(*) FROM _openround_migrations",
     );
-    expect(bootstrapped.rows[0]?.count).toBe("40");
+    expect(bootstrapped.rows[0]?.count).toBe(String(migrations.rows.length));
 
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const alteredDirectory = await mkdtemp(join(tmpdir(), "openround-altered-migrations-"));
@@ -730,6 +825,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     fixture: Awaited<ReturnType<typeof createPublishedRoundFixture>>,
     code: string,
     trustMode: "learning" | "verified" = "learning",
+    decisionReplayEnabled = false,
   ) {
     const now = new Date();
     const id = randomUUID();
@@ -753,6 +849,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       hostId: owner.userId,
       hostTokenHash: randomUUID(),
       trustMode,
+      decisionReplayEnabled,
       state,
       expiresAt: new Date(now.getTime() + 60_000),
       retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
@@ -771,7 +868,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       title: label,
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: randomUUID(),
@@ -801,7 +898,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "draft",
       draft: content,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -854,6 +951,151 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     return { session, sessions };
   }
 
+  it("linearizes workspace deletion ahead of concurrent Round, Presentation, and media creation", async () => {
+    const waitForWorkspaceLock = async (queryFragment: string) => {
+      const deadline = Date.now() + 3_000;
+      while (Date.now() < deadline) {
+        const waiting = await runtimePool.query<{ count: string }>(
+          `SELECT count(*)::text AS count
+             FROM pg_stat_activity
+             WHERE pid <> pg_backend_pid()
+               AND datname = current_database()
+               AND state = 'active'
+               AND wait_event_type = 'Lock'
+               AND query LIKE $1`,
+          [`%${queryFragment}%`],
+        );
+        if (Number(waiting.rows[0]?.count ?? 0) > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for deletion-fenced query: ${queryFragment}`);
+    };
+    const fenceBefore = async <T>(
+      workspaceId: string,
+      queryFragment: string,
+      operation: () => Promise<T>,
+    ) => {
+      const blocker = await runtimePool.connect();
+      try {
+        await blocker.query("BEGIN");
+        await blocker.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+        await expect(
+          blocker.query(
+            `UPDATE workspaces
+               SET deletion_started_at = now()
+               WHERE id = $1`,
+            [workspaceId],
+          ),
+        ).resolves.toMatchObject({ rowCount: 1 });
+        const pending = operation().then(
+          (value) => ({ status: "fulfilled" as const, value }),
+          (error: unknown) => ({ status: "rejected" as const, error }),
+        );
+        await waitForWorkspaceLock(queryFragment);
+        await blocker.query("COMMIT");
+        return await pending;
+      } catch (error) {
+        await blocker.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        blocker.release();
+      }
+    };
+
+    const roundOwner = await creator("deletion-race-round");
+    const round = await createPublishedRoundFixture(roundOwner, "Deletion-fenced Round");
+    const roundNow = new Date();
+    const roundSessionId = randomUUID();
+    const roundState = createGameState({
+      sessionId: roundSessionId,
+      code: String(randomInt(1_000_000, 10_000_000)),
+      quiz: round.content,
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "friendly_only",
+      },
+    });
+    const roundOutcome = await fenceBefore(
+      roundOwner.workspaceId,
+      "INSERT INTO game_sessions",
+      () =>
+        repository.createSession({
+          id: roundSessionId,
+          workspaceId: roundOwner.workspaceId,
+          quizVersionId: round.version.id,
+          hostId: roundOwner.userId,
+          hostTokenHash: randomUUID(),
+          state: roundState,
+          expiresAt: new Date(roundNow.getTime() + 60_000),
+          retentionExpiresAt: new Date(roundNow.getTime() + 30 * 24 * 60 * 60_000),
+          createdAt: roundNow,
+          updatedAt: roundNow,
+        }),
+    );
+    expect(roundOutcome).toMatchObject({
+      status: "rejected",
+      error: expect.any(WorkspaceDeletionInProgressError),
+    });
+
+    const presentationOwner = await creator("deletion-race-presentation");
+    const presentation = await createPublishedPresentationFixture(
+      presentationOwner,
+      "Deletion-fenced Presentation",
+    );
+    const presentationSessions = new PostgresPresentationSessionRepository(repository);
+    const presentationNow = new Date();
+    const presentationOutcome = await fenceBefore(
+      presentationOwner.workspaceId,
+      "INSERT INTO presentation_live_sessions",
+      () =>
+        presentationSessions.createSession({
+          id: randomUUID(),
+          workspaceId: presentationOwner.workspaceId,
+          presentationId: presentation.presentation.id,
+          presentationVersionId: presentation.version.id,
+          title: presentation.content.title,
+          content: presentation.content,
+          code: String(randomInt(1_000_000, 10_000_000)),
+          status: "active",
+          phase: "lobby",
+          currentBlockIndex: -1,
+          revision: 0,
+          createdBy: presentationOwner.userId,
+          createdAt: presentationNow,
+          updatedAt: presentationNow,
+          finishedAt: null,
+          liveExpiresAt: new Date(presentationNow.getTime() + 60_000),
+          retentionExpiresAt: new Date(presentationNow.getTime() + 30 * 24 * 60 * 60_000),
+        }),
+    );
+    expect(presentationOutcome).toMatchObject({
+      status: "rejected",
+      error: expect.any(WorkspaceDeletionInProgressError),
+    });
+
+    const mediaOwner = await creator("deletion-race-media");
+    const mediaId = randomUUID();
+    const mediaOutcome = await fenceBefore(mediaOwner.workspaceId, "INSERT INTO media_assets", () =>
+      repository.createMediaAsset({
+        id: mediaId,
+        workspaceId: mediaOwner.workspaceId,
+        objectKey: `quarantine/${mediaOwner.workspaceId}/${mediaId}.png`,
+        mimeType: "image/png",
+        sizeBytes: 128,
+        scanStatus: "pending",
+        altText: "Deletion race fixture",
+        createdAt: new Date(),
+      }),
+    );
+    expect(mediaOutcome).toMatchObject({
+      status: "rejected",
+      error: expect.objectContaining({ message: "Workspace deletion is in progress" }),
+    });
+  }, 15_000);
+
   it("keeps PostgreSQL on the shared Presentation repository conformance contract", async () => {
     const owner = await creator("presentation-repository-conformance");
     const published = await createPublishedPresentationFixture(
@@ -868,6 +1110,9 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       presentationVersionId: published.version.id,
       createdBy: owner.userId,
       content: published.content,
+      beginWorkspaceDeletion: async () => {
+        await repository.claimWorkspaceMediaDeletion(owner.workspaceId);
+      },
     });
   });
 
@@ -1333,6 +1578,97 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     }
   });
 
+  it("commits decision events with the matching Round state and rolls both back on conflict", async () => {
+    const owner = await creator("decision-replay-postgres");
+    const round = await createPublishedRoundFixture(owner, "Decision replay transaction");
+    const session = await createRoundSessionFixture(
+      owner,
+      round,
+      String(randomInt(1_000_000, 10_000_000)),
+      "learning",
+      true,
+    );
+    const storedSession = await repository.getSessionById(session.id);
+    if (!storedSession) throw new Error("Expected a stored replay session");
+    const now = new Date();
+    const started = applyHostCommand(session.state, {
+      commandId: randomUUID(),
+      expectedVersion: session.state.version,
+      action: "start",
+      nowMs: now.getTime(),
+      newRoundId: randomUUID,
+    });
+    await repository.saveSession(
+      { ...storedSession, state: started.state, decisionReplayEnabled: true },
+      session.state.version,
+    );
+    const locked = applyHostCommand(started.state, {
+      commandId: randomUUID(),
+      expectedVersion: started.state.version,
+      action: "lock",
+      nowMs: now.getTime() + 1_000,
+      newRoundId: randomUUID,
+    });
+    const seq = locked.events.find((event) => event.type === "checkpoint.insight")?.seq;
+    if (!seq || !locked.state.roundId) throw new Error("Expected the checkpoint insight event");
+    const insight = {
+      seq,
+      occurredAt: new Date(now.getTime() + 1_000).toISOString(),
+      type: "insight_shown" as const,
+      roundId: locked.state.roundId,
+      questionId: locked.state.quiz.questions[locked.state.questionIndex!]!.id,
+      sampleSize: 0,
+      activeParticipantCount: 0,
+      recommendationCode: "insufficient_sample" as const,
+      ruleSetVersion: "checkpoint-insight-v1",
+    };
+    await repository.saveSession(
+      { ...storedSession, state: locked.state, decisionReplayEnabled: true },
+      started.state.version,
+      undefined,
+      [{ event: insight, commandId: "decision-lock-command", eventOrdinal: 0 }],
+    );
+    expect(await repository.getSessionEvidence(owner.workspaceId, session.id)).toMatchObject({
+      decisionReplayEnabled: true,
+      decisionEvents: [insight],
+      decisionEventsComplete: true,
+    });
+
+    const revealed = applyHostCommand(locked.state, {
+      commandId: randomUUID(),
+      expectedVersion: locked.state.version,
+      action: "reveal",
+      nowMs: now.getTime() + 2_000,
+      newRoundId: randomUUID,
+    });
+    await expect(
+      repository.saveSession(
+        { ...storedSession, state: revealed.state, decisionReplayEnabled: true },
+        locked.state.version,
+        undefined,
+        [
+          {
+            event: {
+              seq: insight.seq,
+              occurredAt: new Date(now.getTime() + 2_000).toISOString(),
+              type: "answer_revealed",
+              roundId: insight.roundId,
+              questionId: insight.questionId,
+            },
+            commandId: "decision-reveal-command",
+            eventOrdinal: 0,
+          },
+        ],
+      ),
+    ).rejects.toMatchObject({ code: "23505" });
+    await expect(repository.getSessionById(session.id)).resolves.toMatchObject({
+      state: { version: locked.state.version, phase: "question_locked" },
+    });
+    expect(
+      (await repository.getSessionEvidence(owner.workspaceId, session.id)).decisionEvents,
+    ).toEqual([insight]);
+  });
+
   it("persists an idempotent locale preference for only the selected user", async () => {
     const first = await creator("locale-first");
     const second = await creator("locale-second");
@@ -1379,6 +1715,223 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       profile: { locale: "zh-TW", localePreferenceSet: true },
     });
     await expect(repository.updateUserLocale(randomUUID(), "de-DE")).resolves.toBeNull();
+  });
+
+  it("persists tenant-scoped, revision-fenced Question Health dismissals in account exports", async () => {
+    const owner = await creator("question-health-dismissal");
+    const other = await creator("question-health-dismissal-other");
+    const now = new Date();
+    const draft = publishableRound("Dismissal persistence");
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const dismissalInput = {
+      actorId: owner.userId,
+      workspaceId: owner.workspaceId,
+      quizId: quiz.id,
+      findingId: "qh-1.0.0-question.missing_citation-question-field",
+      ruleVersion: 1,
+      rulesetVersion: "1.0.0",
+      contentHash: "a".repeat(64),
+      reason: "intentional_choice" as const,
+      expectedDraftRevision: 0,
+      requestId: randomUUID(),
+    };
+
+    const saved = await repository.putQuestionHealthDismissal(dismissalInput);
+    expect(saved.status).toBe("ok");
+    expect(await repository.listQuestionHealthDismissals(owner.workspaceId, quiz.id)).toHaveLength(
+      1,
+    );
+    expect(await repository.listQuestionHealthDismissals(other.workspaceId, quiz.id)).toEqual([]);
+    expect(
+      await repository.putQuestionHealthDismissal({
+        ...dismissalInput,
+        expectedDraftRevision: 1,
+      }),
+    ).toEqual({ status: "revision_conflict" });
+
+    const accountExport = (await repository.exportAccount(owner.userId)) as {
+      questionHealthDismissals?: Array<{ quiz_id: string; reason: string }>;
+    };
+    expect(accountExport.questionHealthDismissals).toEqual([
+      expect.objectContaining({ quiz_id: quiz.id, reason: "intentional_choice" }),
+    ]);
+
+    expect(await repository.deleteQuestionHealthDismissal(dismissalInput)).toEqual({
+      status: "ok",
+      removed: true,
+    });
+    expect(await repository.listQuestionHealthDismissals(owner.workspaceId, quiz.id)).toEqual([]);
+  });
+
+  it("projects only retained aggregate reports for the exact Question Health version and workspace", async () => {
+    const owner = await creator("question-health-observation");
+    const other = await creator("question-health-observation-other");
+    const fixture = await createPublishedRoundFixture(owner, "Question Health observation");
+    const { id: sessionId, state } = await createRoundSessionFixture(
+      owner,
+      fixture,
+      String(randomInt(1_000_000, 9_999_999)),
+    );
+    const now = new Date();
+    const question = fixture.content.questions[0]!;
+    const session = await repository.getSessionById(sessionId);
+    if (!session) throw new Error("Expected the observation fixture session");
+    const report: Report = {
+      id: randomUUID(),
+      sessionId,
+      schemaVersion: 1,
+      trustMode: "learning",
+      timeMode: "timed",
+      status: "ready",
+      generatedAt: now.toISOString(),
+      expiresAt: session.retentionExpiresAt.toISOString(),
+      metrics: {
+        participantCount: 20,
+        completedCount: 20,
+        answerCount: 20,
+        accuracyPercent: 60,
+      },
+      questions: [
+        {
+          questionId: question.id,
+          prompt: question.prompt,
+          responses: 20,
+          correct: 12,
+          accuracyPercent: 60,
+          difficult: false,
+        },
+      ],
+      participants: [],
+    };
+    expect(state.sessionId).toBe(sessionId);
+    await repository.saveReport(owner.workspaceId, report);
+
+    const observations = await repository.listQuestionHealthObservationReports(
+      owner.workspaceId,
+      fixture.version.quizId,
+      fixture.version.id,
+      now,
+    );
+    expect(observations).toEqual({
+      hasMoreReports: false,
+      reports: [
+        {
+          trustMode: "learning",
+          timeMode: "timed",
+          scoringMode: "accuracy",
+          questions: [{ questionId: question.id, responses: 20, correct: 12 }],
+        },
+      ],
+    });
+    expect(JSON.stringify(observations)).not.toContain(question.prompt);
+    expect(JSON.stringify(observations)).not.toContain("sessionId");
+    await expect(
+      repository.listQuestionHealthObservationReports(
+        owner.workspaceId,
+        fixture.version.quizId,
+        randomUUID(),
+        now,
+      ),
+    ).resolves.toEqual({ reports: [], hasMoreReports: false });
+    await expect(
+      repository.listQuestionHealthObservationReports(
+        other.workspaceId,
+        fixture.version.quizId,
+        fixture.version.id,
+        now,
+      ),
+    ).resolves.toEqual({ reports: [], hasMoreReports: false });
+  });
+
+  it("atomically stores tenant-scoped Question Health application provenance with a draft revision", async () => {
+    const owner = await creator("question-health-application");
+    const other = await creator("question-health-application-other");
+    const now = new Date();
+    const old = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1_000);
+    const draft = publishableRound("Application persistence");
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: old,
+      updatedAt: old,
+    });
+    const applicationId = randomUUID();
+    const changed = {
+      ...draft,
+      questions: [{ ...draft.questions[0]!, explanation: "A reviewed explanation." }],
+    } as QuizDraft;
+    const mutation = {
+      workspaceId: owner.workspaceId,
+      quizId: quiz.id,
+      draft: changed,
+      expectedRevision: 0,
+      mutationId: applicationId,
+      editorId: owner.userId,
+      schemaVersion: 1,
+      draftHash: createHash("sha256").update(JSON.stringify(changed)).digest("hex"),
+      questionHealthApplication: {
+        workspaceId: owner.workspaceId,
+        quizId: quiz.id,
+        applicationId,
+        findingId: "qh-test-missing-explanation",
+        ruleVersion: 1,
+        rulesetVersion: "1.0.0",
+        contentHash: "a".repeat(64),
+        sourceRevision: 0,
+        requestHash: "b".repeat(64),
+        changes: [
+          {
+            fieldPath: "questions.0.explanation",
+            before: "One plus one is two.",
+            after: "A reviewed explanation.",
+          },
+        ],
+        requestId: randomUUID(),
+      },
+    };
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({ draftRevision: 1 });
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({ draftRevision: 1 });
+    expect(
+      await repository.getQuestionHealthApplication(owner.workspaceId, quiz.id, applicationId),
+    ).toMatchObject({ sourceRevision: 0, appliedRevision: 1, requestHash: "b".repeat(64) });
+    expect(
+      await repository.getQuestionHealthApplication(other.workspaceId, quiz.id, applicationId),
+    ).toBeNull();
+    expect(
+      (await repository.listQuizDraftHistory(owner.workspaceId, quiz.id)).map(
+        (snapshot) => snapshot.revision,
+      ),
+    ).toContain(0);
+    await expect(
+      repository.updateQuizDraft({
+        ...mutation,
+        questionHealthApplication: {
+          ...mutation.questionHealthApplication,
+          requestHash: "c".repeat(64),
+        },
+      }),
+    ).rejects.toThrow();
+    const accountExport = (await repository.exportAccount(owner.userId)) as {
+      questionHealthApplications?: Array<{ application_id: string }>;
+    };
+    expect(accountExport.questionHealthApplications).toMatchObject([
+      { application_id: applicationId },
+    ]);
   });
 
   it("atomically fences draft replacements and revision-bound publishing", async () => {
@@ -1605,14 +2158,16 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       title: "Secure presentation",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: randomUUID(),
           kind: "content",
           layout: "title_body",
-          title: "Opening",
-          body: "",
+          textElements: [
+            { id: "opening:title", role: "title", text: "Opening", region: "top_center", order: 0 },
+            { id: "opening:body", role: "body", text: "", region: "middle_center", order: 0 },
+          ],
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "",
@@ -1627,7 +2182,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "draft",
       draft,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -1800,6 +2355,188 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     });
   });
 
+  it("permanently deletes archived Library parents with restricted runtime grants and cleans every member's links", async () => {
+    const owner = await creator("library-delete-owner");
+    const second = await creator("library-delete-second");
+    const fixture = await createLibraryDeletionFixture(repository, owner, second.userId);
+    expect(await repository.deleteQuiz(second.workspaceId, fixture.round.id)).toBe("not_found");
+    expect(
+      await fixture.presentations.deletePresentation(second.workspaceId, fixture.presentation.id),
+    ).toBe("not_found");
+    expect(await repository.deleteQuiz(owner.workspaceId, fixture.round.id)).toBe("not_archived");
+    expect(
+      await fixture.presentations.deletePresentation(owner.workspaceId, fixture.presentation.id),
+    ).toBe("not_archived");
+    expect(await repository.listMediaReferences(owner.workspaceId, fixture.mediaId)).toHaveLength(
+      8,
+    );
+    const privileges = await runtimePool.query<{ can_update: boolean; can_delete: boolean }>(
+      "SELECT has_table_privilege(current_user, 'presentation_versions', 'UPDATE') AS can_update, has_table_privilege(current_user, 'presentation_versions', 'DELETE') AS can_delete",
+    );
+    expect(privileges.rows).toEqual([{ can_update: false, can_delete: false }]);
+    await repository.archiveQuiz(owner.workspaceId, fixture.round.id, true);
+    await fixture.presentations.archivePresentation(
+      owner.workspaceId,
+      fixture.presentation.id,
+      true,
+    );
+    expect(await repository.deleteQuiz(owner.workspaceId, fixture.round.id)).toBe("deleted");
+    expect(
+      await fixture.presentations.getPresentation(owner.workspaceId, fixture.presentation.id),
+    ).not.toBeNull();
+    expect(await fixture.favorites.listFavorites(owner.workspaceId, second.userId)).toMatchObject([
+      { artifactId: fixture.presentation.id },
+    ]);
+    expect(
+      await fixture.presentations.deletePresentation(owner.workspaceId, fixture.presentation.id),
+    ).toBe("deleted");
+    expect(await repository.getQuizVersion(owner.workspaceId, fixture.roundVersion.id)).toBeNull();
+    expect(
+      await fixture.presentations.getPresentationVersion(
+        owner.workspaceId,
+        fixture.presentationVersion.id,
+      ),
+    ).toBeNull();
+    for (const userId of [owner.userId, second.userId])
+      expect(await fixture.favorites.listFavorites(owner.workspaceId, userId)).toEqual([]);
+    expect(await fixture.groups.listArtifacts(fixture.group.id)).toEqual([]);
+    expect(await fixture.groups.listSchedule(fixture.group.id)).toEqual([]);
+    expect(await repository.listMediaReferences(owner.workspaceId)).toEqual([]);
+    expect(await repository.getMediaAsset(owner.workspaceId, fixture.mediaId)).not.toBeNull();
+    expect(
+      await fixture.favorites.setFavorite({
+        workspaceId: owner.workspaceId,
+        userId: owner.userId,
+        artifactType: "round",
+        artifactId: fixture.round.id,
+        favorite: true,
+        now: fixture.now,
+      }),
+    ).toBeNull();
+    const inspector = await runtimePool.connect();
+    try {
+      await inspector.query("BEGIN");
+      await inspector.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+      for (const table of [
+        "quiz_draft_mutations",
+        "quiz_draft_history",
+        "presentation_draft_mutations",
+        "presentation_draft_history",
+      ]) {
+        const remaining = await inspector.query<{ count: number }>(
+          `SELECT count(*)::integer AS count FROM ${table} WHERE workspace_id = $1`,
+          [owner.workspaceId],
+        );
+        expect(remaining.rows[0]?.count, table).toBe(0);
+      }
+      expect(
+        (
+          await inspector.query(
+            "SELECT current_setting('app.system_access', true) AS system_access",
+          )
+        ).rows[0]?.system_access,
+      ).not.toBe("on");
+      await inspector.query("ROLLBACK");
+    } finally {
+      inspector.release();
+    }
+  });
+
+  it("preserves retained Library dependents and still cascades assignments during account deletion", async () => {
+    const owner = await creator("library-delete-dependents");
+    const fixture = await createLibraryDeletionFixture(repository, owner, owner.userId);
+    const roundSession = await createRoundSessionFixture(
+      owner,
+      { content: fixture.content, version: fixture.roundVersion },
+      "8529641",
+    );
+    const presentationSessions = new PostgresPresentationSessionRepository(repository);
+    const presentationSession = await presentationSessions.createSession({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      presentationId: fixture.presentation.id,
+      presentationVersionId: fixture.presentationVersion.id,
+      title: fixture.presentationContent.title,
+      content: fixture.presentationContent,
+      code: "8529642",
+      status: "finished",
+      phase: "finished",
+      currentBlockIndex: 0,
+      revision: 0,
+      createdBy: owner.userId,
+      createdAt: fixture.now,
+      updatedAt: fixture.now,
+      finishedAt: fixture.now,
+      liveExpiresAt: new Date(fixture.now.getTime() - 1),
+      retentionExpiresAt: new Date(fixture.now.getTime() + 86_400_000),
+    });
+    const assignment = {
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      purpose: "assignment" as const,
+      sourceQuizVersionId: fixture.roundVersion.id,
+      sourceSessionId: null,
+      sourceReportId: null,
+      title: "Closed retained assignment",
+      content: fixture.content,
+      conceptKeys: [],
+      timeMode: "flex" as const,
+      genericTokenHash: randomUUID(),
+      opensAt: fixture.now,
+      closesAt: new Date(fixture.now.getTime() + 60_000),
+      expiresAt: new Date(fixture.now.getTime() + 86_400_000),
+      closedAt: fixture.now,
+      createdBy: owner.userId,
+      createdAt: fixture.now,
+    };
+    expect(await repository.createPracticeAssignment(fixture.round.id, assignment, [])).toBe(true);
+    await repository.archiveQuiz(owner.workspaceId, fixture.round.id, true);
+    await fixture.presentations.archivePresentation(
+      owner.workspaceId,
+      fixture.presentation.id,
+      true,
+    );
+    expect(await repository.deleteQuiz(owner.workspaceId, fixture.round.id)).toBe("in_use");
+    expect(
+      await fixture.presentations.deletePresentation(owner.workspaceId, fixture.presentation.id),
+    ).toBe("in_use");
+    expect(await repository.getSessionById(roundSession.id)).not.toBeNull();
+    expect(await presentationSessions.getSessionById(presentationSession.id)).not.toBeNull();
+    expect(await repository.deleteSession(owner.workspaceId, roundSession.id)).toBe(true);
+    expect(await repository.deleteQuiz(owner.workspaceId, fixture.round.id)).toBe("in_use");
+    expect(await repository.getFollowup(owner.workspaceId, assignment.id)).toMatchObject({
+      closedAt: fixture.now,
+    });
+    // The FK also protects assignments if a writer commits after the repository's reference check.
+    const directDelete = await runtimePool.connect();
+    try {
+      await directDelete.query("BEGIN");
+      await directDelete.query("SELECT set_config('app.workspace_id', $1, true)", [
+        owner.workspaceId,
+      ]);
+      await expect(
+        directDelete.query("DELETE FROM quizzes WHERE id = $1", [fixture.round.id]),
+      ).rejects.toMatchObject({ code: "23503" });
+      await directDelete.query("ROLLBACK");
+    } finally {
+      directDelete.release();
+    }
+    expect(await repository.getFollowup(owner.workspaceId, assignment.id)).not.toBeNull();
+    expect(
+      await presentationSessions.deleteSession(
+        owner.workspaceId,
+        presentationSession.id,
+        fixture.now,
+      ),
+    ).toEqual({ status: "deleted" });
+    expect(
+      await fixture.presentations.deletePresentation(owner.workspaceId, fixture.presentation.id),
+    ).toBe("deleted");
+    await expect(repository.deleteAccount(owner.userId)).resolves.toBeUndefined();
+    expect(await repository.getFollowup(owner.workspaceId, assignment.id)).toBeNull();
+    expect(await repository.getQuizVersion(owner.workspaceId, fixture.roundVersion.id)).toBeNull();
+  });
+
   it("creates a Presentation room and initial credential atomically", async () => {
     const owner = await creator("presentation-atomic-credential");
     const published = await createPublishedPresentationFixture(owner, "Atomic Presentation");
@@ -1966,7 +2703,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       title: "Legacy realtime compatibility",
       description: "Migration compatibility coverage",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: questionBlockId,
@@ -1995,7 +2732,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "draft",
       draft,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -2329,14 +3066,28 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       title: "Portable briefing",
       description: "Lifecycle coverage",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: blockId,
           kind: "content",
           layout: "title_body",
-          title: "Opening",
-          body: "Review together.",
+          textElements: [
+            {
+              id: `${blockId}:title`,
+              role: "title",
+              text: "Opening",
+              region: "top_center",
+              order: 0,
+            },
+            {
+              id: `${blockId}:body`,
+              role: "body",
+              text: "Review together.",
+              region: "middle_center",
+              order: 0,
+            },
+          ],
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "Private facilitator note",
@@ -2368,7 +3119,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "draft",
       draft,
       draftRevision: 0,
-      draftSchemaVersion: 1,
+      draftSchemaVersion: 2,
       currentVersionId: null,
       folderId: null,
       publishedDraftRevision: null,
@@ -3139,12 +3890,96 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       tags: ["Safety"],
     });
     expect(await repository.getMediaAsset(second.workspaceId, mediaId)).toBeNull();
+    const finalizationToken = randomUUID();
+    expect(
+      await repository.claimMediaAssetFinalization(first.workspaceId, mediaId, finalizationToken),
+    ).toMatchObject({ scanStatus: "finalizing" });
+    expect(
+      await repository.claimMediaAssetFinalization(first.workspaceId, mediaId, randomUUID()),
+    ).toBeNull();
+    expect(
+      await repository.releaseMediaAssetFinalization(first.workspaceId, mediaId, randomUUID()),
+    ).toBe(false);
+    expect(
+      await repository.releaseMediaAssetFinalization(first.workspaceId, mediaId, finalizationToken),
+    ).toBe(true);
+    expect(
+      await repository.claimMediaAssetFinalization(first.workspaceId, mediaId, finalizationToken),
+    ).toMatchObject({ scanStatus: "finalizing" });
+    const finalizedAt = new Date();
     expect(
       await repository.updateMediaAsset(first.workspaceId, mediaId, {
         scanStatus: "clean",
         objectKey: `media/${first.workspaceId}/${mediaId}.png`,
+        finalizationToken,
+        finalizedAt,
       }),
     ).toMatchObject({ scanStatus: "clean" });
+    const initialClaims = await repository.claimMediaObjectCleanupCandidates(finalizedAt, 100);
+    const initialClaim = initialClaims.find(({ asset }) => asset.id === mediaId);
+    expect(initialClaim).toMatchObject({ pass: 0 });
+    const renewedAt = new Date(finalizedAt.getTime() + 4 * 60_000);
+    expect(await repository.renewMediaObjectCleanupClaim(initialClaim!, renewedAt)).toBe(true);
+    expect(
+      (
+        await repository.claimMediaObjectCleanupCandidates(
+          new Date(finalizedAt.getTime() + 5 * 60_000),
+          100,
+        )
+      ).some(({ asset }) => asset.id === mediaId),
+    ).toBe(false);
+    const replacementAt = new Date(renewedAt.getTime() + 5 * 60_000);
+    const replacementClaims = await repository.claimMediaObjectCleanupCandidates(
+      replacementAt,
+      100,
+    );
+    const replacementClaim = replacementClaims.find(({ asset }) => asset.id === mediaId);
+    expect(replacementClaim).toMatchObject({ pass: 0 });
+    expect(replacementClaim!.claimToken).not.toBe(initialClaim!.claimToken);
+    expect(await repository.renewMediaObjectCleanupClaim(initialClaim!, replacementAt)).toBe(false);
+    expect(await repository.completeMediaObjectCleanupClaim(initialClaim!, replacementAt)).toBe(
+      false,
+    );
+    expect(await repository.completeMediaObjectCleanupClaim(replacementClaim!, replacementAt)).toBe(
+      true,
+    );
+    expect(await repository.completeMediaObjectCleanupClaim(replacementClaim!, replacementAt)).toBe(
+      false,
+    );
+    const finalSweepAt = new Date(finalizedAt.getTime() + 6 * 24 * 60 * 60_000);
+    const finalClaims = await repository.claimMediaObjectCleanupCandidates(finalSweepAt, 100);
+    const finalClaim = finalClaims.find(({ asset }) => asset.id === mediaId);
+    expect(finalClaim).toMatchObject({ pass: 1 });
+    const retryAt = new Date(finalSweepAt.getTime() + 60 * 60_000);
+    expect(await repository.deferMediaObjectCleanupClaim(finalClaim!, retryAt)).toBe(true);
+    const retryClaims = await repository.claimMediaObjectCleanupCandidates(retryAt, 100);
+    const retryClaim = retryClaims.find(({ asset }) => asset.id === mediaId);
+    expect(retryClaim).toMatchObject({ pass: 1 });
+    expect(await repository.completeMediaObjectCleanupClaim(retryClaim!, retryAt)).toBe(true);
+
+    const inlineId = randomUUID();
+    const inlineToken = randomUUID();
+    await repository.createMediaAsset({
+      id: inlineId,
+      workspaceId: second.workspaceId,
+      objectKey: `quarantine/${second.workspaceId}/${inlineId}.png`,
+      mimeType: "image/png",
+      sizeBytes: 128,
+      scanStatus: "pending",
+      altText: "An inline cleanup fixture",
+      createdAt: finalizedAt,
+    });
+    await repository.claimMediaAssetFinalization(second.workspaceId, inlineId, inlineToken);
+    const inlineAsset = await repository.updateMediaAsset(second.workspaceId, inlineId, {
+      scanStatus: "clean",
+      objectKey: `media/${second.workspaceId}/${inlineId}/${inlineToken}.png`,
+      finalizationToken: inlineToken,
+      finalizedAt,
+    });
+    expect(await repository.completeInlineMediaObjectCleanup(inlineAsset!, finalizedAt)).toBe(true);
+    expect(await repository.completeInlineMediaObjectCleanup(inlineAsset!, finalizedAt)).toBe(
+      false,
+    );
     expect((await repository.listMediaAssets(first.workspaceId)).map(({ id }) => id)).toEqual([
       mediaId,
     ]);
@@ -4585,6 +5420,40 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       }),
     ).toBe(true);
     expect(await repository.getPlan(first.workspaceId)).toBe("pro");
+
+    const flexSessionId = randomUUID();
+    const flexLobby = createGameState({
+      sessionId: flexSessionId,
+      code: String(randomInt(1_000_000, 10_000_000)),
+      quiz: firstVersion.content,
+      settings: {
+        audienceLimit: 20,
+        timeMode: "flex",
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    const flexStoredSession = {
+      ...persistedSession,
+      id: flexSessionId,
+      hostTokenHash: randomUUID(),
+      state: flexLobby,
+    };
+    await repository.createSession(flexStoredSession);
+    const flexOpened = applyHostCommand(flexLobby, {
+      commandId: randomUUID(),
+      expectedVersion: flexLobby.version,
+      action: "start",
+      nowMs: Date.now(),
+      newRoundId: randomUUID,
+    }).state;
+    flexStoredSession.state = flexOpened;
+    await repository.saveSession(flexStoredSession, flexLobby.version);
+    expect(await repository.getSessionEvidence(first.workspaceId, flexSessionId)).toMatchObject({
+      rounds: [{ id: flexOpened.roundId, deadlineMs: null }],
+    });
   });
 
   it("atomically provisions and audits one synthetic capacity workspace", async () => {

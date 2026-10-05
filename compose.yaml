@@ -94,6 +94,32 @@ services:
         mc alias set local http://minio:9000 openround change-this-local-secret
         mc mb --ignore-existing local/openround-media
         mc anonymous set none local/openround-media
+        cat > /tmp/openround-media-lifecycle.json <<EOF
+        {
+          "Rules": [
+            {
+              "ID": "expire-abandoned-quarantine-uploads",
+              "Status": "Enabled",
+              "Filter": { "Prefix": "quarantine/" },
+              "Expiration": { "Days": 1 }
+            },
+            {
+              "ID": "expire-abandoned-finalization-candidates",
+              "Status": "Enabled",
+              "Filter": {
+                "And": {
+                  "Prefix": "media/",
+                  "Tags": [
+                    { "Key": "openround-finalization-state", "Value": "temporary" }
+                  ]
+                }
+              },
+              "Expiration": { "Days": 7 }
+            }
+          ]
+        }
+        EOF
+        mc ilm rule import local/openround-media < /tmp/openround-media-lifecycle.json
     restart: "no"
 
   mailpit:
@@ -171,6 +197,7 @@ services:
       FEATURE_GROUPS: "${FEATURE_GROUPS:-false}"
       FEATURE_DISCOVER: "${FEATURE_DISCOVER:-false}"
       FEATURE_PRESENTATION_REALTIME: "${FEATURE_PRESENTATION_REALTIME:-false}"
+      FEATURE_LIVE_FLEX_MODE: "${FEATURE_LIVE_FLEX_MODE:-false}"
       PRESENTATION_CONCURRENT_RESPONSE_WRITES: "${PRESENTATION_CONCURRENT_RESPONSE_WRITES:-false}"
       FEATURE_RECOVERY_PACKS: "${FEATURE_RECOVERY_PACKS:-false}"
       FEATURE_QUESTION_HEALTH: "${FEATURE_QUESTION_HEALTH:-false}"

@@ -3,12 +3,14 @@ import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   PresentationReportEnvelopeSchema,
+  PresentationReportWithSessionContextEnvelopeSchema,
   PresentationRestV1CreateSessionResponseSchema,
   PresentationRestV1HostSnapshotResponseSchema,
   PresentationRestV1JoinSessionResponseSchema,
   PresentationRestV1ParticipantSnapshotResponseSchema,
   PresentationRestV1ResponseAckSchema,
   PresentationRestV1SessionListResponseSchema,
+  type PresentationContent,
 } from "@openround/contracts";
 import { MemoryRepository, type PresentationSessionRecord } from "@openround/db";
 import { buildApp } from "../src/app.js";
@@ -103,14 +105,28 @@ describe("live Presentation sessions", () => {
       title: "Evidence review",
       description: "A mixed session",
       experiencePreset: { id: "focus" as const, version: 1 as const },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: presentation.draft.blocks[0]!.id,
           kind: "content",
           layout: "title_body",
-          title: "Review the source",
-          body: "Observe first, then respond.",
+          textElements: [
+            {
+              id: `${presentation.draft.blocks[0]!.id}:title`,
+              role: "title",
+              text: "Review the source",
+              region: "top_center",
+              order: 0,
+            },
+            {
+              id: `${presentation.draft.blocks[0]!.id}:body`,
+              role: "body",
+              text: "Observe first, then respond.",
+              region: "middle_center",
+              order: 0,
+            },
+          ],
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "Facilitator-only cue",
@@ -185,7 +201,7 @@ describe("live Presentation sessions", () => {
       method: "PUT",
       url: `/v1/presentations/${presentation.id}/draft`,
       headers: { cookie },
-      payload: { draft, expectedRevision: 0, mutationId: randomUUID(), schemaVersion: 1 },
+      payload: { draft, expectedRevision: 0, mutationId: randomUUID(), schemaVersion: 2 },
     });
     expect(saved.statusCode).toBe(200);
     const published = await app.inject({
@@ -196,6 +212,14 @@ describe("live Presentation sessions", () => {
     });
     expect(published.statusCode).toBe(200);
 
+    const unavailableFlex = await app.inject({
+      method: "POST",
+      url: "/v1/presentation-sessions",
+      headers: { cookie },
+      payload: { presentationId: presentation.id, timeMode: "flex" },
+    });
+    expect(unavailableFlex.statusCode).toBe(404);
+
     const hosted = await app.inject({
       method: "POST",
       url: "/v1/presentation-sessions",
@@ -205,7 +229,11 @@ describe("live Presentation sessions", () => {
     expect(hosted.statusCode).toBe(201);
     const hostedBody = PresentationRestV1CreateSessionResponseSchema.parse(hosted.json());
     const lobby = hostedBody.snapshot;
-    expect(lobby).toMatchObject({ phase: "lobby", revision: 0 });
+    expect(lobby).toMatchObject({
+      phase: "lobby",
+      revision: 0,
+      settings: { timeMode: "timed" },
+    });
     expect(lobby.code).toMatch(/^\d{7}$/);
     expect(hosted.json()).toMatchObject({
       snapshot: { createdAt: expect.any(String), updatedAt: expect.any(String), leaderboard: [] },
@@ -314,7 +342,14 @@ describe("live Presentation sessions", () => {
     });
     const contentBody = PresentationRestV1HostSnapshotResponseSchema.parse(content.json());
     expect(contentBody).toMatchObject({
-      snapshot: { phase: "content", currentBlock: { title: "Review the source" } },
+      snapshot: {
+        phase: "content",
+        currentBlock: {
+          textElements: expect.arrayContaining([
+            expect.objectContaining({ role: "title", text: "Review the source" }),
+          ]),
+        },
+      },
     });
     expect(contentBody.snapshot.leaderboard).toEqual(
       expect.arrayContaining([
@@ -651,8 +686,22 @@ describe("live Presentation sessions", () => {
     });
     expect(report.statusCode).toBe(200);
     expect(report.headers["cache-control"]).toContain("no-store");
+    expect(Object.keys(report.json()).sort()).toEqual(["report", "reportStatus"]);
     const readyEnvelope = PresentationReportEnvelopeSchema.parse(report.json());
     expect(readyEnvelope.report).toEqual(pendingProjection);
+    expect(readyEnvelope.report).not.toHaveProperty("timeMode");
+    const timedContext = await app.inject({
+      method: "GET",
+      url: `/v1/presentation-sessions/${lobby.id}/report?includeSessionContext=true`,
+      headers: { cookie },
+    });
+    expect(
+      PresentationReportWithSessionContextEnvelopeSchema.parse(timedContext.json()),
+    ).toMatchObject({
+      reportStatus: "ready",
+      report: readyEnvelope.report,
+      sessionContext: { timeMode: "timed" },
+    });
     const readyReport = readyEnvelope.report;
     if (!readyReport) {
       throw new Error("Expected a ready Presentation report");
@@ -736,6 +785,249 @@ describe("live Presentation sessions", () => {
     }
   });
 
+  it("keeps a flex question open until the host closes it and awards no speed bonus", async () => {
+    const config = ConfigSchema.parse({
+      NODE_ENV: "test",
+      ALLOW_IN_MEMORY: "true",
+      COMMUNITY_MODE: "false",
+      WEB_ORIGIN: "http://localhost:3000",
+      PUBLIC_API_URL: "http://localhost:4000",
+      FEATURE_UX_BETA: "true",
+      UX_BETA_WORKSPACE_ALLOWLIST: BETA_WORKSPACE_ID,
+      FEATURE_PRESENTATIONS: "true",
+      FEATURE_PRESENTATION_REALTIME: "true",
+      FEATURE_LIVE_FLEX_MODE: "true",
+      EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: BETA_WORKSPACE_ID,
+      LOG_LEVEL: "silent",
+    });
+    const built = await buildApp(config, {
+      repository: new MemoryRepository({ initialWorkspaceId: BETA_WORKSPACE_ID }),
+      cache: new MemorySessionCache(),
+    });
+    app = built.app;
+    const cookie = await signIn(app);
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/presentations",
+      headers: { cookie },
+      payload: { title: "Flex learning", description: "Host-paced response" },
+    });
+    expect(created.statusCode).toBe(201);
+    const presentation = created.json<{
+      presentation: { id: string; draft: PresentationContent };
+    }>().presentation;
+    const blockId = randomUUID();
+    const choiceId = randomUUID();
+    const question = {
+      id: randomUUID(),
+      type: "single_select" as const,
+      prompt: "Which statement is evidence?",
+      choices: [
+        { id: choiceId, label: "The observed statement", isCorrect: true },
+        { id: randomUUID(), label: "An assumption", isCorrect: false },
+      ],
+      purpose: "diagnostic" as const,
+      confidence: "off" as const,
+      delivery: "main" as const,
+      conceptKeys: ["evidence"],
+      linkedRecheckQuestionId: null,
+      timeLimitSeconds: 10,
+      basePoints: 1_000,
+      explanation: "Evidence comes from observation.",
+      mediaId: null,
+      mediaAlt: null,
+    };
+    const firstContentBlock = presentation.draft.blocks.find((block) => block.kind === "content");
+    if (!firstContentBlock) throw new Error("Expected the starter content slide");
+    const saved = await app.inject({
+      method: "PUT",
+      url: `/v1/presentations/${presentation.id}/draft`,
+      headers: { cookie },
+      payload: {
+        draft: {
+          ...presentation.draft,
+          blocks: [
+            {
+              ...firstContentBlock,
+              textElements: firstContentBlock.textElements.map((element) => ({
+                ...element,
+                text: element.role === "title" ? "Flex learning" : "Read then answer",
+              })),
+            },
+            { id: blockId, kind: "question", question },
+          ],
+        },
+        expectedRevision: 0,
+        mutationId: randomUUID(),
+        schemaVersion: 2,
+      },
+    });
+    expect(saved.statusCode, JSON.stringify(saved.json())).toBe(200);
+    const published = await app.inject({
+      method: "POST",
+      url: `/v1/presentations/${presentation.id}/publish`,
+      headers: { cookie },
+      payload: { expectedDraftRevision: 1 },
+    });
+    expect(published.statusCode, JSON.stringify(published.json())).toBe(200);
+    const hosted = await app.inject({
+      method: "POST",
+      url: "/v1/presentation-sessions",
+      headers: { cookie },
+      payload: { presentationId: presentation.id, timeMode: "flex" },
+    });
+    expect(hosted.statusCode, JSON.stringify(hosted.json())).toBe(201);
+    const lobby = PresentationRestV1CreateSessionResponseSchema.parse(hosted.json()).snapshot;
+    expect(lobby.settings).toMatchObject({ timeMode: "flex", trustMode: "learning" });
+    const joined = await app.inject({
+      method: "POST",
+      url: "/v1/presentation-sessions/join",
+      payload: { code: lobby.code, nickname: "Learner" },
+    });
+    expect(joined.statusCode).toBe(201);
+    const participantToken = PresentationRestV1JoinSessionResponseSchema.parse(
+      joined.json(),
+    ).participantToken;
+    const waiting = await app.inject({
+      method: "POST",
+      url: "/v1/presentation-sessions/join",
+      payload: { code: lobby.code, nickname: "Late learner" },
+    });
+    expect(waiting.statusCode).toBe(201);
+    const waitingToken = PresentationRestV1JoinSessionResponseSchema.parse(
+      waiting.json(),
+    ).participantToken;
+
+    for (const expectedRevision of [0, 1]) {
+      const advanced = await app.inject({
+        method: "POST",
+        url: `/v1/presentation-sessions/${lobby.id}/advance`,
+        headers: { cookie },
+        payload: { expectedRevision },
+      });
+      expect(advanced.statusCode).toBe(200);
+    }
+    const open = await app.inject({
+      method: "GET",
+      url: `/v1/presentation-sessions/${lobby.id}/participant`,
+      headers: { authorization: `Bearer ${participantToken}` },
+    });
+    const openSnapshot = PresentationRestV1ParticipantSnapshotResponseSchema.parse(
+      open.json(),
+    ).snapshot;
+    expect(openSnapshot).toMatchObject({
+      phase: "question_open",
+      questionClosesAt: null,
+      acceptingResponses: true,
+      settings: { timeMode: "flex" },
+    });
+    config.FEATURE_LIVE_FLEX_MODE = false;
+    const disabledNewSession = await app.inject({
+      method: "POST",
+      url: "/v1/presentation-sessions",
+      headers: { cookie },
+      payload: { presentationId: presentation.id, timeMode: "flex" },
+    });
+    expect(disabledNewSession.statusCode).toBe(404);
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: `/v1/presentation-sessions/${lobby.id}`,
+          headers: { cookie },
+        })
+      ).statusCode,
+    ).toBe(200);
+    const lateReceipt = new Date(Date.parse(openSnapshot.questionOpenedAt!) + 60_000);
+    const idempotencyKey = randomUUID();
+    const response = { choiceIds: [choiceId], confidence: null };
+    const answer = await built.presentationService.submitResponse({
+      sessionId: lobby.id,
+      participantToken,
+      blockId,
+      expectedRevision: 2,
+      idempotencyKey,
+      response,
+      receivedAt: lateReceipt,
+    });
+    expect(answer).toMatchObject({ accepted: true, duplicate: false, blockId });
+    expect(await built.presentationSessions.listResponses(lobby.id)).toEqual([
+      expect.objectContaining({ score: 1_000, responseMs: 60_000 }),
+    ]);
+
+    const closed = await app.inject({
+      method: "POST",
+      url: `/v1/presentation-sessions/${lobby.id}/advance`,
+      headers: { cookie },
+      payload: { expectedRevision: 2 },
+    });
+    expect(closed.statusCode).toBe(200);
+    expect(closed.json()).toMatchObject({
+      snapshot: {
+        phase: "question_reveal",
+        acceptingResponses: false,
+        settings: { timeMode: "flex" },
+      },
+    });
+    const duplicate = await built.presentationService.submitResponse({
+      sessionId: lobby.id,
+      participantToken,
+      blockId,
+      expectedRevision: 2,
+      idempotencyKey,
+      response,
+      receivedAt: lateReceipt,
+    });
+    expect(duplicate).toMatchObject({
+      accepted: true,
+      duplicate: true,
+      responseId: answer.responseId,
+    });
+    await expect(
+      built.presentationService.submitResponse({
+        sessionId: lobby.id,
+        participantToken: waitingToken,
+        blockId,
+        expectedRevision: 2,
+        idempotencyKey: randomUUID(),
+        response,
+        receivedAt: lateReceipt,
+      }),
+    ).rejects.toMatchObject({ code: "STALE_SESSION" });
+    expect(await built.presentationSessions.listResponses(lobby.id)).toHaveLength(1);
+    const finished = await app.inject({
+      method: "POST",
+      url: `/v1/presentation-sessions/${lobby.id}/advance`,
+      headers: { cookie },
+      payload: { expectedRevision: 3 },
+    });
+    expect(finished.statusCode).toBe(200);
+    await expect(built.presentationReportWorker.runUntilIdle()).resolves.toEqual([
+      "completed",
+      "idle",
+    ]);
+    const defaultReport = await app.inject({
+      method: "GET",
+      url: `/v1/presentation-sessions/${lobby.id}/report`,
+      headers: { cookie },
+    });
+    expect(Object.keys(defaultReport.json()).sort()).toEqual(["report", "reportStatus"]);
+    const legacyCompatible = PresentationReportEnvelopeSchema.parse(defaultReport.json());
+    expect(legacyCompatible.report).not.toHaveProperty("timeMode");
+    const flexContext = await app.inject({
+      method: "GET",
+      url: `/v1/presentation-sessions/${lobby.id}/report?includeSessionContext=true`,
+      headers: { cookie },
+    });
+    expect(
+      PresentationReportWithSessionContextEnvelopeSchema.parse(flexContext.json()),
+    ).toMatchObject({
+      reportStatus: "ready",
+      report: legacyCompatible.report,
+      sessionContext: { timeMode: "flex" },
+    });
+  });
+
   it("never applies delayed numeric or rating payloads to the next question", async () => {
     const repository = new MemoryRepository({ initialWorkspaceId: BETA_WORKSPACE_ID });
     const built = await buildApp(
@@ -817,7 +1109,7 @@ describe("live Presentation sessions", () => {
           title: "Fenced responses",
           description: "",
           experiencePreset: { id: "focus", version: 1 },
-          schemaVersion: 1,
+          schemaVersion: 2,
           blocks: [
             { id: oldBlockId, kind: "question", question: example.oldQuestion },
             {
@@ -917,14 +1209,22 @@ describe("live Presentation sessions", () => {
       title: "Capacity briefing",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: randomUUID(),
           kind: "content" as const,
           layout: "title_body" as const,
-          title: "Welcome",
-          body: "Review together.",
+          textElements: [
+            { id: "welcome:title", role: "title", text: "Welcome", region: "top_center", order: 0 },
+            {
+              id: "welcome:body",
+              role: "body",
+              text: "Review together.",
+              region: "middle_center",
+              order: 0,
+            },
+          ],
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "",
@@ -999,13 +1299,24 @@ describe("live Presentation sessions", () => {
     });
     expect(listed.statusCode).toBe(200);
     expect(listed.headers["cache-control"]).toContain("no-store");
-    const listedSessions = listed.json<{ sessions: Array<{ id: string; status: string }> }>()
-      .sessions;
+    const listedSessions = PresentationRestV1SessionListResponseSchema.parse(
+      listed.json(),
+    ).sessions;
     expect(listedSessions).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: entitled.id, status: "active" })]),
     );
-    expect(listedSessions).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: expired.id })]),
+    expect(listedSessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: expired.id,
+          status: "active",
+          liveExpiresAt: expired.liveExpiresAt.toISOString(),
+          acceptingResponses: false,
+        }),
+      ]),
     );
+    expect(await built.presentationSessions.getSessionByCode(expired.code)).toBeNull();
+    expect(await repository.getLiveRoomCode(expired.code)).toBeNull();
+    expect(await built.presentationSessions.getSessionById(expired.id)).not.toBeNull();
   });
 });

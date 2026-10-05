@@ -115,13 +115,41 @@ Assistant states are **disabled**, **waiting**, **creating draft**, **ready to r
 private creator metadata and the editor warns that a citation supports the original proposal if
 the content is later edited.
 
+### Question Health
+
+Question Health is a separately gated, deterministic advisory review. It exposes the rule,
+question/field, observed evidence, and suggested action for one saved draft revision. It covers
+choice duplication/overlap and length cues, missing rationales/explanations/citations, mobile
+density, conflicting settings, and linked-recheck wording or concepts. It does not block publish
+or make an automatic judgment about content quality.
+
+Owners and editors can dismiss a finding with a reason and reopen it. Dismissals are shared
+workspace decisions scoped to matching relevant content and rules; editing that content
+invalidates the match. Previously saved decisions remain reviewable and reopenable when new
+reviews are paused. Supported fixes require a user-prepared field revision, preview, and explicit
+apply through the normal saved-draft path. One-step undo is valid only while that applied revision
+is still current. Other fields use normal manual editing; nothing publishes automatically.
+
+Published-version analysis reads an immutable version separately from the current draft. A
+matching-question link may open the draft, but edits affect future publication rather than
+rewriting existing versions or sessions. Post-use observations read at most 250 recent retained
+completed-session reports for that exact version. Trust, timed/flex, and speed/accuracy cohorts
+remain separate. Each included question/session requires 20 responses; accuracy instability
+requires three compatible sessions and a 30-percentage-point range. Unused-distractor advice
+requires complete choice-count evidence. These bounded descriptive aggregates exclude opinion
+questions and linked rechecks and do not create participant profiles or establish cause or durable
+learning.
+
 ## Live Recovery Loop
 
 ### Ask
 
 Every participant device contains the complete prompt and controls. A shared projector is
-optional. Server time owns the deadline and only a durable acknowledgement means an answer was
-accepted.
+optional. Timed rooms use a server-owned deadline. Separately gated whole-room flex mode removes
+question countdowns and deadlines, disables speed bonuses, and leaves response closure to the
+host. The timing choice is frozen at session creation for Rounds and live Presentations;
+pause/resume and reconnect preserve it without adding a per-participant marker or stored reason.
+Only a durable acknowledgement means an answer was accepted.
 
 ### Diagnose
 
@@ -165,6 +193,20 @@ participants who answered both and were initially incorrect
 ```
 
 Always show numerator, denominator, evidence type, and small-sample warning.
+
+### Session decision replay
+
+Decision replay is captured only for new Round sessions created under its workspace rollout gate.
+That capture choice is frozen, so pausing new capture does not remove it from existing sessions.
+Events are written with the durable transition: measured insight and recommendation/ruleset at
+lock, reveal, intervention start/finish, linked recheck or revote opening, question advance, and
+session finish. Idempotent retries do not add a second decision event.
+
+Report v4 adds this ordered timeline and exports it as descriptive facilitation context. It does
+not infer decisions from participant answers, record audio/video, change scoring, or establish
+that an intervention caused a recovery outcome. Older sessions may have no replay; the 5,000-event
+capture limit can produce a partial timeline. Availability and completeness must be shown
+explicitly rather than reconstructing missing actions.
 
 ## Audience voice and moderation
 
@@ -213,6 +255,32 @@ retention window and is purged directly at its immutable expiry.
 
 ## Presentation and portability
 
+### Structured Presentation slides
+
+The gated Presentation builder combines content slides with interactive question blocks. Its v2
+content model supports six structured layouts—Title, Title + body, Media, Quote, Section, and
+Callout—and up to eight text elements total, exactly one of them a title. Titles are bounded to 160
+characters and each body text element to 4,000. Legacy title/body documents are upcast on read;
+this model change requires no database migration and does not mutate stored published snapshots.
+
+Text uses bounded rectangles expressed as percentages of a 16:9 canvas. Drag handles and keyboard
+controls move and resize them; arrow keys adjust by 1%, or 5% with Shift, and numeric inspector
+fields provide the same control. Nine region shortcuts and per-region order provide structured
+alternatives. Editor-only guides show a 10% grid, safe margins, and alignment cues. Applying a
+layout resets placement, while undo restores the previous arrangement.
+Custom text rectangles may overlap with an editor warning; an image's reserved area remains
+protected.
+
+The same content renderer serves the builder canvas, preview, facilitator, and participant views.
+Narrow screens use a complete reading column; desktop overflow remains scrollable rather than
+silently hiding text. An attached image reserves its preset area. Starter text reflows; custom
+frames intersecting the image are adjusted and later moves/resizes remain clear of it. Removing
+the image restores starter space while preserving custom arrangements. Speaker notes and source
+citations remain outside participant content. Rotation, shapes, detailed typography, and an
+unbounded freeform design canvas remain deferred.
+
+### Presenter access and exports
+
 - Presenter popout and secure embed are read-only and use dedicated credentials.
 - Normal pages deny framing. The embed route permits only the workspace's explicit HTTPS
   allowlist, up to ten origins.
@@ -239,6 +307,22 @@ Correctness, status, danger, and selection must never rely on colour alone.
 - Export, deletion, retention, moderation, and sensitive administrative actions are explicit and
   audited.
 
+### Archive and permanent deletion
+
+Archiving an artifact is reversible; permanent deletion requires an owner and explicit
+confirmation. Only archived Rounds and Presentations are offered for permanent Library deletion.
+Retained sessions and practice assignments block it so immutable source versions remain available
+to work already issued. Deletion removes the artifact's drafts, published versions, authoring and
+recovery history, and organization links; media references follow the normal storage cleanup
+lifecycle.
+
+Session history has a separate deletion action for finished or live-access-expired sessions in
+the Sessions UI. Access expiry and history retention are distinct: an expired code cannot resume a
+room even while its history remains available to its owner. Confirmed session deletion removes
+responses, reports, and linked recovery follow-ups, releases live access, and leaves the source
+artifact intact. Permanent Library deletion uses migration `048_library_artifact_deletion.sql`;
+the structured-slide read upcast does not require a migration.
+
 ## Error and recovery language
 
 Errors identify the source, preserve safe work, and name the next action. For example, an editor
@@ -250,7 +334,7 @@ The UI must not claim success before the corresponding durable action completes.
 
 ## Deliberate non-goals
 
-Native apps, a full slide editor, public content marketplace, persistent learner avatar profiles or
+Native apps, an unbounded freeform slide editor, public content marketplace, persistent learner avatar profiles or
 reward economies, generic AI chat, open-text grading, advertising, participant profiling, and
 1,000-player single events remain out of scope. Session-scoped avatar choice is intentionally
 allowed because it carries no learner account or cross-session profile. Native PowerPoint or

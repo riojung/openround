@@ -12,9 +12,12 @@ import type {
   InstitutionContractStatus,
   InteractionSettings,
   ProductEvent,
+  QuestionHealthDismissalReason,
+  QuestionHealthRevisionChange,
   QuizDraft,
   Report,
   ResponsePayload,
+  SessionDecisionEvent,
   SupportedLocale,
   TimeMultiplier,
   TrustMode,
@@ -263,6 +266,53 @@ export interface QuizDraftHistoryRecord {
   createdAt: Date;
 }
 
+export interface QuestionHealthDismissalRecord {
+  workspaceId: string;
+  quizId: string;
+  findingId: string;
+  ruleVersion: number;
+  rulesetVersion: string;
+  contentHash: string;
+  reason: QuestionHealthDismissalReason;
+  createdAt: Date;
+}
+
+export interface QuestionHealthDismissalWrite {
+  actorId: string;
+  workspaceId: string;
+  quizId: string;
+  findingId: string;
+  ruleVersion: number;
+  rulesetVersion: string;
+  contentHash: string;
+  reason: QuestionHealthDismissalReason;
+  expectedDraftRevision: number;
+  requestId: string;
+}
+
+export type QuestionHealthDismissalIdentity = Omit<QuestionHealthDismissalWrite, "reason">;
+
+/** Durable provenance for a facilitator-approved, draft-only Question Health edit. */
+export interface QuestionHealthApplicationRecord {
+  workspaceId: string;
+  quizId: string;
+  applicationId: string;
+  findingId: string;
+  ruleVersion: number;
+  rulesetVersion: string;
+  contentHash: string;
+  sourceRevision: number;
+  appliedRevision: number;
+  requestHash: string;
+  changes: QuestionHealthRevisionChange[];
+  createdAt: Date;
+}
+
+export type QuestionHealthApplicationWrite = Omit<
+  QuestionHealthApplicationRecord,
+  "appliedRevision" | "createdAt"
+> & { requestId: string };
+
 export interface QuizDraftUpdate {
   workspaceId: string;
   quizId: string;
@@ -272,6 +322,8 @@ export interface QuizDraftUpdate {
   editorId: string;
   schemaVersion: number;
   draftHash: string;
+  questionHealthApplication?: QuestionHealthApplicationWrite;
+  questionHealthUndo?: { applicationId: string; requestId: string };
 }
 
 export interface StoredSession {
@@ -282,6 +334,8 @@ export interface StoredSession {
   hostTokenHash: string;
   /** Frozen identity/privacy promise for this session. */
   trustMode?: TrustMode;
+  /** Whether the optional decision timeline was enabled when the session was created. */
+  decisionReplayEnabled?: boolean;
   state: GameState;
   /** Last instant at which host and participant credentials may use the live session. */
   expiresAt: Date;
@@ -307,6 +361,9 @@ export interface LiveRoomCodeRecord {
 export type LiveRoomCodeClaim = Omit<LiveRoomCodeRecord, "releasedAt">;
 
 export interface SessionEvidence {
+  decisionReplayEnabled: boolean;
+  decisionEvents: SessionDecisionEvent[];
+  decisionEventsComplete: boolean;
   answers: EngineAnswer[];
   rounds: Array<EngineRound & { id: string }>;
   interventions: EngineIntervention[];
@@ -329,12 +386,39 @@ export interface SessionEvidence {
   };
 }
 
+export interface SessionDecisionEventWrite {
+  event: SessionDecisionEvent;
+  commandId: string;
+  eventOrdinal: number;
+}
+
 export interface ReportJob {
   reportId: string;
   workspaceId: string;
   sessionId: string;
   attempts: number;
   expiresAt: Date;
+}
+
+/** Narrow, aggregate-only projection for Question Health. Never contains prompts or participants. */
+export interface QuestionHealthObservationReport {
+  trustMode: TrustMode;
+  timeMode: "timed" | "flex";
+  scoringMode: "accuracy" | "speed";
+  questions: Array<{
+    questionId: string;
+    responses: number;
+    correct: number;
+    responseDistribution?: {
+      kind: "choice";
+      buckets: Array<{ value: string; count: number }>;
+    };
+  }>;
+}
+
+export interface QuestionHealthObservationReportPage {
+  reports: QuestionHealthObservationReport[];
+  hasMoreReports: boolean;
 }
 
 interface FollowupRecordBase {
@@ -463,6 +547,13 @@ export class SessionNotActiveError extends Error {
   constructor(public readonly sessionId: string) {
     super(`Session ${sessionId} is not active`);
     this.name = "SessionNotActiveError";
+  }
+}
+
+export class WorkspaceDeletionInProgressError extends Error {
+  constructor(public readonly workspaceId: string) {
+    super(`Workspace ${workspaceId} is being deleted`);
+    this.name = "WorkspaceDeletionInProgressError";
   }
 }
 
@@ -818,7 +909,11 @@ export class AudienceStoreError extends Error {
   }
 }
 
-export type MediaScanStatus = "pending" | "clean" | "rejected";
+export type MediaScanStatus = "pending" | "finalizing" | "clean" | "rejected" | "deleting";
+
+// Presigned uploads are valid for ten minutes. Keep a deletion tombstone beyond that window so a
+// late client cannot recreate a quarantine object after the final object sweep and metadata purge.
+export const MEDIA_DELETION_TOMBSTONE_HOLD_MS = 11 * 60_000;
 
 export interface MediaAssetRecord {
   id: string;
@@ -829,7 +924,31 @@ export interface MediaAssetRecord {
   scanStatus: MediaScanStatus;
   altText: string;
   createdAt: Date;
+  deletionStartedAt: Date | null;
+  finalizedAt: Date | null;
 }
+
+export interface MediaObjectCleanupClaim {
+  asset: MediaAssetRecord;
+  pass: 0 | 1;
+  claimToken: string;
+}
+
+export interface WorkspaceMediaDeletionJobRecord {
+  workspaceId: string;
+  deletionStartedAt: Date;
+  sweepAfter: Date;
+}
+
+export interface SessionInvalidationTarget {
+  sessionId: string;
+  code: string;
+}
+
+export type MediaAssetCreateInput = Omit<MediaAssetRecord, "deletionStartedAt" | "finalizedAt"> & {
+  deletionStartedAt?: null;
+  finalizedAt?: null;
+};
 
 export type MediaReferenceOwnerType =
   | "quiz_draft"
@@ -888,6 +1007,8 @@ export type OperationalFeaturesUpdate = Partial<
     | "roomChat"
   >
 >;
+
+export type LibraryArtifactDeletionResult = "deleted" | "not_found" | "not_archived" | "in_use";
 
 export interface Repository {
   initialize(): Promise<void>;
@@ -952,6 +1073,27 @@ export interface Repository {
     editorId?: string,
   ): Promise<QuizRecord | null>;
   updateQuizDraft(input: QuizDraftUpdate): Promise<QuizRecord | null>;
+  getQuestionHealthApplication(
+    workspaceId: string,
+    quizId: string,
+    applicationId: string,
+  ): Promise<QuestionHealthApplicationRecord | null>;
+  listQuestionHealthDismissals(
+    workspaceId: string,
+    quizId: string,
+  ): Promise<QuestionHealthDismissalRecord[]>;
+  putQuestionHealthDismissal(
+    input: QuestionHealthDismissalWrite,
+  ): Promise<
+    | { status: "ok"; dismissal: QuestionHealthDismissalRecord }
+    | { status: "not_found" }
+    | { status: "revision_conflict" }
+  >;
+  deleteQuestionHealthDismissal(
+    input: QuestionHealthDismissalIdentity,
+  ): Promise<
+    { status: "ok"; removed: boolean } | { status: "not_found" } | { status: "revision_conflict" }
+  >;
   listQuizDraftHistory(
     workspaceId: string,
     quizId: string,
@@ -964,6 +1106,7 @@ export interface Repository {
     expectedRevision: number;
     mutationId: string;
     editorId: string;
+    questionHealthUndo?: { applicationId: string; requestId: string };
   }): Promise<QuizRecord | null>;
   archiveQuiz(
     workspaceId: string,
@@ -971,6 +1114,7 @@ export interface Repository {
     archived: boolean,
     maxPublishedQuizzes?: number | null,
   ): Promise<QuizRecord | null>;
+  deleteQuiz(workspaceId: string, quizId: string): Promise<LibraryArtifactDeletionResult>;
   duplicateQuiz(input: QuizRecord): Promise<QuizRecord>;
   publishQuiz(
     input: QuizVersionRecord,
@@ -1045,6 +1189,8 @@ export interface Repository {
   getSessionById(sessionId: string): Promise<StoredSession | null>;
   getSessionByCode(code: string): Promise<StoredSession | null>;
   listSessionIds(workspaceId: string): Promise<string[]>;
+  listSessionInvalidationTargets(workspaceId: string): Promise<SessionInvalidationTarget[]>;
+  workspaceDeletionStarted(workspaceId: string): Promise<boolean>;
   listSessionHistory(
     workspaceId: string,
     options: {
@@ -1057,7 +1203,12 @@ export interface Repository {
       now: Date;
     },
   ): Promise<HistoryPage<SessionHistoryRecord>>;
-  saveSession(input: StoredSession, expectedVersion: number, report?: Report): Promise<void>;
+  saveSession(
+    input: StoredSession,
+    expectedVersion: number,
+    report?: Report,
+    decisionEvents?: SessionDecisionEventWrite[],
+  ): Promise<void>;
   deleteSession(workspaceId: string, sessionId: string): Promise<boolean>;
   createParticipant(input: ParticipantRecord): Promise<void>;
   commitParticipants(
@@ -1234,7 +1385,7 @@ export interface Repository {
     sessionId: string,
     participantIds: string[],
   ): Promise<string[]>;
-  createMediaAsset(input: MediaAssetRecord): Promise<MediaAssetRecord>;
+  createMediaAsset(input: MediaAssetCreateInput): Promise<MediaAssetRecord>;
   getMediaAsset(workspaceId: string, mediaId: string): Promise<MediaAssetRecord | null>;
   listMediaAssets(workspaceId: string): Promise<MediaAssetRecord[]>;
   listMediaReferences(workspaceId: string, mediaId?: string): Promise<MediaReferenceRecord[]>;
@@ -1247,12 +1398,47 @@ export interface Repository {
   ): Promise<MediaReferenceRecord[]>;
   listStaleMedia(cutoff: Date, limit?: number): Promise<MediaAssetRecord[]>;
   listUnattachedMedia(cutoff: Date, limit?: number): Promise<MediaAssetRecord[]>;
+  claimMediaObjectCleanupCandidates(now: Date, limit?: number): Promise<MediaObjectCleanupClaim[]>;
+  renewMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, renewedAt: Date): Promise<boolean>;
+  completeMediaObjectCleanupClaim(
+    claim: MediaObjectCleanupClaim,
+    completedAt: Date,
+  ): Promise<boolean>;
+  deferMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, retryAt: Date): Promise<boolean>;
+  completeInlineMediaObjectCleanup(asset: MediaAssetRecord, completedAt: Date): Promise<boolean>;
   updateMediaAsset(
     workspaceId: string,
     mediaId: string,
-    update: { objectKey?: string; scanStatus: MediaScanStatus },
+    update: {
+      objectKey?: string;
+      scanStatus: "clean" | "rejected";
+      finalizationToken: string;
+      finalizedAt: Date;
+    },
   ): Promise<MediaAssetRecord | null>;
-  deleteMediaAsset(workspaceId: string, mediaId: string): Promise<boolean>;
+  claimMediaAssetFinalization(
+    workspaceId: string,
+    mediaId: string,
+    finalizationToken: string,
+    claimedAt?: Date,
+  ): Promise<MediaAssetRecord | null>;
+  releaseMediaAssetFinalization(
+    workspaceId: string,
+    mediaId: string,
+    finalizationToken: string,
+  ): Promise<boolean>;
+  claimMediaAssetDeletion(
+    workspaceId: string,
+    mediaId: string,
+    now?: Date,
+  ): Promise<MediaAssetRecord | null>;
+  claimWorkspaceMediaDeletion(workspaceId: string, now?: Date): Promise<MediaAssetRecord[]>;
+  listDueWorkspaceMediaDeletionJobs(
+    now: Date,
+    limit?: number,
+  ): Promise<WorkspaceMediaDeletionJobRecord[]>;
+  completeWorkspaceMediaDeletionJob(workspaceId: string, deletionStartedAt: Date): Promise<boolean>;
+  deleteMediaAsset(workspaceId: string, mediaId: string, now?: Date): Promise<boolean>;
   persistAnswer(
     workspaceId: string,
     sessionId: string,
@@ -1275,6 +1461,12 @@ export interface Repository {
   retryReportJob(job: ReportJob, error: string, availableAt: Date, failed: boolean): Promise<void>;
   getReport(workspaceId: string, reportId: string): Promise<Report | null>;
   getReportBySession(workspaceId: string, sessionId: string): Promise<Report | null>;
+  listQuestionHealthObservationReports(
+    workspaceId: string,
+    quizId: string,
+    quizVersionId: string,
+    now: Date,
+  ): Promise<QuestionHealthObservationReportPage>;
   listReportHistory(
     workspaceId: string,
     options: {

@@ -14,6 +14,8 @@ operations system and reference redacted artifacts or checksums only.
 - Stripe test account and endpoint reference (redacted):
 - Product/price configuration version or checksum:
 - Signed replay workflow run/artifact:
+- Billing-enabled build/config deployment and `/health/live` identity at replay start/finish:
+- Billing-disabled rollback build/config deployment and post-rollback readiness reference:
 - Operations owner:
 - Independent reviewer:
 
@@ -23,6 +25,7 @@ operations system and reference redacted artifacts or checksums only.
 | --------------------------------------------------------------------------------------------- | ------------------ | ------- |
 | Test-mode restricted key and webhook secret come from the approved secrets system             |                    | Pending |
 | Webhook endpoint uses public HTTPS and verifies the Stripe signature                          |                    | Pending |
+| Signed replay `/health/live` start and finish both match the exact reviewed build             |                    | Pending |
 | Checkout price, currency, interval, trial, tax, and customer notices match the approved offer |                    | Pending |
 | Customer portal exposes only the approved cancellation and billing actions                    |                    | Pending |
 | Logs, traces, support tools, and artifacts omit secrets and full billing payloads             |                    | Pending |
@@ -32,6 +35,12 @@ operations system and reference redacted artifacts or checksums only.
 
 Locally signed replay payloads test ordering and idempotency but do not replace these actions from
 Stripe's test environment.
+
+Enable billing only through a reviewed signed staging build/config, run the immutable-build-bound
+replay and provider journey, then reconcile to Free and deploy a newly reviewed signed
+billing-disabled build/config. Do not edit the active runtime in place. On any failure, stop
+provider activity, reconcile the synthetic workspace, revoke rehearsal credentials/sessions, and
+perform the billing-disabled deployment/readiness rollback before debugging further.
 
 | Step                                                  | Provider event/action reference | Application observation | Entitlement result | Result  |
 | ----------------------------------------------------- | ------------------------------- | ----------------------- | ------------------ | ------- |
@@ -52,6 +61,10 @@ Stripe's test environment.
 | Invalid signature                           | Request rejected with no state change                           |                    | Pending |
 | Cancellation/end-of-period transition       | Effective access matches the approved policy and provider state |                    | Pending |
 | Reconciliation after process restart        | Local entitlement converges to provider truth                   |                    | Pending |
+
+The transient-failure retry and process-restart rows require provider-originated test deliveries
+and operator-observed reconciliation. The workflow's locally signed events exercise application
+ordering and idempotency only; they must remain Pending until the manual provider criteria pass.
 
 ## Reconciliation and cleanup
 

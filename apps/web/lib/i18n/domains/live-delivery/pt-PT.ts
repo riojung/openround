@@ -275,6 +275,10 @@ const messages = {
   "live.common.connected": "Ligado",
   "live.common.connecting": "Conectando...",
   "live.common.dashboard": "Painel",
+  "live.common.flexMode": "Flexível — o facilitador encerra as respostas",
+  "live.common.flexOpen": "Sem contagem decrescente. O facilitador encerra as respostas.",
+  "live.common.flexSetupHelp":
+    "O modo flexível não tem prazo de resposta nem pontuação por rapidez. O facilitador encerra cada pergunta.",
   "live.common.joinedCount": "{count} inscritos",
   "live.common.leaderboard": "Quadro de classificação",
   "live.common.notScored": "Não marcado",
@@ -283,6 +287,8 @@ const messages = {
   "live.common.responses": "Respostas",
   "live.common.saving": "A gravar...",
   "live.common.sessions": "Sessões",
+  "live.common.timeMode": "Tempo de resposta",
+  "live.common.timedMode": "Temporizado — prazo da pergunta",
   "live.common.updating": "Actualizando...",
   "live.presentationHost.backEditor": "Voltar ao editor",
   "live.presentationHost.description":

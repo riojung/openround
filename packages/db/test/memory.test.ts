@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { Report } from "@openround/contracts";
-import { createGameState } from "@openround/game-engine";
+import { applyHostCommand, createGameState } from "@openround/game-engine";
 import {
   FollowupAccessLimitError,
+  MEDIA_DELETION_TOMBSTONE_HOLD_MS,
   MemoryRepository,
   PublishedQuizLimitError,
   QuizDraftRevisionConflictError,
@@ -32,7 +33,156 @@ function publishableRound(title: string) {
   };
 }
 
+async function finalizedMediaForCleanup(
+  repository: MemoryRepository,
+  workspaceId: string,
+  finalizedAt: Date,
+) {
+  const id = randomUUID();
+  const finalizationToken = randomUUID();
+  await repository.createMediaAsset({
+    id,
+    workspaceId,
+    objectKey: `quarantine/${workspaceId}/${id}.png`,
+    mimeType: "image/png",
+    sizeBytes: 128,
+    scanStatus: "pending",
+    altText: "A chart",
+    createdAt: finalizedAt,
+  });
+  await repository.claimMediaAssetFinalization(workspaceId, id, finalizationToken, finalizedAt);
+  const asset = await repository.updateMediaAsset(workspaceId, id, {
+    scanStatus: "clean",
+    objectKey: `media/${workspaceId}/${id}/${finalizationToken}.png`,
+    finalizationToken,
+    finalizedAt,
+  });
+  if (!asset) throw new Error("The media test fixture did not finalize");
+  return asset;
+}
+
 describe("memory repository", () => {
+  it("persists replay events atomically and freezes the session capture setting", async () => {
+    const repository = new MemoryRepository();
+    const sessionId = randomUUID();
+    const workspaceId = randomUUID();
+    let state = createGameState({
+      sessionId,
+      code: "2233445",
+      quiz: publishableRound("Decision replay"),
+      settings: {
+        audienceLimit: 20,
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    const now = new Date();
+    const stored = {
+      id: sessionId,
+      workspaceId,
+      quizVersionId: randomUUID(),
+      hostId: randomUUID(),
+      hostTokenHash: randomUUID(),
+      decisionReplayEnabled: true,
+      state,
+      expiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await repository.createSession(stored);
+
+    const started = applyHostCommand(state, {
+      commandId: randomUUID(),
+      expectedVersion: state.version,
+      action: "start",
+      nowMs: now.getTime(),
+      newRoundId: randomUUID,
+    });
+    await repository.saveSession({ ...stored, state: started.state }, state.version);
+    state = started.state;
+
+    const locked = applyHostCommand(state, {
+      commandId: randomUUID(),
+      expectedVersion: state.version,
+      action: "lock",
+      nowMs: now.getTime() + 1_000,
+      newRoundId: randomUUID,
+    });
+    const insightSeq = locked.events.find((event) => event.type === "checkpoint.insight")?.seq;
+    if (!insightSeq || !locked.state.roundId) throw new Error("Expected a locked question insight");
+    const captured = {
+      seq: insightSeq,
+      occurredAt: new Date(now.getTime() + 1_000).toISOString(),
+      type: "insight_shown" as const,
+      roundId: locked.state.roundId,
+      questionId: locked.state.quiz.questions[locked.state.questionIndex!]!.id,
+      sampleSize: 0,
+      activeParticipantCount: 0,
+      recommendationCode: "insufficient_sample" as const,
+      ruleSetVersion: "checkpoint-insight-v1",
+    };
+    await repository.saveSession({ ...stored, state: locked.state }, state.version, undefined, [
+      { event: captured, commandId: "lock-command-01", eventOrdinal: 0 },
+    ]);
+
+    expect(await repository.getSessionEvidence(workspaceId, sessionId)).toMatchObject({
+      decisionReplayEnabled: true,
+      decisionEvents: [captured],
+      decisionEventsComplete: true,
+    });
+    await expect(
+      repository.saveSession(
+        { ...stored, state: locked.state, decisionReplayEnabled: false },
+        locked.state.version,
+      ),
+    ).rejects.toThrow("immutable");
+  });
+
+  it("preserves a flex Round's missing deadline in durable evidence", async () => {
+    const repository = new MemoryRepository();
+    const sessionId = randomUUID();
+    const workspaceId = randomUUID();
+    const lobby = createGameState({
+      sessionId,
+      code: "1234567",
+      quiz: publishableRound("Untimed checkpoint"),
+      settings: {
+        audienceLimit: 20,
+        timeMode: "flex",
+        scoringMode: "accuracy",
+        resultVisibility: "private",
+        allowLateJoin: true,
+        nicknamePolicy: "custom",
+      },
+    });
+    const opened = applyHostCommand(lobby, {
+      commandId: randomUUID(),
+      expectedVersion: lobby.version,
+      action: "start",
+      nowMs: Date.now(),
+      newRoundId: randomUUID,
+    }).state;
+    const now = new Date();
+    await repository.createSession({
+      id: sessionId,
+      workspaceId,
+      quizVersionId: randomUUID(),
+      hostId: randomUUID(),
+      hostTokenHash: randomUUID(),
+      state: opened,
+      expiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(await repository.getSessionEvidence(workspaceId, sessionId)).toMatchObject({
+      rounds: [{ id: opened.roundId, deadlineMs: null }],
+    });
+  });
+
   it("fences stale draft saves and publishes the acknowledged revision idempotently", async () => {
     const repository = new MemoryRepository();
     const workspaceId = randomUUID();
@@ -892,6 +1042,161 @@ describe("memory repository", () => {
     expect(await repository.consumeMagicToken(tokenHash, new Date())).toBeNull();
   });
 
+  it("exports and deletes content-addressed Question Health dismissals with the source workspace", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date();
+    const tokenHash = `question-health-export-${randomUUID()}`;
+    await repository.createMagicToken({
+      id: randomUUID(),
+      email: `question-health-export-${randomUUID()}@example.com`,
+      segment: "education",
+      tokenHash,
+      policyVersion: "test-v1",
+      expiresAt: new Date(now.getTime() + 60_000),
+      consumedAt: null,
+    });
+    const owner = await repository.consumeMagicToken(tokenHash, now);
+    expect(owner).not.toBeNull();
+    const draft = publishableRound("Question Health export");
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner!.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await repository.putQuestionHealthDismissal({
+      actorId: owner!.userId,
+      workspaceId: owner!.workspaceId,
+      quizId: quiz.id,
+      findingId: "qh-1.0.0-question.missing_citation-item-sourceCitations",
+      ruleVersion: 1,
+      rulesetVersion: "1.0.0",
+      contentHash: "b".repeat(64),
+      reason: "will_address_later",
+      expectedDraftRevision: 0,
+      requestId: randomUUID(),
+    });
+
+    const exported = await repository.exportAccount(owner!.userId);
+    expect(exported.questionHealthDismissals).toMatchObject([
+      expect.objectContaining({ quizId: quiz.id, reason: "will_address_later" }),
+    ]);
+    await repository.deleteAccount(owner!.userId);
+    expect(await repository.listQuestionHealthDismissals(owner!.workspaceId, quiz.id)).toEqual([]);
+  });
+
+  it("keeps Question Health draft application and undo receipts tenant-scoped and idempotent", async () => {
+    const repository = new MemoryRepository();
+    const now = new Date();
+    const tokenHash = `question-health-application-${randomUUID()}`;
+    await repository.createMagicToken({
+      id: randomUUID(),
+      email: `application-${randomUUID()}@example.com`,
+      segment: "education",
+      tokenHash,
+      policyVersion: "test-v1",
+      expiresAt: new Date(now.getTime() + 60_000),
+      consumedAt: null,
+    });
+    const owner = await repository.consumeMagicToken(tokenHash, now);
+    expect(owner).not.toBeNull();
+    const draft = publishableRound("Question Health application");
+    const old = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1_000);
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner!.workspaceId,
+      title: draft.title,
+      description: draft.description,
+      status: "draft",
+      draft,
+      currentVersionId: null,
+      createdAt: old,
+      updatedAt: old,
+    });
+    const applicationId = randomUUID();
+    const changed = {
+      ...draft,
+      questions: [{ ...draft.questions[0]!, explanation: "Reviewed wording." }],
+    };
+    const mutation = {
+      workspaceId: owner!.workspaceId,
+      quizId: quiz.id,
+      draft: changed,
+      expectedRevision: 0,
+      mutationId: applicationId,
+      editorId: owner!.userId,
+      schemaVersion: 1,
+      draftHash: "application-draft",
+      questionHealthApplication: {
+        workspaceId: owner!.workspaceId,
+        quizId: quiz.id,
+        applicationId,
+        findingId: "qh-test-missing-explanation",
+        ruleVersion: 1,
+        rulesetVersion: "1.0.0",
+        contentHash: "a".repeat(64),
+        sourceRevision: 0,
+        requestHash: "b".repeat(64),
+        changes: [
+          {
+            fieldPath: "questions.0.explanation",
+            before: "One plus one is two.",
+            after: "Reviewed wording.",
+          },
+        ],
+        requestId: randomUUID(),
+      },
+    };
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({ draftRevision: 1 });
+    await expect(repository.updateQuizDraft(mutation)).resolves.toMatchObject({ draftRevision: 1 });
+    expect(
+      await repository.getQuestionHealthApplication(owner!.workspaceId, quiz.id, applicationId),
+    ).toMatchObject({ sourceRevision: 0, appliedRevision: 1, requestHash: "b".repeat(64) });
+    expect(
+      await repository.getQuestionHealthApplication(randomUUID(), quiz.id, applicationId),
+    ).toBeNull();
+    expect(
+      (await repository.listQuizDraftHistory(owner!.workspaceId, quiz.id)).map(
+        (snapshot) => snapshot.revision,
+      ),
+    ).toContain(0);
+
+    const undo = {
+      workspaceId: owner!.workspaceId,
+      quizId: quiz.id,
+      historyRevision: 0,
+      expectedRevision: 1,
+      mutationId: randomUUID(),
+      editorId: owner!.userId,
+      questionHealthUndo: { applicationId, requestId: randomUUID() },
+    };
+    await expect(repository.restoreQuizDraftHistory(undo)).resolves.toMatchObject({
+      draftRevision: 2,
+    });
+    await expect(repository.restoreQuizDraftHistory(undo)).resolves.toMatchObject({
+      draftRevision: 2,
+    });
+    expect(
+      (await repository.listAuditEvents(owner!.workspaceId, null, 100)).filter(
+        (event) => event.action === "question_health.application.undo",
+      ),
+    ).toHaveLength(1);
+
+    const exported = await repository.exportAccount(owner!.userId);
+    expect(exported.questionHealthApplications).toMatchObject([
+      expect.objectContaining({ quizId: quiz.id, applicationId }),
+    ]);
+    await repository.deleteAccount(owner!.userId);
+    expect(
+      await repository.getQuestionHealthApplication(owner!.workspaceId, quiz.id, applicationId),
+    ).toBeNull();
+  });
+
   it("defaults legacy report trust mode in account exports", async () => {
     const repository = new MemoryRepository();
     const now = new Date("2026-09-23T12:00:00.000Z");
@@ -1047,9 +1352,37 @@ describe("memory repository", () => {
     });
 
     expect(await repository.getMediaAsset(randomUUID(), mediaId)).toBeNull();
+    const finalizationToken = randomUUID();
+    expect(
+      await repository.claimMediaAssetFinalization(workspaceId, mediaId, finalizationToken),
+    ).toMatchObject({
+      scanStatus: "finalizing",
+    });
+    expect(
+      await repository.claimMediaAssetFinalization(workspaceId, mediaId, randomUUID()),
+    ).toBeNull();
+    expect(await repository.releaseMediaAssetFinalization(workspaceId, mediaId, randomUUID())).toBe(
+      false,
+    );
+    expect(
+      await repository.releaseMediaAssetFinalization(workspaceId, mediaId, finalizationToken),
+    ).toBe(true);
+    expect(
+      await repository.claimMediaAssetFinalization(workspaceId, mediaId, finalizationToken),
+    ).toMatchObject({ scanStatus: "finalizing" });
+    expect(
+      await repository.updateMediaAsset(workspaceId, mediaId, {
+        scanStatus: "clean",
+        objectKey: `media/${workspaceId}/${mediaId}/${randomUUID()}.png`,
+        finalizationToken: randomUUID(),
+        finalizedAt: new Date(),
+      }),
+    ).toBeNull();
     const promoted = await repository.updateMediaAsset(workspaceId, mediaId, {
       scanStatus: "clean",
       objectKey: `media/${workspaceId}/${mediaId}.png`,
+      finalizationToken,
+      finalizedAt: new Date(),
     });
     expect(promoted).toMatchObject({
       scanStatus: "clean",
@@ -1057,7 +1390,266 @@ describe("memory repository", () => {
     });
     expect((await repository.listMediaAssets(workspaceId)).map(({ id }) => id)).toEqual([mediaId]);
     expect(await repository.deleteMediaAsset(randomUUID(), mediaId)).toBe(false);
-    expect(await repository.deleteMediaAsset(workspaceId, mediaId)).toBe(true);
+    const deletionStartedAt = new Date("2026-09-27T01:00:00Z");
+    expect(
+      await repository.claimMediaAssetDeletion(workspaceId, mediaId, deletionStartedAt),
+    ).toMatchObject({
+      scanStatus: "deleting",
+      deletionStartedAt,
+    });
+    await expect(
+      repository.replaceMediaReferences(workspaceId, "quiz_draft", randomUUID(), [mediaId]),
+    ).rejects.toThrow(/unavailable/);
+    expect(await repository.claimMediaAssetDeletion(workspaceId, mediaId)).toMatchObject({
+      scanStatus: "deleting",
+      deletionStartedAt,
+    });
+    expect(
+      await repository.deleteMediaAsset(
+        workspaceId,
+        mediaId,
+        new Date(deletionStartedAt.getTime() + MEDIA_DELETION_TOMBSTONE_HOLD_MS - 1),
+      ),
+    ).toBe(false);
+    expect(
+      await repository.deleteMediaAsset(
+        workspaceId,
+        mediaId,
+        new Date(deletionStartedAt.getTime() + MEDIA_DELETION_TOMBSTONE_HOLD_MS),
+      ),
+    ).toBe(true);
+
+    const abandonedFinalizationId = randomUUID();
+    await repository.createMediaAsset({
+      id: abandonedFinalizationId,
+      workspaceId,
+      objectKey: `quarantine/${workspaceId}/${abandonedFinalizationId}.png`,
+      mimeType: "image/png",
+      sizeBytes: 128,
+      scanStatus: "pending",
+      altText: "Abandoned finalization",
+      createdAt: new Date(),
+    });
+    const abandonedStartedAt = new Date("2026-09-27T00:00:00Z");
+    await repository.claimMediaAssetFinalization(
+      workspaceId,
+      abandonedFinalizationId,
+      randomUUID(),
+      abandonedStartedAt,
+    );
+    expect(
+      await repository.claimMediaAssetDeletion(
+        workspaceId,
+        abandonedFinalizationId,
+        new Date(abandonedStartedAt.getTime() + 4 * 60_000),
+      ),
+    ).toBeNull();
+    const abandonedDeletionStartedAt = new Date(abandonedStartedAt.getTime() + 5 * 60_000);
+    expect(
+      await repository.claimMediaAssetDeletion(
+        workspaceId,
+        abandonedFinalizationId,
+        abandonedDeletionStartedAt,
+      ),
+    ).toMatchObject({ scanStatus: "deleting", deletionStartedAt: abandonedDeletionStartedAt });
+    expect(
+      await repository.deleteMediaAsset(
+        workspaceId,
+        abandonedFinalizationId,
+        new Date(abandonedDeletionStartedAt.getTime() + MEDIA_DELETION_TOMBSTONE_HOLD_MS),
+      ),
+    ).toBe(true);
+  });
+
+  it("completes clean-media cleanup in an initial pass and one final six-day pass", async () => {
+    const repository = new MemoryRepository();
+    const finalizedAt = new Date("2026-09-27T12:00:00.000Z");
+    const workspaceId = randomUUID();
+    const asset = await finalizedMediaForCleanup(repository, workspaceId, finalizedAt);
+
+    const firstClaims = await repository.claimMediaObjectCleanupCandidates(finalizedAt, 100);
+    expect(firstClaims).toEqual([
+      expect.objectContaining({ asset: expect.objectContaining({ id: asset.id }), pass: 0 }),
+    ]);
+    const firstClaim = firstClaims[0]!;
+    expect(firstClaim.claimToken).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await repository.claimMediaObjectCleanupCandidates(finalizedAt, 100)).toEqual([]);
+    expect(await repository.completeMediaObjectCleanupClaim(firstClaim, finalizedAt)).toBe(true);
+    expect(await repository.completeMediaObjectCleanupClaim(firstClaim, finalizedAt)).toBe(false);
+
+    const finalSweepAt = new Date(finalizedAt.getTime() + 6 * 24 * 60 * 60_000);
+    expect(
+      await repository.claimMediaObjectCleanupCandidates(new Date(finalSweepAt.getTime() - 1), 100),
+    ).toEqual([]);
+    const finalClaims = await repository.claimMediaObjectCleanupCandidates(finalSweepAt, 100);
+    expect(finalClaims).toEqual([
+      expect.objectContaining({ asset: expect.objectContaining({ id: asset.id }), pass: 1 }),
+    ]);
+    expect(await repository.completeMediaObjectCleanupClaim(finalClaims[0]!, finalSweepAt)).toBe(
+      true,
+    );
+    expect(await repository.claimMediaObjectCleanupCandidates(finalSweepAt, 100)).toEqual([]);
+    expect(await repository.getMediaAsset(workspaceId, asset.id)).toMatchObject({
+      scanStatus: "clean",
+      objectKey: asset.objectKey,
+    });
+  });
+
+  it("separates overdue initial and final cleanup passes by at least one hour", async () => {
+    const repository = new MemoryRepository();
+    const finalizedAt = new Date("2026-09-18T12:00:00.000Z");
+    await finalizedMediaForCleanup(repository, randomUUID(), finalizedAt);
+    const overdueAt = new Date(finalizedAt.getTime() + 8 * 24 * 60 * 60_000);
+    const firstClaim = (await repository.claimMediaObjectCleanupCandidates(overdueAt, 1))[0]!;
+    expect(firstClaim.pass).toBe(0);
+    expect(await repository.completeMediaObjectCleanupClaim(firstClaim, overdueAt)).toBe(true);
+    expect(await repository.claimMediaObjectCleanupCandidates(overdueAt, 1)).toEqual([]);
+    const finalClaim = (
+      await repository.claimMediaObjectCleanupCandidates(
+        new Date(overdueAt.getTime() + 60 * 60_000),
+        1,
+      )
+    )[0]!;
+    expect(finalClaim.pass).toBe(1);
+  });
+
+  it("reclaims expired media cleanup leases and defers failed attempts", async () => {
+    const repository = new MemoryRepository();
+    const finalizedAt = new Date("2026-09-27T12:00:00.000Z");
+    const asset = await finalizedMediaForCleanup(repository, randomUUID(), finalizedAt);
+    const firstClaim = (await repository.claimMediaObjectCleanupCandidates(finalizedAt, 1))[0]!;
+    const renewedAt = new Date(finalizedAt.getTime() + 4 * 60_000);
+    expect(await repository.renewMediaObjectCleanupClaim(firstClaim, renewedAt)).toBe(true);
+    const originalLeaseExpiry = new Date(finalizedAt.getTime() + 5 * 60_000);
+    expect(await repository.claimMediaObjectCleanupCandidates(originalLeaseExpiry, 1)).toEqual([]);
+    const leaseExpiry = new Date(renewedAt.getTime() + 5 * 60_000);
+
+    expect(
+      await repository.claimMediaObjectCleanupCandidates(new Date(leaseExpiry.getTime() - 1), 1),
+    ).toEqual([]);
+    const replacement = (await repository.claimMediaObjectCleanupCandidates(leaseExpiry, 1))[0]!;
+    expect(replacement).toMatchObject({
+      asset: expect.objectContaining({ id: asset.id }),
+      pass: 0,
+    });
+    expect(replacement.claimToken).not.toBe(firstClaim.claimToken);
+    expect(await repository.renewMediaObjectCleanupClaim(firstClaim, leaseExpiry)).toBe(false);
+    expect(await repository.completeMediaObjectCleanupClaim(firstClaim, leaseExpiry)).toBe(false);
+
+    const retryAt = new Date(leaseExpiry.getTime() + 10 * 60_000);
+    expect(await repository.deferMediaObjectCleanupClaim(replacement, retryAt)).toBe(true);
+    expect(await repository.deferMediaObjectCleanupClaim(replacement, retryAt)).toBe(false);
+    expect(
+      await repository.claimMediaObjectCleanupCandidates(new Date(retryAt.getTime() - 1), 1),
+    ).toEqual([]);
+    const retry = (await repository.claimMediaObjectCleanupCandidates(retryAt, 1))[0]!;
+    expect(retry.pass).toBe(0);
+    expect(await repository.completeMediaObjectCleanupClaim(retry, retryAt)).toBe(true);
+  });
+
+  it("records inline cleanup and rejects stale completion after media deletion begins", async () => {
+    const repository = new MemoryRepository();
+    const finalizedAt = new Date("2026-09-27T12:00:00.000Z");
+    const workspaceId = randomUUID();
+    const asset = await finalizedMediaForCleanup(repository, workspaceId, finalizedAt);
+
+    expect(await repository.completeInlineMediaObjectCleanup(asset, finalizedAt)).toBe(true);
+    expect(await repository.completeInlineMediaObjectCleanup(asset, finalizedAt)).toBe(false);
+    expect(await repository.claimMediaObjectCleanupCandidates(finalizedAt, 1)).toEqual([]);
+
+    const finalSweepAt = new Date(finalizedAt.getTime() + 6 * 24 * 60 * 60_000);
+    const finalClaim = (await repository.claimMediaObjectCleanupCandidates(finalSweepAt, 1))[0]!;
+    expect(finalClaim.pass).toBe(1);
+    expect(
+      await repository.claimMediaAssetDeletion(workspaceId, asset.id, finalSweepAt),
+    ).toMatchObject({
+      scanStatus: "deleting",
+    });
+    expect(await repository.completeMediaObjectCleanupClaim(finalClaim, finalSweepAt)).toBe(false);
+    expect(await repository.claimMediaObjectCleanupCandidates(finalSweepAt, 1)).toEqual([]);
+  });
+
+  it("fences every workspace asset before account deletion can remove its metadata", async () => {
+    const repository = new MemoryRepository();
+    const workspaceId = randomUUID();
+    const mediaId = randomUUID();
+    const finalizationToken = randomUUID();
+    const finalizationStartedAt = new Date("2026-09-27T12:00:00.000Z");
+    const deletionStartedAt = new Date("2026-09-27T12:01:00.000Z");
+    await repository.createMediaAsset({
+      id: mediaId,
+      workspaceId,
+      objectKey: `quarantine/${workspaceId}/${mediaId}.png`,
+      mimeType: "image/png",
+      sizeBytes: 128,
+      scanStatus: "pending",
+      altText: "Account deletion race",
+      createdAt: finalizationStartedAt,
+    });
+    await repository.claimMediaAssetFinalization(
+      workspaceId,
+      mediaId,
+      finalizationToken,
+      finalizationStartedAt,
+    );
+
+    await expect(
+      repository.claimWorkspaceMediaDeletion(workspaceId, deletionStartedAt),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: mediaId,
+        scanStatus: "deleting",
+        deletionStartedAt,
+      }),
+    ]);
+    await expect(
+      repository.updateMediaAsset(workspaceId, mediaId, {
+        scanStatus: "clean",
+        objectKey: `media/${workspaceId}/${mediaId}/${finalizationToken}.png`,
+        finalizationToken,
+        finalizedAt: new Date("2026-09-27T12:01:01.000Z"),
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      repository.claimWorkspaceMediaDeletion(workspaceId, new Date("2026-09-27T12:02:00.000Z")),
+    ).resolves.toEqual([expect.objectContaining({ id: mediaId, deletionStartedAt })]);
+    await expect(
+      repository.listDueWorkspaceMediaDeletionJobs(
+        new Date(deletionStartedAt.getTime() + MEDIA_DELETION_TOMBSTONE_HOLD_MS - 1),
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      repository.listDueWorkspaceMediaDeletionJobs(
+        new Date(deletionStartedAt.getTime() + MEDIA_DELETION_TOMBSTONE_HOLD_MS),
+      ),
+    ).resolves.toEqual([
+      {
+        workspaceId,
+        deletionStartedAt,
+        sweepAfter: new Date(deletionStartedAt.getTime() + MEDIA_DELETION_TOMBSTONE_HOLD_MS),
+      },
+    ]);
+    const lateMediaId = randomUUID();
+    await expect(
+      repository.createMediaAsset({
+        id: lateMediaId,
+        workspaceId,
+        objectKey: `quarantine/${workspaceId}/${lateMediaId}.png`,
+        mimeType: "image/png",
+        sizeBytes: 128,
+        scanStatus: "pending",
+        altText: "Late account deletion upload",
+        createdAt: new Date("2026-09-27T12:02:01.000Z"),
+      }),
+    ).rejects.toThrow("Workspace deletion is in progress");
+    await expect(
+      repository.completeWorkspaceMediaDeletionJob(workspaceId, deletionStartedAt),
+    ).resolves.toBe(true);
+    await expect(
+      repository.listDueWorkspaceMediaDeletionJobs(
+        new Date(deletionStartedAt.getTime() + MEDIA_DELETION_TOMBSTONE_HOLD_MS),
+      ),
+    ).resolves.toEqual([]);
   });
 
   it("applies each billing event once and ignores stale entitlement changes", async () => {

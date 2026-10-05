@@ -3,12 +3,14 @@ import {
   AudienceStoreError,
   FollowupAccessLimitError,
   FollowupVersionConflictError,
+  MEDIA_DELETION_TOMBSTONE_HOLD_MS,
   PublishedQuizLimitError,
   QuizDraftMutationConflictError,
   QuizDraftRevisionConflictError,
   SessionCodeConflictError,
   SessionNotActiveError,
   SessionVersionConflictError,
+  WorkspaceDeletionInProgressError,
 } from "./types.js";
 import type {
   AudienceEventInput,
@@ -42,19 +44,25 @@ import type {
   LtiLoginTransactionRecord,
   LtiRegistrationRecord,
   LiveRoomArtifactType,
+  LibraryArtifactDeletionResult,
   LiveRoomCodeClaim,
   LiveRoomCodeRecord,
   MagicTokenRecord,
+  MediaAssetCreateInput,
   MediaAssetRecord,
+  MediaObjectCleanupClaim,
   MediaReferenceOwnerType,
   MediaReferenceRecord,
-  MediaScanStatus,
   OperationalFeaturesRecord,
   OperationalFeaturesUpdate,
   ParticipantRecord,
   ParticipantSignalRecord,
   Plan,
   ProductEventRecord,
+  QuestionHealthDismissalIdentity,
+  QuestionHealthDismissalRecord,
+  QuestionHealthDismissalWrite,
+  QuestionHealthApplicationRecord,
   QnaQuestionRecord,
   QnaReplyRecord,
   QnaSettingsRecord,
@@ -67,8 +75,11 @@ import type {
   Repository,
   SessionStaffCredentialRecord,
   SessionStaffCredentialInput,
+  SessionDecisionEventWrite,
   SessionHistoryRecord,
+  SessionInvalidationTarget,
   StoredSession,
+  WorkspaceMediaDeletionJobRecord,
   WorkspaceInvitationRecord,
   WorkspaceMemberRecord,
   WorkspaceSummaryRecord,
@@ -81,7 +92,10 @@ import {
   upcastRoundDraft,
 } from "./artifact-schemas.js";
 import {
+  MAX_SESSION_DECISION_EVENTS,
+  QUESTION_HEALTH_POST_USE_MAX_REPORTS,
   ReportSchema,
+  SessionDecisionEventSchema,
   questionDelivery,
   type BrandTheme,
   type QuizDraft,
@@ -106,6 +120,7 @@ interface QuizDraftMutationReceipt {
   expectedRevision: number;
   resultingRevision: number;
   draftHash: string;
+  questionHealthUndoApplicationId?: string | null;
   createdAt: Date;
 }
 
@@ -164,6 +179,22 @@ function normalizeQuizHistory(
   };
 }
 
+function questionHealthDismissalKey(
+  input: Pick<
+    QuestionHealthDismissalRecord,
+    "workspaceId" | "quizId" | "findingId" | "ruleVersion" | "rulesetVersion" | "contentHash"
+  >,
+) {
+  return JSON.stringify([
+    input.workspaceId,
+    input.quizId,
+    input.findingId,
+    input.ruleVersion,
+    input.rulesetVersion,
+    input.contentHash,
+  ]);
+}
+
 export interface MemoryRepositoryLifecycleContext {
   userId: string;
   ownedWorkspaceIds: ReadonlySet<string>;
@@ -175,6 +206,21 @@ export interface MemoryRepositoryLifecycleExtension {
   ): Promise<Record<string, unknown>> | Record<string, unknown>;
   deleteAccount(context: MemoryRepositoryLifecycleContext): Promise<void> | void;
   purgeExpired?(now: Date): Promise<string[]> | string[];
+  hasLibraryArtifact?(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ): boolean;
+  isLibraryArtifactReferenced?(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ): boolean;
+  deleteLibraryArtifactMetadata?(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ): void;
 }
 
 export interface MemoryAccountExport extends Record<string, unknown> {
@@ -182,6 +228,8 @@ export interface MemoryAccountExport extends Record<string, unknown> {
   workspaces?: unknown[];
   quizzes?: QuizRecord[];
   quizDraftHistory?: QuizDraftHistoryRecord[];
+  questionHealthDismissals?: QuestionHealthDismissalRecord[];
+  questionHealthApplications?: QuestionHealthApplicationRecord[];
   mediaAssets?: MediaAssetRecord[];
   mediaReferences?: MediaReferenceRecord[];
   consentRecords?: ConsentRecord[];
@@ -212,9 +260,12 @@ export class MemoryRepository implements Repository {
   readonly quizzes = new Map<string, QuizRecord>();
   readonly quizDraftHistory = new Map<string, QuizDraftHistoryRecord>();
   readonly quizDraftMutations = new Map<string, QuizDraftMutationReceipt>();
+  readonly questionHealthDismissals = new Map<string, QuestionHealthDismissalRecord>();
+  readonly questionHealthApplications = new Map<string, QuestionHealthApplicationRecord>();
   readonly folders = new Map<string, FolderRecord>();
   readonly versions = new Map<string, QuizVersionRecord>();
   readonly sessions = new Map<string, StoredSession>();
+  readonly sessionDecisionEvents = new Map<string, SessionDecisionEventWrite[]>();
   readonly liveRoomCodes = new Map<string, LiveRoomCodeRecord>();
   readonly participants = new Map<string, ParticipantRecord>();
   readonly sessionStaff = new Map<string, SessionStaffCredentialRecord>();
@@ -240,6 +291,18 @@ export class MemoryRepository implements Repository {
   readonly audienceRestrictions = new Map<string, AudienceRestrictionRecord>();
   readonly audienceOutbox = new Map<string, AudienceOutboxRecord>();
   readonly mediaAssets = new Map<string, MediaAssetRecord>();
+  readonly mediaFinalizationLeases = new Map<string, { token: string; startedAt: Date }>();
+  readonly mediaObjectCleanup = new Map<
+    string,
+    {
+      pass: 0 | 1 | 2;
+      dueAt: Date | null;
+      claimToken: string | null;
+      claimedAt: Date | null;
+    }
+  >();
+  readonly workspaceMediaDeletionClaims = new Set<string>();
+  readonly workspaceMediaDeletionJobs = new Map<string, WorkspaceMediaDeletionJobRecord>();
   readonly mediaReferences = new Map<string, MediaReferenceRecord>();
   readonly answers = new Map<string, EngineAnswer>();
   readonly reports = new Map<string, Report>();
@@ -269,6 +332,9 @@ export class MemoryRepository implements Repository {
     string,
     { instance: unknown; lifecycle: MemoryRepositoryLifecycleExtension }
   >();
+  private readonly deletedLibraryArtifacts = new Set<string>();
+  private readonly deletedQuizVersions = new Set<string>();
+  private readonly deletedMediaReferenceOwners = new Set<string>();
   readonly operationalFeatures: OperationalFeaturesRecord = {
     signups: true,
     sessionCreation: true,
@@ -293,6 +359,53 @@ export class MemoryRepository implements Repository {
     const instance = create();
     this.lifecycleExtensions.set(name, { instance, lifecycle: instance });
     return instance;
+  }
+
+  hasLibraryArtifact(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    if (artifactType === "round") return this.quizzes.get(artifactId)?.workspaceId === workspaceId;
+    return [...this.lifecycleExtensions.values()].some(({ lifecycle }) =>
+      lifecycle.hasLibraryArtifact?.(workspaceId, artifactType, artifactId),
+    );
+  }
+
+  isLibraryArtifactReferenced(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    return [...this.lifecycleExtensions.values()].some(({ lifecycle }) =>
+      lifecycle.isLibraryArtifactReferenced?.(workspaceId, artifactType, artifactId),
+    );
+  }
+
+  isLibraryArtifactDeleted(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    return this.deletedLibraryArtifacts.has(`${workspaceId}:${artifactType}:${artifactId}`);
+  }
+
+  markLibraryArtifactDeleted(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    this.deletedLibraryArtifacts.add(`${workspaceId}:${artifactType}:${artifactId}`);
+  }
+
+  deleteLibraryArtifactMetadata(
+    workspaceId: string,
+    artifactType: "round" | "presentation",
+    artifactId: string,
+  ) {
+    for (const { lifecycle } of this.lifecycleExtensions.values()) {
+      lifecycle.deleteLibraryArtifactMetadata?.(workspaceId, artifactType, artifactId);
+    }
   }
 
   async initialize() {}
@@ -839,7 +952,16 @@ export class MemoryRepository implements Repository {
       if (
         retry.quizId !== input.quizId ||
         retry.expectedRevision !== input.expectedRevision ||
-        retry.draftHash !== input.draftHash
+        retry.draftHash !== input.draftHash ||
+        (retry.questionHealthUndoApplicationId ?? null) !==
+          (input.questionHealthUndo?.applicationId ?? null)
+      ) {
+        throw new QuizDraftMutationConflictError(input.mutationId);
+      }
+      if (
+        input.questionHealthApplication &&
+        this.questionHealthApplications.get(mutationKey)?.requestHash !==
+          input.questionHealthApplication.requestHash
       ) {
         throw new QuizDraftMutationConflictError(input.mutationId);
       }
@@ -857,6 +979,9 @@ export class MemoryRepository implements Repository {
     }
 
     const meaningful = JSON.stringify(normalizeQuizRecord(quiz).draft) !== JSON.stringify(draft);
+    if (input.questionHealthApplication && !meaningful) {
+      throw new QuizDraftMutationConflictError(input.mutationId);
+    }
     const updatedAt = new Date();
     const resultingRevision = meaningful ? currentRevision + 1 : currentRevision;
     if (meaningful) {
@@ -868,6 +993,7 @@ export class MemoryRepository implements Repository {
       expectedRevision: input.expectedRevision,
       resultingRevision,
       draftHash: input.draftHash,
+      questionHealthUndoApplicationId: input.questionHealthUndo?.applicationId ?? null,
       createdAt: updatedAt,
     });
     if (!meaningful) return structuredClone(normalizeQuizRecord(quiz));
@@ -893,6 +1019,43 @@ export class MemoryRepository implements Repository {
       mutationId: input.mutationId,
       createdAt: updatedAt,
     });
+    if (input.questionHealthApplication) {
+      const { requestId, ...application } = input.questionHealthApplication;
+      this.questionHealthApplications.set(mutationKey, {
+        ...structuredClone(application),
+        appliedRevision: resultingRevision,
+        createdAt: updatedAt,
+      });
+      await this.recordAudit({
+        workspaceId: input.workspaceId,
+        actorId: input.editorId,
+        action: "question_health.application.apply",
+        targetType: "question_health_application",
+        targetId: input.mutationId,
+        requestId,
+        metadata: {
+          quizId: input.quizId,
+          findingId: application.findingId,
+          sourceRevision: application.sourceRevision,
+          appliedRevision: resultingRevision,
+        },
+      });
+    }
+    if (input.questionHealthUndo) {
+      await this.recordAudit({
+        workspaceId: input.workspaceId,
+        actorId: input.editorId,
+        action: "question_health.application.undo",
+        targetType: "question_health_application",
+        targetId: input.questionHealthUndo.applicationId,
+        requestId: input.questionHealthUndo.requestId,
+        metadata: {
+          quizId: input.quizId,
+          sourceRevision: input.expectedRevision - 1,
+          resultingRevision,
+        },
+      });
+    }
     await this.replaceMediaReferences(
       input.workspaceId,
       "quiz_draft",
@@ -909,6 +1072,91 @@ export class MemoryRepository implements Repository {
     );
     await this.pruneQuizDraftHistory(input.quizId, updatedAt);
     return structuredClone(normalizeQuizRecord(quiz));
+  }
+
+  async listQuestionHealthDismissals(workspaceId: string, quizId: string) {
+    return [...this.questionHealthDismissals.values()]
+      .filter((dismissal) => dismissal.workspaceId === workspaceId && dismissal.quizId === quizId)
+      .map((dismissal) => structuredClone(dismissal));
+  }
+
+  async getQuestionHealthApplication(workspaceId: string, quizId: string, applicationId: string) {
+    const record = this.questionHealthApplications.get(`${workspaceId}:${applicationId}`);
+    return record?.quizId === quizId ? structuredClone(record) : null;
+  }
+
+  async putQuestionHealthDismissal(input: QuestionHealthDismissalWrite) {
+    const quiz = this.quizzes.get(input.quizId);
+    if (!quiz || quiz.workspaceId !== input.workspaceId) return { status: "not_found" as const };
+    if ((quiz.draftRevision ?? 0) !== input.expectedDraftRevision) {
+      return { status: "revision_conflict" as const };
+    }
+
+    // A changed content hash invalidates a prior dismissal for this same finding.
+    for (const [key, dismissal] of this.questionHealthDismissals) {
+      if (
+        dismissal.workspaceId === input.workspaceId &&
+        dismissal.quizId === input.quizId &&
+        dismissal.findingId === input.findingId
+      ) {
+        this.questionHealthDismissals.delete(key);
+      }
+    }
+    const dismissal: QuestionHealthDismissalRecord = {
+      workspaceId: input.workspaceId,
+      quizId: input.quizId,
+      findingId: input.findingId,
+      ruleVersion: input.ruleVersion,
+      rulesetVersion: input.rulesetVersion,
+      contentHash: input.contentHash,
+      reason: input.reason,
+      createdAt: new Date(),
+    };
+    this.questionHealthDismissals.set(questionHealthDismissalKey(dismissal), dismissal);
+    await this.recordAudit({
+      workspaceId: input.workspaceId,
+      actorId: input.actorId,
+      action: "question_health.dismissal.create",
+      targetType: "question_health_dismissal",
+      targetId: input.findingId,
+      requestId: input.requestId,
+      metadata: {
+        quizId: input.quizId,
+        findingId: input.findingId,
+        ruleVersion: input.ruleVersion,
+        rulesetVersion: input.rulesetVersion,
+        contentHash: input.contentHash,
+        reason: input.reason,
+      },
+    });
+    return { status: "ok" as const, dismissal: structuredClone(dismissal) };
+  }
+
+  async deleteQuestionHealthDismissal(input: QuestionHealthDismissalIdentity) {
+    const quiz = this.quizzes.get(input.quizId);
+    if (!quiz || quiz.workspaceId !== input.workspaceId) return { status: "not_found" as const };
+    if ((quiz.draftRevision ?? 0) !== input.expectedDraftRevision) {
+      return { status: "revision_conflict" as const };
+    }
+    const removed = this.questionHealthDismissals.delete(questionHealthDismissalKey(input));
+    if (removed) {
+      await this.recordAudit({
+        workspaceId: input.workspaceId,
+        actorId: input.actorId,
+        action: "question_health.dismissal.delete",
+        targetType: "question_health_dismissal",
+        targetId: input.findingId,
+        requestId: input.requestId,
+        metadata: {
+          quizId: input.quizId,
+          findingId: input.findingId,
+          ruleVersion: input.ruleVersion,
+          rulesetVersion: input.rulesetVersion,
+          contentHash: input.contentHash,
+        },
+      });
+    }
+    return { status: "ok" as const, removed };
   }
 
   private replayQuizDraftMutation(
@@ -932,11 +1180,21 @@ export class MemoryRepository implements Repository {
   }
 
   private async pruneQuizDraftHistory(quizId: string, now: Date) {
+    const currentRevision = this.quizzes.get(quizId)?.draftRevision ?? 0;
+    const protectedSourceRevisions = new Set(
+      [...this.questionHealthApplications.values()]
+        .filter(
+          (application) =>
+            application.quizId === quizId && application.appliedRevision === currentRevision,
+        )
+        .map((application) => application.sourceRevision),
+    );
     const snapshots = [...this.quizDraftHistory.entries()]
       .filter(([, snapshot]) => snapshot.quizId === quizId)
       .sort((left, right) => right[1].revision - left[1].revision);
     const cutoff = now.getTime() - 30 * 24 * 60 * 60 * 1_000;
     for (const [index, [key, snapshot]] of snapshots.entries()) {
+      if (protectedSourceRevisions.has(snapshot.revision)) continue;
       if (index >= 20 || snapshot.createdAt.getTime() < cutoff) {
         this.quizDraftHistory.delete(key);
         await this.replaceMediaReferences(
@@ -970,6 +1228,7 @@ export class MemoryRepository implements Repository {
     expectedRevision: number;
     mutationId: string;
     editorId: string;
+    questionHealthUndo?: { applicationId: string; requestId: string };
   }) {
     const quiz = this.quizzes.get(input.quizId);
     if (!quiz || quiz.workspaceId !== input.workspaceId) return null;
@@ -978,7 +1237,9 @@ export class MemoryRepository implements Repository {
       if (
         retry.quizId !== input.quizId ||
         retry.expectedRevision !== input.expectedRevision ||
-        retry.draftHash !== `restore:${input.historyRevision}`
+        retry.draftHash !== `restore:${input.historyRevision}` ||
+        (retry.questionHealthUndoApplicationId ?? null) !==
+          (input.questionHealthUndo?.applicationId ?? null)
       ) {
         throw new QuizDraftMutationConflictError(input.mutationId);
       }
@@ -995,6 +1256,7 @@ export class MemoryRepository implements Repository {
       editorId: input.editorId,
       schemaVersion: snapshot.draftSchemaVersion ?? ROUND_DRAFT_SCHEMA_VERSION,
       draftHash: `restore:${input.historyRevision}`,
+      questionHealthUndo: input.questionHealthUndo,
     });
   }
 
@@ -1020,6 +1282,62 @@ export class MemoryRepository implements Repository {
     quiz.status = archived ? "archived" : quiz.currentVersionId ? "published" : "draft";
     quiz.updatedAt = new Date();
     return structuredClone(normalizeQuizRecord(quiz));
+  }
+
+  async deleteQuiz(workspaceId: string, quizId: string): Promise<LibraryArtifactDeletionResult> {
+    const quiz = this.quizzes.get(quizId);
+    if (!quiz || quiz.workspaceId !== workspaceId) return "not_found";
+    if (quiz.status !== "archived") return "not_archived";
+    const versionIds = new Set(
+      [...this.versions.values()]
+        .filter((version) => version.workspaceId === workspaceId && version.quizId === quizId)
+        .map((version) => version.id),
+    );
+    if (
+      [...this.sessions.values()].some(
+        (session) => session.workspaceId === workspaceId && versionIds.has(session.quizVersionId),
+      ) ||
+      [...this.followups.values()].some(
+        (followup) =>
+          followup.workspaceId === workspaceId && versionIds.has(followup.sourceQuizVersionId),
+      ) ||
+      this.isLibraryArtifactReferenced(workspaceId, "round", quizId)
+    )
+      return "in_use";
+
+    // Keep the check and every removal synchronous so a restore or new dependent cannot interleave.
+    const historyIds = new Set<string>();
+    for (const [key, snapshot] of this.quizDraftHistory) {
+      if (snapshot.workspaceId === workspaceId && snapshot.quizId === quizId) {
+        historyIds.add(snapshot.id);
+        this.quizDraftHistory.delete(key);
+      }
+    }
+    for (const [key, mutation] of this.quizDraftMutations) {
+      if (mutation.workspaceId === workspaceId && mutation.quizId === quizId)
+        this.quizDraftMutations.delete(key);
+    }
+    for (const [key, dismissal] of this.questionHealthDismissals) {
+      if (dismissal.workspaceId === workspaceId && dismissal.quizId === quizId)
+        this.questionHealthDismissals.delete(key);
+    }
+    for (const [key, application] of this.questionHealthApplications) {
+      if (application.workspaceId === workspaceId && application.quizId === quizId)
+        this.questionHealthApplications.delete(key);
+    }
+    for (const id of versionIds) {
+      this.versions.delete(id);
+      this.deletedQuizVersions.add(`${workspaceId}:${id}`);
+    }
+    this.removeMediaReferencesForOwners(workspaceId, [
+      { ownerType: "quiz_draft", ownerId: quizId },
+      ...[...versionIds].map((ownerId) => ({ ownerType: "quiz_version" as const, ownerId })),
+      ...[...historyIds].map((ownerId) => ({ ownerType: "quiz_history" as const, ownerId })),
+    ]);
+    this.quizzes.delete(quizId);
+    this.markLibraryArtifactDeleted(workspaceId, "round", quizId);
+    this.deleteLibraryArtifactMetadata(workspaceId, "round", quizId);
+    return "deleted";
   }
 
   async duplicateQuiz(input: QuizRecord) {
@@ -1379,7 +1697,14 @@ export class MemoryRepository implements Repository {
     return structuredClone(claim);
   }
 
+  assertWorkspaceLiveSessionCreationAllowed(workspaceId: string) {
+    if (this.workspaceMediaDeletionClaims.has(workspaceId)) {
+      throw new WorkspaceDeletionInProgressError(workspaceId);
+    }
+  }
+
   async claimLiveRoomCode(input: LiveRoomCodeClaim) {
+    this.assertWorkspaceLiveSessionCreationAllowed(input.workspaceId);
     const now = new Date();
     const current = this.liveRoomCodes.get(input.code);
     if (current && current.releasedAt === null && current.expiresAt > now) {
@@ -1416,6 +1741,12 @@ export class MemoryRepository implements Repository {
       createdAt: input.createdAt,
     });
     try {
+      // `claimLiveRoomCode` is awaited by callers, so account deletion can start between the
+      // reservation and this write. Recheck synchronously before publishing any session state.
+      this.assertWorkspaceLiveSessionCreationAllowed(input.workspaceId);
+      if (this.deletedQuizVersions.has(`${input.workspaceId}:${input.quizVersionId}`)) {
+        throw new Error("Quiz version not found");
+      }
       this.sessions.set(
         input.id,
         structuredClone({
@@ -1465,6 +1796,17 @@ export class MemoryRepository implements Repository {
       .filter((session) => session.workspaceId === workspaceId)
       .map((session) => session.id)
       .sort();
+  }
+
+  async listSessionInvalidationTargets(workspaceId: string): Promise<SessionInvalidationTarget[]> {
+    return [...this.sessions.values()]
+      .filter((session) => session.workspaceId === workspaceId)
+      .map((session) => ({ sessionId: session.id, code: session.state.code }))
+      .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
+  }
+
+  async workspaceDeletionStarted(workspaceId: string) {
+    return this.workspaceMediaDeletionClaims.has(workspaceId);
   }
 
   async listSessionHistory(
@@ -1553,7 +1895,15 @@ export class MemoryRepository implements Repository {
     };
   }
 
-  async saveSession(input: StoredSession, expectedVersion: number, report?: Report) {
+  async saveSession(
+    input: StoredSession,
+    expectedVersion: number,
+    report?: Report,
+    decisionEvents: SessionDecisionEventWrite[] = [],
+  ) {
+    if (this.workspaceMediaDeletionClaims.has(input.workspaceId)) {
+      throw new WorkspaceDeletionInProgressError(input.workspaceId);
+    }
     const current = this.sessions.get(input.id);
     if (!current || current.state.version !== expectedVersion) {
       throw new SessionVersionConflictError(input.id, expectedVersion);
@@ -1561,15 +1911,82 @@ export class MemoryRepository implements Repository {
     if (report && report.sessionId !== input.id) throw new Error("Report session does not match");
     const currentTrustMode = current.trustMode ?? current.state.settings.trustMode ?? "learning";
     const nextTrustMode = input.trustMode ?? input.state.settings.trustMode ?? "learning";
+    const currentDecisionReplayEnabled = current.decisionReplayEnabled ?? false;
+    const nextDecisionReplayEnabled = input.decisionReplayEnabled ?? false;
     if (
       currentTrustMode !== nextTrustMode ||
-      (input.state.settings.trustMode ?? "learning") !== nextTrustMode
+      (input.state.settings.trustMode ?? "learning") !== nextTrustMode ||
+      currentDecisionReplayEnabled !== nextDecisionReplayEnabled
     ) {
-      throw new Error("Session trust mode is immutable");
+      throw new Error("Session trust and decision replay settings are immutable");
+    }
+    if (decisionEvents.length > 0 && !nextDecisionReplayEnabled) {
+      throw new Error("Decision events cannot be written for a session without replay enabled");
+    }
+    const currentDecisionEvents = this.sessionDecisionEvents.get(input.id) ?? [];
+    const nextDecisionEvents = decisionEvents.map((write) => ({
+      ...write,
+      event: SessionDecisionEventSchema.parse(write.event),
+    }));
+    if (
+      nextDecisionEvents.some(
+        (write) =>
+          typeof write.commandId !== "string" ||
+          write.commandId.length === 0 ||
+          write.commandId.length > 160 ||
+          !Number.isSafeInteger(write.eventOrdinal) ||
+          write.eventOrdinal < 0,
+      )
+    ) {
+      throw new Error("Invalid session decision event command or ordinal");
+    }
+    for (let index = 0; index < nextDecisionEvents.length; index += 1) {
+      const write = nextDecisionEvents[index]!;
+      const priorEvents = [...currentDecisionEvents, ...nextDecisionEvents.slice(0, index)];
+      if (
+        priorEvents.some(
+          (prior) =>
+            prior.event.seq === write.event.seq ||
+            (prior.commandId === write.commandId && prior.eventOrdinal === write.eventOrdinal),
+        )
+      ) {
+        throw new Error("Duplicate session decision event sequence or command ordinal");
+      }
+    }
+    const hasDecisionEventLimitMarker = currentDecisionEvents.some(
+      (write) => write.event.type === "capture_truncated",
+    );
+    const capturedDecisionEventCount = currentDecisionEvents.filter(
+      (write) => write.event.type !== "capture_truncated",
+    ).length;
+    const decisionEventSlots = Math.max(
+      0,
+      MAX_SESSION_DECISION_EVENTS - capturedDecisionEventCount,
+    );
+    const eventsToPersist = hasDecisionEventLimitMarker
+      ? []
+      : nextDecisionEvents.slice(0, decisionEventSlots);
+    const firstOmittedDecisionEvent = nextDecisionEvents[decisionEventSlots];
+    if (!hasDecisionEventLimitMarker && firstOmittedDecisionEvent) {
+      eventsToPersist.push({
+        ...firstOmittedDecisionEvent,
+        event: {
+          type: "capture_truncated",
+          seq: firstOmittedDecisionEvent.event.seq,
+          occurredAt: firstOmittedDecisionEvent.event.occurredAt,
+          reason: "event_limit",
+        },
+      });
     }
     const storedSession = structuredClone({ ...input, updatedAt: new Date() });
     const storedReport = report ? structuredClone(report) : undefined;
     this.sessions.set(input.id, storedSession);
+    if (eventsToPersist.length > 0) {
+      this.sessionDecisionEvents.set(input.id, [
+        ...currentDecisionEvents,
+        ...structuredClone(eventsToPersist),
+      ]);
+    }
     if (storedSession.state.phase === "finished") {
       await this.releaseLiveRoomCode("round", storedSession.id, storedSession.updatedAt);
       const settings = this.interactionSettings.get(input.id);
@@ -1620,6 +2037,7 @@ export class MemoryRepository implements Repository {
       if (followup.sourceSessionId === sessionId) this.deleteFollowupTree(followupId);
     }
     this.sessions.delete(sessionId);
+    this.sessionDecisionEvents.delete(sessionId);
     this.expiredLiveSessions.delete(sessionId);
     for (const [key, participant] of this.participants) {
       if (participant.sessionId === sessionId) this.participants.delete(key);
@@ -1713,6 +2131,7 @@ export class MemoryRepository implements Repository {
     participants: ParticipantRecord[],
     expectedVersion: number,
   ) {
+    this.assertWorkspaceLiveSessionCreationAllowed(session.workspaceId);
     const current = this.sessions.get(session.id);
     if (!current || current.state.version !== expectedVersion) {
       throw new SessionVersionConflictError(session.id, expectedVersion);
@@ -2542,6 +2961,9 @@ export class MemoryRepository implements Repository {
     const session = this.sessions.get(sessionId);
     if (!session || session.workspaceId !== workspaceId) {
       return {
+        decisionReplayEnabled: false,
+        decisionEvents: [],
+        decisionEventsComplete: false,
         answers: [],
         rounds: [],
         interventions: [],
@@ -2558,7 +2980,21 @@ export class MemoryRepository implements Repository {
     const qnaQuestions = [...this.qnaQuestions.values()].filter(
       (question) => question.workspaceId === workspaceId && question.sessionId === sessionId,
     );
+    const decisionWrites = this.sessionDecisionEvents.get(sessionId) ?? [];
+    const decisionEvents = decisionWrites.map((write) => structuredClone(write.event));
+    const hasCapturedDecisionEvents = decisionEvents.some(
+      (event) => event.type !== "capture_truncated",
+    );
+    const decisionEventsTruncated = decisionEvents.some(
+      (event) => event.type === "capture_truncated",
+    );
     return {
+      decisionReplayEnabled: session.decisionReplayEnabled ?? false,
+      decisionEvents,
+      decisionEventsComplete:
+        (session.decisionReplayEnabled ?? false) &&
+        hasCapturedDecisionEvents &&
+        !decisionEventsTruncated,
       answers: [...this.answers.entries()]
         .filter(([key]) => key.startsWith(`${sessionId}:`))
         .map(([, answer]) => structuredClone(answer)),
@@ -2642,9 +3078,17 @@ export class MemoryRepository implements Repository {
     ];
   }
 
-  async createMediaAsset(input: MediaAssetRecord) {
-    this.mediaAssets.set(input.id, structuredClone(input));
-    return structuredClone(input);
+  async createMediaAsset(input: MediaAssetCreateInput) {
+    if (this.workspaceMediaDeletionClaims.has(input.workspaceId)) {
+      throw new Error("Workspace deletion is in progress");
+    }
+    const asset = {
+      ...structuredClone(input),
+      deletionStartedAt: input.deletionStartedAt ?? null,
+      finalizedAt: input.finalizedAt ?? null,
+    };
+    this.mediaAssets.set(input.id, asset);
+    return structuredClone(asset);
   }
 
   async getMediaAsset(workspaceId: string, mediaId: string) {
@@ -2675,6 +3119,20 @@ export class MemoryRepository implements Repository {
       .map((reference) => structuredClone(reference));
   }
 
+  removeMediaReferencesForOwners(
+    workspaceId: string,
+    owners: Array<{ ownerType: MediaReferenceOwnerType; ownerId: string }>,
+  ) {
+    const ownerKeys = new Set(
+      owners.map(({ ownerType, ownerId }) => `${workspaceId}:${ownerType}:${ownerId}`),
+    );
+    for (const key of ownerKeys) this.deletedMediaReferenceOwners.add(key);
+    for (const [key, reference] of this.mediaReferences) {
+      if (ownerKeys.has(`${reference.workspaceId}:${reference.ownerType}:${reference.ownerId}`))
+        this.mediaReferences.delete(key);
+    }
+  }
+
   async replaceMediaReferences(
     workspaceId: string,
     ownerType: MediaReferenceOwnerType,
@@ -2682,6 +3140,8 @@ export class MemoryRepository implements Repository {
     mediaIds: string[],
     createdAt = new Date(),
   ) {
+    // A pending authoring save may resume after permanent deletion removed its owner.
+    if (this.deletedMediaReferenceOwners.has(`${workspaceId}:${ownerType}:${ownerId}`)) return [];
     const uniqueMediaIds = [...new Set(mediaIds)];
     this.validateMediaReferences(workspaceId, uniqueMediaIds);
     for (const [key, reference] of this.mediaReferences) {
@@ -2713,7 +3173,7 @@ export class MemoryRepository implements Repository {
   validateMediaReferences(workspaceId: string, mediaIds: string[]) {
     const invalidMediaId = [...new Set(mediaIds)].find((mediaId) => {
       const asset = this.mediaAssets.get(mediaId);
-      return !asset || asset.workspaceId !== workspaceId;
+      return !asset || asset.workspaceId !== workspaceId || asset.scanStatus === "deleting";
     });
     if (invalidMediaId) {
       throw new Error(`Media asset ${invalidMediaId} is unavailable in this workspace`);
@@ -2724,8 +3184,8 @@ export class MemoryRepository implements Repository {
     return [...this.mediaAssets.values()]
       .filter(
         (asset) =>
-          asset.scanStatus !== "clean" &&
-          asset.createdAt <= cutoff &&
+          (asset.scanStatus === "deleting" ||
+            (asset.scanStatus !== "clean" && asset.createdAt <= cutoff)) &&
           ![...this.mediaReferences.values()].some(
             (reference) =>
               reference.workspaceId === asset.workspaceId && reference.mediaId === asset.id,
@@ -2751,21 +3211,305 @@ export class MemoryRepository implements Repository {
       .map((asset) => structuredClone(asset));
   }
 
+  async claimMediaObjectCleanupCandidates(now: Date, limit = 100) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("Media cleanup batch limit must be between 1 and 100");
+    }
+    const claimToken = crypto.randomUUID();
+    return [...this.mediaAssets.values()]
+      .filter((asset) => {
+        const state = this.mediaObjectCleanup.get(asset.id);
+        return (
+          asset.scanStatus === "clean" &&
+          asset.finalizedAt !== null &&
+          state !== undefined &&
+          state.pass < 2 &&
+          state.dueAt !== null &&
+          state.dueAt <= now &&
+          (state.claimToken === null ||
+            (state.claimedAt !== null && now.getTime() - state.claimedAt.getTime() >= 5 * 60_000))
+        );
+      })
+      .sort((left, right) => {
+        const leftDueAt = this.mediaObjectCleanup.get(left.id)!.dueAt!;
+        const rightDueAt = this.mediaObjectCleanup.get(right.id)!.dueAt!;
+        return leftDueAt.getTime() - rightDueAt.getTime() || left.id.localeCompare(right.id);
+      })
+      .slice(0, limit)
+      .map((asset): MediaObjectCleanupClaim => {
+        const state = this.mediaObjectCleanup.get(asset.id)!;
+        state.claimToken = claimToken;
+        state.claimedAt = new Date(now);
+        return { asset: structuredClone(asset), pass: state.pass as 0 | 1, claimToken };
+      });
+  }
+
+  async completeMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, completedAt: Date) {
+    const { asset: claimedAsset, pass, claimToken } = claim;
+    const asset = this.mediaAssets.get(claimedAsset.id);
+    const state = this.mediaObjectCleanup.get(claimedAsset.id);
+    if (
+      !asset ||
+      !state ||
+      !asset.finalizedAt ||
+      !claimedAsset.finalizedAt ||
+      asset.workspaceId !== claimedAsset.workspaceId ||
+      asset.scanStatus !== "clean" ||
+      asset.objectKey !== claimedAsset.objectKey ||
+      asset.finalizedAt.getTime() !== claimedAsset.finalizedAt.getTime() ||
+      state.pass !== pass ||
+      state.claimToken !== claimToken
+    ) {
+      return false;
+    }
+    state.pass = pass === 0 ? 1 : 2;
+    state.dueAt =
+      pass === 0
+        ? new Date(
+            Math.max(
+              asset.finalizedAt.getTime() + 6 * 24 * 60 * 60_000,
+              completedAt.getTime() + 60 * 60_000,
+            ),
+          )
+        : null;
+    state.claimToken = null;
+    state.claimedAt = null;
+    return true;
+  }
+
+  async renewMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, renewedAt: Date) {
+    const { asset: claimedAsset, pass, claimToken } = claim;
+    const asset = this.mediaAssets.get(claimedAsset.id);
+    const state = this.mediaObjectCleanup.get(claimedAsset.id);
+    if (
+      !asset ||
+      !state ||
+      !asset.finalizedAt ||
+      !claimedAsset.finalizedAt ||
+      asset.workspaceId !== claimedAsset.workspaceId ||
+      asset.scanStatus !== "clean" ||
+      asset.objectKey !== claimedAsset.objectKey ||
+      asset.finalizedAt.getTime() !== claimedAsset.finalizedAt.getTime() ||
+      state.pass !== pass ||
+      state.claimToken !== claimToken
+    ) {
+      return false;
+    }
+    state.claimedAt = new Date(renewedAt);
+    return true;
+  }
+
+  async deferMediaObjectCleanupClaim(claim: MediaObjectCleanupClaim, retryAt: Date) {
+    const { asset: claimedAsset, pass, claimToken } = claim;
+    const asset = this.mediaAssets.get(claimedAsset.id);
+    const state = this.mediaObjectCleanup.get(claimedAsset.id);
+    if (
+      !asset ||
+      !state ||
+      !asset.finalizedAt ||
+      !claimedAsset.finalizedAt ||
+      asset.workspaceId !== claimedAsset.workspaceId ||
+      asset.scanStatus !== "clean" ||
+      asset.objectKey !== claimedAsset.objectKey ||
+      asset.finalizedAt.getTime() !== claimedAsset.finalizedAt.getTime() ||
+      state.pass !== pass ||
+      state.claimToken !== claimToken
+    ) {
+      return false;
+    }
+    state.dueAt = new Date(retryAt);
+    state.claimToken = null;
+    state.claimedAt = null;
+    return true;
+  }
+
+  async completeInlineMediaObjectCleanup(asset: MediaAssetRecord, completedAt: Date) {
+    const current = this.mediaAssets.get(asset.id);
+    const state = this.mediaObjectCleanup.get(asset.id);
+    if (
+      !current ||
+      !state ||
+      !asset.finalizedAt ||
+      !current.finalizedAt ||
+      current.workspaceId !== asset.workspaceId ||
+      current.scanStatus !== "clean" ||
+      current.objectKey !== asset.objectKey ||
+      current.finalizedAt.getTime() !== asset.finalizedAt.getTime() ||
+      state.pass !== 0 ||
+      state.claimToken !== null
+    ) {
+      return false;
+    }
+    state.pass = 1;
+    state.dueAt = new Date(
+      Math.max(
+        current.finalizedAt.getTime() + 6 * 24 * 60 * 60_000,
+        completedAt.getTime() + 60 * 60_000,
+      ),
+    );
+    return true;
+  }
+
   async updateMediaAsset(
     workspaceId: string,
     mediaId: string,
-    update: { objectKey?: string; scanStatus: MediaScanStatus },
+    update: {
+      objectKey?: string;
+      scanStatus: "clean" | "rejected";
+      finalizationToken: string;
+      finalizedAt: Date;
+    },
   ) {
     const asset = this.mediaAssets.get(mediaId);
-    if (!asset || asset.workspaceId !== workspaceId) return null;
+    const lease = this.mediaFinalizationLeases.get(mediaId);
+    if (
+      !asset ||
+      asset.workspaceId !== workspaceId ||
+      asset.scanStatus !== "finalizing" ||
+      lease?.token !== update.finalizationToken
+    ) {
+      return null;
+    }
     asset.scanStatus = update.scanStatus;
+    asset.deletionStartedAt = null;
+    asset.finalizedAt = new Date(update.finalizedAt);
     if (update.objectKey) asset.objectKey = update.objectKey;
+    this.mediaFinalizationLeases.delete(mediaId);
+    if (update.scanStatus === "clean") {
+      this.mediaObjectCleanup.set(mediaId, {
+        pass: 0,
+        dueAt: new Date(update.finalizedAt),
+        claimToken: null,
+        claimedAt: null,
+      });
+    } else {
+      this.mediaObjectCleanup.delete(mediaId);
+    }
     return structuredClone(asset);
   }
 
-  async deleteMediaAsset(workspaceId: string, mediaId: string) {
+  async claimMediaAssetFinalization(
+    workspaceId: string,
+    mediaId: string,
+    finalizationToken: string,
+    claimedAt = new Date(),
+  ) {
     const asset = this.mediaAssets.get(mediaId);
-    if (!asset || asset.workspaceId !== workspaceId) return false;
+    if (!asset || asset.workspaceId !== workspaceId) return null;
+    const lease = this.mediaFinalizationLeases.get(mediaId);
+    const leaseExpired =
+      asset.scanStatus === "finalizing" &&
+      (!lease || claimedAt.getTime() - lease.startedAt.getTime() >= 5 * 60_000);
+    if (asset.scanStatus !== "pending" && !leaseExpired) return null;
+    asset.scanStatus = "finalizing";
+    asset.deletionStartedAt = null;
+    this.mediaFinalizationLeases.set(mediaId, {
+      token: finalizationToken,
+      startedAt: new Date(claimedAt),
+    });
+    return structuredClone(asset);
+  }
+
+  async releaseMediaAssetFinalization(
+    workspaceId: string,
+    mediaId: string,
+    finalizationToken: string,
+  ) {
+    const asset = this.mediaAssets.get(mediaId);
+    const lease = this.mediaFinalizationLeases.get(mediaId);
+    if (
+      !asset ||
+      asset.workspaceId !== workspaceId ||
+      asset.scanStatus !== "finalizing" ||
+      lease?.token !== finalizationToken
+    ) {
+      return false;
+    }
+    asset.scanStatus = "pending";
+    asset.deletionStartedAt = null;
+    this.mediaFinalizationLeases.delete(mediaId);
+    return true;
+  }
+
+  async claimMediaAssetDeletion(workspaceId: string, mediaId: string, now = new Date()) {
+    const asset = this.mediaAssets.get(mediaId);
+    if (!asset || asset.workspaceId !== workspaceId) return null;
+    if (
+      [...this.mediaReferences.values()].some(
+        (reference) => reference.workspaceId === workspaceId && reference.mediaId === mediaId,
+      )
+    ) {
+      return null;
+    }
+    const lease = this.mediaFinalizationLeases.get(mediaId);
+    if (
+      asset.scanStatus === "finalizing" &&
+      lease &&
+      now.getTime() - lease.startedAt.getTime() < 5 * 60_000
+    ) {
+      return null;
+    }
+    if (asset.scanStatus !== "deleting") {
+      asset.scanStatus = "deleting";
+      asset.deletionStartedAt = new Date(now);
+    }
+    this.mediaFinalizationLeases.delete(mediaId);
+    this.mediaObjectCleanup.delete(mediaId);
+    return structuredClone(asset);
+  }
+
+  async claimWorkspaceMediaDeletion(workspaceId: string, now = new Date()) {
+    this.workspaceMediaDeletionClaims.add(workspaceId);
+    const claimed = [...this.mediaAssets.values()]
+      .filter((asset) => asset.workspaceId === workspaceId)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    if (claimed.length > 0 && !this.workspaceMediaDeletionJobs.has(workspaceId)) {
+      this.workspaceMediaDeletionJobs.set(workspaceId, {
+        workspaceId,
+        deletionStartedAt: new Date(now),
+        sweepAfter: new Date(now.getTime() + MEDIA_DELETION_TOMBSTONE_HOLD_MS),
+      });
+    }
+    for (const asset of claimed) {
+      if (asset.scanStatus !== "deleting") {
+        asset.scanStatus = "deleting";
+        asset.deletionStartedAt = new Date(now);
+      }
+      this.mediaFinalizationLeases.delete(asset.id);
+      this.mediaObjectCleanup.delete(asset.id);
+    }
+    return claimed.map((asset) => structuredClone(asset));
+  }
+
+  async listDueWorkspaceMediaDeletionJobs(now: Date, limit = 100) {
+    return [...this.workspaceMediaDeletionJobs.values()]
+      .filter((job) => job.sweepAfter <= now)
+      .sort(
+        (left, right) =>
+          left.sweepAfter.getTime() - right.sweepAfter.getTime() ||
+          left.workspaceId.localeCompare(right.workspaceId),
+      )
+      .slice(0, limit)
+      .map((job) => structuredClone(job));
+  }
+
+  async completeWorkspaceMediaDeletionJob(workspaceId: string, deletionStartedAt: Date) {
+    const job = this.workspaceMediaDeletionJobs.get(workspaceId);
+    if (!job || job.deletionStartedAt.getTime() !== deletionStartedAt.getTime()) return false;
+    return this.workspaceMediaDeletionJobs.delete(workspaceId);
+  }
+
+  async deleteMediaAsset(workspaceId: string, mediaId: string, now = new Date()) {
+    const asset = this.mediaAssets.get(mediaId);
+    if (
+      !asset ||
+      asset.workspaceId !== workspaceId ||
+      asset.scanStatus !== "deleting" ||
+      !asset.deletionStartedAt ||
+      now.getTime() - asset.deletionStartedAt.getTime() < MEDIA_DELETION_TOMBSTONE_HOLD_MS
+    ) {
+      return false;
+    }
     if (
       [...this.mediaReferences.values()].some(
         (reference) => reference.workspaceId === workspaceId && reference.mediaId === mediaId,
@@ -2773,6 +3517,8 @@ export class MemoryRepository implements Repository {
     ) {
       return false;
     }
+    this.mediaFinalizationLeases.delete(mediaId);
+    this.mediaObjectCleanup.delete(mediaId);
     return this.mediaAssets.delete(mediaId);
   }
 
@@ -2797,6 +3543,9 @@ export class MemoryRepository implements Repository {
     expectedVersion: number,
     _options: { roundEvidencePersisted?: boolean } = {},
   ) {
+    if (this.workspaceMediaDeletionClaims.has(session.workspaceId)) {
+      throw new WorkspaceDeletionInProgressError(session.workspaceId);
+    }
     const current = this.sessions.get(session.id);
     if (!current || current.state.version !== expectedVersion) {
       throw new SessionVersionConflictError(session.id, expectedVersion);
@@ -2890,7 +3639,9 @@ export class MemoryRepository implements Repository {
   async getReport(workspaceId: string, reportId: string) {
     const report = this.reports.get(reportId);
     const session = report ? this.sessions.get(report.sessionId) : undefined;
-    return report && session?.workspaceId === workspaceId ? structuredClone(report) : null;
+    return report && session?.workspaceId === workspaceId
+      ? ReportSchema.parse(structuredClone(report))
+      : null;
   }
 
   async getReportBySession(workspaceId: string, sessionId: string) {
@@ -2899,7 +3650,77 @@ export class MemoryRepository implements Repository {
     const report = [...this.reports.values()].find(
       (candidate) => candidate.sessionId === sessionId,
     );
-    return report ? structuredClone(report) : null;
+    return report ? ReportSchema.parse(structuredClone(report)) : null;
+  }
+
+  async listQuestionHealthObservationReports(
+    workspaceId: string,
+    quizId: string,
+    quizVersionId: string,
+    now: Date,
+  ) {
+    const limit = QUESTION_HEALTH_POST_USE_MAX_REPORTS;
+    const newest: Array<{ report: Report; session: StoredSession }> = [];
+    const retainedReportLimit = limit + 1;
+    let retainedReportCount = 0;
+
+    for (const report of this.reports.values()) {
+      if (report.status !== "ready" || !report.generatedAt) continue;
+      const session = this.sessions.get(report.sessionId);
+      if (
+        !session ||
+        session.workspaceId !== workspaceId ||
+        session.quizVersionId !== quizVersionId ||
+        session.retentionExpiresAt <= now
+      ) {
+        continue;
+      }
+      const version = this.versions.get(session.quizVersionId);
+      if (!version || version.workspaceId !== workspaceId || version.quizId !== quizId) continue;
+
+      retainedReportCount += 1;
+      const candidate = { report, session };
+      const insertAt = newest.findIndex((existing) => {
+        const dateOrder =
+          Date.parse(report.generatedAt!) - Date.parse(existing.report.generatedAt!);
+        return dateOrder > 0 || (dateOrder === 0 && report.id > existing.report.id);
+      });
+      if (insertAt < 0) {
+        if (newest.length < retainedReportLimit) newest.push(candidate);
+      } else {
+        newest.splice(insertAt, 0, candidate);
+        if (newest.length > retainedReportLimit) newest.pop();
+      }
+    }
+
+    return {
+      hasMoreReports: retainedReportCount > limit,
+      reports: newest.slice(0, limit).map(({ report, session }) => ({
+        trustMode: session.trustMode ?? report.trustMode ?? "learning",
+        timeMode: report.timeMode ?? session.state.settings.timeMode ?? "timed",
+        scoringMode: session.state.settings.scoringMode,
+        questions: report.questions.map((question) => {
+          const distribution = question.responseDistribution;
+          return {
+            questionId: question.questionId,
+            responses: question.responses,
+            correct: question.correct,
+            ...(distribution?.kind === "choice"
+              ? {
+                  responseDistribution: {
+                    kind: "choice" as const,
+                    buckets: distribution.buckets.flatMap((bucket) =>
+                      typeof bucket.value === "string"
+                        ? [{ value: bucket.value, count: bucket.count }]
+                        : [],
+                    ),
+                  },
+                }
+              : {}),
+          };
+        }),
+      })),
+    };
   }
 
   async listReportHistory(
@@ -3698,6 +4519,12 @@ export class MemoryRepository implements Repository {
         quizDraftHistory: [...this.quizDraftHistory.values()]
           .filter((snapshot) => ownedWorkspaceIds.has(snapshot.workspaceId))
           .map((snapshot) => structuredClone(normalizeQuizHistory(snapshot))),
+        questionHealthDismissals: [...this.questionHealthDismissals.values()]
+          .filter((dismissal) => ownedWorkspaceIds.has(dismissal.workspaceId))
+          .map((dismissal) => structuredClone(dismissal)),
+        questionHealthApplications: [...this.questionHealthApplications.values()]
+          .filter((application) => ownedWorkspaceIds.has(application.workspaceId))
+          .map((application) => structuredClone(application)),
         quizVersions: [...this.versions.values()]
           .filter((version) => ownedWorkspaceIds.has(version.workspaceId))
           .map((version) => structuredClone(normalizeQuizVersion(version))),
@@ -3811,6 +4638,16 @@ export class MemoryRepository implements Repository {
         lifecycle.deleteAccount({ userId, ownedWorkspaceIds }),
       ),
     );
+    for (const key of this.deletedLibraryArtifacts) {
+      if (ownedWorkspaceIds.has(key.split(":", 1)[0]!)) this.deletedLibraryArtifacts.delete(key);
+    }
+    for (const key of this.deletedQuizVersions) {
+      if (ownedWorkspaceIds.has(key.split(":", 1)[0]!)) this.deletedQuizVersions.delete(key);
+    }
+    for (const key of this.deletedMediaReferenceOwners) {
+      if (ownedWorkspaceIds.has(key.split(":", 1)[0]!))
+        this.deletedMediaReferenceOwners.delete(key);
+    }
     user.deletedAt = new Date();
     user.email = `deleted-${userId.slice(0, 8)}@invalid.local`;
     user.locale = "en-CA";
@@ -3829,6 +4666,13 @@ export class MemoryRepository implements Repository {
     }
     for (const [key, mutation] of this.quizDraftMutations) {
       if (ownedWorkspaceIds.has(mutation.workspaceId)) this.quizDraftMutations.delete(key);
+    }
+    for (const [key, dismissal] of this.questionHealthDismissals) {
+      if (ownedWorkspaceIds.has(dismissal.workspaceId)) this.questionHealthDismissals.delete(key);
+    }
+    for (const [key, application] of this.questionHealthApplications) {
+      if (ownedWorkspaceIds.has(application.workspaceId))
+        this.questionHealthApplications.delete(key);
     }
     for (const [id, folder] of this.folders) {
       if (ownedWorkspaceIds.has(folder.workspaceId)) this.folders.delete(id);
@@ -3856,7 +4700,11 @@ export class MemoryRepository implements Repository {
       if (deletedSessionIds.has(report.sessionId)) this.reports.delete(id);
     }
     for (const [id, asset] of this.mediaAssets) {
-      if (ownedWorkspaceIds.has(asset.workspaceId)) this.mediaAssets.delete(id);
+      if (ownedWorkspaceIds.has(asset.workspaceId)) {
+        this.mediaAssets.delete(id);
+        this.mediaFinalizationLeases.delete(id);
+        this.mediaObjectCleanup.delete(id);
+      }
     }
     for (const [key, reference] of this.mediaReferences) {
       if (ownedWorkspaceIds.has(reference.workspaceId)) this.mediaReferences.delete(key);

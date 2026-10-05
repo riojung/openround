@@ -14,6 +14,7 @@ COPY packages/game-engine/package.json packages/game-engine/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY tests/load tests/load
+COPY scripts/ops/target-load-evidence.mjs scripts/ops/target-load-evidence.mjs
 COPY tests/support/report-readiness.ts tests/support/report-readiness.ts
 COPY tests/support/readiness-contract.ts tests/support/readiness-contract.ts
 
