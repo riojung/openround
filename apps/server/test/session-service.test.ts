@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { QuizDraft, Report } from "@openround/contracts";
-import { MemoryRepository, type ParticipantRecord, type StoredSession } from "@openround/db";
+import {
+  MemoryRepository,
+  WorkspaceDeletionInProgressError,
+  type ParticipantRecord,
+  type StoredSession,
+} from "@openround/db";
 import {
   addParticipant,
   applyHostCommand,
@@ -68,6 +73,47 @@ function storedSession(input: {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+async function hostedRoundFixture() {
+  const repository = new MemoryRepository();
+  const cache = new MemorySessionCache();
+  const service = new SessionService(repository, cache, config, new MetricsService());
+  const tokenHash = `deletion-race-${randomUUID()}`;
+  const now = new Date();
+  await repository.createMagicToken({
+    id: randomUUID(),
+    email: `deletion-race-${randomUUID()}@example.com`,
+    segment: "workplace",
+    tokenHash,
+    policyVersion: "test-v1",
+    expiresAt: new Date(now.getTime() + 60_000),
+    consumedAt: null,
+  });
+  const creator = await repository.consumeMagicToken(tokenHash, now);
+  if (!creator) throw new Error("Could not create deletion-race owner");
+  const { quiz } = quizFixture();
+  const quizRecord = await repository.createQuiz({
+    id: randomUUID(),
+    workspaceId: creator.workspaceId,
+    title: quiz.title,
+    description: quiz.description,
+    status: "draft",
+    draft: quiz,
+    currentVersionId: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await repository.publishQuiz({
+    id: randomUUID(),
+    workspaceId: creator.workspaceId,
+    quizId: quizRecord.id,
+    version: 1,
+    content: quiz,
+    contentHash: randomUUID(),
+    publishedAt: now,
+  });
+  return { repository, cache, service, creator, quizId: quizRecord.id };
 }
 
 async function openQuestionFixture(participantCount: number) {
@@ -137,6 +183,144 @@ afterEach(() => {
 });
 
 describe("session service ordering", () => {
+  it("gates new flex rooms while keeping existing rooms readable after the flag is disabled", async () => {
+    const { repository, cache, service, creator, quizId } = await hostedRoundFixture();
+    const settings = {
+      audienceLimit: 20,
+      timeMode: "flex" as const,
+      scoringMode: "speed" as const,
+      resultVisibility: "private" as const,
+      allowLateJoin: true,
+      nicknamePolicy: "custom" as const,
+    };
+    await expect(service.createSession(creator, quizId, settings)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    const enabledConfig = ConfigSchema.parse({
+      NODE_ENV: "test",
+      ALLOW_IN_MEMORY: "true",
+      COMMUNITY_MODE: "false",
+      WEB_ORIGIN: "http://localhost:3000",
+      PUBLIC_API_URL: "http://localhost:4000",
+      LOG_LEVEL: "silent",
+      FEATURE_LIVE_FLEX_MODE: "true",
+      EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: creator.workspaceId,
+    });
+    const enabled = new SessionService(repository, cache, enabledConfig, new MetricsService());
+    const hosted = await enabled.createSession(creator, quizId, settings);
+    expect(hosted.snapshot.settings).toMatchObject({
+      timeMode: "flex",
+      scoringMode: "accuracy",
+    });
+    const started = await enabled.hostCommand({
+      sessionId: hosted.sessionId,
+      hostToken: hosted.hostToken,
+      commandId: randomUUID(),
+      expectedVersion: hosted.snapshot.version,
+      action: "start",
+    });
+    expect(started.deadline).toBeNull();
+    expect(
+      (enabled as unknown as { timers: Map<string, unknown> }).timers.has(hosted.sessionId),
+    ).toBe(false);
+    const disabled = new SessionService(repository, cache, config, new MetricsService());
+    expect(
+      await disabled.snapshot({ sessionId: hosted.sessionId, hostToken: hosted.hostToken }),
+    ).toMatchObject({ settings: { timeMode: "flex" }, deadline: null });
+    expect(
+      await disabled.hostCommand({
+        sessionId: hosted.sessionId,
+        hostToken: hosted.hostToken,
+        commandId: randomUUID(),
+        expectedVersion: started.version,
+        action: "lock",
+      }),
+    ).toMatchObject({ phase: "question_locked", settings: { timeMode: "flex" } });
+    enabled.close();
+    disabled.close();
+    service.close();
+  });
+
+  it("freezes the allowlisted replay feature at session creation and captures later commands", async () => {
+    const { repository, creator, quizId } = await hostedRoundFixture();
+    const replayConfig = ConfigSchema.parse({
+      NODE_ENV: "test",
+      ALLOW_IN_MEMORY: "true",
+      COMMUNITY_MODE: "false",
+      WEB_ORIGIN: "http://localhost:3000",
+      PUBLIC_API_URL: "http://localhost:4000",
+      LOG_LEVEL: "silent",
+      FEATURE_DECISION_REPLAY: "true",
+      EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: creator.workspaceId,
+    });
+    const service = new SessionService(
+      repository,
+      new MemorySessionCache(),
+      replayConfig,
+      new MetricsService(),
+    );
+    const hosted = await service.createSession(creator, quizId, {
+      audienceLimit: 20,
+      scoringMode: "accuracy",
+      resultVisibility: "private",
+      allowLateJoin: true,
+      nicknamePolicy: "custom",
+    });
+    expect(await repository.getSessionById(hosted.sessionId)).toMatchObject({
+      decisionReplayEnabled: true,
+    });
+
+    const started = await service.hostCommand({
+      sessionId: hosted.sessionId,
+      hostToken: hosted.hostToken,
+      commandId: randomUUID(),
+      expectedVersion: hosted.snapshot.version,
+      action: "start",
+    });
+    const locked = await service.hostCommand({
+      sessionId: hosted.sessionId,
+      hostToken: hosted.hostToken,
+      commandId: randomUUID(),
+      expectedVersion: started.version,
+      action: "lock",
+    });
+    expect(
+      await repository.getSessionEvidence(creator.workspaceId, hosted.sessionId),
+    ).toMatchObject({
+      decisionReplayEnabled: true,
+      decisionEvents: [
+        expect.objectContaining({
+          type: "insight_shown",
+          sampleSize: 0,
+          recommendationCode: "insufficient_sample",
+        }),
+      ],
+    });
+    const revealed = await service.hostCommand({
+      sessionId: hosted.sessionId,
+      hostToken: hosted.hostToken,
+      commandId: randomUUID(),
+      expectedVersion: locked.version,
+      action: "reveal",
+    });
+    await service.hostCommand({
+      sessionId: hosted.sessionId,
+      hostToken: hosted.hostToken,
+      commandId: randomUUID(),
+      expectedVersion: revealed.version,
+      action: "next",
+    });
+    expect(
+      await repository.getReportBySession(creator.workspaceId, hosted.sessionId),
+    ).toMatchObject({
+      schemaVersion: 4,
+      status: "pending",
+      decisionReplayAvailable: false,
+      decisionTimeline: [],
+    });
+    service.close();
+  });
+
   it("reserves PostgreSQL capacity while synchronized rooms commit answers", async () => {
     const service = new SessionService(
       new MemoryRepository(),
@@ -167,6 +351,142 @@ describe("session service ordering", () => {
     releaseCommits();
     await Promise.all(commits);
     expect(activeCommits).toBe(0);
+    service.close();
+  });
+
+  it("waits for in-flight creation publication before account-deletion invalidation", async () => {
+    const { repository, cache, service, creator, quizId } = await hostedRoundFixture();
+    const originalSet = cache.set.bind(cache);
+    let markSetStarted!: () => void;
+    let releaseSet!: () => void;
+    const setStarted = new Promise<void>((resolve) => {
+      markSetStarted = resolve;
+    });
+    const setBlocked = new Promise<void>((resolve) => {
+      releaseSet = resolve;
+    });
+    vi.spyOn(cache, "set").mockImplementation(async (state, ttlSeconds) => {
+      markSetStarted();
+      await setBlocked;
+      await originalSet(state, ttlSeconds);
+    });
+
+    const creation = service.createSession(creator, quizId, {
+      audienceLimit: 20,
+      scoringMode: "accuracy",
+      resultVisibility: "private",
+      allowLateJoin: true,
+      nicknamePolicy: "custom",
+    });
+    await setStarted;
+    await repository.claimWorkspaceMediaDeletion(creator.workspaceId, new Date());
+    const targets = await repository.listSessionInvalidationTargets(creator.workspaceId);
+    expect(targets).toHaveLength(1);
+    const invalidation = service.invalidateWorkspaceDeletion(targets);
+
+    releaseSet();
+    const hosted = await creation;
+    await invalidation;
+
+    expect(await cache.get(hosted.sessionId)).toBeNull();
+    expect(
+      (service as unknown as { active: Map<string, unknown> }).active.has(hosted.sessionId),
+    ).toBe(false);
+    expect(await cache.reserveSessionCode(hosted.code, "probe-owner", 1_000)).toBe(true);
+    await cache.releaseSessionCode(hosted.code, "probe-owner");
+    service.close();
+  });
+
+  it("waits for a post-commit mutation before account-deletion invalidation", async () => {
+    const { repository, cache, service, creator, quizId } = await hostedRoundFixture();
+    const hosted = await service.createSession(creator, quizId, {
+      audienceLimit: 20,
+      scoringMode: "accuracy",
+      resultVisibility: "private",
+      allowLateJoin: true,
+      nicknamePolicy: "custom",
+    });
+    const originalSave = repository.saveSession.bind(repository);
+    let markSaveCommitted!: () => void;
+    let releaseSave!: () => void;
+    const saveCommitted = new Promise<void>((resolve) => {
+      markSaveCommitted = resolve;
+    });
+    const saveBlocked = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    vi.spyOn(repository, "saveSession").mockImplementation(
+      async (session, expectedVersion, report) => {
+        await originalSave(session, expectedVersion, report);
+        markSaveCommitted();
+        await saveBlocked;
+      },
+    );
+    const command = service.hostCommand({
+      sessionId: hosted.sessionId,
+      hostToken: hosted.hostToken,
+      commandId: randomUUID(),
+      expectedVersion: hosted.snapshot.version,
+      action: "start",
+    });
+    await saveCommitted;
+    await repository.claimWorkspaceMediaDeletion(creator.workspaceId, new Date());
+    const targets = await repository.listSessionInvalidationTargets(creator.workspaceId);
+    const invalidation = service.invalidateWorkspaceDeletion(targets);
+
+    releaseSave();
+    await command;
+    await invalidation;
+
+    expect(await cache.get(hosted.sessionId)).toBeNull();
+    expect(
+      (service as unknown as { active: Map<string, unknown> }).active.has(hosted.sessionId),
+    ).toBe(false);
+    expect(await cache.reserveSessionCode(hosted.code, "probe-owner", 1_000)).toBe(true);
+    await cache.releaseSessionCode(hosted.code, "probe-owner");
+    service.close();
+  });
+
+  it("maps a deletion-fenced participant commit to a stable join conflict", async () => {
+    const { repository, service, creator, quizId } = await hostedRoundFixture();
+    const hosted = await service.createSession(creator, quizId, {
+      audienceLimit: 20,
+      scoringMode: "accuracy",
+      resultVisibility: "private",
+      allowLateJoin: true,
+      nicknamePolicy: "custom",
+    });
+    vi.spyOn(repository, "commitParticipants").mockRejectedValueOnce(
+      new WorkspaceDeletionInProgressError(creator.workspaceId),
+    );
+
+    await expect(
+      service.join({ code: hosted.code, nickname: "Late learner" }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    expect(await repository.getParticipants(hosted.sessionId)).toEqual([]);
+    service.close();
+  });
+
+  it("maps a deletion-fenced answer commit to a stable response conflict", async () => {
+    const { correctChoiceId, participantInputs, repository, service, sessionId, state } =
+      await openQuestionFixture(1);
+    const persisted = await repository.getSessionById(sessionId);
+    vi.spyOn(repository, "commitAnswers").mockRejectedValueOnce(
+      new WorkspaceDeletionInProgressError(persisted!.workspaceId),
+    );
+
+    await expect(
+      service.answer({
+        sessionId,
+        participantToken: participantInputs[0]!.token,
+        roundId: state.roundId!,
+        choiceId: correctChoiceId,
+        idempotencyKey: "deletion-fenced-answer",
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(repository.answers.size).toBe(0);
     service.close();
   });
 
@@ -368,7 +688,10 @@ describe("session service ordering", () => {
     }).state;
     const deadlineMs = receivedAtMs + 100;
     state.deadlineMs = deadlineMs;
-    const stored = storedSession({ state, hostToken: "host-token-long-enough-for-test" });
+    const stored = {
+      ...storedSession({ state, hostToken: "host-token-long-enough-for-test" }),
+      decisionReplayEnabled: true,
+    };
     const participant: ParticipantRecord = {
       id: participantId,
       sessionId,
@@ -402,11 +725,20 @@ describe("session service ordering", () => {
 
     await expect(answer).resolves.toMatchObject({ accepted: true, duplicate: false, score: 1_000 });
     await automaticLock;
+    expect((await repository.getSessionById(sessionId))?.decisionReplayEnabled).toBe(true);
     expect((await repository.getSessionById(sessionId))?.state).toMatchObject({
       phase: "question_locked",
       answers: expect.objectContaining({}),
     });
     expect(repository.answers).toHaveLength(1);
+    const evidence = await repository.getSessionEvidence(stored.workspaceId, sessionId);
+    expect(evidence.decisionReplayEnabled).toBe(true);
+    expect(evidence.decisionEvents).toContainEqual(
+      expect.objectContaining({
+        type: "insight_shown",
+        occurredAt: new Date(deadlineMs + 1).toISOString(),
+      }),
+    );
     service.close();
   });
 

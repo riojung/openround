@@ -13,15 +13,25 @@ concurrency:
 
 jobs:
   main-candidate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
       run_stripe_replay: ${{ steps.payload.outputs.run_stripe_replay }}
       soak_minutes: ${{ steps.payload.outputs.soak_minutes }}
+      public_api_url: ${{ steps.target.outputs.public_api_url }}
+      public_web_url: ${{ steps.target.outputs.public_web_url }}
+      public_media_url: ${{ steps.target.outputs.public_media_url }}
+      image_repository: ${{ steps.target.outputs.image_repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
       - name: Verify main-branch candidate
         run: |
           set -euo pipefail
@@ -63,18 +73,41 @@ jobs:
             "utf8",
           );
           NODE
+      - name: Validate configured staging deployment target
+        run: node scripts/check-deployment-target.mjs staging
+      - name: Require protected staging environment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-staging-environment.mjs
+      - name: Export reviewed staging target
+        id: target
+        run: |
+          node <<'NODE'
+          const { appendFileSync, readFileSync } = require("node:fs");
+
+          const config = JSON.parse(readFileSync("config/deploy/staging.json", "utf8"));
+          for (const [output, key] of [
+            ["public_api_url", "publicApiUrl"],
+            ["public_web_url", "publicWebUrl"],
+            ["public_media_url", "publicMediaUrl"],
+            ["image_repository", "imageRepository"],
+          ]) {
+            const value = output === "image_repository" ? config[key] : new URL(config[key]).origin;
+            appendFileSync(process.env.GITHUB_OUTPUT, `${output}=${value}\n`);
+          }
+          NODE
 
   remote-readiness:
     if: github.ref == 'refs/heads/main'
     needs: main-candidate
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
     environment: single-vm-staging
     env:
-      READINESS_API_URL: ${{ vars.OPENROUND_API_URL }}
-      READINESS_WEB_URL: ${{ vars.OPENROUND_WEB_URL }}
-      READINESS_MEDIA_URL: ${{ vars.OPENROUND_MEDIA_URL }}
-      READINESS_EXPECTED_WEB_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
+      READINESS_API_URL: ${{ needs.main-candidate.outputs.public_api_url }}
+      READINESS_WEB_URL: ${{ needs.main-candidate.outputs.public_web_url }}
+      READINESS_MEDIA_URL: ${{ needs.main-candidate.outputs.public_media_url }}
+      READINESS_EXPECTED_WEB_ORIGIN: ${{ needs.main-candidate.outputs.public_web_url }}
       READINESS_EXPECT_BILLING: ${{ vars.OPENROUND_EXPECTED_BILLING }}
       READINESS_EXPECT_COMMUNITY_MODE: ${{ vars.OPENROUND_EXPECTED_COMMUNITY_MODE }}
       READINESS_EXPECT_SIGNUPS: ${{ vars.OPENROUND_EXPECTED_SIGNUPS }}
@@ -90,6 +123,7 @@ jobs:
       READINESS_EXPECT_GROUPS: ${{ vars.OPENROUND_EXPECTED_GROUPS }}
       READINESS_EXPECT_DISCOVER: ${{ vars.OPENROUND_EXPECTED_DISCOVER }}
       READINESS_EXPECTED_BUILD_ID: ${{ github.sha }}
+      READINESS_EXPECTED_IMAGE_REPOSITORY: ${{ needs.main-candidate.outputs.image_repository }}
       READINESS_EXPECTED_HOME_REGION: ${{ vars.OPENROUND_EXPECTED_HOME_REGION }}
       # Caddy intentionally does not route /metrics; the private collector uses the Compose network.
       READINESS_EXPECT_METRICS: disabled
@@ -107,6 +141,12 @@ jobs:
       - name: Validate required staging configuration
         env:
           READINESS_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
+          READINESS_SMTP_PROBE_EMAIL: ${{ secrets.OPENROUND_SMTP_PROBE_EMAIL }}
+          READINESS_SMTP_OBSERVER_URL: ${{ secrets.OPENROUND_SMTP_OBSERVER_URL }}
+          READINESS_SMTP_OBSERVER_TOKEN: ${{ secrets.OPENROUND_SMTP_OBSERVER_TOKEN }}
+          READINESS_TELEMETRY_OBSERVER_URL: ${{ secrets.OPENROUND_TELEMETRY_OBSERVER_URL }}
+          READINESS_TELEMETRY_OBSERVER_TOKEN: ${{ secrets.OPENROUND_TELEMETRY_OBSERVER_TOKEN }}
+          READINESS_DEPLOYMENT_RECEIPT_JSON: ${{ secrets.OPENROUND_DEPLOYMENT_RECEIPT_JSON }}
         run: |
           test -n "$READINESS_API_URL"
           test -n "$READINESS_WEB_URL"
@@ -127,14 +167,27 @@ jobs:
           test -n "$READINESS_EXPECT_GROUPS"
           test -n "$READINESS_EXPECT_DISCOVER"
           test -n "$READINESS_EXPECTED_BUILD_ID"
+          test -n "$READINESS_EXPECTED_IMAGE_REPOSITORY"
           test -n "$READINESS_EXPECTED_HOME_REGION"
           test -n "$READINESS_EXPECT_METRICS"
           test -n "$READINESS_CREATOR_COOKIE"
-      - name: Probe deployment and dependency readiness
+          test -n "$READINESS_SMTP_PROBE_EMAIL"
+          test -n "$READINESS_SMTP_OBSERVER_URL"
+          test -n "$READINESS_SMTP_OBSERVER_TOKEN"
+          test -n "$READINESS_TELEMETRY_OBSERVER_URL"
+          test -n "$READINESS_TELEMETRY_OBSERVER_TOKEN"
+          test -n "$READINESS_DEPLOYMENT_RECEIPT_JSON"
+      - name: Probe deployment, media, delivery, and telemetry readiness
         env:
           READINESS_CREATOR_COOKIE: ${{ secrets.OPENROUND_CREATOR_COOKIE }}
+          READINESS_SMTP_PROBE_EMAIL: ${{ secrets.OPENROUND_SMTP_PROBE_EMAIL }}
+          READINESS_SMTP_OBSERVER_URL: ${{ secrets.OPENROUND_SMTP_OBSERVER_URL }}
+          READINESS_SMTP_OBSERVER_TOKEN: ${{ secrets.OPENROUND_SMTP_OBSERVER_TOKEN }}
+          READINESS_TELEMETRY_OBSERVER_URL: ${{ secrets.OPENROUND_TELEMETRY_OBSERVER_URL }}
+          READINESS_TELEMETRY_OBSERVER_TOKEN: ${{ secrets.OPENROUND_TELEMETRY_OBSERVER_TOKEN }}
+          READINESS_DEPLOYMENT_RECEIPT_JSON: ${{ secrets.OPENROUND_DEPLOYMENT_RECEIPT_JSON }}
         run: pnpm smoke:remote
-      - name: Upload public-endpoint probe evidence
+      - name: Upload redacted remote-readiness evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -146,14 +199,16 @@ jobs:
   target-region-load:
     if: github.ref == 'refs/heads/main'
     needs: [main-candidate, remote-readiness]
-    runs-on: [self-hosted, single-vm-staging]
+    runs-on: [self-hosted, single-vm-staging, actions-runner-2-327-1-plus]
     timeout-minutes: 90
     environment: single-vm-staging
     env:
-      LOAD_BASE_URL: ${{ vars.OPENROUND_API_URL }}
-      LOAD_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
+      LOAD_BASE_URL: ${{ needs.main-candidate.outputs.public_api_url }}
+      LOAD_ORIGIN: ${{ needs.main-candidate.outputs.public_web_url }}
       LOAD_RUNNER_REGION: ${{ vars.OPENROUND_LOAD_RUNNER_REGION }}
       LOAD_EXPECTED_BUILD_ID: ${{ github.sha }}
+      LOAD_SATURATION_EVIDENCE_REFERENCE: ${{ vars.OPENROUND_TARGET_SATURATION_EVIDENCE_REFERENCE }}
+      LOAD_DURABLE_ARCHIVE_REFERENCE: ${{ vars.OPENROUND_TARGET_DURABLE_ARCHIVE_REFERENCE }}
       LOAD_RUN_ID: staging-${{ github.run_id }}-${{ github.run_attempt }}
       JOIN_BATCH_SIZE: "20"
       ASSERT_PERFORMANCE: "true"
@@ -177,23 +232,39 @@ jobs:
           test -n "$LOAD_RUNNER_REGION"
           test -n "$LOAD_CREATOR_COOKIE"
           test -n "$LOAD_EXPECTED_BUILD_ID"
+          test -n "$LOAD_SATURATION_EVIDENCE_REFERENCE"
+          test -n "$LOAD_DURABLE_ARCHIVE_REFERENCE"
+          node scripts/ops/target-load-evidence.mjs validate-references \
+            --saturation-reference "$LOAD_SATURATION_EVIDENCE_REFERENCE" \
+            --durable-archive-reference "$LOAD_DURABLE_ARCHIVE_REFERENCE"
       - name: Capture load-generator provenance
         run: |
           mkdir -p artifacts/readiness
           node -e '
+            const { createHash } = require("node:crypto");
             const fs = require("node:fs");
             fs.writeFileSync(
               "artifacts/readiness/load-runner-provenance.json",
               `${JSON.stringify({
-                schemaVersion: 2,
+                schemaVersion: 3,
+                artifactType: "target-load-runner-provenance",
                 candidateBuildId: process.env.LOAD_EXPECTED_BUILD_ID,
                 workflowCommit: process.env.GITHUB_SHA,
                 declaredRegion: process.env.LOAD_RUNNER_REGION,
+                capturedAt: new Date().toISOString(),
+                workflowRunId: process.env.GITHUB_RUN_ID,
+                workflowRunAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
                 runner: {
-                  name: process.env.RUNNER_NAME,
+                  nameSha256: `sha256:${createHash("sha256").update(process.env.RUNNER_NAME).digest("hex")}`,
                   os: process.env.RUNNER_OS,
                   architecture: process.env.RUNNER_ARCH,
-                  requiredLabels: ["self-hosted", "single-vm-staging"],
+                  minimumRequiredVersion: "2.327.1",
+                  versionAttestationLabel: "actions-runner-2-327-1-plus",
+                  requiredLabels: [
+                    "self-hosted",
+                    "single-vm-staging",
+                    "actions-runner-2-327-1-plus",
+                  ],
                 },
               }, null, 2)}\n`,
               { mode: 0o600 },
@@ -236,6 +307,7 @@ jobs:
           CLIENTS: "50"
           SOAK_MINUTES: ${{ needs.main-candidate.outputs.soak_minutes }}
         run: |
+          set -euo pipefail
           mkdir -p artifacts/readiness/soak
           started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           deadline=$((SECONDS + SOAK_MINUTES * 60))
@@ -248,23 +320,45 @@ jobs:
             if (( SECONDS < deadline )); then sleep 5; fi
           done
           finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          # shellcheck disable=SC2016
-          STARTED_AT="$started_at" FINISHED_AT="$finished_at" ITERATION="$iteration" node -e '
-            const fs = require("node:fs");
-            fs.writeFileSync(
-              "artifacts/readiness/soak-summary.json",
-              `${JSON.stringify({
-                schemaVersion: 2,
-                candidateBuildId: process.env.LOAD_EXPECTED_BUILD_ID,
-                workflowCommit: process.env.GITHUB_SHA,
-                startedAt: process.env.STARTED_AT,
-                finishedAt: process.env.FINISHED_AT,
-                requestedMinutes: Number(process.env.SOAK_MINUTES),
-                completedGames: Number(process.env.ITERATION),
-              }, null, 2)}\n`,
-              { mode: 0o600 },
-            );
-          '
+          test "$iteration" -gt 0
+          node scripts/ops/target-load-evidence.mjs summarize-soak \
+            --directory artifacts/readiness/soak \
+            --expected-build "$LOAD_EXPECTED_BUILD_ID" \
+            --runner-region "$LOAD_RUNNER_REGION" \
+            --requested-minutes "$SOAK_MINUTES" \
+            --started-at "$started_at" \
+            --finished-at "$finished_at" \
+            --output artifacts/readiness/soak-summary.json
+      - name: Record explicitly skipped soak
+        if: needs.main-candidate.outputs.soak_minutes == '0'
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/readiness/soak
+          observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          node scripts/ops/target-load-evidence.mjs summarize-soak \
+            --directory artifacts/readiness/soak \
+            --expected-build "$LOAD_EXPECTED_BUILD_ID" \
+            --runner-region "$LOAD_RUNNER_REGION" \
+            --requested-minutes 0 \
+            --started-at "$observed_at" \
+            --finished-at "$observed_at" \
+            --output artifacts/readiness/soak-summary.json
+      - name: Validate and bind target-region evidence bundle
+        run: |
+          set -euo pipefail
+          node scripts/ops/target-load-evidence.mjs bundle \
+            --provenance artifacts/readiness/load-runner-provenance.json \
+            --round-50 artifacts/readiness/target-region-round-50.json \
+            --presentation-50 artifacts/readiness/target-region-presentation-50.json \
+            --round-250 artifacts/readiness/target-region-round-250.json \
+            --presentation-250 artifacts/readiness/target-region-presentation-250.json \
+            --soak-summary artifacts/readiness/soak-summary.json \
+            --soak-directory artifacts/readiness/soak \
+            --expected-build "$LOAD_EXPECTED_BUILD_ID" \
+            --runner-region "$LOAD_RUNNER_REGION" \
+            --saturation-reference "$LOAD_SATURATION_EVIDENCE_REFERENCE" \
+            --durable-archive-reference "$LOAD_DURABLE_ARCHIVE_REFERENCE" \
+            --output artifacts/readiness/target-region-evidence-bundle.json
       - name: Upload target-region load and soak evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -278,22 +372,24 @@ jobs:
             artifacts/readiness/target-region-presentation-250.json
             artifacts/readiness/soak/
             artifacts/readiness/soak-summary.json
+            artifacts/readiness/target-region-evidence-bundle.json
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 90
 
   stripe-replay:
     if: >-
       github.ref == 'refs/heads/main' &&
       needs.main-candidate.outputs.run_stripe_replay == 'true'
     needs: [main-candidate, remote-readiness]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     environment: single-vm-staging
     env:
-      STRIPE_REHEARSAL_BASE_URL: ${{ vars.OPENROUND_API_URL }}
-      STRIPE_REHEARSAL_ORIGIN: ${{ vars.OPENROUND_WEB_URL }}
+      STRIPE_REHEARSAL_BASE_URL: ${{ needs.main-candidate.outputs.public_api_url }}
+      STRIPE_REHEARSAL_ORIGIN: ${{ needs.main-candidate.outputs.public_web_url }}
       STRIPE_REHEARSAL_CREATOR_COOKIE: ${{ secrets.OPENROUND_STRIPE_REHEARSAL_COOKIE }}
       STRIPE_REHEARSAL_WEBHOOK_SECRET: ${{ secrets.OPENROUND_STRIPE_WEBHOOK_SECRET }}
+      STRIPE_REHEARSAL_EXPECTED_BUILD_ID: ${{ github.sha }}
       STRIPE_REHEARSAL_OUTPUT: artifacts/readiness/stripe-replay.json
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -311,6 +407,7 @@ jobs:
           test -n "$STRIPE_REHEARSAL_ORIGIN"
           test -n "$STRIPE_REHEARSAL_CREATOR_COOKIE"
           test -n "$STRIPE_REHEARSAL_WEBHOOK_SECRET"
+          test -n "$STRIPE_REHEARSAL_EXPECTED_BUILD_ID"
           pnpm smoke:stripe-replay
       - name: Upload signed-webhook rehearsal evidence
         if: always()
@@ -319,4 +416,4 @@ jobs:
           name: single-vm-staging-stripe-replay-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/readiness/stripe-replay.json
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 90

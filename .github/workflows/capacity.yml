@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   local-compose:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     env:
       # Keep AOF writes and restart recovery in scope while deferring background

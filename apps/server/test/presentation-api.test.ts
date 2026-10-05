@@ -71,14 +71,28 @@ describe("presentation authoring API", () => {
       title: "Quarterly learning review",
       description: "A grounded interactive deck",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [
         {
           id: presentation.draft.blocks[0]!.id,
           kind: "content",
           layout: "title_body",
-          title: "What changed this quarter?",
-          body: "Review the evidence, then answer together.",
+          textElements: [
+            {
+              id: `${presentation.draft.blocks[0]!.id}:title`,
+              role: "title",
+              text: "What changed this quarter?",
+              region: "top_center",
+              order: 0,
+            },
+            {
+              id: `${presentation.draft.blocks[0]!.id}:body`,
+              role: "body",
+              text: "Review the evidence, then answer together.",
+              region: "middle_center",
+              order: 0,
+            },
+          ],
           mediaId: null,
           mediaAlt: null,
           speakerNotes: "Pause for questions.",
@@ -112,7 +126,7 @@ describe("presentation authoring API", () => {
       method: "PUT",
       url: `/v1/presentations/${presentation.id}/draft`,
       headers: { cookie },
-      payload: { draft, expectedRevision: 0, mutationId, schemaVersion: 1 },
+      payload: { draft, expectedRevision: 0, mutationId, schemaVersion: 2 },
     });
     expect(saved.statusCode).toBe(200);
     expect(saved.headers.etag).toBe('"draft-1"');
@@ -129,7 +143,7 @@ describe("presentation authoring API", () => {
         draft: interveningDraft,
         expectedRevision: 1,
         mutationId: randomUUID(),
-        schemaVersion: 1,
+        schemaVersion: 2,
       },
     });
     expect(intervening.statusCode).toBe(200);
@@ -139,7 +153,7 @@ describe("presentation authoring API", () => {
       method: "PUT",
       url: `/v1/presentations/${presentation.id}/draft`,
       headers: { cookie },
-      payload: { draft, expectedRevision: 0, mutationId, schemaVersion: 1 },
+      payload: { draft, expectedRevision: 0, mutationId, schemaVersion: 2 },
     });
     expect(retried.statusCode).toBe(200);
     expect(retried.headers.etag).toBe('"draft-1"');
@@ -158,7 +172,7 @@ describe("presentation authoring API", () => {
         draft: { ...draft, title: "Stale overwrite" },
         expectedRevision: 0,
         mutationId: randomUUID(),
-        schemaVersion: 1,
+        schemaVersion: 2,
       },
     });
     expect(stale.statusCode).toBe(409);
@@ -199,7 +213,7 @@ describe("presentation authoring API", () => {
         draft: { ...draft, description: "Saved after restore" },
         expectedRevision: 3,
         mutationId: randomUUID(),
-        schemaVersion: 1,
+        schemaVersion: 2,
       },
     });
     expect(afterRestore.statusCode).toBe(200);
@@ -318,7 +332,7 @@ describe("presentation authoring API", () => {
         draft: { ...firstPresentation.draft, title: "First save" },
         expectedRevision: 0,
         mutationId,
-        schemaVersion: 1,
+        schemaVersion: 2,
       },
     });
     expect(saved.statusCode).toBe(200);
@@ -331,7 +345,7 @@ describe("presentation authoring API", () => {
         draft: { ...firstPresentation.draft, title: "Different save" },
         expectedRevision: 0,
         mutationId,
-        schemaVersion: 1,
+        schemaVersion: 2,
       },
     });
     expect(changedPayload.statusCode).toBe(409);
@@ -345,7 +359,7 @@ describe("presentation authoring API", () => {
         draft: secondPresentation.draft,
         expectedRevision: 0,
         mutationId,
-        schemaVersion: 1,
+        schemaVersion: 2,
       },
     });
     expect(changedTarget.statusCode).toBe(409);
@@ -360,12 +374,12 @@ describe("presentation authoring API", () => {
           title: "",
           description: "",
           experiencePreset: { id: "focus", version: 1 },
-          schemaVersion: 1,
+          schemaVersion: 2,
           blocks: [],
         },
         expectedRevision: 1,
         mutationId: randomUUID(),
-        schemaVersion: 1,
+        schemaVersion: 2,
       },
     });
     expect(invalidDraft.statusCode).toBe(200);

@@ -38,7 +38,7 @@ This file is not legal advice.
 | @aws-sdk/types                             | 3.974.5          | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/types)                                                       |
 | @aws-sdk/xml-builder                       | 3.972.40         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/xml-builder)                                                 |
 | @aws/lambda-invoke-store                   | 0.3.0            | [Project page](https://github.com/awslabs/aws-lambda-invoke-store)                                                                           |
-| @grpc/grpc-js                              | 1.14.4           | [Project page](https://grpc.io/)                                                                                                             |
+| @grpc/grpc-js                              | 1.14.5           | [Project page](https://grpc.io/)                                                                                                             |
 | @grpc/proto-loader                         | 0.8.1            | [Project page](https://grpc.io/)                                                                                                             |
 | @img/sharp-platform-binary                 | 0.35.4           | [Project page](https://sharp.pixelplumbing.com)                                                                                              |
 | @opentelemetry/api                         | 1.9.1            | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/api)                                                             |
@@ -120,7 +120,7 @@ This file is not legal advice.
 | @protobufjs/path         | 1.1.2        | [Project page](https://github.com/dcodeIO/protobuf.js#readme)       |
 | @protobufjs/pool         | 1.1.0        | [Project page](https://github.com/dcodeIO/protobuf.js#readme)       |
 | @protobufjs/utf8         | 1.1.2        | [Project page](https://github.com/protobufjs/protobuf.js#readme)    |
-| fast-uri                 | 3.1.7, 4.1.4 | [Project page](https://github.com/fastify/fast-uri)                 |
+| fast-uri                 | 3.1.8, 4.1.5 | [Project page](https://github.com/fastify/fast-uri)                 |
 | light-my-request         | 6.6.0        | [Project page](https://github.com/fastify/light-my-request#readme)  |
 | protobufjs               | 7.6.6        | [Project page](https://protobufjs.github.io/protobuf.js/)           |
 | secure-json-parse        | 4.1.0        | [Project page](https://github.com/fastify/secure-json-parse#readme) |
@@ -179,8 +179,8 @@ This file is not legal advice.
 | @lukeed/ms                            | 2.0.2               | [Project page](https://github.com/lukeed/ms#readme)                                                 |
 | @napi-rs/canvas                       | 1.0.9               | [Project page](https://github.com/Brooooooklyn/canvas#readme)                                       |
 | @napi-rs/canvas-platform-binary       | 1.0.9               | [Project page](https://github.com/Brooooooklyn/canvas#readme)                                       |
-| @next/env                             | 16.3.5              | [Project page](https://github.com/vercel/next.js#readme)                                            |
-| @next/swc-platform-binary             | 16.3.5              | [Project page](https://github.com/vercel/next.js#readme)                                            |
+| @next/env                             | 16.3.6              | [Project page](https://github.com/vercel/next.js#readme)                                            |
+| @next/swc-platform-binary             | 16.3.6              | [Project page](https://github.com/vercel/next.js#readme)                                            |
 | @nodable/entities                     | 3.0.0               | [Project page](https://github.com/nodable/val-parsers#readme)                                       |
 | @pinojs/redact                        | 0.4.0               | [Project page](https://github.com/pinojs/redact#readme)                                             |
 | @socket.io/component-emitter          | 3.1.2               | [Project page](https://github.com/socketio/emitter#readme)                                          |
@@ -229,7 +229,7 @@ This file is not legal advice.
 | fast-querystring                      | 1.1.2               | [Project page](https://github.com/anonrig/fast-querystring#readme)                                  |
 | fast-xml-builder                      | 1.3.1               | [Project page](https://github.com/NaturalIntelligence/fast-xml-builder#readme)                      |
 | fast-xml-parser                       | 5.11.1              | [Project page](https://github.com/NaturalIntelligence/fast-xml-parser#readme)                       |
-| fastify                               | 5.12.4              | [Project page](https://fastify.dev/)                                                                |
+| fastify                               | 5.12.5              | [Project page](https://fastify.dev/)                                                                |
 | fastify-plugin                        | 5.1.0, 6.0.0        | [Project page](https://github.com/fastify/fastify-plugin#readme)                                    |
 | fastify-raw-body                      | 6.0.1               | [Project page](https://github.com/Eomm/fastify-raw-body#readme)                                     |
 | find-my-way                           | 9.9.0               | [Project page](https://github.com/delvedor/find-my-way#readme)                                      |
@@ -239,7 +239,7 @@ This file is not legal advice.
 | http-errors                           | 2.0.1               | [Project page](https://github.com/jshttp/http-errors#readme)                                        |
 | iconv-lite                            | 0.7.3               | [Project page](https://github.com/pillarjs/iconv-lite)                                              |
 | ioredis                               | 6.0.0               | [Project page](https://github.com/redis/ioredis#readme)                                             |
-| ip-address                            | 10.7.0              | [Project page](https://github.com/beaugunderson/ip-address#readme)                                  |
+| ip-address                            | 10.7.2              | [Project page](https://github.com/beaugunderson/ip-address#readme)                                  |
 | ipaddr.js                             | 2.5.0               | [Project page](https://github.com/whitequark/ipaddr.js#readme)                                      |
 | is-fullwidth-code-point               | 3.0.0               | [Project page](https://github.com/sindresorhus/is-fullwidth-code-point#readme)                      |
 | is-plain-object                       | 5.1.0               | [Project page](https://github.com/jonschlinkert/is-plain-object)                                    |
@@ -255,7 +255,7 @@ This file is not legal advice.
 | ms                                    | 2.1.3               | [Project page](https://github.com/vercel/ms#readme)                                                 |
 | nanoid                                | 3.3.19              | [Project page](https://github.com/ai/nanoid#readme)                                                 |
 | negotiator                            | 0.6.3               | [Project page](https://github.com/jshttp/negotiator#readme)                                         |
-| next                                  | 16.3.5              | [Project page](https://nextjs.org)                                                                  |
+| next                                  | 16.3.6              | [Project page](https://nextjs.org)                                                                  |
 | oauth4webapi                          | 3.8.8               | [Project page](https://github.com/panva/oauth4webapi)                                               |
 | object-assign                         | 4.1.1               | [Project page](https://github.com/sindresorhus/object-assign#readme)                                |
 | on-exit-leak-free                     | 2.1.2               | [Project page](https://github.com/mcollina/on-exit-or-gc#readme)                                    |

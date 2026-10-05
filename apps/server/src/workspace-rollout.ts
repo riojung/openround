@@ -6,6 +6,7 @@ export type ProfessionalWorkspaceFeature =
 
 export type EvidenceWorkspaceFeature =
   | "presentationRealtime"
+  | "liveFlexMode"
   | "recoveryPacks"
   | "questionHealth"
   | "decisionReplay"
@@ -78,6 +79,7 @@ export function evidenceWorkspaceFeatureEnabled(
     AppConfig,
     | "EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST"
     | "FEATURE_PRESENTATION_REALTIME"
+    | "FEATURE_LIVE_FLEX_MODE"
     | "FEATURE_RECOVERY_PACKS"
     | "FEATURE_QUESTION_HEALTH"
     | "FEATURE_DECISION_REPLAY"
@@ -93,6 +95,8 @@ export function evidenceWorkspaceFeatureEnabled(
   switch (feature) {
     case "presentationRealtime":
       return config.FEATURE_PRESENTATION_REALTIME;
+    case "liveFlexMode":
+      return config.FEATURE_LIVE_FLEX_MODE;
     case "recoveryPacks":
       return config.FEATURE_RECOVERY_PACKS;
     case "questionHealth":

@@ -9,6 +9,7 @@ import type {
   Report,
   ReportV2,
   ReportV3,
+  ReportV4,
   ResponseDistribution,
   WorkspaceProductFeatures,
 } from "@openround/contracts";
@@ -26,9 +27,10 @@ interface ReportContext {
   sessionUpdatedAt: string;
 }
 
-type ReportTab = "evidence" | "questions" | "participants" | "interactions" | "manage";
+type ReportTab =
+  "evidence" | "decision_replay" | "questions" | "participants" | "interactions" | "manage";
 
-function RecoveryStory({ report }: { report: ReportV2 | ReportV3 }) {
+function RecoveryStory({ report }: { report: ReportV2 | ReportV3 | ReportV4 }) {
   const summary = deriveRecoverySummary(report);
   const evidenceLabel =
     summary.evidenceTypes.length === 0
@@ -99,7 +101,7 @@ function ReportDistribution({
   );
 }
 
-function EvidenceSections({ report }: { report: ReportV2 | ReportV3 }) {
+function EvidenceSections({ report }: { report: ReportV2 | ReportV3 | ReportV4 }) {
   const recovered = report.recovery.reduce((total, item) => total + item.recovered, 0);
   const recoveryDenominator = report.recovery.reduce(
     (total, item) => total + item.initiallyIncorrectWithBoth,
@@ -254,12 +256,75 @@ function EvidenceSections({ report }: { report: ReportV2 | ReportV3 }) {
   );
 }
 
+function DecisionTimeline({ report }: { report: ReportV4 }) {
+  const labelForEvent = (event: ReportV4["decisionTimeline"][number]) => {
+    switch (event.type) {
+      case "insight_shown":
+        return `Facilitator insight: ${event.recommendationCode.replaceAll("_", " ")} (${event.sampleSize} of ${event.activeParticipantCount} active participants; ${event.ruleSetVersion})`;
+      case "answer_revealed":
+        return "Answer revealed";
+      case "intervention_started":
+        return `${event.interventionType.replaceAll("_", " ")} started`;
+      case "intervention_finished":
+        return `${event.interventionType.replaceAll("_", " ")} finished`;
+      case "recheck_opened":
+        return event.kind === "linked_recheck" ? "Linked recheck opened" : "Revote opened";
+      case "question_advanced":
+        return "Advanced to the next question";
+      case "session_finished":
+        return event.reason === "completed" ? "Session completed" : "Session ended by facilitator";
+      case "capture_truncated":
+        return "Replay capture reached its event limit";
+    }
+  };
+
+  return (
+    <section
+      aria-labelledby="decision-replay-heading"
+      className="panel"
+      style={{ marginBottom: 26 }}
+    >
+      <p className="eyebrow">Session decision replay</p>
+      <h2 id="decision-replay-heading" style={{ fontSize: "1.7rem" }}>
+        Facilitator decisions
+      </h2>
+      <p className="muted">
+        This timeline records session events as they happened. It is not reconstructed from answers
+        and does not establish a causal learning outcome.
+      </p>
+      {!report.decisionReplayAvailable ? (
+        <p className="notice">
+          No decision timeline is available. This session may predate replay capture, or no replay
+          events were retained.
+        </p>
+      ) : null}
+      {report.decisionReplayAvailable && !report.decisionReplayComplete ? (
+        <p className="notice" role="status">
+          This is a partial timeline. Some events could not be retained, so do not treat it as a
+          complete sequence.
+        </p>
+      ) : null}
+      {report.decisionReplayAvailable ? (
+        <ol>
+          {report.decisionTimeline.map((event) => (
+            <li key={event.seq}>
+              <time dateTime={event.occurredAt}>{new Date(event.occurredAt).toLocaleString()}</time>
+              {" — "}
+              {labelForEvent(event)}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </section>
+  );
+}
+
 function InteractionEvidenceSections({
   report,
   transcriptExport,
   uxBeta,
 }: {
-  report: ReportV3;
+  report: ReportV3 | ReportV4;
   transcriptExport: boolean;
   uxBeta: boolean;
 }) {
@@ -387,7 +452,7 @@ function FollowupBuilder({
   initialFollowup,
   uxBeta,
 }: {
-  report: ReportV2 | ReportV3;
+  report: ReportV2 | ReportV3 | ReportV4;
   entitlement: boolean;
   initialFollowup: Followup | null;
   uxBeta: boolean;
@@ -819,10 +884,16 @@ export default function ReportPage() {
 
   const uxBeta = productFeatures?.uxBeta === true;
 
-  const evidence = report?.schemaVersion === 2 || report?.schemaVersion === 3 ? report : null;
+  const evidence =
+    report?.schemaVersion === 2 || report?.schemaVersion === 3 || report?.schemaVersion === 4
+      ? report
+      : null;
   const detailTabs: { id: ReportTab; label: string }[] = [
     ...(evidence ? [{ id: "evidence" as const, label: "Evidence" }] : []),
-    ...(report?.schemaVersion === 3
+    ...(report?.schemaVersion === 4
+      ? [{ id: "decision_replay" as const, label: "Decision replay" }]
+      : []),
+    ...(report?.schemaVersion === 3 || report?.schemaVersion === 4
       ? [{ id: "interactions" as const, label: "Conversation" }]
       : []),
     { id: "questions", label: "Questions" },
@@ -922,6 +993,12 @@ export default function ReportPage() {
         ) : null}
         {report?.status === "ready" ? (
           <>
+            <p className="muted" lang="en-CA">
+              Response timing:{" "}
+              {report.timeMode === "flex"
+                ? "Flex — facilitator closes responses"
+                : "Timed — question deadline"}
+            </p>
             {!uxBeta ? (
               <p className="notice" style={{ marginBottom: 26 }}>
                 This report&apos;s stored retention deadline is{" "}
@@ -989,9 +1066,22 @@ export default function ReportPage() {
                 role={uxBeta ? "tabpanel" : undefined}
               >
                 <EvidenceSections report={evidence} />
+                {!uxBeta && report.schemaVersion === 4 ? (
+                  <DecisionTimeline report={report} />
+                ) : null}
               </div>
             ) : null}
-            {(!uxBeta || selectedTab === "interactions") && report.schemaVersion === 3 ? (
+            {uxBeta && selectedTab === "decision_replay" && report.schemaVersion === 4 ? (
+              <div
+                aria-labelledby="report-tab-decision_replay"
+                id="report-panel-decision_replay"
+                role="tabpanel"
+              >
+                <DecisionTimeline report={report} />
+              </div>
+            ) : null}
+            {(!uxBeta || selectedTab === "interactions") &&
+            (report.schemaVersion === 3 || report.schemaVersion === 4) ? (
               <div
                 aria-labelledby={uxBeta ? "report-tab-interactions" : undefined}
                 id={uxBeta ? "report-panel-interactions" : undefined}

@@ -9,7 +9,14 @@ measurements, and independently reviewed infrastructure inventory references.
 - Workflow run and attempt:
 - Staging inventory reference (provider, region, machine class, resource limits):
 - Load-runner inventory reference and declared region:
+- Installed Actions Runner version:
+- Runner-version command output/checksum or inventory evidence reference:
+- `actions-runner-2-327-1-plus` label applied after version review (reviewer and UTC):
+- Automatic-update/current-release verification:
 - Network path and expected round-trip characteristics:
+- `target-region-evidence-bundle.json` URL and SHA-256:
+- Target saturation evidence reference (CPU, memory, disk, network, PostgreSQL, Valkey):
+- Durable archive reference:
 - Owner and independent reviewer:
 
 ## Required target-region matrix
@@ -37,10 +44,21 @@ For every row, attach the complete redacted JSON artifact and record:
 - Pre-reveal answer-key or hidden-diagnostic leakage result:
 - Failure, retry, or exclusion details:
 
+Every row uses target-load schema version 2 with the same `artifactType`, numeric `profile`,
+`runnerRegion`, expected/observed build identity, counts, correctness, receipts, recovery, report,
+latency, and immutable threshold fields. The bundle must list exactly the four rows above plus
+runner provenance and the soak summary, hash their exact bytes, and report all validation flags as
+true except the deliberately external `externalEvidenceContentVerified` and `acceptanceComplete`
+flags. Those remain false because a URL alone cannot prove the referenced saturation/archive
+content or human acceptance. A zero-minute dispatch must also report `soakValidated: false`; retain
+it only as incomplete fixed-matrix evidence. Do not accept loose files when the bundle
+build/region/workflow identity, target origin, wall-clock coverage, inventory, or a source hash
+differs.
+
 ## Soak and saturation
 
 - Soak profile, requested duration, completed games, and artifact/checksum URL:
-- VM CPU, memory, disk, network, PostgreSQL, and Valkey saturation evidence:
+- VM CPU, memory, disk, network, PostgreSQL, and Valkey saturation evidence from the target services (not runner metrics):
 - Process-restart and coordination-loss recovery evidence reference:
 - Abuse/rate-limit observations:
 - Estimated target-host cost and support impact:
@@ -53,5 +71,6 @@ For every row, attach the complete redacted JSON artifact and record:
 - All four rows meet participant receipt p95 below 500 ms with no material timeout rate:
 - Every acknowledged response is unique, durable, and present in the reconciled report:
 - Representative soak completed without response loss, report mismatch, data leak, or severity-1/2 defect:
+- Bundle is retained at the durable archive reference and every recorded source hash matches:
 - Owner decision: Pending
 - Independent reviewer decision: Pending

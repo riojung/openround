@@ -164,6 +164,32 @@ services:
         mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
         mc mb --ignore-existing "local/$$MINIO_BUCKET"
         mc anonymous set none "local/$$MINIO_BUCKET"
+        cat > /tmp/openround-media-lifecycle.json <<EOF
+        {
+          "Rules": [
+            {
+              "ID": "expire-abandoned-quarantine-uploads",
+              "Status": "Enabled",
+              "Filter": { "Prefix": "quarantine/" },
+              "Expiration": { "Days": 1 }
+            },
+            {
+              "ID": "expire-abandoned-finalization-candidates",
+              "Status": "Enabled",
+              "Filter": {
+                "And": {
+                  "Prefix": "media/",
+                  "Tags": [
+                    { "Key": "openround-finalization-state", "Value": "temporary" }
+                  ]
+                }
+              },
+              "Expiration": { "Days": 7 }
+            }
+          ]
+        }
+        EOF
+        mc ilm rule import "local/$$MINIO_BUCKET" < /tmp/openround-media-lifecycle.json
         cat > /tmp/openround-media-policy.json <<EOF
         {
           "Version": "2012-10-17",
@@ -175,7 +201,7 @@ services:
             },
             {
               "Effect": "Allow",
-              "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+              "Action": ["s3:GetObject", "s3:PutObject", "s3:PutObjectTagging", "s3:DeleteObject"],
               "Resource": ["arn:aws:s3:::$$MINIO_BUCKET/*"]
             }
           ]
@@ -286,6 +312,7 @@ services:
       FEATURE_GROUPS: ${FEATURE_GROUPS:-false}
       FEATURE_DISCOVER: ${FEATURE_DISCOVER:-false}
       FEATURE_PRESENTATION_REALTIME: ${FEATURE_PRESENTATION_REALTIME:-false}
+      FEATURE_LIVE_FLEX_MODE: ${FEATURE_LIVE_FLEX_MODE:-false}
       PRESENTATION_CONCURRENT_RESPONSE_WRITES: ${PRESENTATION_CONCURRENT_RESPONSE_WRITES:-false}
       FEATURE_RECOVERY_PACKS: ${FEATURE_RECOVERY_PACKS:-false}
       FEATURE_QUESTION_HEALTH: ${FEATURE_QUESTION_HEALTH:-false}
@@ -320,12 +347,11 @@ services:
       AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_TOKEN: ${METRICS_TOKEN:?Set METRICS_TOKEN}
+      OPENROUND_LOG_SHIPPING_MODE: ${OPENROUND_LOG_SHIPPING_MODE:-disabled}
       TRACING_ENABLED: ${TRACING_ENABLED:-false}
-      # The schema requires a URL when this variable is present. It remains unused while tracing
-      # is disabled; operators enabling tracing must replace this loopback placeholder.
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://127.0.0.1:4318/v1/traces}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}"
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-openround-server}
-      OTEL_SERVICE_VERSION: ${OTEL_SERVICE_VERSION:-0.1.0}
+      OTEL_SERVICE_VERSION: "${OPENROUND_BUILD_ID:?Set OPENROUND_BUILD_ID}"
       SMTP_URL: ${SMTP_URL:?Set SMTP_URL for hosted sign-in email}
       EMAIL_FROM: ${EMAIL_FROM:?Set EMAIL_FROM}
       DEVELOPMENT_EMAIL_INBOX_URL: ""

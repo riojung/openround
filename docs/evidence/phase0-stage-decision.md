@@ -12,10 +12,13 @@ only pseudonymous, reviewed evidence records here.
 - Research owner:
 - Independent reviewer:
 - Redacted evidence index URL/checksum:
+- Redacted machine-readable aggregate checksum or opaque `ref:` handle:
+- `pnpm research:check` output checksum/reference:
 - Frozen in-scope cohort/version and observation cutoff:
 - In-scope records by final disposition (accepted/rejected/excluded/pending):
-- Frozen primary facilitator cohort (six education/six workplace IDs):
-- Same-segment reserve order and substitutions with reasons:
+- Frozen initial primary facilitator cohort (first six eligible-at-freeze education/workplace IDs):
+- Final primary facilitator cohort after reviewed substitutions:
+- Same-segment reserve order and substitutions with predeclared reason codes and review references:
 - Phase 0 research gate result (accepted/rejected/pending): Pending
 - Phase 0 independent reviewer decision (accepted/rejected/pending): Pending
 
@@ -25,6 +28,26 @@ independent review is pending.
 Every record inside the frozen cohort/cutoff must have a final accepted, rejected, or excluded
 disposition under the predeclared rules. Any pending in-scope record keeps every dependent aggregate
 and decision pending.
+
+## Machine-readable recomputation
+
+Populate a private copy of the deliberately empty
+[Phase 0 research aggregate example](phase0-research-aggregate.example.json) under the
+[aggregate schema](phase0-research-aggregate.schema.json), then run
+`pnpm research:check -- path/to/redacted-aggregate.json`. Do not commit the populated aggregate.
+Record its checksum or opaque `ref:` handle and the evaluator output reference above. The command
+rejects pending records, raw/private fields, duplicate stable record IDs, invalid denominators,
+missing independently reviewed reason codes, primary-cohort substitutions that do not take the next
+eligible same-segment reserve, usability samples below the frozen floor, and declared decisions
+that do not match the recomputed thresholds or branch order. It also recomputes all eight usability
+journey thresholds from per-segment numerators, denominators, and complete timing samples rather
+than trusting a declared accepted result.
+
+The committed example is intentionally empty and pending. Validator success establishes only that
+the redacted aggregate is internally consistent; it does not replace source evidence, independent
+review, or either human decision recorded here. Optional Companion, Question Health, and
+delayed-probe Prototype Lab tasks may inform reviewed records but are not required to close Phase 0
+and cannot substitute for observed real sessions or accepted segment usability.
 
 ## Acquisition-segment evidence
 
@@ -36,6 +59,8 @@ and decision pending.
 | Observed real sessions                      |                  |           |                     |
 | Evidence-complete recovery checkpoints      |                  |           |                     |
 | Eligible recovery checkpoints               |                  |           |                     |
+| Eligible first-time usability facilitators  |                  |           |                     |
+| Eligible usability participants             |                  |           |                     |
 | Median time to unassisted first activation  |                  |           |                     |
 | Willingness-to-pay yes/known denominator    |                  |           |                     |
 
@@ -49,13 +74,16 @@ least six eligible higher-education and six eligible workplace facilitators are 
 least eight of the frozen primary twelve demonstrate the recurring post-result decision problem;
 at least three
 partners per segment run twice; at least ten real sessions are observed; at least 50% of eligible
-recovery checkpoints are evidence-complete; and the P0 beta usability study is accepted. A pending
-or rejected independent review keeps the gate pending or rejected.
+recovery checkpoints are evidence-complete; and both P0 beta usability segment results are accepted
+with at least six eligible first-time facilitators and twenty eligible participants per segment. A
+pending or rejected aggregate decision keeps the gate pending or rejected. Phase 0 can be accepted
+only when both the research-owner and independent-reviewer aggregate decisions are accepted.
 
-Selection order: choose the segment with more repeat pilots and evidence-complete recovery loops.
-If those reviewed measures are tied, prefer faster activation, then stronger willingness-to-pay
-evidence. If the leading measures conflict without a defensible winner, leave the decision pending
-and collect more evidence rather than inventing a score.
+Selection order: choose a segment only when it is no worse on repeat partners and evidence-complete
+recovery checkpoints and better on at least one. If those two reviewed measures tie, prefer the
+lower median activation time, then the higher willingness-to-pay yes/known rate. If leading
+measures conflict, a tie remains after the ordered comparisons, or a needed denominator is missing,
+leave the decision pending and collect more evidence rather than inventing a score.
 
 - Selected primary acquisition segment (higher education/workplace/pending): Pending
 - Selection rationale and evidence references:
@@ -91,6 +119,10 @@ into the attempt denominator.
 The Companion gate passes only when at least four repeat facilitators use an external deck and at
 least two observed sessions suffer a material context-switch interruption.
 
+For machine recomputation, a repeat external-deck facilitator has at least two distinct accepted
+eligible sessions and external-deck use in at least one of them. A single prototype or duplicated
+session record does not count.
+
 ## Ordered Phase 1 decision
 
 Apply the rules without reordering them:
@@ -105,6 +137,8 @@ Apply the rules without reordering them:
 If both gates explicitly fail, compare only independently reviewed activation or correctness
 failures with a defined eligible population. Record exclusions and failed instrumentation; do not
 rank raw event counts that lack a denominator or combine unlike populations into one rate.
+Select the unique candidate with the greatest affected/eligible rate. If the greatest reviewed rate
+is tied or no accepted candidate has a valid denominator, keep the branch pending.
 
 | Candidate activation/correctness failure | Affected eligible attempts/workflows | Eligible denominator | Rate | Severity and user consequence | Evidence references | Independent reviewer result |
 | ---------------------------------------- | ------------------------------------ | -------------------- | ---- | ----------------------------- | ------------------- | --------------------------- |

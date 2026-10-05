@@ -309,6 +309,7 @@ const messages = {
   "pages.home.sessions.empty": "Noch keine gehosteten Sitzungen.",
   "pages.home.sessions.eyebrow": "Lieferung",
   "pages.library.action.archive": "Archiv",
+  "pages.library.action.delete": "Gelöscht",
   "pages.library.action.duplicate": "Duplizieren",
   "pages.library.action.restore": "Wiederherstellen",
   "pages.library.actionComplete": "{count} {type} {action}.",
@@ -322,6 +323,12 @@ const messages = {
   "pages.library.clear": "Klar",
   "pages.library.createPresentation": "Präsentation erstellen",
   "pages.library.createRound": "Runde erstellen",
+  "pages.library.delete": "Endgültig löschen",
+  "pages.library.deleteConfirm":
+    "„{title}“ einschließlich aller Entwürfe und veröffentlichten Versionen endgültig löschen? Dies kann nicht rückgängig gemacht werden.",
+  "pages.library.deleteCount": "Löschen ({count})",
+  "pages.library.deleteManyConfirm":
+    "{count} ausgewählte archivierte Inhalte einschließlich aller Entwürfe und veröffentlichten Versionen endgültig löschen? Dies kann nicht rückgängig gemacht werden.",
   "pages.library.deselectResults": "Ergebnisse abwählen",
   "pages.library.destinationFolder": "Zielordner",
   "pages.library.duplicate": "Duplizieren",
@@ -436,6 +443,10 @@ const messages = {
   "pages.sessions.artifactType": "Artefakttyp",
   "pages.sessions.blockProgress": "Fortschritt blockieren",
   "pages.sessions.currentResponses": "Aktuelle Antworten",
+  "pages.sessions.delete": "Sitzung löschen",
+  "pages.sessions.deleteConfirm":
+    "Die Sitzung „{title}“, ihre Antworten, ihren Bericht und verknüpfte Folgeübungen endgültig löschen? Dies kann nicht rückgängig gemacht werden.",
+  "pages.sessions.deleting": "Wird gelöscht…",
   "pages.sessions.emptyDescription":
     "Veranstalten Sie eine veröffentlichte Runde oder Präsentation und die Live-Sitzung wird hier angezeigt.",
   "pages.sessions.emptyFiltered": "In diesem Arbeitsbereich gibt es keine {status}-Sitzungen.",

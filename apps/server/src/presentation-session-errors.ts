@@ -5,6 +5,7 @@ export type PresentationSessionServiceErrorCode =
   | "INSTITUTION_AUTH_REQUIRED"
   | "UNAUTHORIZED"
   | "VALIDATION_ERROR"
+  | "CONFLICT"
   | "STALE_SESSION"
   | "IDEMPOTENCY_CONFLICT"
   | "ALREADY_RESPONDED"

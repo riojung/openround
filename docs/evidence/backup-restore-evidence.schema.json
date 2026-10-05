@@ -1,0 +1,824 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openround.dev/schemas/backup-restore-evidence.schema.json",
+  "title": "OpenRound off-host backup manifest or replacement-host restore receipt",
+  "description": "Redaction-safe evidence structures. Cross-document binding, timestamp arithmetic, privilege constraints, and acceptance rules are enforced by scripts/check-backup-restore-evidence.mjs.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/manifest"
+    },
+    {
+      "$ref": "#/$defs/receipt"
+    }
+  ],
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._/-]{1,119}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "evidenceReference": {
+      "type": "string",
+      "pattern": "^(sha256:[a-f0-9]{64}|ref:[a-z0-9][a-z0-9._/-]{2,127})$"
+    },
+    "evidenceReferences": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/evidenceReference"
+      }
+    },
+    "encryption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "keyId", "authenticatedEncryption", "keyStoredSeparately"],
+      "properties": {
+        "algorithm": {
+          "enum": ["age-x25519", "aes-256-gcm", "xchacha20-poly1305"]
+        },
+        "keyId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "authenticatedEncryption": {
+          "const": true
+        },
+        "keyStoredSeparately": {
+          "const": true
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "mediaType",
+        "plaintextBytes",
+        "plaintextSha256",
+        "encryptedBytes",
+        "encryptedSha256",
+        "encryption"
+      ],
+      "properties": {
+        "artifactId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "mediaType": {
+          "enum": [
+            "application/vnd.postgresql.custom-dump",
+            "application/vnd.openround.object-backup",
+            "application/vnd.openround.non-secret-configuration"
+          ]
+        },
+        "plaintextBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "plaintextSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "encryptedBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "encryptedSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "encryption": {
+          "$ref": "#/$defs/encryption"
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "containsCustomerContent",
+        "containsCredentials",
+        "containsPrivateUrls",
+        "containsEncryptionKeyMaterial",
+        "containsDirectIdentifiers"
+      ],
+      "properties": {
+        "containsCustomerContent": {
+          "const": false
+        },
+        "containsCredentials": {
+          "const": false
+        },
+        "containsPrivateUrls": {
+          "const": false
+        },
+        "containsEncryptionKeyMaterial": {
+          "const": false
+        },
+        "containsDirectIdentifiers": {
+          "const": false
+        }
+      }
+    },
+    "ownerAcceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "decision", "acceptedAtUtc", "evidenceReference"],
+      "properties": {
+        "role": {
+          "const": "operations"
+        },
+        "decision": {
+          "const": "accepted"
+        },
+        "acceptedAtUtc": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "evidenceReference": {
+          "$ref": "#/$defs/evidenceReference"
+        }
+      }
+    },
+    "independentReviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "independent", "decision", "acceptedAtUtc", "evidenceReference"],
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/safeId"
+        },
+        "independent": {
+          "const": true
+        },
+        "decision": {
+          "const": "accepted"
+        },
+        "acceptedAtUtc": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "evidenceReference": {
+          "$ref": "#/$defs/evidenceReference"
+        }
+      }
+    },
+    "postgresAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identityId",
+        "dedicated",
+        "superuser",
+        "databaseOwner",
+        "canCreateRoles",
+        "canCreateDatabases",
+        "canReplicate",
+        "bypassRlsForBackup",
+        "readAllDurableRowsVerified",
+        "writePrivileges",
+        "credentialInPayload",
+        "privilegeReviewReference"
+      ],
+      "properties": {
+        "identityId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "dedicated": {
+          "const": true
+        },
+        "superuser": {
+          "const": false
+        },
+        "databaseOwner": {
+          "const": false
+        },
+        "canCreateRoles": {
+          "const": false
+        },
+        "canCreateDatabases": {
+          "const": false
+        },
+        "canReplicate": {
+          "const": false
+        },
+        "bypassRlsForBackup": {
+          "const": true
+        },
+        "readAllDurableRowsVerified": {
+          "const": true
+        },
+        "writePrivileges": {
+          "const": false
+        },
+        "credentialInPayload": {
+          "const": false
+        },
+        "privilegeReviewReference": {
+          "$ref": "#/$defs/evidenceReference"
+        }
+      }
+    },
+    "objectStoreAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identityId",
+        "dedicated",
+        "bucketScoped",
+        "canList",
+        "canReadObjects",
+        "canReadObjectTags",
+        "canReadVersions",
+        "canWriteObjects",
+        "canDeleteObjects",
+        "administrative",
+        "credentialInPayload",
+        "privilegeReviewReference"
+      ],
+      "properties": {
+        "identityId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "dedicated": {
+          "const": true
+        },
+        "bucketScoped": {
+          "const": true
+        },
+        "canList": {
+          "const": true
+        },
+        "canReadObjects": {
+          "const": true
+        },
+        "canReadObjectTags": {
+          "const": true
+        },
+        "canReadVersions": {
+          "const": true
+        },
+        "canWriteObjects": {
+          "const": false
+        },
+        "canDeleteObjects": {
+          "const": false
+        },
+        "administrative": {
+          "const": false
+        },
+        "credentialInPayload": {
+          "const": false
+        },
+        "privilegeReviewReference": {
+          "$ref": "#/$defs/evidenceReference"
+        }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "$schema",
+        "schemaVersion",
+        "kind",
+        "backupSetId",
+        "sourceSetSha256",
+        "source",
+        "access",
+        "database",
+        "objects",
+        "configuration",
+        "offHostStorage",
+        "redaction",
+        "ownerAcceptance",
+        "independentReviewer",
+        "evidenceReferences"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "./backup-restore-evidence.schema.json"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "openround-off-host-backup-manifest"
+        },
+        "backupSetId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "sourceSetSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "environment",
+            "hostId",
+            "failureDomainId",
+            "gitCommit",
+            "serverImageDigest",
+            "webImageDigest",
+            "captureStartedAtUtc",
+            "snapshotCutoffAtUtc",
+            "captureCompletedAtUtc",
+            "consistencyMethod"
+          ],
+          "properties": {
+            "environment": {
+              "$ref": "#/$defs/safeId"
+            },
+            "hostId": {
+              "$ref": "#/$defs/safeId"
+            },
+            "failureDomainId": {
+              "$ref": "#/$defs/safeId"
+            },
+            "gitCommit": {
+              "$ref": "#/$defs/commit"
+            },
+            "serverImageDigest": {
+              "$ref": "#/$defs/sha256"
+            },
+            "webImageDigest": {
+              "$ref": "#/$defs/sha256"
+            },
+            "captureStartedAtUtc": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "snapshotCutoffAtUtc": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "captureCompletedAtUtc": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "consistencyMethod": {
+              "enum": ["maintenance-freeze", "application-coordinated-cutoff"]
+            }
+          }
+        },
+        "access": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["postgres", "objectStore"],
+          "properties": {
+            "postgres": {
+              "$ref": "#/$defs/postgresAccess"
+            },
+            "objectStore": {
+              "$ref": "#/$defs/objectStoreAccess"
+            }
+          }
+        },
+        "database": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "format",
+            "artifact",
+            "pgRestoreListSha256",
+            "durableTableCount",
+            "rowInventorySha256",
+            "migrationLedgerSha256"
+          ],
+          "properties": {
+            "format": {
+              "const": "postgres-custom"
+            },
+            "artifact": {
+              "$ref": "#/$defs/artifact"
+            },
+            "pgRestoreListSha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "durableTableCount": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "rowInventorySha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "migrationLedgerSha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "objects": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "artifact",
+            "inventoryGeneratedAtUtc",
+            "inventoryScope",
+            "objectCount",
+            "totalBytes",
+            "inventorySha256",
+            "tagInventorySha256",
+            "includesMetadata",
+            "includesTags"
+          ],
+          "properties": {
+            "artifact": {
+              "$ref": "#/$defs/artifact"
+            },
+            "inventoryGeneratedAtUtc": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "inventoryScope": {
+              "const": "all-current-objects-and-available-versions"
+            },
+            "objectCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "totalBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "inventorySha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "tagInventorySha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "includesMetadata": {
+              "const": true
+            },
+            "includesTags": {
+              "const": true
+            }
+          }
+        },
+        "configuration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scope", "artifact"],
+          "properties": {
+            "scope": {
+              "const": "reviewed-non-secret-deployment-inventory"
+            },
+            "artifact": {
+              "$ref": "#/$defs/artifact"
+            }
+          }
+        },
+        "offHostStorage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "providerClass",
+            "failureDomainId",
+            "accountBoundary",
+            "storedAtUtc",
+            "retentionUntilUtc",
+            "immutableOrVersioned",
+            "locationReference"
+          ],
+          "properties": {
+            "providerClass": {
+              "enum": ["object-storage", "backup-vault", "managed-backup"]
+            },
+            "failureDomainId": {
+              "$ref": "#/$defs/safeId"
+            },
+            "accountBoundary": {
+              "const": "separately-administered"
+            },
+            "storedAtUtc": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "retentionUntilUtc": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "immutableOrVersioned": {
+              "const": true
+            },
+            "locationReference": {
+              "$ref": "#/$defs/evidenceReference"
+            }
+          }
+        },
+        "redaction": {
+          "$ref": "#/$defs/redaction"
+        },
+        "ownerAcceptance": {
+          "$ref": "#/$defs/ownerAcceptance"
+        },
+        "independentReviewer": {
+          "$ref": "#/$defs/independentReviewer"
+        },
+        "evidenceReferences": {
+          "$ref": "#/$defs/evidenceReferences"
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "$schema",
+        "schemaVersion",
+        "kind",
+        "restoreId",
+        "backupBinding",
+        "replacementHost",
+        "timing",
+        "verification",
+        "cleanup",
+        "redaction",
+        "ownerAcceptance",
+        "independentReviewer",
+        "evidenceReferences"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "./backup-restore-evidence.schema.json"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "kind": {
+          "const": "openround-replacement-host-restore-receipt"
+        },
+        "restoreId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "backupBinding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "backupSetId",
+            "backupManifestSha256",
+            "sourceSetSha256",
+            "sourceEnvironment",
+            "gitCommit",
+            "serverImageDigest",
+            "webImageDigest",
+            "databaseEncryptedSha256",
+            "objectsEncryptedSha256",
+            "configurationEncryptedSha256"
+          ],
+          "properties": {
+            "backupSetId": {
+              "$ref": "#/$defs/safeId"
+            },
+            "backupManifestSha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "sourceSetSha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "sourceEnvironment": {
+              "$ref": "#/$defs/safeId"
+            },
+            "gitCommit": {
+              "$ref": "#/$defs/commit"
+            },
+            "serverImageDigest": {
+              "$ref": "#/$defs/sha256"
+            },
+            "webImageDigest": {
+              "$ref": "#/$defs/sha256"
+            },
+            "databaseEncryptedSha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "objectsEncryptedSha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "configurationEncryptedSha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "replacementHost": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "environment",
+            "hostId",
+            "failureDomainId",
+            "cleanBaseline",
+            "originalHostUsed",
+            "freshPostgresStorage",
+            "freshObjectStorage",
+            "valkeyStartedEmpty",
+            "deployedServerImageDigest",
+            "deployedWebImageDigest"
+          ],
+          "properties": {
+            "environment": {
+              "$ref": "#/$defs/safeId"
+            },
+            "hostId": {
+              "$ref": "#/$defs/safeId"
+            },
+            "failureDomainId": {
+              "$ref": "#/$defs/safeId"
+            },
+            "cleanBaseline": {
+              "const": true
+            },
+            "originalHostUsed": {
+              "const": false
+            },
+            "freshPostgresStorage": {
+              "const": true
+            },
+            "freshObjectStorage": {
+              "const": true
+            },
+            "valkeyStartedEmpty": {
+              "const": true
+            },
+            "deployedServerImageDigest": {
+              "$ref": "#/$defs/sha256"
+            },
+            "deployedWebImageDigest": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "timing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "failureDeclaredAtUtc",
+            "restoreStartedAtUtc",
+            "serviceValidatedAtUtc",
+            "targetRpoSeconds",
+            "targetRtoSeconds",
+            "actualRpoSeconds",
+            "actualRtoSeconds"
+          ],
+          "properties": {
+            "failureDeclaredAtUtc": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "restoreStartedAtUtc": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "serviceValidatedAtUtc": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "targetRpoSeconds": {
+              "const": 86400
+            },
+            "targetRtoSeconds": {
+              "const": 14400
+            },
+            "actualRpoSeconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "actualRtoSeconds": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "verification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "allCiphertextChecksumsVerified",
+            "databasePlaintextSha256",
+            "objectsPlaintextSha256",
+            "configurationPlaintextSha256",
+            "durableTableCount",
+            "rowInventorySha256",
+            "migrationLedgerSha256",
+            "objectCount",
+            "objectTotalBytes",
+            "objectInventorySha256",
+            "objectTagInventorySha256",
+            "databaseInventoryMatch",
+            "objectInventoryMatch",
+            "objectTagInventoryMatch",
+            "acceptedAnswerUniqueness",
+            "reportReconciliation",
+            "auditContinuity",
+            "sampleMediaChecksums",
+            "syntheticTlsFlow",
+            "mediaAuthorization",
+            "valkeyRebuild"
+          ],
+          "properties": {
+            "allCiphertextChecksumsVerified": {
+              "const": true
+            },
+            "databasePlaintextSha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "objectsPlaintextSha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "configurationPlaintextSha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "durableTableCount": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "rowInventorySha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "migrationLedgerSha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "objectCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "objectTotalBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "objectInventorySha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "objectTagInventorySha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "databaseInventoryMatch": {
+              "const": true
+            },
+            "objectInventoryMatch": {
+              "const": true
+            },
+            "objectTagInventoryMatch": {
+              "const": true
+            },
+            "acceptedAnswerUniqueness": {
+              "const": true
+            },
+            "reportReconciliation": {
+              "const": true
+            },
+            "auditContinuity": {
+              "const": true
+            },
+            "sampleMediaChecksums": {
+              "const": true
+            },
+            "syntheticTlsFlow": {
+              "const": true
+            },
+            "mediaAuthorization": {
+              "const": true
+            },
+            "valkeyRebuild": {
+              "const": true
+            }
+          }
+        },
+        "cleanup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "plaintextArtifactsDeletedAtUtc",
+            "decryptionKeyPersisted",
+            "temporaryCredentialsRevoked",
+            "temporaryResourcesRemoved"
+          ],
+          "properties": {
+            "plaintextArtifactsDeletedAtUtc": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "decryptionKeyPersisted": {
+              "const": false
+            },
+            "temporaryCredentialsRevoked": {
+              "const": true
+            },
+            "temporaryResourcesRemoved": {
+              "const": true
+            }
+          }
+        },
+        "redaction": {
+          "$ref": "#/$defs/redaction"
+        },
+        "ownerAcceptance": {
+          "$ref": "#/$defs/ownerAcceptance"
+        },
+        "independentReviewer": {
+          "$ref": "#/$defs/independentReviewer"
+        },
+        "evidenceReferences": {
+          "$ref": "#/$defs/evidenceReferences"
+        }
+      }
+    }
+  }
+}

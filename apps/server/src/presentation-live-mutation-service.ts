@@ -9,6 +9,7 @@ import {
 } from "@openround/contracts";
 import {
   PresentationSessionConflictError,
+  WorkspaceDeletionInProgressError,
   type PresentationResponseAcknowledgementState,
   type PresentationSessionRecord,
   type PresentationSessionRepository,
@@ -161,6 +162,28 @@ function nextTransition(session: PresentationSessionRecord) {
 export class PresentationLiveMutationService {
   constructor(private readonly dependencies: PresentationLiveMutationDependencies) {}
 
+  private workspaceDeletionClosed() {
+    return new PresentationSessionServiceError(
+      409,
+      "PHASE_CLOSED",
+      "This Presentation session is no longer accepting changes",
+    );
+  }
+
+  private async acceptResponse(
+    response: PresentationSessionResponseRecord,
+    expectedRevision: number,
+  ) {
+    try {
+      return await this.dependencies.sessions.acceptResponse(response, expectedRevision);
+    } catch (error) {
+      if (error instanceof WorkspaceDeletionInProgressError) {
+        throw this.workspaceDeletionClosed();
+      }
+      throw error;
+    }
+  }
+
   async advance(input: AdvancePresentationSessionInput): Promise<PresentationRestHostSnapshot> {
     const session = await this.dependencies.sessions.getSessionForWorkspace(
       input.workspaceId,
@@ -217,6 +240,9 @@ export class PresentationLiveMutationService {
     } catch (error) {
       if (error instanceof PresentationSessionConflictError) {
         throw this.staleSession(error.expectedRevision, error.currentRevision);
+      }
+      if (error instanceof WorkspaceDeletionInProgressError) {
+        throw this.workspaceDeletionClosed();
       }
       throw error;
     }
@@ -276,6 +302,9 @@ export class PresentationLiveMutationService {
       if (error instanceof PresentationSessionConflictError) {
         throw this.staleSession(error.expectedRevision, error.currentRevision);
       }
+      if (error instanceof WorkspaceDeletionInProgressError) {
+        throw this.workspaceDeletionClosed();
+      }
       throw error;
     }
   }
@@ -318,10 +347,7 @@ export class PresentationLiveMutationService {
           "This response key was already used for a different request",
         );
       }
-      const duplicate = await this.dependencies.sessions.acceptResponse(
-        receipt,
-        input.expectedRevision,
-      );
+      const duplicate = await this.acceptResponse(receipt, input.expectedRevision);
       if (duplicate.status !== "duplicate") {
         throw new Error("Durable Presentation response receipt could not be acknowledged");
       }
@@ -366,7 +392,7 @@ export class PresentationLiveMutationService {
     }
     const correct = presentationResponseCorrect(submittedBlock.question, input.response);
     const timing = presentationResponseTiming(session, receivedAt);
-    const acceptance = await this.dependencies.sessions.acceptResponse(
+    const acceptance = await this.acceptResponse(
       {
         id: randomUUID(),
         workspaceId: session.workspaceId,

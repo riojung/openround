@@ -20,9 +20,25 @@ Record both the numerator/denominator (or complete timing sample) and the aggreg
 threshold passes only when the reviewed protocol measures the stated task without coaching unless
 the metric explicitly asks whether help was required.
 
-Report each numerator/denominator or timing sample separately for education and workplace,
-including excluded or failed instrumentation. The overall result does not replace either segment
-result when choosing the primary acquisition segment.
+Report each numerator/denominator or timing sample separately for education and workplace. Preserve
+excluded or failed-instrumentation attempts as separate rejected/excluded aggregate records with
+null metrics; do not merge their partial data into a replacement study. Number every segment's
+attempts contiguously with `attemptOrder`, and link each replacement to the immediately preceding
+`studyId` with `supersedesStudyId`. The overall result does not replace either segment result when
+choosing the primary acquisition segment.
+
+The redacted research aggregate must encode the six ratio rows as exact numerator/denominator
+pairs and the publish/acknowledgement rows as complete bounded timing samples. `pnpm research:check`
+recomputes every rate, the publish median, and the nearest-rank acknowledgement p95; a typed
+`accepted` label cannot override a failed threshold.
+
+Every accepted segment record must cover the full declared eligible population: facilitator tasks
+use the `eligibleFirstTimeFacilitators` denominator/sample size and participant response tasks use
+the `eligibleParticipants` denominator/sample size. Do not silently drop failed instrumentation or
+other observations. Close that study record as rejected or excluded with the predeclared reason and
+run a new independently reviewed study when the protocol requires replacement evidence.
+The replacement becomes the segment's only eligible accepted decision record and must be the final
+entry in that segment's explicit supersession chain; the earlier attempt remains preserved.
 
 | Metric                                                                                 | Required threshold                          | Education result/sample | Workplace result/sample | Overall result | Result  |
 | -------------------------------------------------------------------------------------- | ------------------------------------------- | ----------------------- | ----------------------- | -------------- | ------- |
@@ -36,6 +52,27 @@ result when choosing the primary acquisition segment.
 | Pilot user completes Recovery Rehearsal and explains the suggested action without help | At least 80%                                |                         |                         |                | Pending |
 
 ## Study integrity and decision
+
+### Enabled-feature task coverage
+
+When these features are enabled in the frozen candidate, add the following observed tasks to the
+study protocol and retain assistance, errors, timing, and comprehension results separately from the
+P0 thresholds above. Code or browser coverage does not supply these observations.
+
+- Move/resize a slide title, add and position multiple text boxes, use guides/inspector controls,
+  save and publish, then recognize the same arrangement in preview and live delivery. Include a
+  narrow-screen reading-order task and content that triggers overflow guidance.
+- Explain a Question Health finding and its sample/version limits; dismiss/reopen it or preview,
+  apply, and undo a supported draft edit without assuming the published version changed.
+- Explain the captured decisions in an eligible Round report and distinguish an unavailable or
+  truncated timeline from evidence that an action never happened.
+- Find the owner deletion action for archived content and finished/expired session history, cancel
+  once, confirm with synthetic data, and understand a retained-dependency error without deleting
+  linked practice unintentionally.
+- Run a whole-room flex question and identify that the facilitator closes responses and speed
+  scoring is absent; do not imply private participant-specific extra time is available live.
+
+### Record the study decision
 
 - Task order and counterbalancing:
 - Timing/instrumentation method and clock source:

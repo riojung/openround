@@ -66,7 +66,7 @@ async function fixture(options: { failCreateAudit?: boolean } = {}) {
     title: "Realtime service integration",
     description: "Exercises durable role-safe synchronization.",
     experiencePreset: { id: "focus", version: 1 },
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceDisclosure: {
       sourceName: AUTHORING_SECRETS[6],
       sourceDigest: "a".repeat(64),
@@ -78,8 +78,22 @@ async function fixture(options: { failCreateAudit?: boolean } = {}) {
         id: contentBlockId,
         kind: "content",
         layout: "title_body",
-        title: "Safe live title",
-        body: "Safe live body",
+        textElements: [
+          {
+            id: `${contentBlockId}:title`,
+            role: "title",
+            text: "Safe live title",
+            region: "top_center",
+            order: 0,
+          },
+          {
+            id: `${contentBlockId}:body`,
+            role: "body",
+            text: "Safe live body",
+            region: "middle_center",
+            order: 0,
+          },
+        ],
         mediaId: null,
         mediaAlt: null,
         speakerNotes: AUTHORING_SECRETS[0],
@@ -138,7 +152,7 @@ async function fixture(options: { failCreateAudit?: boolean } = {}) {
     status: "draft",
     draft,
     draftRevision: 0,
-    draftSchemaVersion: 1,
+    draftSchemaVersion: 2,
     currentVersionId: null,
     folderId: null,
     publishedDraftRevision: null,
@@ -207,6 +221,122 @@ function expectNoAuthoringSecrets(snapshot: unknown) {
 }
 
 describe("PresentationSessionService realtime integration", () => {
+  it("deletes finished room data and fences an already claimed report job", async () => {
+    const { repository, sessions, service, hosted, joined, ids } = await fixture();
+    const sessionId = hosted.snapshot.sessionId;
+    const deleted = vi.fn();
+    service.setSessionDeletedHandler(deleted);
+    const companionToken = randomUUID();
+    const currentSession = (await sessions.getSessionById(sessionId))!;
+    await sessions.createCredential({
+      id: randomUUID(),
+      workspaceId: ids.workspaceId,
+      sessionId,
+      role: "companion",
+      tokenHash: presentationParticipantTokenHash(companionToken),
+      createdAt: new Date(),
+      expiresAt: currentSession.liveExpiresAt,
+      revokedAt: null,
+    });
+    for (let expectedRevision = 0; expectedRevision < 2; expectedRevision += 1) {
+      await service.command({
+        sessionId,
+        controlToken: hosted.controlToken,
+        commandId: randomUUID(),
+        expectedRevision,
+        action: "advance",
+      });
+    }
+    await service.submitResponse({
+      sessionId,
+      participantToken: joined.participantToken,
+      blockId: ids.questionBlockId,
+      expectedRevision: 2,
+      idempotencyKey: randomUUID(),
+      response: { choiceIds: [ids.correctChoiceId], confidence: 3 },
+    });
+    for (let expectedRevision = 2; expectedRevision < 4; expectedRevision += 1) {
+      await service.command({
+        sessionId,
+        controlToken: hosted.controlToken,
+        commandId: randomUUID(),
+        expectedRevision,
+        action: "advance",
+      });
+    }
+    expect(await sessions.getSessionById(sessionId)).toMatchObject({ status: "finished" });
+    expect(await sessions.listParticipants(sessionId)).toHaveLength(1);
+    expect(await sessions.listResponses(sessionId)).toHaveLength(1);
+    expect(await sessions.listTimeline(sessionId)).toHaveLength(4);
+    const now = new Date();
+    const job = (await sessions.claimReportJob(now, new Date(now.getTime() + 60_000)))!;
+    expect(job).toMatchObject({ sessionId, workspaceId: ids.workspaceId });
+
+    await service.deleteSession({
+      workspaceId: ids.workspaceId,
+      userId: ids.userId,
+      sessionId,
+      requestId: randomUUID(),
+    });
+    expect(deleted).toHaveBeenCalledExactlyOnceWith(sessionId);
+    expect(await sessions.getSessionById(sessionId)).toBeNull();
+    expect(await sessions.listParticipants(sessionId)).toEqual([]);
+    expect(await sessions.listResponses(sessionId)).toEqual([]);
+    expect(await sessions.listTimeline(sessionId)).toEqual([]);
+    expect(await sessions.getReport(ids.workspaceId, sessionId)).toBeNull();
+    expect(
+      await sessions.findParticipant(
+        sessionId,
+        presentationParticipantTokenHash(joined.participantToken),
+      ),
+    ).toBeNull();
+    expect(
+      await sessions.findValidCredential(
+        sessionId,
+        presentationParticipantTokenHash(hosted.controlToken),
+      ),
+    ).toBeNull();
+    expect(
+      await sessions.findValidCredential(
+        sessionId,
+        presentationParticipantTokenHash(companionToken),
+      ),
+    ).toBeNull();
+    expect(await repository.getLiveRoomCode(hosted.snapshot.code)).toBeNull();
+    expect(
+      repository.isLibraryArtifactReferenced(ids.workspaceId, "presentation", ids.presentationId),
+    ).toBe(false);
+    expect(
+      await createPresentationRepository(repository).getPresentation(
+        ids.workspaceId,
+        ids.presentationId,
+      ),
+    ).not.toBeNull();
+
+    await expect(
+      sessions.completeReportJob(job, {
+        reportId: job.reportId,
+        sessionId,
+        schemaVersion: 1,
+        payload: { staleWorker: true },
+        generatedAt: now,
+      }),
+    ).rejects.toThrow("no longer pending");
+    await sessions.retryReportJob(job, "stale worker", now, false);
+    expect(await sessions.getReport(ids.workspaceId, sessionId)).toBeNull();
+    expect(await sessions.claimReportJob(now, new Date(now.getTime() + 60_000))).toBeNull();
+    for (const input of [
+      { sessionId, projection: "participant" as const, participantToken: joined.participantToken },
+      { sessionId, projection: "host" as const, controlToken: hosted.controlToken },
+      { sessionId, projection: "companion" as const, companionToken },
+    ]) {
+      await expect(service.sync(input)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    }
+    await expect(service.join(hosted.snapshot.code, "Late participant")).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+  });
+
   it("keeps creation usable when audit delivery fails after the atomic session credential", async () => {
     const { service, sessions, hosted, ids } = await fixture({ failCreateAudit: true });
 
@@ -268,7 +398,12 @@ describe("PresentationSessionService realtime integration", () => {
     expect(content).toMatchObject({
       projection: "host",
       phase: "content",
-      currentBlock: { kind: "content", title: "Safe live title" },
+      currentBlock: {
+        kind: "content",
+        textElements: expect.arrayContaining([
+          expect.objectContaining({ role: "title", text: "Safe live title" }),
+        ]),
+      },
       settings: { timeMode: "timed", trustMode: "learning" },
     });
     expectNoAuthoringSecrets(content);
@@ -521,6 +656,85 @@ describe("PresentationSessionService realtime integration", () => {
     ).rejects.toMatchObject({
       code: "IDEMPOTENCY_CONFLICT",
       status: 409,
+    } satisfies Partial<PresentationSessionServiceError>);
+  });
+
+  it("closes new live mutations during workspace deletion while replaying durable receipts", async () => {
+    const { repository, service, hosted, joined, ids } = await fixture();
+    const contentCommandId = randomUUID();
+    await service.command({
+      sessionId: hosted.snapshot.sessionId,
+      controlToken: hosted.controlToken,
+      commandId: contentCommandId,
+      expectedRevision: 0,
+      action: "advance",
+    });
+    await service.command({
+      sessionId: hosted.snapshot.sessionId,
+      controlToken: hosted.controlToken,
+      commandId: randomUUID(),
+      expectedRevision: 1,
+      action: "advance",
+    });
+    const responseInput = {
+      sessionId: hosted.snapshot.sessionId,
+      participantToken: joined.participantToken,
+      blockId: ids.questionBlockId,
+      expectedRevision: 2,
+      idempotencyKey: randomUUID(),
+      response: { choiceIds: [ids.correctChoiceId], confidence: 2 as const },
+    };
+    const accepted = await service.submitResponse(responseInput);
+
+    await repository.claimWorkspaceMediaDeletion(ids.workspaceId);
+
+    await expect(
+      service.command({
+        sessionId: hosted.snapshot.sessionId,
+        controlToken: hosted.controlToken,
+        commandId: contentCommandId,
+        expectedRevision: 0,
+        action: "advance",
+      }),
+    ).resolves.toMatchObject({ phase: "question_open", revision: 2 });
+    await expect(service.submitResponse(responseInput)).resolves.toMatchObject({
+      responseId: accepted.responseId,
+      duplicate: true,
+    });
+
+    await expect(service.join(hosted.snapshot.code, "Late learner")).rejects.toMatchObject({
+      status: 404,
+      code: "NOT_FOUND",
+    } satisfies Partial<PresentationSessionServiceError>);
+    await expect(
+      service.command({
+        sessionId: hosted.snapshot.sessionId,
+        controlToken: hosted.controlToken,
+        commandId: randomUUID(),
+        expectedRevision: 2,
+        action: "advance",
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "PHASE_CLOSED",
+    } satisfies Partial<PresentationSessionServiceError>);
+    await expect(
+      service.advance({
+        workspaceId: ids.workspaceId,
+        userId: ids.userId,
+        sessionId: hosted.snapshot.sessionId,
+        expectedRevision: 2,
+        requestId: randomUUID(),
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "PHASE_CLOSED",
+    } satisfies Partial<PresentationSessionServiceError>);
+    await expect(
+      service.submitResponse({ ...responseInput, idempotencyKey: randomUUID() }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "PHASE_CLOSED",
     } satisfies Partial<PresentationSessionServiceError>);
   });
 

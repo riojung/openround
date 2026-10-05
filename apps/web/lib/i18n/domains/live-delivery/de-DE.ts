@@ -276,6 +276,10 @@ const messages = {
   "live.common.connected": "Verbunden",
   "live.common.connecting": "Anschluss...",
   "live.common.dashboard": "Übersicht",
+  "live.common.flexMode": "Flexibel — die Moderation schließt die Antworten",
+  "live.common.flexOpen": "Kein Countdown. Die Moderation schließt die Antworten.",
+  "live.common.flexSetupHelp":
+    "Im flexiblen Modus gibt es weder eine Antwortfrist noch eine Geschwindigkeitswertung. Die Moderation schließt jede Frage.",
   "live.common.joinedCount": "{count} verbunden",
   "live.common.leaderboard": "Rangliste",
   "live.common.notScored": "Nicht bewertet",
@@ -284,6 +288,8 @@ const messages = {
   "live.common.responses": "Antworten",
   "live.common.saving": "Rettung...",
   "live.common.sessions": "Sitzungen",
+  "live.common.timeMode": "Antwortzeit",
+  "live.common.timedMode": "Mit Zeitlimit — Frist pro Frage",
   "live.common.updating": "Aktualisierung...",
   "live.presentationHost.backEditor": "Zurück zum Editor",
   "live.presentationHost.description":

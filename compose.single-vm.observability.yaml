@@ -1,0 +1,188 @@
+x-observability-logging: &observability-logging
+  driver: local
+  options:
+    max-size: ${OPENROUND_LOG_MAX_SIZE:-10m}
+    max-file: "${OPENROUND_LOG_MAX_FILES:-5}"
+
+services:
+  server:
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+    networks:
+      - telemetry
+
+  otel-healthcheck-install:
+    image: busybox@sha256:31b72538c3019a20336b04c4cebcd47c36511d0b45aa76666804c2845055bbd3
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        cp /bin/busybox /healthcheck/busybox
+        chmod 0555 /healthcheck/busybox
+    network_mode: none
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 32
+    logging: *observability-logging
+    volumes:
+      - otel-healthcheck:/healthcheck
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    environment:
+      OPENROUND_DEPLOYMENT: ${OPENROUND_DEPLOYMENT_ENVIRONMENT:?Set OPENROUND_DEPLOYMENT_ENVIRONMENT}
+      OPENROUND_METRICS_TOKEN: ${METRICS_TOKEN:?Set METRICS_TOKEN}
+      OPENROUND_OTLP_BACKEND_ENDPOINT: ${OPENROUND_OTLP_BACKEND_ENDPOINT:?Set OPENROUND_OTLP_BACKEND_ENDPOINT}
+      OPENROUND_OTLP_BACKEND_TOKEN: ${OPENROUND_OTLP_BACKEND_TOKEN:?Set OPENROUND_OTLP_BACKEND_TOKEN}
+    ports:
+      - "127.0.0.1:${OPENROUND_OTEL_HEALTH_PORT:-13133}:13133"
+    depends_on:
+      otel-healthcheck-install:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        ["CMD", "/healthcheck/busybox", "wget", "--spider", "--quiet", "http://127.0.0.1:13133/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cpus: ${OPENROUND_OTEL_CPUS:-0.5}
+    mem_limit: ${OPENROUND_OTEL_MEMORY_LIMIT:-512m}
+    pids_limit: ${OPENROUND_OTEL_PIDS_LIMIT:-128}
+    logging: *observability-logging
+    volumes:
+      - ./infra/observability/otel-collector.single-vm.yml:/etc/otelcol-contrib/config.yaml:ro
+      - otel-healthcheck:/healthcheck:ro
+    networks:
+      - telemetry
+      - telemetry-egress
+
+  prometheus:
+    image: prom/prometheus@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        umask 077
+        printf '%s' "$$OPENROUND_METRICS_TOKEN" > /run/openround/metrics-token
+        case "$$OPENROUND_DEPLOYMENT" in
+          ""|*[!A-Za-z0-9._-]*) echo "Invalid OPENROUND_DEPLOYMENT" >&2; exit 64 ;;
+        esac
+        sed "s/__OPENROUND_DEPLOYMENT__/$$OPENROUND_DEPLOYMENT/g" \
+          /etc/prometheus/prometheus.yml.tmpl > /run/openround/prometheus.yml
+        exec /bin/prometheus "$$@"
+      - --
+    command:
+      - --config.file=/run/openround/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${OPENROUND_PROMETHEUS_RETENTION:-15d}
+    depends_on:
+      alertmanager:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    environment:
+      OPENROUND_METRICS_TOKEN: ${METRICS_TOKEN:?Set METRICS_TOKEN}
+      OPENROUND_DEPLOYMENT: ${OPENROUND_DEPLOYMENT_ENVIRONMENT:?Set OPENROUND_DEPLOYMENT_ENVIRONMENT}
+    ports:
+      - "127.0.0.1:${OPENROUND_PROMETHEUS_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:9090/-/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /run/openround:size=1m,mode=0700,uid=65534,gid=65534
+      - /tmp:size=64m,mode=1777
+    cpus: ${OPENROUND_PROMETHEUS_CPUS:-0.5}
+    mem_limit: ${OPENROUND_PROMETHEUS_MEMORY_LIMIT:-768m}
+    pids_limit: ${OPENROUND_PROMETHEUS_PIDS_LIMIT:-128}
+    logging: *observability-logging
+    volumes:
+      - ./infra/observability/prometheus.single-vm.yml:/etc/prometheus/prometheus.yml.tmpl:ro
+      - ./infra/observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - telemetry
+      - monitoring
+
+  alertmanager:
+    image: prom/alertmanager@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        umask 077
+        printf '%s' "$$OPENROUND_PAGING_WEBHOOK_URL" > /run/openround/paging-url
+        printf '%s' "$$OPENROUND_WARNING_WEBHOOK_URL" > /run/openround/warning-url
+        printf '%s' "$$OPENROUND_TICKET_WEBHOOK_URL" > /run/openround/ticket-url
+        exec /bin/alertmanager "$$@"
+      - --
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    environment:
+      OPENROUND_PAGING_WEBHOOK_URL: ${OPENROUND_PAGING_WEBHOOK_URL:?Set OPENROUND_PAGING_WEBHOOK_URL}
+      OPENROUND_WARNING_WEBHOOK_URL: ${OPENROUND_WARNING_WEBHOOK_URL:?Set OPENROUND_WARNING_WEBHOOK_URL}
+      OPENROUND_TICKET_WEBHOOK_URL: ${OPENROUND_TICKET_WEBHOOK_URL:?Set OPENROUND_TICKET_WEBHOOK_URL}
+    ports:
+      - "127.0.0.1:${OPENROUND_ALERTMANAGER_PORT:-9093}:9093"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:9093/-/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /run/openround:size=1m,mode=0700,uid=65534,gid=65534
+      - /tmp:size=64m,mode=1777
+    cpus: ${OPENROUND_ALERTMANAGER_CPUS:-0.25}
+    mem_limit: ${OPENROUND_ALERTMANAGER_MEMORY_LIMIT:-256m}
+    pids_limit: ${OPENROUND_ALERTMANAGER_PIDS_LIMIT:-96}
+    logging: *observability-logging
+    volumes:
+      - ./infra/observability/alertmanager.single-vm.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    networks:
+      - monitoring
+      - alerting-egress
+
+networks:
+  telemetry:
+    internal: true
+  monitoring:
+    internal: true
+  telemetry-egress:
+  alerting-egress:
+
+volumes:
+  otel-healthcheck:
+  prometheus-data:
+  alertmanager-data:

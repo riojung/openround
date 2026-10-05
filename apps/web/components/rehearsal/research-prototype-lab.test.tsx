@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { QuizDraft } from "@openround/contracts";
-import { buildPrototypeEvidenceExport, evaluateDelayedProbeCandidate } from "@openround/rehearsal";
+import {
+  buildPrototypeEvidenceExport,
+  evaluateDelayedProbeCandidate,
+  QUESTION_HEALTH_RULESET_VERSION,
+} from "@openround/rehearsal";
 import {
   buildResearchPrototypeEvidence,
   createPrototypeTimingState,
@@ -173,14 +177,14 @@ describe("Phase 0 research prototype lab", () => {
 
   it("does not count missing or partial Question Health dispositions as fully reviewed", () => {
     const result = {
-      rulesetVersion: "p0.1.0" as const,
+      rulesetVersion: QUESTION_HEALTH_RULESET_VERSION,
       evaluatedQuestionCount: 1,
       findings: [
         {
           id: "finding-1",
           ruleId: "question.missing_citation" as const,
           ruleVersion: 1 as const,
-          rulesetVersion: "p0.1.0" as const,
+          rulesetVersion: QUESTION_HEALTH_RULESET_VERSION,
           severity: "advisory" as const,
           questionIndex: 0,
           fieldPath: "questions.0.sourceCitations",
@@ -212,7 +216,7 @@ describe("Phase 0 research prototype lab", () => {
       {
         ruleId: "question.missing_citation",
         ruleVersion: 1,
-        rulesetVersion: "p0.1.0",
+        rulesetVersion: QUESTION_HEALTH_RULESET_VERSION,
         usefulness: "useful",
         outcome: "pending",
       },
@@ -225,7 +229,7 @@ describe("Phase 0 research prototype lab", () => {
       {
         ruleId: "question.missing_citation",
         ruleVersion: 1,
-        rulesetVersion: "p0.1.0",
+        rulesetVersion: QUESTION_HEALTH_RULESET_VERSION,
         usefulness: "pending",
         outcome: "pending",
       },
@@ -302,7 +306,7 @@ describe("Phase 0 research prototype lab", () => {
           {
             ruleId: "question.missing_citation",
             ruleVersion: 1,
-            rulesetVersion: "p0.1.0",
+            rulesetVersion: QUESTION_HEALTH_RULESET_VERSION,
             usefulness: "useful",
             outcome: "retained_revision",
           },

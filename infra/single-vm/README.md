@@ -1,13 +1,16 @@
 # Single-VM hosted profile
 
 This profile runs one OpenRound environment on one Linux VM with Docker Compose. The web app,
-API/realtime service, PostgreSQL, Valkey, MinIO, ClamAV, and Caddy remain separate containers, but
-share one host. Only Caddy publishes host ports (`80/tcp`, `443/tcp`, and `443/udp`); database,
-coordination, storage-console, scanning, application, and metrics ports remain private.
+API/realtime service, PostgreSQL, Valkey, MinIO, ClamAV, Caddy, OpenTelemetry Collector,
+Prometheus, and Alertmanager remain separate containers, but share one host. Only Caddy publishes
+public host ports (`80/tcp`, `443/tcp`, and `443/udp`). Observability administration and health
+ports bind to host loopback; database, coordination, storage-console, scanning, application, OTLP,
+and metrics ports remain private.
 
 Use one VM and one Compose project per environment. Do not place development, staging, and
 production data on the same host. The repository's normal `compose.yaml` remains the local
-development profile; hosted environments use `compose.single-vm.yaml`.
+development profile; hosted environments use `compose.single-vm.yaml` together with
+`compose.single-vm.observability.yaml`.
 
 ## Availability boundary
 
@@ -34,7 +37,11 @@ Install a currently supported Docker Engine and Compose plugin. Configure the ho
   workloads under it.
 - Enable security updates, host time synchronization, disk monitoring, and an external uptime
   check.
-- Do not publish Docker daemon, PostgreSQL, Valkey, MinIO, ClamAV, application, or metrics ports.
+- Install a separately managed, least-privilege host log agent that forwards the server's
+  structured stdout to the reviewed backend. The Compose observability overlay intentionally has
+  no Docker socket or broad host/container-log mount.
+- Do not publish Docker daemon, PostgreSQL, Valkey, MinIO, ClamAV, application, OTLP, metrics, or
+  observability administration ports to a non-loopback interface.
 
 Create DNS `A`/`AAAA` records for both `OPENROUND_APP_DOMAIN` and `OPENROUND_MEDIA_DOMAIN` before
 starting Caddy. Both records must resolve to the VM. Caddy obtains and renews certificates
@@ -66,8 +73,9 @@ together, keeping the proxy IP inside the replacement subnet.
 values. The deployment automation injects them from the verified build manifest; do not put them
 in the operator runtime file. The image references must identify the same tested release by digest,
 and the web release must be built with the reviewed API URL equal to the public web origin. The
-infrastructure images are also digest-pinned in `compose.single-vm.yaml`; upgrade them through a
-reviewed source change and record them in the release software bill of materials.
+infrastructure images are also digest-pinned in `compose.single-vm.yaml` and
+`compose.single-vm.observability.yaml`; upgrade them through a reviewed source change and record
+them in the release software bill of materials.
 
 The example defaults to a non-billing Community deployment and keeps professional workspace gates
 off. That is intentional: rollout is workspace allowlisted. An approved alpha or beta can enable
@@ -79,6 +87,35 @@ runbook is approved.
 
 Production sign-in requires a real SMTP provider. Mailpit and debug magic links are not part of
 this profile. Public media uploads always pass through the included ClamAV service.
+
+Hosted deployment requires protected metrics, tracing, and
+`OPENROUND_LOG_SHIPPING_MODE=external-host-agent`. The server sends traces only to
+`http://otel-collector:4318/v1/traces` on the private telemetry network. The collector scrapes
+`http://server:4000/metrics` with `METRICS_TOKEN` and exports both signals to the explicitly
+configured HTTPS OTLP/HTTP backend using `OPENROUND_OTLP_BACKEND_TOKEN`. Set
+`OPENROUND_OTLP_BACKEND_ENDPOINT` to the reviewed OTLP/HTTP base endpoint, without a signal suffix,
+query, fragment, or embedded credential. Select and review the backend's retention, residency,
+ownership, and outage behavior before deploying; the checked-in template intentionally does not
+invent a provider URL. Alertmanager similarly requires reviewed HTTPS page, warning, and ticket
+receiver URLs. OpenRound stamps spans with the deployment environment and immutable build ID.
+The deployment receipt records the log-shipping mode, but only an end-to-end lookup of the
+readiness probe's exact `x-request-id` proves the external agent and log backend path.
+
+The `telemetry` and `monitoring` networks are internal. The collector and Alertmanager each join a
+separate egress network to reach, respectively, the authenticated telemetry backend and the three
+receiver URLs. Prometheus evaluates the checked-in alert rules locally and forwards them to
+Alertmanager over the internal monitoring network. Loopback defaults are collector health on
+`13133`, Prometheus on `9090`, and Alertmanager on `9093`; access them only through an approved SSH
+tunnel or local operator session. Collector health probes the live endpoint using a static helper
+installed by a digest-pinned, networkless init container. Prometheus renders its deployment label
+from the exact reviewed `OPENROUND_DEPLOYMENT_ENVIRONMENT` value.
+
+Workspace allowlists need the real UUID created by the first hosted sign-in. Bootstrap a new
+target with workspace-gated features disabled and empty allowlists, capture and review the
+synthetic workspace UUID, run the staging-capacity provisioner when required, and activate that
+UUID through a second signed build/config deployment. Do not edit the active release `.env` or
+replace its immutable directory in place; the deployment command rejects the currently active
+build ID.
 
 ## Validate, migrate, and start
 
@@ -94,7 +131,10 @@ reviewed Compose project name. For example:
 ```sh
 cd /opt/openround/staging/current
 COMPOSE_PROJECT_NAME=openround-staging docker compose \
-  --env-file .env -f compose.single-vm.yaml config --quiet
+  --env-file .env \
+  -f compose.single-vm.yaml \
+  -f compose.single-vm.observability.yaml \
+  config --quiet
 ```
 
 The same generated release file can run the server's production configuration check without
@@ -102,7 +142,9 @@ starting dependencies:
 
 ```sh
 COMPOSE_PROJECT_NAME=openround-staging docker compose \
-  --env-file .env -f compose.single-vm.yaml \
+  --env-file .env \
+  -f compose.single-vm.yaml \
+  -f compose.single-vm.observability.yaml \
   run --rm --no-deps server node dist/config-check.js
 ```
 
@@ -119,7 +161,10 @@ After deployment, inspect container health without recreating services:
 
 ```sh
 COMPOSE_PROJECT_NAME=openround-staging docker compose \
-  --env-file .env -f compose.single-vm.yaml ps
+  --env-file .env \
+  -f compose.single-vm.yaml \
+  -f compose.single-vm.observability.yaml \
+  ps
 ```
 
 `minio-init` is repeatable and reconciles the private media bucket, bucket-scoped policy, and

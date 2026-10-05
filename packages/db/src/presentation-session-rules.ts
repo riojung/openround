@@ -4,12 +4,17 @@ import type {
   PresentationSessionResponseRecord,
   PresentationSessionTransitionInput,
 } from "./presentation-session-types.js";
+import { upcastPresentationDraft } from "./artifact-schemas.js";
 
 export function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
 export function normalizeSession(input: PresentationSessionCreateInput): PresentationSessionRecord {
+  const content = upcastPresentationDraft(
+    input.content,
+    input.content.schemaVersion,
+  ) as PresentationSessionRecord["content"];
   const settings = input.settings ?? { timeMode: "timed" as const };
   let questionOpenedAt = input.questionOpenedAt ?? null;
   let questionClosesAt = input.questionClosesAt ?? null;
@@ -19,7 +24,7 @@ export function normalizeSession(input: PresentationSessionCreateInput): Present
   if (input.phase === "question_open" && settings.timeMode === "flex") {
     questionClosesAt = null;
   } else if (input.phase === "question_open" && questionClosesAt === null) {
-    const block = input.content.blocks[input.currentBlockIndex];
+    const block = content.blocks[input.currentBlockIndex];
     if (block?.kind === "question" && questionOpenedAt) {
       questionClosesAt = new Date(
         questionOpenedAt.getTime() + block.question.timeLimitSeconds * 1_000,
@@ -28,6 +33,7 @@ export function normalizeSession(input: PresentationSessionCreateInput): Present
   }
   return {
     ...input,
+    content,
     settings,
     trustMode: input.trustMode ?? "learning",
     eventSeq: input.eventSeq ?? 0,
