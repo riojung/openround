@@ -35,12 +35,19 @@ embed, and follow-up routes use their own scoped credentials as documented by th
 
 `FEATURE_UX_BETA`, `FEATURE_RECOVERY_REHEARSAL`, `FEATURE_PRACTICE_ASSIGNMENTS`,
 `FEATURE_WORKSPACE_SHELL`, `FEATURE_BUILDER_V2`, `FEATURE_PRESENTATIONS`,
-`FEATURE_PRESENTATION_REALTIME`, `FEATURE_GROUPS`, and `FEATURE_DISCOVER` default off. These
-professional-workspace switches are independent rollback ceilings. Disabling Presentations blocks
+`FEATURE_PRESENTATION_REALTIME`, `FEATURE_LIVE_FLEX_MODE`, `FEATURE_QUESTION_HEALTH`,
+`FEATURE_DECISION_REPLAY`, `FEATURE_GROUPS`, and `FEATURE_DISCOVER` default off. These
+opt-in switches are independent rollback ceilings. Disabling Presentations blocks
 new Presentation authoring; disabling Presentation realtime, or removing its workspace allowlist,
 blocks new live-session creation. Existing live sessions, scoped credentials, reports, joins,
 commands, responses, and recovery reads remain registered and usable so a rollback cannot strand
 an active room or make its evidence unreadable. Disabling Groups removes its collaboration routes.
+`FEATURE_PRESENTATION_REALTIME`, `FEATURE_LIVE_FLEX_MODE`, `FEATURE_QUESTION_HEALTH`, and
+`FEATURE_DECISION_REPLAY` require explicit `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST` membership.
+Disabling `FEATURE_LIVE_FLEX_MODE` prevents new flex Rounds or Presentations, but never disables
+control, joining, answering, or reporting for an existing flex room. Decision replay eligibility
+is resolved by the server and frozen on each new Round session; disabling its creation gate preserves captured evidence and existing reports.
+Question Health has separate rollback behavior described below.
 The authenticated
 `productFeatures` view requires explicit membership in `UX_BETA_WORKSPACE_ALLOWLIST`; an empty
 allowlist fails closed and enables no workspace. Presentation authoring, new Presentation-session
@@ -101,6 +108,11 @@ read-only content/report access. Account export excludes bearer-token hashes and
 collaboration, Pulse, chat, moderation, Q&A, recovery, follow-up, and authoring records owned by
 the workspace.
 
+Account deletion durably marks every owned workspace as deleting before its media object sweep.
+That fence rejects new media records and invalidates in-flight finalization commits before account
+metadata is cascaded. Any token-scoped object copied by an interrupted finalizer remains tagged
+temporary and is removed by the bucket lifecycle even if the account row no longer exists.
+
 ## Institution identity and LTI APIs
 
 These routes are disabled by default and require an operator-granted workspace policy. Enabling a
@@ -127,10 +139,9 @@ type, signed target, role, and registration. Deep Linking supports a single publ
 `ltiResourceLink` and returns the same signed result on retry. Instructor launches are supported;
 learner launches, NRPS, and AGS are deliberately rejected in this release.
 
-## Checkpoint-set and portability APIs
+## Round and portability APIs
 
-Legacy `/v1/quizzes` naming is intentionally stable through v1 even though the UI says
-**checkpoint set**.
+Legacy `/v1/quizzes` naming is intentionally stable through v1 even though the UI says **Round**.
 
 - `GET /v1/starters` — six immutable, versioned first-party starter summaries.
 - `POST /v1/starters/{id}/use` — owner/editor creation of a normal draft with fresh Round,
@@ -168,6 +179,107 @@ profile supports single select, true/false, multiple select, and numeric respons
 types and omitted media are explicit warnings/errors. CSV output escapes spreadsheet formula
 prefixes.
 
+## Question Health APIs
+
+Question Health evaluates saved Round content with deterministic, versioned rules. Findings have
+`severity: "advisory"` and do not block publication. Reads are creator-authenticated and
+workspace-scoped; mutations require an owner/editor. Responses use `Cache-Control: private,
+no-store` and `Pragma: no-cache`.
+
+- `GET /v1/quizzes/{id}/question-health` — saved-draft findings, `draftRevision`,
+  `rulesetVersion`, matching dismissals, and explicit `findingsTruncated`; returns a draft ETag.
+  Evaluation is bounded to 200 questions and 1,000 findings.
+- `GET /v1/quizzes/{id}/versions/{versionId}/question-health` — findings for the exact immutable
+  published version, with version identity/hash and `source: "published"`. Draft dismissals do not
+  apply, and the version must belong to the Round in the URL.
+- `GET /v1/quizzes/{id}/versions/{versionId}/question-health/observations` — aggregate post-use
+  evidence for that exact published version.
+- `PUT /v1/quizzes/{id}/question-health/dismissals/{findingId}` — record a dismissal with
+  `{ ruleVersion, rulesetVersion, contentHash, draftRevision, reason }`. Reasons are
+  `false_positive`, `intentional_choice`, or `will_address_later`.
+- `DELETE /v1/quizzes/{id}/question-health/dismissals/{findingId}` — reopen the finding using the
+  same identity and revision fields, without `reason`.
+- `POST /v1/quizzes/{id}/question-health/findings/{findingId}/preview` — submit the finding
+  identity, `draftRevision`, and `action`; return one or two before/after field changes without
+  saving them.
+- `POST /v1/quizzes/{id}/question-health/findings/{findingId}/apply` — the preview body plus a
+  UUID `mutationId`; atomically save a new draft revision, history, mutation receipt, application
+  provenance, and audit event. Returns the authoritative `quiz`, `applicationId`,
+  `appliedRevision`, and changes.
+- `POST /v1/quizzes/{id}/question-health/applications/{applicationId}/undo` —
+  `{ expectedRevision, mutationId }`; restore the source draft as a new revision only while the
+  application's applied revision is still current. A later edit prevents undo with a conflict.
+
+A finding identity includes its rule/ruleset versions and content hash. Dismissals appear only
+while that identity still matches the saved content. Preview/apply reevaluate the saved finding,
+require the acknowledged revision, and require the proposed edit to resolve its original rule.
+Allowed actions are `align_opinion_settings`, `set_explanation`, `set_choice_feedback`,
+`set_choice_label`, `set_prompt`, and `set_recheck_prompt`; published versions and question/choice
+IDs remain unchanged. Stale identity/revision or reused mutation IDs with different input return
+`409`; unsupported or unresolved edits return `422`. Identical apply/undo retries return current
+Round state, even after a newer edit, rather than presenting an old receipt snapshot as current.
+
+New evaluation, dismissal, preview, and apply actions require the Question Health flag and
+allowlist. After rollback, matching stored draft dismissals can still be read and reopened, and
+accepted application retries and undo remain available. Published evaluation and observation
+reads require current eligibility.
+
+Post-use observations select at most 250 recent ready reports from retained sessions for the exact
+version and expose `history.hasMoreReports`. They consider scorable main questions only and keep
+learning/verified, timed/flex, and accuracy/speed cohorts separate. Each included question/session
+sample needs at least 20 responses. Instability requires at least three compatible sessions and a
+range of at least 30 percentage points; an unused incorrect choice requires complete choice
+coverage across the selected eligible samples. Output contains aggregate counts and descriptive
+advisories, without learner rows, aliases, or raw answers. It does not establish causation or
+learning efficacy.
+
+## Presentation authoring and Library APIs
+
+- `GET|POST /v1/presentations`; `GET` accepts `archived=true|false`.
+- `GET /v1/presentations/{id}` — saved draft and version metadata, with a draft ETag.
+- `PUT /v1/presentations/{id}/draft` — fenced, idempotent save with
+  `{ draft, expectedRevision, mutationId, schemaVersion: 2 }`.
+- `POST /v1/presentations/{id}/publish` — publish the exact `expectedDraftRevision`.
+- `GET /v1/presentations/{id}/history`;
+  `POST /v1/presentations/{id}/history/{revision}/restore`
+- `POST /v1/presentations/{id}/blocks/import` — copy 1–50 selected `questionIds` from an exact
+  `sourceQuizVersionId`, using `expectedRevision`, `mutationId`, and optional `afterBlockId`.
+  Selecting either side of a linked Recovery pair copies the pair in source order, with fresh
+  block/question/choice IDs, remapped links, and source provenance. Copies are independent.
+- `PATCH /v1/presentations/{id}/organization`; `POST /v1/presentations/{id}/archive`
+- `GET /v1/library/favorites` — the current workspace member's private favorites.
+- `PUT /v1/library/favorites/{artifactType}/{artifactId}` with `{ favorite: boolean }`, where
+  `artifactType` is `round` or `presentation`. Adding a favorite requires an existing item in the
+  same workspace; favorites never grant content access.
+- `DELETE /v1/quizzes/{id}`; `DELETE /v1/presentations/{id}` — owner-only permanent deletion of
+  archived Library content under its workspace and Presentation gates. Success returns `204`;
+  missing/foreign items return `404`; unarchived items return `409 ARTIFACT_NOT_ARCHIVED`.
+  Any retained session or practice assignment prevents deletion with `409 ARTIFACT_IN_USE`,
+  including finished/expired sessions and closed assignments. Delete associated sessions first;
+  content needed by an assignment must remain archived until that dependency is removed.
+
+Presentation authoring and organization mutations require an owner/editor and the applicable
+authoring/workspace gates. Permanent deletion requires an owner. Existing list/detail reads remain available after authoring rollback and return private, no-store
+responses. Permanent deletion atomically removes drafts, immutable versions, history, mutation
+receipts, Question Health records where applicable, every member's favorites, group links/schedule
+entries, and content media references. It preserves unrelated content and media assets; removing a
+reference does not itself delete its stored image. Successful deletions are audited.
+
+Presentation content schema v2 stores `textElements` with stable string IDs, a `title` or `body`
+role, one of nine `top|middle|bottom` × `left|center|right` regions (such as `top_left`), and
+integer `order` 0–7. IDs are nonempty strings of at most 200 characters. A slide has **one to eight text elements total, including exactly one title**. IDs and
+`(region, order)` pairs must be unique within the slide. Title text is at most 160 characters and
+body text at most 4,000. Layout is `title`, `title_body`, `media`, `quote`, `section`, or `callout`.
+Optional `frame: { x, y, width, height }` values are finite canvas percentages: coordinates 0–100, width 12–100, height 6–100, and the rectangle must fit inside the
+canvas. Arbitrary CSS is not accepted. Drafts may keep empty text or incomplete image descriptions;
+publishing requires slide text or an image, and nonblank `mediaAlt` for an image. A Presentation
+contains at most 200 blocks and publication requires a valid interactive main question.
+
+Read upcasters project legacy content-slide `title`/`body` fields into v2 text elements with
+stable IDs; they do not rewrite immutable published rows. Unsupported future schema versions fail
+closed. Public live content projections include layout, text elements, media ID, and image alt,
+while excluding speaker notes, citations, and source disclosure.
+
 ## Source-grounded authoring APIs
 
 - `GET /v1/authoring/status` — configured state and current monthly usage.
@@ -196,11 +308,18 @@ selection, and source-created artifacts remain unpublished drafts.
 - `POST /v1/media` — constrained signed quarantine upload.
 - `POST /v1/media/{id}/complete` — verify metadata/bytes/signature, scan, and promote clean data.
 - `GET /v1/media/{id}` — creator-scoped signed clean-object URL.
+- `DELETE /v1/media/{id}` — owner/editor logical deletion for unreferenced workspace media.
 - `GET /v1/sessions/{sessionId}/media/{mediaId}` — authorized frozen-session media.
 - `GET /v1/followups/{id}/media/{mediaId}` — current follow-up checkpoint media.
 
-Pending or rejected media is never returned by a read endpoint and is eligible for scheduled
-cleanup.
+Pending, rejected, or deleting media is never returned by a read endpoint. DELETE rejects media
+that still has a durable content reference, immediately blocks completion/download/reference
+creation, and retains an internal tombstone beyond the ten-minute presigned-upload lifetime.
+Retention performs a second object sweep before removing that metadata; a successful DELETE means
+the public metadata is unavailable, not that the internal tombstone has already been purged.
+Abandoned quarantine uploads and temporary finalization candidates also have bucket lifecycle
+expiry. This deferred physical cleanup prevents a late PUT or stale finalizer from recreating a
+permanent untracked object.
 
 ## Live session, staff, presenter, and embed APIs
 
@@ -213,10 +332,52 @@ cleanup.
 - `POST /v1/sessions/{id}/commands`
 - `POST /v1/sessions/{id}/answers`
 - `POST /v1/sessions/{id}/control-pass` — owner/editor secure resume for an active room.
-- `DELETE /v1/sessions/{id}`
+- `DELETE /v1/sessions/{id}` — owner-only deletion of a Round session, its answers, report,
+  and linked follow-ups.
+- `DELETE /v1/presentation-sessions/{id}` — owner-only deletion of a finished or expired
+  Presentation session and its responses, report, credentials, and room-code claim.
+  Returns `204`, tenant-scoped `404`, or `409 CONFLICT` for an active, unexpired room.
+  Eligibility uses durable status/`liveExpiresAt`, checked atomically with deletion.
 - Session staff credential creation/list/revocation routes under `/v1/sessions/{id}/staff`
 - Presenter/embed policy issuance under the session routes
 - `GET /v1/embed/policies/{sessionId}/{policyKey}`
+
+Presentation REST endpoints additionally include:
+
+- `GET|POST /v1/presentation-sessions` — creation accepts `presentationId` and optional
+  `timeMode`; the private list returns `{ sessions }` with an additive `liveExpiresAt` field,
+  including retained expired rooms.
+- `GET /v1/presentation-sessions/{id}` — creator host snapshot.
+- `POST /v1/presentation-sessions/{id}/advance` with `expectedRevision`.
+- `POST /v1/presentation-sessions/{id}/control-pass`;
+  `DELETE /v1/presentation-sessions/{id}/control-passes/{credentialId}`
+- `POST /v1/presentation-sessions/join`;
+  `GET /v1/presentation-sessions/{id}/participant`
+- `POST /v1/presentation-sessions/{id}/responses` — scoped participant credential,
+  idempotency key, and validated response payload; acknowledge only after durable commit.
+- `GET /v1/presentation-sessions/{id}/host-media/{mediaId}`;
+  `GET /v1/presentation-sessions/{id}/media/{mediaId}` — role-scoped frozen media access.
+- `GET /v1/presentation-sessions/{id}/report` — private creator response; `202` while pending
+  without a report, otherwise `200`. The default strict envelope and stored Presentation Report V1
+  remain compatible.
+
+New Presentation rooms require their workspace and realtime creation eligibility. Creator control
+requires an owner/editor; guest routes use session-scoped credentials. Deleting a room disconnects
+its sockets through the shared adapter and removes credentials, pending broadcasts, and durable
+report work. In-flight projections and report completions recheck durable existence so deletion
+cannot recreate the room or its report.
+
+Live Round creation accepts `settings.timeMode: "timed" | "flex"`; omission preserves the
+existing timed behavior. Flex is frozen at creation: an open question has no deadline, the host
+closes it, and speed scoring is replaced by accuracy scoring. This applies to the whole room,
+including linked rechecks and revotes; there is no per-question timed/flex override. Timed and flex
+Round snapshots and ready reports expose their effective `timeMode`. Live Presentation creation likewise accepts a
+top-level `timeMode` and defaults to timed. Its flex questions have no `questionClosesAt` and
+remain open until the host reveals/closes them. Both creation paths require the deployment flag
+and workspace allowlist for flex; existing rooms remain usable if eligibility changes later. The
+stored Presentation V1 report and default report response remain unchanged for strict legacy
+readers; `GET /v1/presentation-sessions/{id}/report?includeSessionContext=true` adds
+`sessionContext.timeMode` to an opt-in response.
 
 `POST /v1/sessions/join` accepts an optional `JoinRequest.avatarId` from the fixed, content-free
 allowlist `comet`, `fox`, `owl`, `otter`, `panda`, `robot`, `rocket`, and `star`. Omitting it keeps
@@ -272,7 +433,7 @@ and the workspace's allowlist of at most ten HTTPS origins.
 Interaction synchronization includes `capabilities.audiencePulse` and `capabilities.roomChat` so
 clients can disable unavailable controls instead of treating a rollout gate as a session setting.
 
-Checkpoint drafts and OpenRound JSON v2 carry `category` and `{ id, version }` experience preset
+Round drafts and OpenRound JSON v2 carry `category` and `{ id, version }` experience preset
 metadata. JSON v1 remains importable and defaults to General/Focus with a visible validation
 warning. `POST /v1/sessions` may carry a one-session preset override and presenter-sound choice;
 its returned snapshot contains the frozen validated theme.
@@ -336,9 +497,19 @@ moderation, kick/ban, retention, export, and deletion are enforced server-side.
 Finished rounds create pending versioned reports. Until the worker completes, export returns a
 conflict with an actionable “still being generated” message. Report v3 derives from durable rows,
 not cached historical state, and adds the frozen experience plus aggregate Pulse, chat, reaction,
-report, and moderation evidence. Report v1/v2 remain renderable. The standard report omits raw
-chat and participant-level signals; the transcript requires report access, CSV follows the export
+report, and moderation evidence. Sessions created with decision replay enabled produce Report v4,
+which extends v3 with `decisionTimeline`, `decisionReplayAvailable`, and `decisionReplayComplete`.
+Report v1–v3 remain renderable; sessions without capture retain v3 output. The standard report omits
+raw chat and participant-level signals; the transcript requires report access, CSV follows the export
 entitlement, and revealing removed bodies additionally requires owner/editor audit access.
+
+Decision capture is server-resolved at Round creation and never backfilled into older sessions.
+The durable timeline records accepted insight/reveal, intervention, recheck/revote, question-advance,
+and finish decisions with server timestamps and sequence numbers, without prompt text, raw answer
+bodies, or aliases. It is bounded to 5,000 events plus an optional `capture_truncated` marker.
+Availability/completeness flags distinguish missing or truncated evidence from a complete trail.
+Existing report/detail/JSON/CSV routes serve the versioned report; there is no separate replay API.
+This facilitator decision trail is separate from realtime reconnect replay.
 
 Practice start accepts a generic, personal, or accommodation bearer and returns the credential to
 use for that attempt. Generic access receives a separate client- or server-generated resume
@@ -354,7 +525,7 @@ rows, cap at 50, and order by `(createdAt DESC, id DESC)`. Cursors are opaque ba
 malformed cursors return a validation error. These endpoints expose summaries only—never answer
 bodies, aliases, chat content, or state snapshots. Report detail keeps the versioned `report` and
 adds Round/session context (`quizId`, `quizTitle`, `sessionCreatedAt`, `sessionUpdatedAt`) when
-available. Recovery-follow-up creation accepts ready Report V2 and Report V3 evidence. Standalone
+available. Recovery-follow-up creation accepts ready Report V2, V3, and V4 evidence. Standalone
 assignment creation and personal-link issuance require the independent practice-assignment beta
 feature plus the workspace beta allowlist; existing practice remains manageable and answerable if
 that creation switch is later disabled.
@@ -371,7 +542,7 @@ idempotently before changing entitlements. Billing remains disabled in community
 
 ## Realtime interface
 
-Every server message carries `eventId`, `sessionId`, `sessionVersion`, `seq`, `type`,
+Round game messages carry `eventId`, `sessionId`, `sessionVersion`, `seq`, `type`,
 `schemaVersion`, `serverTime`, and a validated role-filtered `payload`.
 
 Required client messages are:
@@ -417,11 +588,28 @@ signal where applicable, and moderation state. Clients deduplicate at-least-once
 `eventId`. Existing direct `qna.*` notifications remain available for compatibility while the same
 committed Q&A changes also advance the audience cursor through `audience.event`.
 
+### Presentation realtime
+
+Presentation uses its own strict protocol. Clients send `presentation.join`,
+`presentation.sync.request`, `presentation.command`, and `presentation.response.submit`.
+Server events are `presentation.session.updated` and `presentation.room-status.updated`; envelopes
+carry `{ eventId, sessionId, revision, seq, type, serverTime, payload }`. They do not use the Round
+`sessionVersion`/`schemaVersion` envelope fields.
+
+Sync requests contain `sessionId`, `afterSeq`, and a `projection` of `host`, `participant`, or
+`companion`, with the matching `controlToken`, `participantToken`, or `companionToken`. The response
+contains `{ resetRequired, events, snapshot }`, with at most 1,000 role-filtered replay events and
+an authoritative role snapshot. Honor the revision and stream sequence independently; use the
+snapshot when a reset is required. An advance command includes `commandId`, `expectedRevision`,
+and `action: "advance"`; response submission uses an idempotency key. Credential scope and phase
+projection prevent participants/companions from receiving unrevealed answers or authoring notes.
+
 ## Stable errors
 
 Core stable errors include `INVALID_CODE`, `SESSION_FULL`, `SESSION_LOCKED`,
 `NICKNAME_REJECTED`, `STALE_VERSION`, `ANSWER_LATE`, `ANSWER_INVALID`, `ENTITLEMENT_LIMIT`,
-`UNAUTHORIZED`, and `RATE_LIMITED`, plus the Q&A, follow-up, portability, and authoring errors
+`UNAUTHORIZED`, and `RATE_LIMITED`, plus `ARTIFACT_NOT_ARCHIVED`, `ARTIFACT_IN_USE`,
+revision/mutation `CONFLICT`, and the Q&A, follow-up, portability, and authoring errors
 described above.
 
 Experience/audience errors add `THEME_NOT_FOUND`, `THEME_VERSION_UNSUPPORTED`,

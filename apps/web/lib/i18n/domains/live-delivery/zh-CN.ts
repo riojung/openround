@@ -261,6 +261,10 @@ const messages = {
   "live.common.connected": "已连接",
   "live.common.connecting": "正在连接...",
   "live.common.dashboard": "电线板",
+  "live.common.flexMode": "灵活 — 引导者结束作答",
+  "live.common.flexOpen": "无倒计时。引导者会结束作答。",
+  "live.common.flexSetupHelp":
+    "灵活模式没有作答截止时间，也不按速度计分。引导者会结束每道题的作答。",
   "live.common.joinedCount": "{count} 人已加入",
   "live.common.leaderboard": "领导板",
   "live.common.notScored": "没有得分",
@@ -269,6 +273,8 @@ const messages = {
   "live.common.responses": "回应",
   "live.common.saving": "正在保存...",
   "live.common.sessions": "会议",
+  "live.common.timeMode": "作答计时",
+  "live.common.timedMode": "限时 — 每题截止时间",
   "live.common.updating": "更新...",
   "live.presentationHost.backEditor": "返回编辑器",
   "live.presentationHost.description":

@@ -10,11 +10,14 @@ describe("evidence-gated workspace rollout", () => {
       NODE_ENV: "test",
       ALLOW_IN_MEMORY: "true",
       FEATURE_QUESTION_HEALTH: "true",
+      FEATURE_LIVE_FLEX_MODE: "true",
       EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: workspaceId,
     });
 
     expect(evidenceWorkspaceFeatureEnabled(config, workspaceId, "questionHealth")).toBe(true);
+    expect(evidenceWorkspaceFeatureEnabled(config, workspaceId, "liveFlexMode")).toBe(true);
     expect(evidenceWorkspaceFeatureEnabled(config, randomUUID(), "questionHealth")).toBe(false);
+    expect(evidenceWorkspaceFeatureEnabled(config, randomUUID(), "liveFlexMode")).toBe(false);
     expect(evidenceWorkspaceFeatureEnabled(config, workspaceId, "recoveryPacks")).toBe(false);
   });
 
@@ -23,6 +26,7 @@ describe("evidence-gated workspace rollout", () => {
       NODE_ENV: "test",
       ALLOW_IN_MEMORY: "true",
       FEATURE_PRESENTATION_REALTIME: "true",
+      FEATURE_LIVE_FLEX_MODE: "true",
       FEATURE_DECISION_REPLAY: "true",
     });
 
@@ -30,5 +34,6 @@ describe("evidence-gated workspace rollout", () => {
       false,
     );
     expect(evidenceWorkspaceFeatureEnabled(config, randomUUID(), "decisionReplay")).toBe(false);
+    expect(evidenceWorkspaceFeatureEnabled(config, randomUUID(), "liveFlexMode")).toBe(false);
   });
 });

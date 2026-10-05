@@ -5,6 +5,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { io, type Socket } from "socket.io-client";
+import {
+  evaluateTargetLoadThresholds,
+  targetLoadSchemaVersion,
+  targetLoadThresholds,
+  validateTargetLoadArtifact,
+} from "../../scripts/ops/target-load-evidence.mjs";
 import { optionalImmutableBuildId } from "../support/readiness-contract.js";
 import { waitForReadyReport } from "../support/report-readiness.js";
 
@@ -21,7 +27,13 @@ const suppliedCreatorCookie = process.env.LOAD_CREATOR_COOKIE?.trim() ?? "";
 const expectedBuildId = optionalImmutableBuildId(process.env, "LOAD_EXPECTED_BUILD_ID");
 const keepData = process.env.LOAD_KEEP_DATA === "true";
 const runId = process.env.LOAD_RUN_ID?.trim() || randomUUID();
+const runnerRegion = process.env.LOAD_RUNNER_REGION?.trim() || "local-compose";
 const outputPath = process.env.LOAD_OUTPUT?.trim();
+const workflowRunId = process.env.GITHUB_RUN_ID?.trim() || null;
+const workflowRunAttempt = process.env.GITHUB_RUN_ATTEMPT
+  ? Number(process.env.GITHUB_RUN_ATTEMPT)
+  : null;
+const executionStartedAt = new Date().toISOString();
 const runFile = promisify(execFile);
 
 if (!Number.isInteger(clientCount) || clientCount < 1 || clientCount > 250) {
@@ -51,6 +63,13 @@ if (restartServer && suppliedCreatorCookie) {
 }
 if (suppliedCreatorCookie && !expectedBuildId) {
   throw new Error("LOAD_EXPECTED_BUILD_ID is required with a supplied staging creator cookie");
+}
+if (
+  (workflowRunId === null) !== (workflowRunAttempt === null) ||
+  (workflowRunAttempt !== null &&
+    (!Number.isSafeInteger(workflowRunAttempt) || workflowRunAttempt < 1))
+) {
+  throw new Error("GITHUB_RUN_ID and a positive GITHUB_RUN_ATTEMPT must be provided together");
 }
 
 interface Ack<T> {
@@ -319,13 +338,14 @@ async function main() {
   }
 
   let questionCommandStartedAt = 0;
+  let receiptTimeoutCount = 0;
   const broadcastSamples = participants.map(
     ({ socket }) =>
       new Promise<number>((resolve, reject) => {
-        const timeout = setTimeout(
-          () => reject(new Error("question.open broadcast timed out")),
-          15_000,
-        );
+        const timeout = setTimeout(() => {
+          receiptTimeoutCount += 1;
+          reject(new Error("question.open broadcast timed out"));
+        }, 15_000);
         socket.once(
           "question.open",
           (envelope: { payload?: { snapshot?: Snapshot } }, acknowledge?: () => void) => {
@@ -511,19 +531,49 @@ async function main() {
   assert.equal(report.metrics.accuracyPercent, 100);
 
   const results = {
+    schemaVersion: targetLoadSchemaVersion,
     runId,
+    artifactType: "round" as const,
+    profile: clientCount,
     target: new URL(baseUrl).origin,
-    deployment: {
-      buildId: deployment.buildId,
+    runnerRegion,
+    workflow: { runId: workflowRunId, runAttempt: workflowRunAttempt },
+    startedAt: executionStartedAt,
+    finishedAt: new Date().toISOString(),
+    build: {
       expectedBuildId,
+      observedBuildId: deployment.buildId,
+      matched: expectedBuildId !== null && deployment.buildId === expectedBuildId,
     },
-    clients: clientCount,
+    counts: {
+      requestedParticipants: clientCount,
+      joinedParticipants: participants.length,
+      acceptedResponses: answerMs.length,
+      expectedResponses: clientCount,
+      reportParticipants: report.metrics.participantCount,
+      reportResponses: report.metrics.answerCount,
+    },
     correctness: {
-      acceptedAnswers: report.metrics.answerCount,
-      duplicateScoreEffects: 0,
-      answerKeyLeak: false,
-      reconnectReplayComplete: synchronized.replayComplete,
+      lostAcceptedResponses: answerMs.length - report.metrics.answerCount,
+      duplicateAcceptedResponses: 0,
+      leakageDetected: false,
+      reportReconciled: report.metrics.answerCount === answerMs.length,
+    },
+    receipts: {
+      expected: clientCount,
+      received: broadcastMs.length,
+      timeoutCount: receiptTimeoutCount,
+      timeoutRate: receiptTimeoutCount / clientCount,
+    },
+    recovery: {
+      reconnectCompleted: synchronized.replayComplete,
+      reconnectMs,
       processRestart: restartServer ? "recovered" : "not_run",
+      coordinationReset: "not_run" as const,
+    },
+    report: {
+      reconciled: report.metrics.answerCount === answerMs.length,
+      availableMs: reportMs,
     },
     latencyMs: {
       join: {
@@ -536,6 +586,20 @@ async function main() {
           0.95,
         ),
       },
+      answerAcknowledgement: {
+        p50: percentile(answerMs, 0.5),
+        p95: percentile(answerMs, 0.95),
+        p99: percentile(answerMs, 0.99),
+      },
+      clientReceipt: {
+        p50: percentile(broadcastMs, 0.5),
+        p95: percentile(broadcastMs, 0.95),
+        max: Math.max(...broadcastMs),
+      },
+    },
+    thresholds: { ...targetLoadThresholds },
+    thresholdsPassed: false,
+    diagnostics: {
       socketConnection: {
         p50: percentile(
           participants.map(({ connectMs }) => connectMs),
@@ -556,20 +620,14 @@ async function main() {
           0.95,
         ),
       },
-      answerAcknowledgement: {
-        p50: percentile(answerMs, 0.5),
-        p95: percentile(answerMs, 0.95),
-        p99: percentile(answerMs, 0.99),
-      },
-      questionBroadcast: {
-        p95: percentile(broadcastMs, 0.95),
-        max: Math.max(...broadcastMs),
-      },
-      reconnectSnapshot: reconnectMs,
-      restartRecovery: restartRecoveryMs,
-      reportAvailable: reportMs,
+      restartRecoveryMs,
     },
   };
+  results.thresholdsPassed = evaluateTargetLoadThresholds(results);
+  validateTargetLoadArtifact(results, {
+    artifactType: "round",
+    profile: clientCount,
+  });
 
   const serializedResults = `${JSON.stringify(results, null, 2)}\n`;
   if (outputPath) {
@@ -577,32 +635,12 @@ async function main() {
     await writeFile(outputPath, serializedResults, { encoding: "utf8", mode: 0o600 });
   }
   process.stdout.write(serializedResults);
-
   if (assertPerformance) {
-    assert.ok(
-      results.latencyMs.join.p95 < 500,
-      `Join p95 ${results.latencyMs.join.p95.toFixed(1)} ms exceeded 500 ms`,
-    );
-    assert.ok(
-      results.latencyMs.answerAcknowledgement.p95 < 250,
-      `Answer acknowledgement p95 ${results.latencyMs.answerAcknowledgement.p95.toFixed(1)} ms exceeded 250 ms`,
-    );
-    assert.ok(
-      results.latencyMs.answerAcknowledgement.p99 < 600,
-      `Answer acknowledgement p99 ${results.latencyMs.answerAcknowledgement.p99.toFixed(1)} ms exceeded 600 ms`,
-    );
-    assert.ok(
-      results.latencyMs.questionBroadcast.p95 < 500,
-      `Question broadcast p95 ${results.latencyMs.questionBroadcast.p95.toFixed(1)} ms exceeded 500 ms`,
-    );
-    assert.ok(
-      results.latencyMs.reconnectSnapshot < 2_000,
-      `Reconnect ${results.latencyMs.reconnectSnapshot.toFixed(1)} ms exceeded two seconds`,
-    );
-    assert.ok(
-      results.latencyMs.reportAvailable < 60_000,
-      `Report availability ${results.latencyMs.reportAvailable.toFixed(1)} ms exceeded 60 seconds`,
-    );
+    validateTargetLoadArtifact(results, {
+      artifactType: "round",
+      profile: clientCount,
+      enforceThresholds: true,
+    });
   }
 }
 

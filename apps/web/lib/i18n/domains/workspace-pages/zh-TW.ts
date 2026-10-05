@@ -272,6 +272,7 @@ const messages = {
   "pages.home.sessions.empty": "尚未主持會議。",
   "pages.home.sessions.eyebrow": "出貨",
   "pages.library.action.archive": "存檔",
+  "pages.library.action.delete": "已刪除",
   "pages.library.action.duplicate": "重複",
   "pages.library.action.restore": "恢復",
   "pages.library.actionComplete": "{count} {type} {action}。",
@@ -285,6 +286,12 @@ const messages = {
   "pages.library.clear": "清除",
   "pages.library.createPresentation": "建立簡報",
   "pages.library.createRound": "創建回合",
+  "pages.library.delete": "永久刪除",
+  "pages.library.deleteConfirm":
+    "要永久刪除「{title}」及其所有草稿和已發布版本嗎？此操作無法復原。",
+  "pages.library.deleteCount": "刪除 ({count})",
+  "pages.library.deleteManyConfirm":
+    "要永久刪除所選的 {count} 個已封存項目及其所有草稿和已發布版本嗎？此操作無法復原。",
   "pages.library.deselectResults": "取消選擇結果",
   "pages.library.destinationFolder": "目標資料夾",
   "pages.library.duplicate": "重複",
@@ -394,6 +401,10 @@ const messages = {
   "pages.sessions.artifactType": "神器類型",
   "pages.sessions.blockProgress": "阻止進度",
   "pages.sessions.currentResponses": "目前的回應",
+  "pages.sessions.delete": "刪除工作階段",
+  "pages.sessions.deleteConfirm":
+    "要永久刪除工作階段「{title}」及其回答、報告和相關的後續練習嗎？此操作無法復原。",
+  "pages.sessions.deleting": "正在刪除…",
   "pages.sessions.emptyDescription": "主持已发布的回合或演示，其现场会议将出现在此处。",
   "pages.sessions.emptyFiltered": "此工作区中没有 {status} 会话。",
   "pages.sessions.emptyTitle": "這裡還沒有會議",

@@ -8,10 +8,69 @@ import {
   type PresentationSessionRepository,
   type PresentationSessionResponseRecord,
 } from "../src/index.js";
+import { mapSession } from "../src/presentation-session-postgres-support.js";
 import {
   expectPresentationSessionRepositoryConformance,
   presentationSessionConformanceContent,
 } from "./support/presentation-session-conformance.js";
+
+describe("legacy Presentation session snapshots", () => {
+  it("upcasts v1 slide text before returning a stored live session", () => {
+    const now = new Date("2026-09-20T12:00:00.000Z");
+    const legacySlideId = randomUUID();
+    const baseContent = presentationSessionConformanceContent();
+    const legacyContent = {
+      ...baseContent,
+      schemaVersion: 1,
+      blocks: [
+        {
+          id: legacySlideId,
+          kind: "content",
+          layout: "title_body",
+          title: "Legacy session title",
+          body: "Legacy session body",
+          mediaId: null,
+          mediaAlt: null,
+          speakerNotes: "Private facilitator note",
+        },
+        ...baseContent.blocks,
+      ],
+    };
+    const session = mapSession({
+      id: randomUUID(),
+      workspace_id: randomUUID(),
+      presentation_id: randomUUID(),
+      presentation_version_id: randomUUID(),
+      title: "Legacy session",
+      content_snapshot: legacyContent,
+      join_code: "1234567",
+      status: "active",
+      phase: "content",
+      current_block_index: 0,
+      revision: 1,
+      settings: { timeMode: "timed" },
+      trust_mode: "learning",
+      event_seq: 1,
+      question_opened_at: null,
+      question_closes_at: null,
+      created_by: randomUUID(),
+      created_at: now,
+      updated_at: now,
+      finished_at: null,
+      live_expires_at: new Date(now.getTime() + 60_000),
+      retention_expires_at: new Date(now.getTime() + 86_400_000),
+    } as never);
+
+    expect(session.content.schemaVersion).toBe(2);
+    expect(session.content.blocks[0]).toMatchObject({
+      id: legacySlideId,
+      textElements: [
+        { id: `${legacySlideId}:title`, role: "title", text: "Legacy session title" },
+        { id: `${legacySlideId}:body`, role: "body", text: "Legacy session body" },
+      ],
+    });
+  });
+});
 
 function fixture() {
   const workspaceId = randomUUID();
@@ -25,7 +84,7 @@ function fixture() {
     title: "Atomic response check",
     description: "",
     experiencePreset: { id: "focus", version: 1 },
-    schemaVersion: 1,
+    schemaVersion: 2,
     blocks: [
       {
         id: blockId,
@@ -94,13 +153,17 @@ async function addFixtureParticipant(
 describe("presentation response acceptance", () => {
   it("keeps the memory repository on the shared Presentation conformance contract", async () => {
     const memory = new MemoryRepository();
+    const workspaceId = randomUUID();
     await expectPresentationSessionRepositoryConformance({
       repository: new MemoryPresentationSessionRepository(memory),
-      workspaceId: randomUUID(),
+      workspaceId,
       presentationId: randomUUID(),
       presentationVersionId: randomUUID(),
       createdBy: randomUUID(),
       content: presentationSessionConformanceContent(),
+      beginWorkspaceDeletion: async () => {
+        await memory.claimWorkspaceMediaDeletion(workspaceId);
+      },
     });
   });
 

@@ -6,9 +6,10 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  security-events: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   preflight:
@@ -18,6 +19,7 @@ jobs:
     runs-on: ubuntu-26.04
     outputs:
       candidate_commit: ${{ steps.candidate.outputs.commit }}
+      evidence_candidate_commit: ${{ steps.candidate.outputs.evidence_commit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -38,12 +40,36 @@ jobs:
         id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_PUSH_ACTOR_ID: ${{ github.event.sender.id }}
+          TAG_PUSH_CREATED: ${{ github.event.created }}
+          TAG_PUSH_DELETED: ${{ github.event.deleted }}
+          TAG_PUSH_FORCED: ${{ github.event.forced }}
+          TAG_PUSH_BEFORE: ${{ github.event.before }}
+          TAG_PUSH_AFTER: ${{ github.event.after }}
         run: |
           set -euo pipefail
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
-            echo "Release tag must be a v-prefixed semantic version without build metadata" >&2
+          node --input-type=module -e '
+            import { validateReleaseTag } from "./scripts/ops/release-acceptance.mjs";
+            validateReleaseTag(process.env.GITHUB_REF_NAME);
+          '
+
+          expected_actor_id="$(jq -r '.bypass_actors[] | select(.actor_type == "User") | .actor_id' .github/rulesets/release-tags.json)"
+          test "$expected_actor_id" = "1459373"
+          if [[ "$TAG_PUSH_ACTOR_ID" != "$expected_actor_id" ]]; then
+            echo "Release tags may be pushed only by the named release owner" >&2
             exit 1
           fi
+          zero_object_id="0000000000000000000000000000000000000000"
+          if [[ \
+            "$TAG_PUSH_CREATED" != "true" || \
+            "$TAG_PUSH_DELETED" != "false" || \
+            "$TAG_PUSH_FORCED" != "false" || \
+            "$TAG_PUSH_BEFORE" != "$zero_object_id" \
+          ]]; then
+            echo "Release workflow accepts only the initial creation of a new version tag" >&2
+            exit 1
+          fi
+          [[ "$TAG_PUSH_AFTER" =~ ^[0-9a-f]{40}$ ]]
 
           git fetch --force origin \
             "+refs/heads/main:refs/remotes/origin/main" \
@@ -54,10 +80,32 @@ jobs:
           echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
           git merge-base --is-ancestor "$tag_commit" origin/main
 
+          evidence_candidate_commit="$(
+            jq -er '
+              [.gates[] | select(.status == "complete" and (.acceptance? != null)) | .acceptance.candidateBuildId]
+              | unique
+              | if length == 1 then .[0] else error("reviewed gates must name one evidence candidate") end
+            ' docs/release-readiness.json
+          )"
+          [[ "$evidence_candidate_commit" =~ ^[0-9a-f]{40}$ ]]
+          test "$evidence_candidate_commit" != "$tag_commit"
+          git cat-file -e "$evidence_candidate_commit^{commit}"
+          git merge-base --is-ancestor "$evidence_candidate_commit" "$tag_commit"
+          mapfile -t evidence_descendant_changes < <(
+            git diff --name-only --no-renames "$evidence_candidate_commit" "$tag_commit" --
+          )
+          test "${#evidence_descendant_changes[@]}" -eq 1
+          test "${evidence_descendant_changes[0]}" = "docs/release-readiness.json"
+          echo "evidence_commit=$evidence_candidate_commit" >> "$GITHUB_OUTPUT"
+
           tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME")"
           test "$(jq -r '.object.type' <<<"$tag_ref")" = "tag"
           tag_object="$(jq -r '.object.sha' <<<"$tag_ref")"
           test "$tag_object" = "$local_tag_object"
+          if [[ "$TAG_PUSH_AFTER" != "$tag_object" && "$TAG_PUSH_AFTER" != "$tag_commit" ]]; then
+            echo "The release tag no longer matches the initial tag-creation payload" >&2
+            exit 1
+          fi
           if [[ "$GITHUB_SHA" != "$tag_object" && "$GITHUB_SHA" != "$tag_commit" ]]; then
             echo "The current tag no longer matches the tag-push event" >&2
             exit 1
@@ -73,18 +121,27 @@ jobs:
           require_successful_workflow() {
             local workflow_file="$1"
             local workflow_label="$2"
+            local workflow_path=".github/workflows/$workflow_file"
             local runs
             local latest_run
             runs="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_file/runs?head_sha=$tag_commit&per_page=100")"
             latest_run="$(
-              jq -c --arg sha "$tag_commit" '
-                [.[].workflow_runs[] | select(.head_sha == $sha)]
+              jq -c --arg sha "$tag_commit" --arg path "$workflow_path" '
+                [
+                  .[].workflow_runs[]
+                  | select(
+                      .head_sha == $sha
+                      and .event == "push"
+                      and .head_branch == "main"
+                      and .path == $path
+                    )
+                ]
                 | sort_by(.run_number, .run_attempt)
                 | last
               ' <<<"$runs"
             )"
             if [[ "$latest_run" == "null" ]]; then
-              echo "$workflow_label has no run for candidate commit $tag_commit" >&2
+              echo "$workflow_label has no main push run from $workflow_path for candidate commit $tag_commit" >&2
               exit 1
             fi
             if [[ "$(jq -r '.status' <<<"$latest_run")" != "completed" ]]; then
@@ -97,7 +154,7 @@ jobs:
             fi
             jq -c \
               --arg workflow "$workflow_label" \
-              '{workflow: $workflow, runId: .id, runNumber: .run_number, runAttempt: .run_attempt, event: .event, status: .status, conclusion: .conclusion, url: .html_url, commit: .head_sha, startedAt: .run_started_at, completedAt: .updated_at}' \
+              '{workflow: $workflow, path: .path, runId: .id, runNumber: .run_number, runAttempt: .run_attempt, event: .event, headBranch: .head_branch, status: .status, conclusion: .conclusion, url: .html_url, commit: .head_sha, startedAt: .run_started_at, completedAt: .updated_at}' \
               <<<"$latest_run"
           }
 
@@ -110,11 +167,12 @@ jobs:
             --arg tag "$GITHUB_REF_NAME" \
             --arg commit "$tag_commit" \
             --arg tagObject "$tag_object" \
+            --arg evidenceCandidateCommit "$evidence_candidate_commit" \
             --argjson verification "$verification" \
             --argjson ciRun "$ci_run" \
             --argjson securityRun "$security_run" \
             --argjson productionSmokeRun "$production_smoke_run" \
-            '{schemaVersion: 1, tag: $tag, commit: $commit, tagObject: $tagObject, onOriginMain: true, verification: $verification, candidateWorkflows: {ci: $ciRun, security: $securityRun, productionSmoke: $productionSmokeRun}}' \
+            '{schemaVersion: 1, tag: $tag, commit: $commit, tagObject: $tagObject, evidenceCandidateCommit: $evidenceCandidateCommit, evidenceOnlyDescendant: true, onOriginMain: true, verification: $verification, candidateWorkflows: {ci: $ciRun, security: $securityRun, productionSmoke: $productionSmokeRun}}' \
             > artifacts/release/preflight.json
       - name: Upload release preflight evidence
         if: always()
@@ -127,6 +185,11 @@ jobs:
 
   images:
     needs: preflight
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+      security-events: write
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -252,6 +315,24 @@ jobs:
               "$image_ref" \
               > "artifacts/release/$component/cosign-verification.json"
           done
+      - name: Retain SBOM and provenance attestations
+        run: |
+          set -euo pipefail
+          for component in server web; do
+            image_ref="$(cat "artifacts/release/$component/ref.txt")"
+            docker buildx imagetools inspect \
+              "$image_ref" \
+              --format '{{ json .SBOM.SPDX }}' \
+              > "artifacts/release/$component/sbom.spdx.json"
+            docker buildx imagetools inspect \
+              "$image_ref" \
+              --format '{{ json .Provenance.SLSA }}' \
+              > "artifacts/release/$component/provenance.slsa.json"
+            jq -e 'type == "object" and length > 0' \
+              "artifacts/release/$component/sbom.spdx.json" >/dev/null
+            jq -e 'type == "object" and length > 0' \
+              "artifacts/release/$component/provenance.slsa.json" >/dev/null
+          done
       - name: Upload server release evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -274,5 +355,284 @@ jobs:
         with:
           name: release-deployment-manifest-${{ github.ref_name }}
           path: artifacts/deploy/production/build-manifest.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  draft-release:
+    name: Create draft GitHub Release
+    needs: [preflight, images]
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Download release preflight evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-preflight-${{ github.ref_name }}
+          path: artifacts/release-input/preflight
+      - name: Download server release evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-evidence-server-${{ github.ref_name }}
+          path: artifacts/release-input/server
+      - name: Download web release evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-evidence-web-${{ github.ref_name }}
+          path: artifacts/release-input/web
+      - name: Download release deployment manifest
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-deployment-manifest-${{ github.ref_name }}
+          path: artifacts/release-input/manifest
+      - name: Validate and assemble bounded release evidence
+        env:
+          CANDIDATE_COMMIT: ${{ needs.preflight.outputs.candidate_commit }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD^{commit})" = "$CANDIDATE_COMMIT"
+
+          input=artifacts/release-input
+          output=artifacts/release-publication
+          manifest="$input/manifest/build-manifest.json"
+          mkdir -p "$output"
+
+          test "$(jq -r '.commit' "$input/preflight/preflight.json")" = "$CANDIDATE_COMMIT"
+          test "$(jq -r '.evidenceCandidateCommit' "$input/preflight/preflight.json")" = \
+            "${{ needs.preflight.outputs.evidence_candidate_commit }}"
+          test "$(jq -r '.evidenceOnlyDescendant' "$input/preflight/preflight.json")" = "true"
+          test "$(jq -r '.tag' "$input/preflight/preflight.json")" = "$GITHUB_REF_NAME"
+          test "$(jq -r '.buildId' "$manifest")" = "$CANDIDATE_COMMIT"
+          cp "$input/preflight/preflight.json" "$output/openround-$GITHUB_REF_NAME-preflight.json"
+          cp "$manifest" "$output/openround-$GITHUB_REF_NAME-manifest.json"
+
+          for component in server web; do
+            image_ref="$(cat "$input/$component/ref.txt")"
+            digest="$(cat "$input/$component/digest.txt")"
+            test "$image_ref" = "$(jq -r ".images.$component.ref" "$manifest")"
+            test "$digest" = "$(jq -r ".images.$component.digest" "$manifest")"
+            test "$(jq -r ".images.$component.signed" "$manifest")" = "true"
+            jq -e 'type == "array" and length > 0' \
+              "$input/$component/cosign-verification.json" >/dev/null
+            jq -e 'type == "object" and length > 0' \
+              "$input/$component/sbom.spdx.json" >/dev/null
+            jq -e 'type == "object" and length > 0' \
+              "$input/$component/provenance.slsa.json" >/dev/null
+            jq -e '.version == "2.1.0" and (.runs | type == "array")' \
+              "$input/$component/trivy.sarif" >/dev/null
+
+            cp "$input/$component/cosign-verification.json" \
+              "$output/openround-$component-$GITHUB_REF_NAME-cosign-verification.json"
+            cp "$input/$component/sbom.spdx.json" \
+              "$output/openround-$component-$GITHUB_REF_NAME-sbom.spdx.json"
+            cp "$input/$component/provenance.slsa.json" \
+              "$output/openround-$component-$GITHUB_REF_NAME-provenance.slsa.json"
+            cp "$input/$component/trivy.sarif" \
+              "$output/openround-$component-$GITHUB_REF_NAME-trivy.sarif"
+          done
+
+          version="${GITHUB_REF_NAME#v}"
+          git archive --format=tar --prefix="openround-$version/" "$CANDIDATE_COMMIT" \
+            | gzip -n > "$output/openround-$version-source.tar.gz"
+
+          server_ref="$(jq -r '.images.server.ref' "$manifest")"
+          web_ref="$(jq -r '.images.web.ref' "$manifest")"
+          cat > "$output/release-notes.md" <<EOF
+          OpenRound $GITHUB_REF_NAME artifacts were assembled for independent review.
+
+          Tagged commit: $CANDIDATE_COMMIT
+          Exercised candidate: ${{ needs.preflight.outputs.evidence_candidate_commit }}
+
+          Immutable images:
+          - Server: $server_ref
+          - Web: $web_ref
+
+          Scope and compatibility: exact tagged source plus linux/amd64 server and web images.
+          Known limitation: this release supports the documented single-VM linux/amd64 profile.
+
+          The attached manifest, SBOMs, provenance, vulnerability scans, signature verification,
+          source archive, and SHA-256 checksum inventory are the bounded evidence set for this
+          release. Deployment and publication are governed by separate readiness-ledger and
+          independent-review acceptance; artifact assembly alone does not attest those gates.
+          EOF
+          test "$(wc -c < "$output/release-notes.md")" -le 8192
+
+          (
+            cd "$output"
+            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS
+            sha256sum --check --strict SHA256SUMS
+          )
+          grep -F "openround-$version-source.tar.gz" "$output/SHA256SUMS" >/dev/null
+          mapfile -t expected_assets < <(
+            node --input-type=module -e '
+              import { requiredReleaseAssetNames } from "./scripts/ops/release-acceptance.mjs";
+              process.stdout.write(`${requiredReleaseAssetNames(process.env.GITHUB_REF_NAME).join("\n")}\n`);
+            '
+          )
+          mapfile -t actual_assets < <(
+            find "$output" -maxdepth 1 -type f -printf '%f\n' | sort
+          )
+          test "${#actual_assets[@]}" -eq "${#expected_assets[@]}"
+          for index in "${!expected_assets[@]}"; do
+            test "${actual_assets[$index]}" = "${expected_assets[$index]}"
+          done
+      - name: Create draft GitHub Release
+        env:
+          CANDIDATE_COMMIT: ${{ needs.preflight.outputs.candidate_commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          output=artifacts/release-publication
+          expected_tag_object="$(jq -r '.tagObject' artifacts/release-input/preflight/preflight.json)"
+          tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME")"
+          test "$(jq -r '.object.type' <<<"$tag_ref")" = "tag"
+          test "$(jq -r '.object.sha' <<<"$tag_ref")" = "$expected_tag_object"
+          tag_details="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$expected_tag_object")"
+          test "$(jq -r '.object.type' <<<"$tag_details")" = "commit"
+          test "$(jq -r '.object.sha' <<<"$tag_details")" = "$CANDIDATE_COMMIT"
+          test "$(jq -r '.verification.verified' <<<"$tag_details")" = "true"
+          test "$(jq -r '.verification.reason' <<<"$tag_details")" = "valid"
+
+          releases_before="$(mktemp)"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$releases_before"
+          existing_count="$(
+            jq --arg tag "$GITHUB_REF_NAME" \
+              '[.[][] | select(.tag_name == $tag)] | length' \
+              "$releases_before"
+          )"
+          rm -f "$releases_before"
+          if [[ "$existing_count" != "0" ]]; then
+            echo "A release already exists for $GITHUB_REF_NAME; do not replace reviewed evidence" >&2
+            exit 1
+          fi
+
+          mapfile -d '' assets < <(find "$output" -maxdepth 1 -type f -print0 | sort -z)
+          test "${#assets[@]}" -eq 13
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --verify-tag \
+            --target "$CANDIDATE_COMMIT" \
+            --title "OpenRound $GITHUB_REF_NAME" \
+            --notes-file "$output/release-notes.md" \
+            "${assets[@]}"
+
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')" = "$expected_tag_object"
+
+          verification_output=artifacts/release-verification
+          mkdir -p "$verification_output"
+          release_json="$verification_output/github-release.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq \
+                --arg tag "$GITHUB_REF_NAME" \
+                --arg commit "$CANDIDATE_COMMIT" \
+                '[.[][] | select(
+                  .tag_name == $tag and
+                  .target_commitish == $commit and
+                  .draft == true
+                )] | if length == 1 then .[0] else error("expected exactly one new draft release") end' \
+                > "$release_json"
+          test "$(jq -r '.tag_name' "$release_json")" = "$GITHUB_REF_NAME"
+          test "$(jq -r '.target_commitish' "$release_json")" = "$CANDIDATE_COMMIT"
+          test "$(jq -r '.draft' "$release_json")" = "true"
+          test "$(jq -r '.prerelease' "$release_json")" = "false"
+          test "$(jq -r '.published_at' "$release_json")" = "null"
+
+          mapfile -t expected_assets < <(
+            node --input-type=module -e '
+              import { requiredReleaseAssetNames } from "./scripts/ops/release-acceptance.mjs";
+              process.stdout.write(`${requiredReleaseAssetNames(process.env.GITHUB_REF_NAME).join("\n")}\n`);
+            '
+          )
+          mapfile -t published_assets < <(jq -r '.assets | sort_by(.name)[] | .name' "$release_json")
+          test "${#published_assets[@]}" -eq "${#expected_assets[@]}"
+          for index in "${!expected_assets[@]}"; do
+            test "${published_assets[$index]}" = "${expected_assets[$index]}"
+          done
+
+          for path in "$output"/*; do
+            name="$(basename "$path")"
+            local_size="$(wc -c < "$path" | tr -d ' ')"
+            local_digest="sha256:$(sha256sum "$path" | cut -d ' ' -f 1)"
+            test "$(jq -r --arg name "$name" '.assets[] | select(.name == $name) | .state' "$release_json")" = "uploaded"
+            test "$(jq -r --arg name "$name" '.assets[] | select(.name == $name) | .size' "$release_json")" = "$local_size"
+            test "$(jq -r --arg name "$name" '.assets[] | select(.name == $name) | .digest' "$release_json")" = "$local_digest"
+          done
+
+          checksum_asset_id="$(jq -r '.assets[] | select(.name == "SHA256SUMS") | .id' "$release_json")"
+          gh api \
+            -H 'Accept: application/octet-stream' \
+            "repos/$GITHUB_REPOSITORY/releases/assets/$checksum_asset_id" \
+            > "$verification_output/downloaded-SHA256SUMS"
+          cmp "$output/SHA256SUMS" "$verification_output/downloaded-SHA256SUMS"
+
+          manifest_digest="sha256:$(sha256sum "$output/openround-$GITHUB_REF_NAME-manifest.json" | cut -d ' ' -f 1)"
+          server_digest="$(jq -r '.images.server.digest' artifacts/release-input/manifest/build-manifest.json)"
+          web_digest="$(jq -r '.images.web.digest' artifacts/release-input/manifest/build-manifest.json)"
+          jq \
+            --arg tagObject "$expected_tag_object" \
+            --arg buildId "$CANDIDATE_COMMIT" \
+            --arg manifestDigest "$manifest_digest" \
+            --arg serverDigest "$server_digest" \
+            --arg webDigest "$web_digest" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg releaseTag "$GITHUB_REF_NAME" \
+            '{
+              schemaVersion: 2,
+              tag: .tag_name,
+              tagObject: $tagObject,
+              buildId: $buildId,
+              githubRelease: {
+                id: .id,
+                apiUrl: .url,
+                htmlUrl: .html_url,
+                targetCommitish: .target_commitish,
+                draft: .draft,
+                createdAt: .created_at
+              },
+              manifestDigest: $manifestDigest,
+              imageDigests: {server: $serverDigest, web: $webDigest},
+              assets: [
+                .assets[]
+                | {
+                    id,
+                    name,
+                    size,
+                    digest,
+                    apiUrl: .url,
+                    downloadUrl: (
+                      "https://github.com/" + $repository +
+                      "/releases/download/" + $releaseTag + "/" + .name
+                    )
+                  }
+              ] | sort_by(.name)
+            }' "$release_json" > "$verification_output/release-binding.json"
+
+          node --input-type=module - \
+            "$verification_output/release-binding.json" \
+            "$release_json" <<'NODE'
+          import { readFile } from "node:fs/promises";
+          import {
+            validateDraftGithubRelease,
+            validateReleaseBinding,
+          } from "./scripts/ops/release-acceptance.mjs";
+          const binding = JSON.parse(await readFile(process.argv[2], "utf8"));
+          const release = JSON.parse(await readFile(process.argv[3], "utf8"));
+          validateReleaseBinding(binding);
+          validateDraftGithubRelease(release, binding);
+          NODE
+      - name: Upload verified draft release binding
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-publication-${{ github.ref_name }}
+          path: artifacts/release-verification/
           if-no-files-found: warn
           retention-days: 90

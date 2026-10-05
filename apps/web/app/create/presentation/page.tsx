@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import type { PresentationDraft } from "@openround/contracts";
+import type { ContentSlideRegion, PresentationDraft } from "@openround/contracts";
 import { AuthoringAssistant } from "../../../components/authoring-assistant";
 import { useLocale } from "../../../components/locale-provider";
 import { apiFetch, humanError } from "../../../lib/api";
@@ -18,6 +18,35 @@ import {
 import styles from "../../../components/workspace/workspace-hub.module.css";
 
 type PresentationTemplateKind = "review" | "training" | "meeting";
+
+function templateContentSlide(
+  layout: "title_body" | "section" | "callout",
+  title: string,
+  body: string,
+  speakerNotes: string,
+) {
+  const id = clientUuid();
+  const titleRegion: ContentSlideRegion = layout === "callout" ? "top_center" : "middle_center";
+  const bodyRegion: ContentSlideRegion = layout === "section" ? "bottom_center" : "middle_center";
+  return {
+    id,
+    kind: "content" as const,
+    layout,
+    textElements: [
+      { id: `${id}:title`, role: "title" as const, text: title, region: titleRegion, order: 0 },
+      {
+        id: `${id}:body`,
+        role: "body" as const,
+        text: body,
+        region: bodyRegion,
+        order: titleRegion === bodyRegion ? 1 : 0,
+      },
+    ],
+    mediaId: null,
+    mediaAlt: null,
+    speakerNotes,
+  };
+}
 
 const presentationTemplates: Array<{
   kind: PresentationTemplateKind;
@@ -113,31 +142,23 @@ function PresentationLauncher() {
         title: labels[kind],
         description: "Adapt this structured template to the facilitation goal.",
         experiencePreset: { id: "focus", version: 1 },
-        schemaVersion: 1,
+        schemaVersion: 2,
         blocks: [
-          {
-            id: clientUuid(),
-            kind: "content",
-            layout: kind === "meeting" ? "section" : "title_body",
-            title: labels[kind],
-            body: "Set the context, desired outcome, and evidence participants need before responding.",
-            mediaId: null,
-            mediaAlt: null,
-            speakerNotes: "Confirm the purpose and invite questions before advancing.",
-          },
+          templateContentSlide(
+            kind === "meeting" ? "section" : "title_body",
+            labels[kind],
+            "Set the context, desired outcome, and evidence participants need before responding.",
+            "Confirm the purpose and invite questions before advancing.",
+          ),
           { id: clientUuid(), kind: "question", question: mainQuestion },
           ...(kind === "training"
             ? [
-                {
-                  id: clientUuid(),
-                  kind: "content" as const,
-                  layout: "callout" as const,
-                  title: "Intervention",
-                  body: "Clarify the misconception using a worked example before the recheck.",
-                  mediaId: null,
-                  mediaAlt: null,
-                  speakerNotes: "Do not reveal the recheck answer.",
-                },
+                templateContentSlide(
+                  "callout",
+                  "Intervention",
+                  "Clarify the misconception using a worked example before the recheck.",
+                  "Do not reveal the recheck answer.",
+                ),
                 {
                   id: clientUuid(),
                   kind: "question" as const,
@@ -163,7 +184,7 @@ function PresentationLauncher() {
           draft,
           expectedRevision: created.presentation.draftRevision,
           mutationId: clientUuid(),
-          schemaVersion: 1,
+          schemaVersion: 2,
         }),
       });
       recordCreationEvent("creation_completed", "starter", "presentation");

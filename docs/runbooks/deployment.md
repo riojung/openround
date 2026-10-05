@@ -6,16 +6,18 @@ monitoring route, or provider account has been provisioned.
 
 ## Supported topology
 
-| Environment   | Single-host implementation                      | Image policy                                 |
-| ------------- | ----------------------------------------------- | -------------------------------------------- |
-| `development` | Local `compose.yaml` and optional overlays      | Locally built images                         |
-| `staging`     | Remote `compose.single-vm.yaml` over pinned SSH | Registry images selected by immutable digest |
-| `production`  | Remote `compose.single-vm.yaml` after all gates | Signed digest-selected registry images       |
+| Environment   | Single-host implementation                                     | Image policy                                 |
+| ------------- | -------------------------------------------------------------- | -------------------------------------------- |
+| `development` | Local `compose.yaml` and optional overlays                     | Locally built images                         |
+| `staging`     | Remote single-VM base + observability overlays over pinned SSH | Registry images selected by immutable digest |
+| `production`  | Remote single-VM base + observability overlays after all gates | Signed digest-selected registry images       |
 
-The hosted stack places Caddy, web, API/realtime, PostgreSQL, Valkey, MinIO, and ClamAV on one VM.
-Only TCP 80/443 and UDP 443 are published by Compose. The database, cache, scanner, and MinIO
-administration port are not published. Caddy obtains TLS certificates and routes the application
-origin to web/API services and the separate media origin to MinIO.
+The hosted stack places Caddy, web, API/realtime, PostgreSQL, Valkey, MinIO, ClamAV, OpenTelemetry
+Collector, Prometheus, and Alertmanager on one VM. Only TCP 80/443 and UDP 443 are public.
+Observability health and administration ports bind to loopback; the database, cache, scanner,
+MinIO administration, OTLP, and application metrics ports are not published. Caddy obtains TLS
+certificates and routes the application origin to web/API services and the separate media origin
+to MinIO.
 
 This is an initial alpha/beta topology. A host, disk, kernel, Docker daemon, or availability-zone
 failure can interrupt every service at once. It has no high-availability or SLA claim. Keep
@@ -96,7 +98,10 @@ artifacts/deploy/<environment>/build-manifest.json
 
 Do not replace digest references with mutable tags or combine server and web images from different
 manifests. Production images are built by the protected tag-triggered release workflow, scanned,
-signed using its allowlisted OIDC identity, and verified before promotion. Its unprotected
+signed using its allowlisted OIDC identity, and verified before promotion. After those steps pass,
+the workflow retains the manifest, SBOMs, provenance, SARIF scans, source archive, and checksums in
+a draft GitHub Release. It never publishes the draft; independent evidence review and the final
+readiness decision remain manual gates. Its unprotected
 preflight runs `node scripts/check-deployment-target.mjs production`, so a release tag cannot
 produce signed images while the production origin, VM target, or exact SSH key pin is still a
 placeholder.
@@ -222,11 +227,16 @@ The hosted deployment contract is:
   --migration-env artifacts/deploy/<environment>/migration.env \
   --confirm <environment>:<full-build-id> \
   [--ssh-identity /path/to/private-key] \
-  [--backup-reference <reference>] [--recover-lock] [--dry-run]
+  [--backup-reference <reference>] [--recover-lock] [--dry-run] \
+  [--published-release-redeploy \
+   --prior-deployment-receipt artifacts/deploy/production/receipts/<receipt>.json \
+   --prior-deployment-receipt-sha256 sha256:<reviewed-receipt-digest>]
 ```
 
 Production requires `--backup-reference`. The value identifies an operator-verified off-host
 backup or recovery anchor; passing a string neither creates a backup nor proves restoration.
+The three published-release options are valid only together for a forward production redeploy.
+They are not needed—and are rejected—while the accepted GitHub release is still a draft.
 
 Code-only rollback selects a previously approved, schema-compatible manifest:
 
@@ -274,8 +284,13 @@ config/deploy/dev.json
 config/deploy/staging.json
 config/deploy/production.json
 compose.single-vm.yaml
+compose.single-vm.observability.yaml
 infra/single-vm/Caddyfile
 infra/single-vm/postgres-init.sh
+infra/observability/alerts.yml
+infra/observability/alertmanager.single-vm.yml
+infra/observability/otel-collector.single-vm.yml
+infra/observability/prometheus.single-vm.yml
 ```
 
 The historical `infra/fly/` profiles remain reference material and are not the active target.
@@ -293,10 +308,15 @@ chmod 600 artifacts/deploy/staging/runtime.env artifacts/deploy/staging/migratio
 git check-ignore artifacts/deploy/staging/runtime.env artifacts/deploy/staging/migration.env
 ```
 
-Replace every placeholder and make domain, billing, community-mode, regional, and feature-flag
-values agree with the reviewed target. Use URL-encoded passwords inside connection URLs. For the
-professional alpha, enable workspace features deliberately and prefer a workspace allowlist before
-broad enablement. Do not copy staging secrets into production.
+Replace every placeholder and make domain, billing, community-mode, regional, feature-flag, and
+observability values agree with the reviewed target. Hosted single-VM validation requires protected
+metrics, tracing to the private collector endpoint, an explicit external-host-agent log-shipping
+attestation, an explicitly selected HTTPS OTLP/HTTP backend with its bearer token, and reviewed
+HTTPS page, warning, and ticket receivers. The host log agent is installed and credentialed outside
+the Compose stack; the overlay receives neither the Docker socket nor host log mounts. The
+repository does not supply provider URLs. Use URL-encoded passwords inside connection URLs. For the professional
+alpha, enable workspace features deliberately and prefer a workspace allowlist before broad
+enablement. Do not copy staging secrets into production.
 
 The runtime file is the complete reviewed Compose input for long-lived services. It includes the
 restricted application database URL and infrastructure credentials required by their respective
@@ -322,11 +342,18 @@ For staging:
 3. Run the deploy command first with `--dry-run`, then without it using the exact confirmation value.
 4. The deployer verifies inputs and gates, uploads a private incoming release, validates Compose,
    pulls exact images, runs the candidate configuration check, verifies the embedded web build ID,
-   starts data dependencies, runs the one-shot migration, and activates the full stack under a
-   remote deployment lock.
-5. The deployer verifies public API readiness and web/server build markers. If post-activation
-   verification fails, it attempts to restore the previously active release. Retain the non-secret
-   deployment receipt and failure evidence.
+   starts data dependencies, runs the one-shot migration, and activates the full stack—including
+   collector, Prometheus, and Alertmanager health checks—under a remote deployment lock.
+5. The deployer verifies public API readiness and web/server build markers, then reads the exact
+   active release's configuration summary. It rejects summaries with extra fields or without
+   protected metrics, external host-agent log shipping, and OTLP tracing. The observability overlay
+   never mounts the Docker socket or host logs; configure that least-privilege agent separately.
+   If post-activation verification fails, it attempts to
+   restore the previously active release. Retain the non-secret deployment receipt, whose
+   `configuration` object contains that redaction-safe summary and the SHA-256 of the reviewed
+   runtime input, while `manifestSha256` binds the exact build manifest and its immutable images,
+   plus any failure evidence. The digests prove input identity; they are not copies of the inputs
+   and cannot prove external telemetry or log delivery.
 6. Run the [staging readiness workflow](staging-readiness.md), physical-device tests, restore drill,
    and target-region load/soak checks. A public health response is not capacity evidence.
 
@@ -338,13 +365,27 @@ Run it from the reviewed evidence-acceptance commit described in the
 still requires operations `HEAD` to equal the manifest build ID. The sole exception is this
 production acceptance commit: the tagged build must be its ancestor; the full tree delta may
 contain only `docs/release-readiness.json`; only the `signed-release` acceptance may change inside
-that ledger; and its tag object, tagged commit, downloaded-manifest SHA-256, and both image digests
-must match the selected manifest. The deployer fetches `origin/main` and the exact release tag from
-the trusted OpenRound GitHub remote, requires `HEAD` to equal the fetched main tip, and verifies the
-exact annotated tag object's valid signature and target through the GitHub API, so run it with
-network access and read access to that repository. A local-only, unsigned, recreated, or substituted
-commit or tag, or any documentation, code, configuration, or unrelated gate change, requires a new
-reviewed release build and tag.
+that ledger; and its owner/independent-reviewer acceptance, tag object, tagged commit,
+downloaded-manifest SHA-256, both image digests, acceptance-time GitHub draft release ID, and exact
+release asset inventory must match. The deployer fetches `origin/main` and the exact release tag from the trusted
+OpenRound GitHub remote, requires `HEAD` to equal the fetched main tip, and verifies the exact
+annotated tag object's valid signature and target through the GitHub API. It also requires the bound
+release to remain the exact accepted release and downloads its `SHA256SUMS` and preflight assets to
+verify the accepted bytes, complete checksum inventory, exercised candidate, and successful
+main-push CI, Security, and Production-path smoke provenance. The first deployment occurs while the
+release is a draft. A published release can never serve as the first production deployment. Later
+normal or replacement-host deployments may use that unchanged published release only with
+`--published-release-redeploy` and a reviewed, SHA-256-pinned receipt from its successful draft
+deployment. The receipt must be a bounded regular file under
+`artifacts/deploy/production/receipts/`; it must start after signed-release acceptance and complete
+before publication, and it must bind the exact release ID/tag/tag object, manifest and images,
+production host/project, redaction-safe configuration summary, verification results, operations
+revision, and reviewed deployment-input hashes. Preserve that receipt and its independently
+recorded digest outside the replacement host's failure domain. Run initial deployment with network
+access and a `GITHUB_TOKEN` with read access to draft releases and release assets. A local-only,
+unsigned, recreated, mutated, or substituted
+commit, tag, release, or asset—or any documentation, code, configuration, or unrelated gate
+change—requires a new reviewed release build and tag.
 
 ## Failure and rollback policy
 
@@ -355,6 +396,16 @@ reviewed release build and tag.
 - Database migrations are forward-only. Repair schema/data with a reviewed forward migration.
 - A code rollback is safe only when the older images tolerate the current schema. Preserve
   expand/contract compatibility during every rollout window.
+- Presentation v2/custom geometry and capture-enabled Round sessions/Report V4 also constrain the
+  rollback target. Apply migrations through 048 before the current server and follow the
+  [content, report, and deletion upgrade checklist](upgrade.md#recent-content-report-and-deletion-upgrades).
+  An older image cannot undo a completed deletion or safely reconstruct missing decision events.
+- Deploy a flex-capable image with `FEATURE_LIVE_FLEX_MODE=false` first, and retain that image as
+  the approved rollback target before enabling flex creation. Do not roll back to a pre-flex image
+  after flex creation is enabled: older code cannot accept untimed responses, reads null Round
+  deadlines as invalid numbers, and may overwrite them with synthetic deadlines on a later save.
+  If the flex-capable image is defective, disable new flex creation and use a reviewed forward fix
+  or another flex-capable image; draining rooms alone does not make a pre-flex rollback safe.
 - Keep at least the current and previous approved release available on the VM, but treat the
   off-host database/media backup as the disaster-recovery source when the host is lost.
 - After rollback or recovery, verify readiness, build markers, live-session behavior, reports,

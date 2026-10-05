@@ -19,6 +19,7 @@ type WorkflowStep = {
 };
 
 type WorkflowJob = {
+  name?: string;
   "runs-on"?: string | string[];
   steps?: WorkflowStep[];
 };
@@ -58,48 +59,70 @@ describe("GitHub-hosted runner migration contract", () => {
     expect(parsed.on?.pull_request?.paths).toContain(".github/workflows/*.yml");
     expect(parsed.on?.pull_request?.paths).toContain(".dockerignore");
     expect(parsed.on?.schedule?.[0]?.cron).toBe("43 10 * * 2");
-    for (const job of [
+    const canaryJobs = [
+      ["ubuntu26-check", "Ubuntu 26 / check"],
+      ["ubuntu26-postgres-migration", "Ubuntu 26 / postgres migration"],
+      ["ubuntu26-browser-smoke", "Ubuntu 26 / browser smoke"],
+      ["ubuntu26-production-compose", "Ubuntu 26 / production Compose"],
+      ["ubuntu26-image-toolchain", "Ubuntu 26 / image toolchain"],
+    ] as const;
+    for (const [job, displayName] of canaryJobs) {
+      expect(parsed.jobs[job]?.name).toBe(displayName);
+      expect(parsed.jobs[job]?.["runs-on"]).toBe("ubuntu-26.04");
+    }
+    const requiredContexts = new Set([
       "check",
       "postgres-migration",
       "browser-smoke",
-      "production-compose",
-      "image-toolchain",
-    ]) {
-      expect(parsed.jobs[job]?.["runs-on"]).toBe("ubuntu-26.04");
+      "dependency-review",
+      "dependency-and-secret-review",
+      "sbom",
+      "codeql",
+    ]);
+    for (const [job, displayName] of canaryJobs) {
+      expect(requiredContexts.has(job)).toBe(false);
+      expect(requiredContexts.has(displayName)).toBe(false);
     }
-    for (const job of ["check", "postgres-migration", "browser-smoke", "production-compose"]) {
+    for (const job of [
+      "ubuntu26-check",
+      "ubuntu26-postgres-migration",
+      "ubuntu26-browser-smoke",
+      "ubuntu26-production-compose",
+    ]) {
       const setupNode = parsed.jobs[job].steps?.find(({ uses }) =>
         uses?.startsWith("actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"),
       );
       expect(setupNode?.with?.["node-version"]).toBe(22);
     }
-    expect(parsed.jobs.check.steps?.some(({ run }) => run === "pnpm check")).toBe(true);
+    expect(parsed.jobs["ubuntu26-check"].steps?.some(({ run }) => run === "pnpm check")).toBe(true);
     expect(
-      parsed.jobs["browser-smoke"].steps?.some(
+      parsed.jobs["ubuntu26-browser-smoke"].steps?.some(
         ({ run }) => run === "pnpm exec playwright install --with-deps chromium firefox webkit",
       ),
     ).toBe(true);
     expect(
-      parsed.jobs["production-compose"].steps?.some(({ run }) => run === "pnpm smoke:restore"),
+      parsed.jobs["ubuntu26-production-compose"].steps?.some(
+        ({ run }) => run === "pnpm smoke:restore",
+      ),
     ).toBe(true);
     expect(
-      parsed.jobs["production-compose"].steps?.some(({ run }) =>
+      parsed.jobs["ubuntu26-production-compose"].steps?.some(({ run }) =>
         run?.includes("pnpm smoke:multi-process"),
       ),
     ).toBe(true);
     expect(
       step(
-        parsed.jobs["production-compose"],
+        parsed.jobs["ubuntu26-production-compose"],
         "100-client correctness, latency, and restart recovery",
       )?.env?.ASSERT_PERFORMANCE,
     ).toBe("false");
-    expect(step(parsed.jobs["image-toolchain"], "Build server and web images")?.run).toContain(
-      "docker buildx build",
-    );
-    expect(step(parsed.jobs["image-toolchain"], "Scan canary images")?.run).toContain(
+    expect(
+      step(parsed.jobs["ubuntu26-image-toolchain"], "Build server and web images")?.run,
+    ).toContain("docker buildx build");
+    expect(step(parsed.jobs["ubuntu26-image-toolchain"], "Scan canary images")?.run).toContain(
       "trivy image",
     );
-    const trivySetup = parsed.jobs["image-toolchain"].steps?.find(
+    const trivySetup = parsed.jobs["ubuntu26-image-toolchain"].steps?.find(
       ({ name }) => name === "Install Trivy CLI",
     );
     expect(trivySetup?.uses).toBe(
@@ -107,20 +130,21 @@ describe("GitHub-hosted runner migration contract", () => {
     );
     expect(trivySetup?.with?.version).toBe("v0.74.0");
     expect(
-      parsed.jobs["image-toolchain"].steps?.some(
+      parsed.jobs["ubuntu26-image-toolchain"].steps?.some(
         ({ uses }) => uses === "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
       ),
     ).toBe(true);
     expect(
-      step(parsed.jobs["image-toolchain"], "Sign and verify a local canary payload")?.run,
+      step(parsed.jobs["ubuntu26-image-toolchain"], "Sign and verify a local canary payload")?.run,
     ).toContain("--use-signing-config=false");
     expect(
-      step(parsed.jobs["image-toolchain"], "Sign and verify a local canary payload")?.run,
+      step(parsed.jobs["ubuntu26-image-toolchain"], "Sign and verify a local canary payload")?.run,
     ).toContain("--insecure-ignore-tlog");
     expect(runbook).toMatch(/October 19 and\s+November 19, 2026/);
     expect(runbook).toMatch(/is not target-region capacity evidence/i);
     expect(runbook).toContain("replaces every GitHub-hosted `runs-on: ubuntu-latest` label");
     expect(runbook).toContain("temporary rollback");
+    expect(runbook).toMatch(/do not replace, satisfy, or share a name with any required/);
     expect(status).toMatch(/Ubuntu 26 canary exercises native builds/);
     expect(status).toMatch(/do not complete a pending readiness gate/);
   });

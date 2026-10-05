@@ -32,6 +32,7 @@ describe("production configuration", () => {
     expect(config.FEATURE_GROUPS).toBe(false);
     expect(config.FEATURE_DISCOVER).toBe(false);
     expect(config.FEATURE_PRESENTATION_REALTIME).toBe(false);
+    expect(config.FEATURE_LIVE_FLEX_MODE).toBe(false);
     expect(config.FEATURE_RECOVERY_PACKS).toBe(false);
     expect(config.FEATURE_QUESTION_HEALTH).toBe(false);
     expect(config.FEATURE_DECISION_REPLAY).toBe(false);
@@ -96,6 +97,7 @@ describe("production configuration", () => {
         FEATURE_GROUPS: "false",
         FEATURE_DISCOVER: "true",
         FEATURE_PRESENTATION_REALTIME: "true",
+        FEATURE_LIVE_FLEX_MODE: "true",
         FEATURE_RECOVERY_PACKS: "true",
         FEATURE_QUESTION_HEALTH: "true",
         FEATURE_DECISION_REPLAY: "true",
@@ -118,6 +120,7 @@ describe("production configuration", () => {
       groups: false,
       discover: true,
       presentationRealtime: true,
+      liveFlexMode: true,
       recoveryPacks: true,
       questionHealth: true,
       decisionReplay: true,

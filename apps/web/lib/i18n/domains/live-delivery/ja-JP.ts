@@ -273,6 +273,10 @@ const messages = {
   "live.common.connected": "接続済み",
   "live.common.connecting": "接続...",
   "live.common.dashboard": "ダッシュボード",
+  "live.common.flexMode": "フレックス — ファシリテーターが回答を締め切る",
+  "live.common.flexOpen": "カウントダウンはありません。ファシリテーターが回答を締め切ります。",
+  "live.common.flexSetupHelp":
+    "フレックスには回答期限や回答速度による得点はありません。各問題はファシリテーターが締め切ります。",
   "live.common.joinedCount": "{count} 人が参加しました",
   "live.common.leaderboard": "リーダーボード",
   "live.common.notScored": "スコアなし",
@@ -281,6 +285,8 @@ const messages = {
   "live.common.responses": "回答",
   "live.common.saving": "保存...",
   "live.common.sessions": "セッション",
+  "live.common.timeMode": "回答時間の設定",
+  "live.common.timedMode": "時間制 — 問題ごとに締め切り",
   "live.common.updating": "更新中…",
   "live.presentationHost.backEditor": "エディタに戻る",
   "live.presentationHost.description":

@@ -19,6 +19,10 @@ legal system and reference only a redacted identifier or checksum here.
 
 ## Reviewed source set
 
+Assemble the versioned engineering and operator inputs using the
+[privacy and legal source packet](privacy-legal-source-packet.md). The checked-in `/privacy` and
+`/terms` pages remain drafts until this record is accepted for the exact launch scope.
+
 | Artifact                                                      | Version/date or checksum | Decision | Conditions/reference |
 | ------------------------------------------------------------- | ------------------------ | -------- | -------------------- |
 | Privacy notice                                                |                          | Pending  |                      |

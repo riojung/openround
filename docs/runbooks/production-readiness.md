@@ -41,8 +41,10 @@
   credentials authenticate. Remote probes must compare both the running server's `/health/live`
   build ID and the web root's `X-OpenRound-Build-Id` with that candidate marker; target-host
   probes independently compare the server marker.
-- Production metrics require a bearer token at startup. Keep `METRICS_ENABLED=false` until a
-  private authenticated collector is ready; do not expose the route through the public ingress.
+- Hosted production requires `METRICS_ENABLED=true`, a non-default bearer token, and the private
+  authenticated collector overlay. Bind the collector scrape path only on the private service
+  network, retain the token outside evidence/logs, and never expose the metrics route through the
+  public Caddy ingress.
 - Application traffic uses a non-owner PostgreSQL role; only the migration job receives the
   owner-level `DATABASE_MIGRATION_URL`, and the production-like forced-RLS test passes.
 - PostgreSQL, Valkey, MinIO, Caddy, web, API/realtime, and ClamAV run on the same production VM.
@@ -108,6 +110,17 @@
 - Chromium, WebKit, Firefox, mobile Safari, and mobile Chrome critical flows pass.
 - Recovery interventions/rechecks, cohosting, Q&A moderation, hostile portability imports,
   secure embed, follow-up expiry/revocation/accommodations, and source-authoring review paths pass.
+- For enabled Presentation candidates, legacy v1 reads and v2 save/recovery/history behavior pass;
+  bounded move/resize, inspector/keyboard equivalents, image reservation, overflow guidance, and
+  narrow-screen reading order agree in editor, preview, facilitator, and participant views.
+- For enabled Question Health and Decision Replay candidates, verify revision-fenced
+  dismissal/apply/undo, exact-version/cohort/sample bounds, aggregate-only event capture, retry
+  idempotency, explicit unavailable/truncated timelines, and V1–V4 report/follow-up compatibility.
+- Owner-only archived Library deletion and finished/expired session-history deletion pass with
+  confirmation, tenant isolation, retained-assignment guards, concurrent restore/dependent writes,
+  metadata/media-reference cleanup, socket revocation, and report-worker fencing. Migration 048
+  runs under the migration principal; runtime permissions remain restricted. Include post-cutoff
+  deletion reconciliation in the replacement-host restore rehearsal.
 - All six Round Experience presets pass contrast, keyboard, screen-reader, reduced-motion, 200%
   zoom, phone, projector, and visual-regression checks. Presenter sound begins muted and every cue
   has an equivalent visual state.

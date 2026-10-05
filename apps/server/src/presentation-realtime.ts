@@ -75,6 +75,7 @@ export interface PresentationRealtimeService {
   setConnectedParticipantIdsProvider?(
     provider: ((sessionId: string) => Promise<ReadonlySet<string>>) | null,
   ): void;
+  setSessionDeletedHandler?(handler: ((sessionId: string) => void) | null): void;
 }
 
 export interface PresentationRealtimeOptions {
@@ -408,6 +409,13 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
   const localCredentials = new Map<string, PresentationSocketCredential>();
   let joinAdmissionAttempts = 0;
   let closed = false;
+  const clearRoomBroadcasts = (sessionId: string) => {
+    const pending = pendingBroadcasts.get(sessionId);
+    if (pending) clearTimeout(pending);
+    pendingBroadcasts.delete(sessionId);
+    lastBroadcastAt.delete(sessionId);
+    queuedBroadcasts.delete(sessionId);
+  };
   const connectedParticipantIds = async (sessionId: string) => {
     const sockets = await io.in(presentationRoom(sessionId)).fetchSockets();
     return new Set(
@@ -505,6 +513,11 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
           (entry): entry is { socket: Socket; snapshot: PresentationRoleSnapshot } =>
             entry.snapshot !== null,
         );
+      }
+
+      if (projected.length === 0) {
+        clearRoomBroadcasts(sessionId);
+        return;
       }
 
       const participantIds = new Set(
@@ -624,6 +637,16 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
     pendingBroadcasts.set(sessionId, timer);
   };
 
+  options.service.setSessionDeletedHandler?.((sessionId) => {
+    // The adapter disconnects this room across every node. Each node's disconnect callback
+    // releases its raw credentials, and any already queued projection rechecks the durable room.
+    io.in(presentationRoom(sessionId)).disconnectSockets(true);
+    for (const [socketId, credential] of localCredentials) {
+      if (credential.sessionId === sessionId) localCredentials.delete(socketId);
+    }
+    clearRoomBroadcasts(sessionId);
+  });
+
   io.on("connection", (socket) => {
     const rateLimits: Record<string, { startedAt: number; count: number }> = {};
 
@@ -678,6 +701,7 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
           },
           snapshot.participantId,
         );
+        if (!socket.connected) return;
         localCredentials.set(socket.id, {
           sessionId: snapshot.sessionId,
           projection: "participant",
@@ -731,6 +755,7 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
             ? synchronized.snapshot.participantId
             : undefined,
         );
+        if (!socket.connected) return;
         localCredentials.set(socket.id, credential);
         acknowledge({ data: synchronized });
         scheduleBroadcast(input.sessionId);
@@ -753,6 +778,7 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
           projection: "host",
           controlToken: input.controlToken,
         });
+        if (!socket.connected) return;
         localCredentials.set(socket.id, {
           sessionId: input.sessionId,
           projection: "host",
@@ -796,6 +822,7 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
           },
           response.snapshot.participantId,
         );
+        if (!socket.connected) return;
         localCredentials.set(socket.id, {
           sessionId: input.sessionId,
           projection: "participant",
@@ -822,6 +849,7 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
     close() {
       closed = true;
       options.service.setConnectedParticipantIdsProvider?.(null);
+      options.service.setSessionDeletedHandler?.(null);
       for (const timer of pendingBroadcasts.values()) clearTimeout(timer);
       pendingBroadcasts.clear();
       lastBroadcastAt.clear();
