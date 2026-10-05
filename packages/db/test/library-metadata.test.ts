@@ -31,6 +31,17 @@ describe("Library metadata", () => {
     const { owner, now } = await createOwner(repository, "favorite-owner@example.com");
     const otherUserId = randomUUID();
     const roundId = randomUUID();
+    await repository.createQuiz({
+      id: roundId,
+      workspaceId: owner.workspaceId,
+      title: "Favorite Round",
+      description: "",
+      status: "draft",
+      draft: { title: "Favorite Round", description: "", questions: [] },
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
 
     await metadata.setFavorite({
       workspaceId: owner.workspaceId,
@@ -103,7 +114,7 @@ describe("Library metadata", () => {
         title: "Operations review",
         description: "",
         experiencePreset: { id: "focus", version: 1 },
-        schemaVersion: 1,
+        schemaVersion: 2,
         blocks: [],
       },
       draftRevision: 0,

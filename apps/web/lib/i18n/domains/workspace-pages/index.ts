@@ -306,6 +306,7 @@ export const workspacePageEnglishMessages = {
   "pages.home.sessions.lobby": "Lobby",
   "pages.home.sessions.questionProgress": "Question {current} of {total}",
   "pages.library.action.archive": "Archive",
+  "pages.library.action.delete": "Deleted",
   "pages.library.action.duplicate": "Duplicate",
   "pages.library.action.restore": "Restore",
   "pages.library.actionComplete": "{count} {type} {action}.",
@@ -319,6 +320,12 @@ export const workspacePageEnglishMessages = {
   "pages.library.clear": "Clear",
   "pages.library.createPresentation": "Create Presentation",
   "pages.library.createRound": "Create Round",
+  "pages.library.delete": "Delete permanently",
+  "pages.library.deleteConfirm":
+    "Permanently delete “{title}”, including all drafts and published versions? This cannot be undone.",
+  "pages.library.deleteCount": "Delete ({count})",
+  "pages.library.deleteManyConfirm":
+    "Permanently delete {count} selected archived items, including all drafts and published versions? This cannot be undone.",
   "pages.library.deselectResults": "Deselect results",
   "pages.library.destinationFolder": "Destination folder",
   "pages.library.duplicate": "Duplicate",
@@ -432,6 +439,10 @@ export const workspacePageEnglishMessages = {
   "pages.sessions.artifactType": "Artifact Type",
   "pages.sessions.blockProgress": "Block Progress",
   "pages.sessions.currentResponses": "Current Responses",
+  "pages.sessions.delete": "Delete session",
+  "pages.sessions.deleteConfirm":
+    "Permanently delete the session “{title}”, its responses, report, and linked follow-ups? This cannot be undone.",
+  "pages.sessions.deleting": "Deleting…",
   "pages.sessions.emptyDescription":
     "Host a published Round or Presentation and its live session will appear here.",
   "pages.sessions.emptyFiltered": "There are no {status} sessions in this workspace.",

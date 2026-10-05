@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { PresentationContentSchema, PresentationDraftSchema } from "../src/index";
+import {
+  ContentSlideDraftSchema,
+  ContentSlideFrameSchema,
+  PresentationContentSchema,
+  PresentationDraftMutationSchema,
+  PresentationDraftSchema,
+  migratePresentationV1,
+  type ContentSlideDraft,
+} from "../src/index";
 
 function questionBlock() {
   return {
@@ -28,25 +36,143 @@ function questionBlock() {
   };
 }
 
+function contentBlock(title = "", body = ""): ContentSlideDraft {
+  const id = randomUUID();
+  return {
+    id,
+    kind: "content" as const,
+    layout: "title_body" as const,
+    textElements: [
+      {
+        id: `${id}:title`,
+        role: "title" as const,
+        text: title,
+        region: "top_center" as const,
+        order: 0,
+      },
+      {
+        id: `${id}:body`,
+        role: "body" as const,
+        text: body,
+        region: "middle_center" as const,
+        order: 0,
+      },
+    ],
+    mediaId: null,
+    mediaAlt: null,
+    speakerNotes: "",
+  };
+}
+
 describe("presentation contracts", () => {
+  it("retains optional bounded text frames in draft mutations and published content", () => {
+    const slide = contentBlock("Positioned title", "Positioned body");
+    slide.textElements[0]!.frame = { x: 8, y: 20, width: 84, height: 22 };
+    slide.textElements[1]!.frame = { x: 8, y: 48, width: 84, height: 40 };
+    const mutation = PresentationDraftMutationSchema.parse({
+      schemaVersion: 2,
+      mutationId: randomUUID(),
+      expectedRevision: 0,
+      draft: {
+        title: "Bounded geometry",
+        schemaVersion: 2,
+        blocks: [slide, questionBlock()],
+      },
+    });
+    const content = PresentationContentSchema.parse(mutation.draft);
+    const publishedSlide = content.blocks[0];
+    expect(publishedSlide?.kind).toBe("content");
+    if (publishedSlide?.kind !== "content") throw new Error("Expected the content slide");
+    expect(publishedSlide.textElements).toEqual(slide.textElements);
+    expect(ContentSlideFrameSchema.parse({ x: 88, y: 94, width: 12, height: 6 })).toEqual({
+      x: 88,
+      y: 94,
+      width: 12,
+      height: 6,
+    });
+  });
+
+  it.each([
+    { x: -1, y: 0, width: 12, height: 6 },
+    { x: 0, y: -1, width: 12, height: 6 },
+    { x: 0, y: 0, width: 11, height: 6 },
+    { x: 0, y: 0, width: 12, height: 5 },
+    { x: 89, y: 0, width: 12, height: 6 },
+    { x: 0, y: 95, width: 12, height: 6 },
+    { x: 0, y: 0, width: 101, height: 6 },
+    { x: 0, y: 0, width: 12, height: 101 },
+    { x: Number.NaN, y: 0, width: 12, height: 6 },
+    { x: 0, y: Number.POSITIVE_INFINITY, width: 12, height: 6 },
+    { x: 0, y: 0, width: Number.POSITIVE_INFINITY, height: 6 },
+    { x: 0, y: 0, width: 12, height: Number.NEGATIVE_INFINITY },
+  ])("rejects unbounded text frame %j", (frame) => {
+    const slide = contentBlock("Bounded title", "");
+    slide.textElements[0]!.frame = frame;
+    expect(ContentSlideDraftSchema.safeParse(slide).success).toBe(false);
+  });
+
+  it("keeps legacy slides valid without frames and preserves frames during migration", () => {
+    const legacySlide = {
+      id: randomUUID(),
+      kind: "content",
+      layout: "quote",
+      title: "Recovered title",
+      body: "Recovered body",
+      mediaId: null,
+      mediaAlt: null,
+      speakerNotes: "Recovered note",
+    };
+    const migrated = PresentationDraftSchema.parse(
+      migratePresentationV1({
+        title: "Recovered presentation",
+        schemaVersion: 1,
+        blocks: [legacySlide],
+      }),
+    );
+    const migratedSlide = migrated.blocks[0];
+    if (migratedSlide?.kind !== "content") throw new Error("Expected the recovered slide");
+    expect(migratedSlide.textElements.every((element) => element.frame === undefined)).toBe(true);
+    const frame = { x: 8, y: 20, width: 84, height: 22 };
+    migratedSlide.textElements[0]!.frame = frame;
+    const retained = PresentationDraftSchema.parse(migratePresentationV1(migrated));
+    expect(retained).toEqual(migrated);
+  });
+
+  it("bounds text elements and requires unique IDs and positions", () => {
+    const block = contentBlock("Title", "Body");
+    const duplicateId = structuredClone(block);
+    duplicateId.textElements[1]!.id = duplicateId.textElements[0]!.id;
+    expect(ContentSlideDraftSchema.safeParse(duplicateId).success).toBe(false);
+
+    const duplicatePosition = structuredClone(block);
+    duplicatePosition.textElements[1]!.region = "top_center";
+    expect(ContentSlideDraftSchema.safeParse(duplicatePosition).success).toBe(false);
+
+    const invalidRegion = structuredClone(block);
+    invalidRegion.textElements[0]!.region = "outside" as never;
+    expect(ContentSlideDraftSchema.safeParse(invalidRegion).success).toBe(false);
+
+    const tooMany = structuredClone(block);
+    tooMany.textElements = [
+      ...tooMany.textElements,
+      ...Array.from({ length: 7 }, (_, index) => ({
+        id: `${block.id}:extra-${index}`,
+        role: "body" as const,
+        text: "",
+        region: "bottom_center" as const,
+        order: index,
+      })),
+    ];
+    expect(ContentSlideDraftSchema.safeParse(tooMany).success).toBe(false);
+  });
+
   it("stores incomplete structured authoring states", () => {
     expect(
       PresentationDraftSchema.safeParse({
         title: "",
         description: "",
-        schemaVersion: 1,
-        blocks: [
-          {
-            id: randomUUID(),
-            kind: "content",
-            layout: "title_body",
-            title: "",
-            body: "",
-            mediaId: null,
-            mediaAlt: null,
-            speakerNotes: "",
-          },
-        ],
+        schemaVersion: 2,
+        blocks: [contentBlock()],
       }).success,
     ).toBe(true);
   });
@@ -56,19 +182,8 @@ describe("presentation contracts", () => {
       title: "Content only",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
-      blocks: [
-        {
-          id: randomUUID(),
-          kind: "content",
-          layout: "title_body",
-          title: "Context",
-          body: "Read this before the activity.",
-          mediaId: null,
-          mediaAlt: null,
-          speakerNotes: "",
-        },
-      ],
+      schemaVersion: 2,
+      blocks: [contentBlock("Context", "Read this before the activity.")],
     });
     expect(contentOnly.success).toBe(false);
 
@@ -76,7 +191,7 @@ describe("presentation contracts", () => {
       title: "Mixed deck",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [questionBlock()],
     });
     expect(mixed.success).toBe(true);
@@ -91,7 +206,7 @@ describe("presentation contracts", () => {
       title: "Broken IDs",
       description: "",
       experiencePreset: { id: "focus", version: 1 },
-      schemaVersion: 1,
+      schemaVersion: 2,
       blocks: [first, second],
     });
     expect(parsed.success).toBe(false);
@@ -114,7 +229,7 @@ describe("presentation contracts", () => {
       title: "Shared recovery",
       description: "",
       experiencePreset: { id: "focus" as const, version: 1 as const },
-      schemaVersion: 1 as const,
+      schemaVersion: 2 as const,
       blocks: [first, second, recheck],
     };
     const sharedResult = PresentationContentSchema.safeParse(shared);

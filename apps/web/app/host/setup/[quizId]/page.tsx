@@ -42,6 +42,7 @@ interface ProductFeatures {
   roundExperiences: boolean;
   audiencePulse: boolean;
   roomChat: boolean;
+  liveFlexMode: boolean;
   uxBeta: boolean;
   workspaceShell: boolean;
 }
@@ -53,6 +54,7 @@ function defaultsFor(creator: Creator, entitlements: Entitlements): SessionSetti
       entitlements.maxParticipants,
     ),
     scoringMode: creator.segment === "education" ? "accuracy" : "speed",
+    timeMode: "timed",
     resultVisibility: creator.segment === "education" ? "private" : "leaderboard",
     allowLateJoin: true,
     nicknamePolicy: creator.segment === "education" ? "friendly_only" : "custom",
@@ -77,6 +79,7 @@ export default function HostSetupPage() {
   const { t } = useLocale();
   const tRef = useRef(t);
   tRef.current = t;
+  const preserveFlexPreferenceRef = useRef(false);
   const [quiz, setQuiz] = useState<QuizRecord | null>(null);
   const [publishedContent, setPublishedContent] = useState<QuizDraft | null>(null);
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
@@ -130,6 +133,7 @@ export default function HostSetupPage() {
         setUxBeta(account.productFeatures.uxBeta);
         const defaults = defaultsFor(account.creator, account.entitlements);
         if (!account.productFeatures.uxBeta) {
+          preserveFlexPreferenceRef.current = false;
           setSettings(defaults);
           setExperiencePreset(
             account.productFeatures.roundExperiences
@@ -157,10 +161,14 @@ export default function HostSetupPage() {
             ? saved!.recipe!
             : "custom";
           if (parsedSettings.success) {
+            const restoredSettings = parsedSettings.data;
+            preserveFlexPreferenceRef.current =
+              restoredSettings.timeMode === "flex" && !account.productFeatures.liveFlexMode;
             setSettings({
-              ...parsedSettings.data,
+              ...restoredSettings,
+              timeMode: account.productFeatures.liveFlexMode ? restoredSettings.timeMode : "timed",
               audienceLimit: Math.min(
-                Math.max(1, parsedSettings.data.audienceLimit),
+                Math.max(1, restoredSettings.audienceLimit),
                 account.entitlements.maxParticipants,
               ),
             });
@@ -181,6 +189,7 @@ export default function HostSetupPage() {
           localStorage.removeItem(setupRecipeStorageKey(account.creator.workspaceId));
         }
         if (!restored) {
+          preserveFlexPreferenceRef.current = false;
           const resolved = resolveSetupRecipe("recovery", defaults, {
             segment: account.creator.segment,
             maxParticipants: account.entitlements.maxParticipants,
@@ -202,14 +211,18 @@ export default function HostSetupPage() {
 
   useEffect(() => {
     if (!creator || !settings || !uxBeta) return;
+    const storedSettings = preserveFlexPreferenceRef.current
+      ? { ...settings, timeMode: "flex" as const, scoringMode: "accuracy" as const }
+      : settings;
     localStorage.setItem(
       setupRecipeStorageKey(creator.workspaceId),
-      JSON.stringify({ recipe, settings, experiencePreset, presenterSoundEnabled }),
+      JSON.stringify({ recipe, settings: storedSettings, experiencePreset, presenterSoundEnabled }),
     );
   }, [creator, experiencePreset, presenterSoundEnabled, recipe, settings, uxBeta]);
 
   function applyRecipe(nextRecipe: SetupRecipe) {
     if (!settings || !creator || !entitlements) return;
+    if (nextRecipe === "competition") preserveFlexPreferenceRef.current = false;
     const resolved = resolveSetupRecipe(nextRecipe, settings, {
       segment: creator.segment,
       maxParticipants: entitlements.maxParticipants,
@@ -398,6 +411,29 @@ export default function HostSetupPage() {
                       ),
                     })}
                   </label>
+                  {productFeatures?.liveFlexMode ? (
+                    <label className="field" htmlFor="time-mode">
+                      <span>{t("live.common.timeMode")}</span>
+                      <select
+                        className="select"
+                        id="time-mode"
+                        onChange={(event) => {
+                          const timeMode = event.target.value as "timed" | "flex";
+                          setRecipe("custom");
+                          setSettings({
+                            ...settings,
+                            timeMode,
+                            scoringMode: timeMode === "flex" ? "accuracy" : settings.scoringMode,
+                          });
+                        }}
+                        value={settings.timeMode ?? "timed"}
+                      >
+                        <option value="timed">{t("live.common.timedMode")}</option>
+                        <option value="flex">{t("live.common.flexMode")}</option>
+                      </select>
+                      <small className="muted">{t("live.common.flexSetupHelp")}</small>
+                    </label>
+                  ) : null}
                 </section>
 
                 <section className="panel">
@@ -439,6 +475,9 @@ export default function HostSetupPage() {
                       id="scoring-mode"
                       onChange={(event) => {
                         setRecipe("custom");
+                        if (event.target.value === "speed") {
+                          preserveFlexPreferenceRef.current = false;
+                        }
                         setSettings({
                           ...settings,
                           scoringMode: event.target.value as SessionSettings["scoringMode"],
@@ -447,7 +486,9 @@ export default function HostSetupPage() {
                       value={settings.scoringMode}
                     >
                       <option value="accuracy">{t("live.roundSetup.accuracyScoring")}</option>
-                      <option value="speed">{t("live.roundSetup.competitiveScoring")}</option>
+                      <option disabled={settings.timeMode === "flex"} value="speed">
+                        {t("live.roundSetup.competitiveScoring")}
+                      </option>
                     </select>
                   </label>
                   <label className="field" htmlFor="result-visibility">

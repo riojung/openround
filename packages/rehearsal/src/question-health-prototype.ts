@@ -9,7 +9,7 @@ import { normalizePrototypeConceptKey } from "./prototype-normalization";
 
 type ChoiceQuestion = Extract<QuestionDraft, { choices: unknown }>;
 
-export const QUESTION_HEALTH_RULESET_VERSION = "p0.1.0" as const;
+export const QUESTION_HEALTH_RULESET_VERSION = "p0.1.1" as const;
 
 export const QUESTION_HEALTH_RULE_IDS = [
   "choice.duplicate",
@@ -95,7 +95,7 @@ function questionContent(question: QuestionDraft) {
     timeLimitSeconds: question.timeLimitSeconds,
     basePoints: question.basePoints,
     explanation: question.explanation,
-    media: Boolean(question.mediaId),
+    mediaId: question.mediaId,
     mediaAlt: question.mediaAlt,
     sourceCitations: (question.sourceCitations ?? []).map((citation) => ({
       sourceName: citation.sourceName,

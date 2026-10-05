@@ -7,6 +7,7 @@ import type { PresentationHostSnapshot } from "@openround/contracts";
 import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import { PresentationMedia } from "../../../../components/presentation-live/presentation-media";
+import { ContentSlideView } from "../../../../components/presentation/content-slide-view";
 import {
   useWorkspace,
   WorkspaceProvider,
@@ -231,12 +232,16 @@ function PresentationHostContent() {
                     <span className={styles.statusPill}>
                       {t("live.presentationSession.contentSlide")}
                     </span>
-                    <h1 lang="">{block.title}</h1>
-                    <p lang="">{block.body}</p>
-                    <PresentationMedia
-                      altText={block.mediaAlt}
-                      mediaId={block.mediaId}
-                      sessionId={id}
+                    <ContentSlideView
+                      block={block}
+                      media={
+                        <PresentationMedia
+                          altText={block.mediaAlt}
+                          mediaId={block.mediaId}
+                          sessionId={id}
+                        />
+                      }
+                      variant="live"
                     />
                   </>
                 ) : null}
@@ -258,6 +263,10 @@ function PresentationHostContent() {
                           unit: "second",
                           unitDisplay: "narrow",
                         })}
+                      </p>
+                    ) : snapshot.acceptingResponses && snapshot.settings.timeMode === "flex" ? (
+                      <p className="muted" lang={locale} role="status">
+                        {t("live.common.flexOpen")}
                       </p>
                     ) : null}
                     <h1 lang="">{block.question.prompt}</h1>

@@ -732,16 +732,28 @@ export default function HostPage() {
                   <small lang={locale}>{t("live.host.answered")}</small>
                 </span>
                 <span>
-                  <strong
-                    lang={
-                      snapshot.questionPosition === null || snapshot.questionPosition === undefined
-                        ? locale
-                        : undefined
-                    }
-                  >
-                    {snapshot.deadline ? timeFormatter.format(new Date(snapshot.deadline)) : "None"}
-                  </strong>
-                  <small>deadline</small>
+                  {snapshot.settings.timeMode === "flex" ? (
+                    <>
+                      <strong lang={locale}>{t("live.common.flexMode")}</strong>
+                      <small lang={locale}>{t("live.common.timeMode")}</small>
+                    </>
+                  ) : (
+                    <>
+                      <strong
+                        lang={
+                          snapshot.questionPosition === null ||
+                          snapshot.questionPosition === undefined
+                            ? locale
+                            : undefined
+                        }
+                      >
+                        {snapshot.deadline
+                          ? timeFormatter.format(new Date(snapshot.deadline))
+                          : "None"}
+                      </strong>
+                      <small>deadline</small>
+                    </>
+                  )}
                 </span>
                 <span>
                   <strong>
@@ -815,7 +827,13 @@ export default function HostPage() {
                         {localizedPhaseLabel ?? snapshot.phase.replaceAll("_", " ")}
                       </span>
                       {snapshot.phase === "question_open" ? (
-                        <Countdown deadline={snapshot.deadline} />
+                        snapshot.settings.timeMode === "flex" ? (
+                          <span className="muted" lang={locale} role="status">
+                            {t("live.common.flexOpen")}
+                          </span>
+                        ) : (
+                          <Countdown deadline={snapshot.deadline} />
+                        )
                       ) : null}
                     </div>
                     <h1 lang="" style={{ fontSize: "clamp(2rem, 6vw, 4rem)" }}>

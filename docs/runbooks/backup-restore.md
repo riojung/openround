@@ -114,6 +114,23 @@ normal review to change the ledger.
 
 ## Restore exercise
 
+### Deletion and restored data
+
+Permanent Library/session deletion removes current application records and access; it does not
+rewrite prior encrypted database/media backups or downloaded exports. Retain backup generations
+only for the approved lifetime and limit access to named operators. The application has no
+automatic journal that reapplies deletions to an older restored generation.
+
+Before reopening a restored environment, reconcile approved deletion requests accepted after the
+backup cutoff using the operator's protected records. Remove the affected session trees before
+their archived sources, preserve assignment dependencies, and verify that deleted items, reports,
+room codes, and credentials are inaccessible. Reconcile media references and orphan cleanup as
+well; do not remove objects still referenced by retained content. Record counts and opaque request
+references rather than deleted content. If the deletion set cannot be established, resolve that
+privacy gap with the incident owner before traffic resumes.
+
+### Execute the drill
+
 1. Declare an exercise or incident and freeze destructive maintenance.
 2. Provision a clean replacement VM from the approved baseline. Patch it, configure its firewall,
    install the supported Docker/Compose versions, create the restricted deployment account, and pin

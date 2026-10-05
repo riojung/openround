@@ -31,6 +31,17 @@ the candidate. A repository scan alone is not an independent security review.
 - Stripe signature, ordering, retry, and entitlement reconciliation
 - Secret handling, logs, metrics, traces, container identity, and provider network boundaries
 - Account export, deletion, retention, audit, backup, and restore behavior
+- Archived Library deletion: current owner/tenant checks, archived-state and dependency races,
+  retained practice preservation, all-user favorite/Group/media-reference cleanup, and runtime
+  privilege boundaries after migration 048
+- Finished/expired Presentation session deletion: active-room refusal, socket/credential invalidation,
+  concurrent join/response/report-worker fencing, room-code release, and stale reconnects
+- Question Health: dismissal content/rule binding, revision-fenced apply/undo, exact-version and
+  cohort/sample isolation, bounded field-diff export/deletion, and no participant data in AI prompts
+- Decision Replay: frozen capture gate, strict aggregate-only event payload, atomic/idempotent
+  capture, event-limit marker, legacy availability, and session/report retention/deletion
+- Presentation v2: malformed IDs/regions/frames and element bounds, published-version immutability,
+  read-upcast compatibility, and projection-safe media/notes/citations
 
 ## Findings and decision
 

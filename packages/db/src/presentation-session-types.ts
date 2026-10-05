@@ -217,6 +217,9 @@ export type PresentationParticipantJoin =
   | { status: "full" }
   | { status: "closed" };
 
+export type PresentationSessionDeletion =
+  { status: "deleted" } | { status: "not_found" } | { status: "active" };
+
 export interface PresentationSessionTransitionInput {
   workspaceId: string;
   sessionId: string;
@@ -239,7 +242,17 @@ export type PresentationSessionCommandInput = PresentationSessionTransitionInput
 };
 
 export interface PresentationSessionRepository {
-  listSessions(workspaceId: string, now?: Date): Promise<PresentationSessionRecord[]>;
+  listSessions(
+    workspaceId: string,
+    now?: Date,
+    includeExpired?: boolean,
+  ): Promise<PresentationSessionRecord[]>;
+  /** Deletes the entire retained room only when it is finished or its live access has expired. */
+  deleteSession(
+    workspaceId: string,
+    sessionId: string,
+    now?: Date,
+  ): Promise<PresentationSessionDeletion>;
   createSession(input: PresentationSessionCreateInput): Promise<PresentationSessionRecord>;
   /** Creates the live room and its first scoped credential in one durable unit. */
   createSessionWithCredential(

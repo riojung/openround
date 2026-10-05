@@ -309,6 +309,7 @@ const messages = {
   "pages.home.sessions.empty": "Aucune session hébergée pour l'instant.",
   "pages.home.sessions.eyebrow": "Livraison",
   "pages.library.action.archive": "Archiver",
+  "pages.library.action.delete": "Supprimés",
   "pages.library.action.duplicate": "Dupliquer",
   "pages.library.action.restore": "Restaurer",
   "pages.library.actionComplete": "{count} {type} {action}.",
@@ -322,6 +323,12 @@ const messages = {
   "pages.library.clear": "Effacer",
   "pages.library.createPresentation": "Créer une présentation",
   "pages.library.createRound": "Créer un tour",
+  "pages.library.delete": "Supprimer définitivement",
+  "pages.library.deleteConfirm":
+    "Supprimer définitivement « {title} », y compris tous les brouillons et toutes les versions publiées ? Cette action est irréversible.",
+  "pages.library.deleteCount": "Supprimer ({count})",
+  "pages.library.deleteManyConfirm":
+    "Supprimer définitivement {count} éléments archivés sélectionnés, y compris tous les brouillons et toutes les versions publiées ? Cette action est irréversible.",
   "pages.library.deselectResults": "Désélectionner les résultats",
   "pages.library.destinationFolder": "Dossier de destination",
   "pages.library.duplicate": "Dupliquer",
@@ -436,6 +443,10 @@ const messages = {
   "pages.sessions.artifactType": "Type d'artefact",
   "pages.sessions.blockProgress": "Bloquer la progression",
   "pages.sessions.currentResponses": "Réponses actuelles",
+  "pages.sessions.delete": "Supprimer la session",
+  "pages.sessions.deleteConfirm":
+    "Supprimer définitivement la session « {title} », ses réponses, son rapport et ses suivis liés ? Cette action est irréversible.",
+  "pages.sessions.deleting": "Suppression…",
   "pages.sessions.emptyDescription":
     "Hébergez une ronde ou une présentation publiée et sa session en direct apparaîtra ici.",
   "pages.sessions.emptyFiltered": "Il n’y a aucune session {status} dans cet espace de travail.",
