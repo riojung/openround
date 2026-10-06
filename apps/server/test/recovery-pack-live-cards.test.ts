@@ -57,7 +57,7 @@ function packContent() {
   });
 }
 
-async function fixture(enabled = true, allowlisted = true, replay = true) {
+async function fixture(enabled = true, allowlisted = true, replay = true, liveCards = true) {
   const repository = new MemoryRepository();
   const now = new Date();
   const tokenHash = randomUUID();
@@ -119,6 +119,7 @@ async function fixture(enabled = true, allowlisted = true, replay = true) {
     ALLOW_IN_MEMORY: "true",
     LOG_LEVEL: "silent",
     FEATURE_RECOVERY_PACKS: String(enabled),
+    FEATURE_RECOVERY_PACK_LIVE_CARDS: String(liveCards),
     FEATURE_DECISION_REPLAY: String(replay),
     EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: allowlisted ? creator.workspaceId : "",
   });
@@ -126,7 +127,9 @@ async function fixture(enabled = true, allowlisted = true, replay = true) {
     const result = new SessionService(
       repository,
       new MemorySessionCache(),
-      disabled ? { ...config, FEATURE_RECOVERY_PACKS: false } : config,
+      disabled
+        ? { ...config, FEATURE_RECOVERY_PACKS: false, FEATURE_RECOVERY_PACK_LIVE_CARDS: false }
+        : config,
       new MetricsService(),
     );
     services.push(result);
@@ -173,6 +176,42 @@ async function fixture(enabled = true, allowlisted = true, replay = true) {
 }
 
 describe("Round Recovery Pack playback", () => {
+  it("keeps authoring-only canary rooms v5-readable through mutation, cache, and cold restart", async () => {
+    const f = await fixture(true, true, false, false);
+    expect(f.session.snapshot.stateSchemaVersion).toBe(5);
+    expect(f.learner.snapshot.stateSchemaVersion).toBe(5);
+    for (const action of ["start", "lock", "reveal"] as const) {
+      const result = await f.command(f.current, action);
+      expect(result.snapshot.stateSchemaVersion).toBe(5);
+      expect(result.snapshot.recoveryPackCards).toBeUndefined();
+      expect((await f.repository.getSessionById(f.session.sessionId))!.state).toMatchObject({
+        stateSchemaVersion: 5,
+        recoveryPackCardsEnabled: false,
+      });
+    }
+    await expect(
+      f.command(f.current, "intervention.start", {
+        interventionType: "explain",
+        recoveryPackCard: f.selection,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await f.command(f.current, "intervention.start", { interventionType: "explain" });
+    f.current.close();
+    const restarted = f.service();
+    const synced = await restarted.sync({
+      sessionId: f.session.sessionId,
+      participantToken: f.learner.participantToken,
+      role: "participant",
+      lastSeq: 0,
+    });
+    expect(synced.snapshot.stateSchemaVersion).toBe(5);
+    await f.command(restarted, "intervention.finish");
+    expect(
+      (await f.command(restarted, "recheck.open", { recheckMode: "linked" })).snapshot
+        .stateSchemaVersion,
+    ).toBe(5);
+  });
+
   it("recovers the selected card after a cold restart and reconciles its linked-recheck evidence", async () => {
     const f = await fixture();
     await f.command(f.current, "start");
@@ -193,6 +232,7 @@ describe("Round Recovery Pack playback", () => {
       reference: f.reference,
       body: "Use the reference part.",
     });
+    expect(selected.snapshot.stateSchemaVersion).toBe(6);
     const activeState = (await f.repository.getSessionById(f.session.sessionId))!.state;
     const select = snapshotSelector(activeState);
     // Exercise the optimized realtime projection when the current round has no answers.
@@ -212,6 +252,7 @@ describe("Round Recovery Pack playback", () => {
       lastSeq: 0,
     });
     expect(synchronized.snapshot.recoveryPackCard).toMatchObject({ reference: f.reference });
+    expect(synchronized.snapshot.stateSchemaVersion).toBe(6);
     expect(synchronized.snapshot.recoveryPackCards).toBeUndefined();
     expect(JSON.stringify(synchronized)).not.toContain("Unselected card secret");
     expect(JSON.stringify(synchronized)).not.toContain("correctValue");

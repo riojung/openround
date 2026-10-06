@@ -10,6 +10,8 @@
    `DATABASE_MIGRATION_URL` in the long-lived server environment.
 4. Deploy to staging and run the synthetic creator, host, three-player, reconnect, finish, report, and deletion flow.
 5. Promote one canary, check error rate, event-loop lag, acknowledgement latency, reconnects, database pool, Redis latency, and reconciliation.
+   Keep `FEATURE_RECOVERY_PACK_LIVE_CARDS=false` while any v5 server or worker can receive traffic;
+   authoring-only and ordinary rooms remain v5-readable during this mixed-version window.
 6. Promote production only when thresholds remain normal.
 7. Roll back by deploying the prior immutable image. Do not reverse a destructive database migration; use the documented forward repair.
 8. Contract or remove old schema only in a later release after every running version has stopped using it.
@@ -54,16 +56,23 @@ Migration 052 adds nullable aggregate Pack/card attribution to existing session 
 the session's forced workspace RLS and retention/deletion cascade still apply. Apply it before
 starting the new server. It does not link evidence to a mutable source Pack or add learner identity.
 
-The engine writes game state v6. Its explicit v5 upcaster keeps live Pack playback disabled for
-old rooms. New rooms freeze eligibility from `FEATURE_RECOVERY_PACKS` plus the evidence workspace
-allowlist; disabling the flag prevents eligibility in subsequently created rooms, without
-interrupting enabled active rooms or hiding copied content/reports. Cards resolve only from the
-room's immutable published Round snapshot (accepted update baseline when present), never from a
-latest source lookup. Text/citation cards are post-reveal only in this slice.
+Ordinary rooms and all v1–v5 legacy rooms retain game state v5 with live playback disabled through
+commands, caching, and restart. Only new live-card-eligible rooms write v6. Eligibility requires
+both `FEATURE_RECOVERY_PACKS=true` and the separate default-off
+`FEATURE_RECOVERY_PACK_LIVE_CARDS=true`, plus the evidence workspace allowlist. Authoring alone
+does not activate v6 writers. Snapshots report the room's actual schema version.
 
-Use a v6-capable server/worker rollback target after this release creates or writes room state;
-v5 binaries reject v6 snapshots even when the room has no Pack cards. Keep migration 052 during
-rollback. Disabling the Pack flag is not a schema downgrade. Rehearse duplicate/stale commands,
+Keep the live-card switch off throughout the canary. Drain and replace every v5 server and worker,
+then verify the serving image set before enabling it. Once enabled rooms or their reference-bearing
+decision evidence exist, use only a v6-capable, live-card-aware server/worker rollback target: old
+writers cannot preserve card projections and attribution. Disabling either flag prevents eligibility
+in new rooms without interrupting enabled active rooms or hiding copied content/reports; it does
+not downgrade existing v6 state. Cards resolve only from the room's immutable published Round
+snapshot (accepted update baseline when present), never from a latest source lookup. Text/citation
+cards are post-reveal only in this slice.
+
+Keep migration 052 during rollback. Rehearse authoring-only v5 creation, commands, and cold restart
+before enablement, then duplicate/stale commands,
 participant/presenter projection safety, empty-cache restart during a selected card, finish and
 linked recheck, source Pack deletion, and both Report V3/V4 attribution with CSV export.
 

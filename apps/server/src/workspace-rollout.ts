@@ -8,6 +8,7 @@ export type EvidenceWorkspaceFeature =
   | "presentationRealtime"
   | "liveFlexMode"
   | "recoveryPacks"
+  | "recoveryPackLiveCards"
   | "questionHealth"
   | "decisionReplay"
   | "recoveryTrails"
@@ -81,6 +82,7 @@ export function evidenceWorkspaceFeatureEnabled(
     | "FEATURE_PRESENTATION_REALTIME"
     | "FEATURE_LIVE_FLEX_MODE"
     | "FEATURE_RECOVERY_PACKS"
+    | "FEATURE_RECOVERY_PACK_LIVE_CARDS"
     | "FEATURE_QUESTION_HEALTH"
     | "FEATURE_DECISION_REPLAY"
     | "FEATURE_RECOVERY_TRAILS"
@@ -99,6 +101,9 @@ export function evidenceWorkspaceFeatureEnabled(
       return config.FEATURE_LIVE_FLEX_MODE;
     case "recoveryPacks":
       return config.FEATURE_RECOVERY_PACKS;
+    case "recoveryPackLiveCards":
+      // Authoring can be enabled during a v5/v6 canary without activating v6 live writers.
+      return config.FEATURE_RECOVERY_PACKS && config.FEATURE_RECOVERY_PACK_LIVE_CARDS;
     case "questionHealth":
       return config.FEATURE_QUESTION_HEALTH;
     case "decisionReplay":

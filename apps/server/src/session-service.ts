@@ -871,7 +871,7 @@ export class SessionService {
             recoveryPackCardsEnabled: evidenceWorkspaceFeatureEnabled(
               this.config,
               creator.workspaceId,
-              "recoveryPacks",
+              "recoveryPackLiveCards",
             ),
           }),
           expiresAt: new Date(now.getTime() + ttlMs),

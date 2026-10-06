@@ -133,7 +133,7 @@ describe("game engine", () => {
       ...state,
       participants: { [fallbackParticipant.id]: fallbackParticipant },
     });
-    expect(upgradedCurrentState.stateSchemaVersion).toBe(6);
+    expect(upgradedCurrentState.stateSchemaVersion).toBe(5);
     expect(upgradedCurrentState.settings.trustMode).toBe("learning");
     expect(upgradedCurrentState.settings.timeMode).toBe("timed");
     expect(upgradedCurrentState.participants[fallbackParticipant.id]?.avatarId).toBe(
@@ -1232,7 +1232,7 @@ describe("game engine", () => {
     };
 
     const upgraded = upgradeGameState(legacy as unknown as typeof state);
-    expect(upgraded.stateSchemaVersion).toBe(6);
+    expect(upgraded.stateSchemaVersion).toBe(5);
     expect(upgraded.settings).toMatchObject({
       trustMode: "learning",
       timeMode: "timed",
@@ -1257,7 +1257,7 @@ describe("game engine", () => {
     delete (legacy.settings as Partial<typeof legacy.settings>).timeMode;
 
     const upgraded = upgradeGameState(legacy);
-    expect(upgraded.stateSchemaVersion).toBe(6);
+    expect(upgraded.stateSchemaVersion).toBe(5);
     expect(upgraded.settings.timeMode).toBe("timed");
     expect(upgraded.settings.scoringMode).toBe("speed");
   });

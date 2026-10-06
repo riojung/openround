@@ -4,6 +4,32 @@ import { ConfigSchema } from "../src/config.js";
 import { evidenceWorkspaceFeatureEnabled } from "../src/workspace-rollout.js";
 
 describe("evidence-gated workspace rollout", () => {
+  it("keeps live Pack rollout separate from authoring and requires both switches and membership", () => {
+    const workspaceId = randomUUID();
+    const authoringOnly = ConfigSchema.parse({
+      NODE_ENV: "test",
+      ALLOW_IN_MEMORY: "true",
+      FEATURE_RECOVERY_PACKS: "true",
+      EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: workspaceId,
+    });
+    expect(evidenceWorkspaceFeatureEnabled(authoringOnly, workspaceId, "recoveryPacks")).toBe(true);
+    expect(
+      evidenceWorkspaceFeatureEnabled(authoringOnly, workspaceId, "recoveryPackLiveCards"),
+    ).toBe(false);
+    const live = { ...authoringOnly, FEATURE_RECOVERY_PACK_LIVE_CARDS: true };
+    expect(evidenceWorkspaceFeatureEnabled(live, workspaceId, "recoveryPackLiveCards")).toBe(true);
+    expect(evidenceWorkspaceFeatureEnabled(live, randomUUID(), "recoveryPackLiveCards")).toBe(
+      false,
+    );
+    expect(
+      evidenceWorkspaceFeatureEnabled(
+        { ...live, FEATURE_RECOVERY_PACKS: false },
+        workspaceId,
+        "recoveryPackLiveCards",
+      ),
+    ).toBe(false);
+  });
+
   it("requires both a deployment flag and explicit workspace membership", () => {
     const workspaceId = randomUUID();
     const config = ConfigSchema.parse({

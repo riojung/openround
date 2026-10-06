@@ -33,8 +33,9 @@ import {
 import { resolveExperienceTheme } from "@openround/experience";
 import { deriveCheckpointInsight } from "@openround/insights";
 
-// v6 freezes live Recovery Pack card enablement with the session. Old sessions must not
-// acquire the capability when deployment configuration changes.
+// Ordinary rooms retain v5 readability during flag-off canaries. Enabled live Pack rooms use
+// v6 to fence old writers that cannot retain card projections and decision/report attribution.
+export const BASE_GAME_STATE_SCHEMA_VERSION = 5;
 export const CURRENT_GAME_STATE_SCHEMA_VERSION = 6;
 
 /** Browser-safe stable fallback used for legacy and avatar-less participants. */
@@ -246,12 +247,12 @@ export function upgradeGameState(input: GameState): GameState {
       recoveryPackCardsEnabled: legacy.recoveryPackCardsEnabled ?? false,
     };
   }
-  if (legacy.stateSchemaVersion === 5) {
+  if (legacy.stateSchemaVersion === BASE_GAME_STATE_SCHEMA_VERSION) {
     return {
       ...legacy,
       participants,
       settings,
-      stateSchemaVersion: 6,
+      stateSchemaVersion: BASE_GAME_STATE_SCHEMA_VERSION,
       recoveryPackCardsEnabled: false,
     };
   }
@@ -259,7 +260,7 @@ export function upgradeGameState(input: GameState): GameState {
   const presetId = legacy.quiz.experiencePreset?.id;
   return {
     ...legacy,
-    stateSchemaVersion: CURRENT_GAME_STATE_SCHEMA_VERSION,
+    stateSchemaVersion: BASE_GAME_STATE_SCHEMA_VERSION,
     recoveryPackCardsEnabled: false,
     roundKind: legacy.roundKind ?? "main",
     sourceRoundId: legacy.sourceRoundId ?? null,
@@ -311,7 +312,9 @@ export function createGameState(input: {
 }): GameState {
   const brandTheme = input.brandTheme ?? null;
   return {
-    stateSchemaVersion: CURRENT_GAME_STATE_SCHEMA_VERSION,
+    stateSchemaVersion: input.recoveryPackCardsEnabled
+      ? CURRENT_GAME_STATE_SCHEMA_VERSION
+      : BASE_GAME_STATE_SCHEMA_VERSION,
     uxBeta: input.uxBeta,
     recoveryPackCardsEnabled: input.recoveryPackCardsEnabled ?? false,
     sessionId: input.sessionId,
@@ -1259,7 +1262,7 @@ export function snapshotForRole(
   return {
     mode: "live",
     uxBeta: state.uxBeta ?? false,
-    stateSchemaVersion: CURRENT_GAME_STATE_SCHEMA_VERSION,
+    stateSchemaVersion: state.stateSchemaVersion,
     sessionId: state.sessionId,
     code: state.code,
     version: state.version,

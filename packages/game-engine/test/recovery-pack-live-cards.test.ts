@@ -6,6 +6,8 @@ import {
   type RecoveryPackInsertion,
 } from "@openround/contracts";
 import {
+  acceptAnswer,
+  addParticipant,
   applyHostCommand,
   createGameState,
   snapshotForRole,
@@ -136,6 +138,16 @@ function revealed(state: GameState) {
   return command(command(command(state, "start").state, "lock").state, "reveal").state;
 }
 
+// Exact newer-schema guard in the pre-live-card engine at commit 7f0a5d8.
+function historicalV5Read(input: Pick<GameState, "stateSchemaVersion">) {
+  if ((input.stateSchemaVersion ?? 1) > 5) {
+    throw new Error(
+      `Game state schema ${input.stateSchemaVersion} is newer than supported schema 5`,
+    );
+  }
+  return input;
+}
+
 describe("frozen live Recovery Pack cards", () => {
   it("freezes creation enablement and explicitly upcasts legacy sessions without enabling cards", () => {
     const { state } = fixture();
@@ -144,13 +156,96 @@ describe("frozen live Recovery Pack cards", () => {
     expect(fixture(false).state.recoveryPackCardsEnabled).toBe(false);
     const old = { ...state, stateSchemaVersion: 5 };
     expect(upgradeGameState(old)).toMatchObject({
-      stateSchemaVersion: 6,
+      stateSchemaVersion: 5,
       recoveryPackCardsEnabled: false,
     });
     const missing = { ...state };
     delete missing.recoveryPackCardsEnabled;
     expect(upgradeGameState(missing).recoveryPackCardsEnabled).toBe(false);
     expect(upgradeGameState(state).recoveryPackCardsEnabled).toBe(true);
+  });
+
+  it("keeps disabled creations, persisted transitions, and role snapshots readable by v5 instances", () => {
+    let { state } = fixture(false);
+    const participantId = randomUUID();
+    state = addParticipant(state, {
+      id: participantId,
+      nickname: "Learner",
+      score: 0,
+      correctCount: 0,
+      acceptedResponseMs: 0,
+      connected: true,
+      kicked: false,
+    }).state;
+    const assertCompatible = (current: GameState) => {
+      expect(current.stateSchemaVersion).toBe(5);
+      expect(current.recoveryPackCardsEnabled).toBe(false);
+      expect(() => historicalV5Read(current)).not.toThrow();
+      const restored = upgradeGameState(JSON.parse(JSON.stringify(current)) as GameState);
+      expect(restored.stateSchemaVersion).toBe(5);
+      for (const role of ["host", "participant", "presenter"] as const) {
+        const snapshot = snapshotForRole(restored, { role, participantId });
+        expect(snapshot.stateSchemaVersion).toBe(5);
+        expect(snapshot).not.toHaveProperty("recoveryPackCards");
+        expect(snapshot).not.toHaveProperty("recoveryPackCard");
+      }
+    };
+    assertCompatible(state);
+    state = command(state, "start").state;
+    assertCompatible(state);
+    const question = state.quiz.questions[state.questionIndex!]!;
+    if (!("choices" in question)) throw new Error("Expected a choice fixture");
+    state = acceptAnswer(state, {
+      participantId,
+      roundId: state.roundId!,
+      choiceId: question.choices.find((choice) => choice.isCorrect)!.id,
+      idempotencyKey: randomUUID(),
+      answerId: randomUUID(),
+      nowMs: state.openedAtMs! + 100,
+    }).state;
+    assertCompatible(state);
+    for (const action of [
+      "lock",
+      "reveal",
+      "intervention.start",
+      "intervention.finish",
+      "next",
+    ] as const) {
+      state = command(
+        state,
+        action,
+        action === "intervention.start" ? { interventionType: "explain" } : {},
+      ).state;
+      assertCompatible(state);
+    }
+  });
+
+  it("fences enabled v6 state from the historical v5 guard while defaults and old states stay disabled", () => {
+    const enabled = fixture().state;
+    expect(() => historicalV5Read(enabled)).toThrow("newer than supported schema 5");
+    expect(snapshotForRole(enabled, { role: "host" }).stateSchemaVersion).toBe(6);
+    const omitted = createGameState({
+      sessionId: randomUUID(),
+      code: "1234567",
+      quiz: enabled.quiz,
+      settings: enabled.settings,
+    });
+    expect(omitted).toMatchObject({ stateSchemaVersion: 5, recoveryPackCardsEnabled: false });
+    expect(() => historicalV5Read(omitted)).not.toThrow();
+    for (const stateSchemaVersion of [1, 2, 3, 4, 5]) {
+      const legacy = upgradeGameState({ ...enabled, stateSchemaVersion });
+      expect(legacy).toMatchObject({ stateSchemaVersion: 5, recoveryPackCardsEnabled: false });
+      expect(snapshotForRole(revealed(legacy), { role: "host" })).not.toHaveProperty(
+        "recoveryPackCards",
+      );
+    }
+    expect(upgradeGameState({ ...enabled, recoveryPackCardsEnabled: false })).toMatchObject({
+      stateSchemaVersion: 6,
+      recoveryPackCardsEnabled: false,
+    });
+    expect(() => upgradeGameState({ ...enabled, stateSchemaVersion: 7 })).toThrow(
+      "newer than supported schema 6",
+    );
   });
 
   it("offers only the current diagnostic cards to the host after reveal", () => {

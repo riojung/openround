@@ -259,11 +259,14 @@ unsupported because authored card text can disclose the answer.
 
 Playback uses the exact insertion's accepted update baseline, or its original immutable snapshot
 when no update has been accepted. It never fetches the latest source Pack, and source deletion does
-not change an existing room. New sessions freeze eligibility from `FEATURE_RECOVERY_PACKS` and the
-evidence workspace allowlist. Disabling the feature prevents eligibility in new rooms while active
-enabled rooms remain usable. Game state v6 explicitly upcasts v5 sessions with playback disabled.
-Once v6 state is written, rollback requires a v6-capable server/worker; flag disable alone cannot
-make an older binary compatible.
+not change an existing room. New sessions freeze eligibility from both `FEATURE_RECOVERY_PACKS`
+and the separate default-off `FEATURE_RECOVERY_PACK_LIVE_CARDS`, plus the evidence workspace
+allowlist. Ordinary rooms and v1–v5 legacy rooms stay v5-readable through commands and restart;
+only new eligible live-card rooms write v6. Disabling either flag prevents eligibility in new
+rooms while active enabled rooms remain usable. Keep the live-card switch off during the canary
+and drain every old v5 server/worker before enabling it. Once enabled rooms or reference-bearing
+decision evidence exist, rollback requires a v6-capable, live-card-aware server/worker; flag disable
+alone cannot make an older binary compatible.
 
 Migration `052_recovery_pack_live_cards.sql` persists aggregate insertion/Pack/version/hash/card
 references on the existing forced-RLS intervention table. Reports and CSV retain this attribution
@@ -275,8 +278,11 @@ The existing browser sign-in fixtures now wait for hydration, confirmed consent,
 dashboard redirect before navigating to the next workflow. This addresses the WebKit navigation
 race seen in CI without loosening feature assertions or raising timeouts.
 
-Verification passes 219 contract, 28 engine, 338 server, 87 memory database, and 364 web tests,
-163 support checks, and 45 isolated PostgreSQL tests. The PostgreSQL path includes durable card
+Verification passes 219 contract, 30 engine, 340 server, 87 memory database, and 364 web tests,
+167 support checks, and 45 isolated PostgreSQL tests. Compatibility regressions cover authoring-only
+v5 creation, commands, cached reads, cold restart, legacy upcasts, actual snapshot versions, separate
+flag/allowlist requirements, enabled v6 persistence after flag disable, and older deployment receipts.
+The PostgreSQL path includes durable card
 and decision-event references, source deletion, cold repository restart, tenant denial, account
 export, and retention cascade. The browser journey passes desktop Chromium, Android Chromium,
 and iPhone WebKit, including mobile participant contexts, host-only previews, socket-frame leakage
