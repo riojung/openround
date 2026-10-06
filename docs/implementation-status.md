@@ -60,8 +60,9 @@ dependent gates remain pending.
 The runner-compatibility hardening slice makes the staging preflights select Node 22 explicitly,
 requires a reviewed Node 24-compatible Actions Runner attestation before the target-region load job
 can select a self-hosted runner, and records that minimum and label in its provenance. A separate
-Ubuntu 26 canary exercises native builds, service containers, all supported browser engines, the
-production Compose path, and image tooling ahead of GitHub's hosted-runner migration. Canary latency
+Ubuntu 26 canary retains the production Compose path and image tooling ahead of GitHub's
+hosted-runner migration. Primary Ubuntu 26 CI covers native builds, service containers, and all
+supported browser engines without running a duplicate canary suite. Canary latency
 is not target-region capacity evidence, and these controls do not complete a pending readiness gate.
 
 The final technical closure pass adds the hosted single-VM observability overlay, authenticated

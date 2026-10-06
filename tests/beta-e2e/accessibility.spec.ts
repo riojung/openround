@@ -116,14 +116,14 @@ test("workspace Create flyout stays inside the mobile viewport @mobile", async (
   expect(createFlyoutBox!.x + createFlyoutBox!.width).toBeLessThanOrEqual(
     page.viewportSize()!.width,
   );
-  await expect(page.getByRole("link", { name: /^Round\b/ })).toBeVisible();
-  await expect(page.getByRole("link", { name: /^Presentation\b/ })).toBeVisible();
+  await expect(createFlyout.getByRole("link", { name: /^Round\b/ })).toBeVisible();
+  await expect(createFlyout.getByRole("link", { name: /^Presentation\b/ })).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
 
 test("professional workspace destinations pass automated accessibility checks", async ({
   page,
-}) => {
+}, testInfo) => {
   await signIn(page);
 
   for (const [path, heading] of workspaceDestinations) {
@@ -138,10 +138,32 @@ test("professional workspace destinations pass automated accessibility checks", 
     await page.goto(path);
     await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
     if (assignmentsResponse) {
-      expect((await assignmentsResponse).status()).toBe(200);
-      await expect(
-        page.getByRole("heading", { name: "No assignments yet", level: 2 }),
-      ).toBeVisible();
+      const response = await assignmentsResponse;
+      expect(response.status()).toBe(200);
+      const { items } = (await response.json()) as {
+        items: Array<{ id: string; title: string; purpose: string }>;
+      };
+      const assignments = items.filter((item) => item.purpose === "assignment");
+      // The initial seeded Chromium profile exercises the exact empty state. Later
+      // profiles share this backend and must render assignments created by earlier tests.
+      if (testInfo.project.name === "chromium-beta") expect(assignments).toEqual([]);
+      const emptyHeading = page.getByRole("heading", { name: "No assignments yet", level: 2 });
+      if (!assignments.length) {
+        await expect(emptyHeading).toBeVisible();
+      } else {
+        await expect(emptyHeading).toHaveCount(0);
+        for (const assignment of assignments) {
+          const card = page.getByRole("article").filter({
+            has: page.locator(`a[href="/practice/${assignment.id}"]`),
+          });
+          await expect(
+            card.getByRole("heading", { name: assignment.title, exact: true }),
+          ).toBeVisible();
+          await expect(
+            card.getByRole("link", { name: "Manage assignment", exact: true }),
+          ).toBeVisible();
+        }
+      }
       await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
     }
     await expectNoAxeViolations(page);
@@ -266,6 +288,12 @@ test("Round Builder follows system appearance changes", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
   await expect(page.getByLabel("Title")).toHaveValue("Misconception check");
+  // The theme attribute changes before button background transitions finish. Axe
+  // must inspect the final dark surface, not a light/dark interpolation.
+  await expect(page.getByRole("button", { name: "Preview", exact: true })).toHaveCSS(
+    "background-color",
+    "rgb(16, 44, 52)",
+  );
   await expectNoAxeViolations(page);
 });
 

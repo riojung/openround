@@ -124,7 +124,7 @@ This file is not legal advice.
 | light-my-request         | 6.6.0        | [Project page](https://github.com/fastify/light-my-request#readme)  |
 | protobufjs               | 7.6.6        | [Project page](https://protobufjs.github.io/protobuf.js/)           |
 | secure-json-parse        | 4.1.0        | [Project page](https://github.com/fastify/secure-json-parse#readme) |
-| source-map-js            | 1.2.1        | [Project page](https://github.com/7rulnik/source-map-js)            |
+| source-map-js            | 1.2.2        | [Project page](https://github.com/7rulnik/source-map-js)            |
 
 ### CC-BY-4.0
 

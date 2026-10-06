@@ -5,6 +5,12 @@ const webUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_WEB_PORT ?? 3200)
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
 const betaEmail = "ux-beta-e2e@example.com";
 
+test.afterEach(async ({ page }) => {
+  // Redirects can complete while a second mocked account/authoring request is
+  // still running. Drain route handlers before fixture teardown disposes responses.
+  await page.unrouteAll({ behavior: "wait" });
+});
+
 async function signIn(page: Page, email: string) {
   await page.goto("/signin");
   const education = page.getByRole("button", { name: "Education" });

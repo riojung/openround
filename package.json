@@ -14,6 +14,7 @@
       "fast-uri@>=3.0.0 <3.1.8": "3.1.8",
       "fast-uri@>=4.0.0 <4.1.5": "4.1.5",
       "ip-address@>=10.0.0 <10.7.1": "10.7.2",
+      "source-map-js@>=1.0.0 <1.2.2": "1.2.2",
       "tsup>esbuild": "0.28.1"
     }
   },
@@ -56,7 +57,7 @@
     "test:multi-writer": "pnpm --filter @openround/server test:multi-writer",
     "test:smoke-support": "vitest run tests/support",
     "test:e2e": "playwright test",
-    "test:e2e:beta": "playwright test --config=playwright.beta.config.ts --project=chromium-beta && playwright test --config=playwright.beta.config.ts --project=firefox-beta && playwright test --config=playwright.beta.config.ts --project=chromium-beta-mobile && playwright test --config=playwright.beta.config.ts --project=webkit-beta-mobile",
+    "test:e2e:beta": "playwright test --config=playwright.beta.config.ts",
     "test:e2e:compose": "playwright test --config=playwright.compose.config.ts",
     "test:coverage": "turbo run test:coverage",
     "typecheck": "turbo run typecheck",
