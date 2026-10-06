@@ -60,8 +60,9 @@ dependent gates remain pending.
 The runner-compatibility hardening slice makes the staging preflights select Node 22 explicitly,
 requires a reviewed Node 24-compatible Actions Runner attestation before the target-region load job
 can select a self-hosted runner, and records that minimum and label in its provenance. A separate
-Ubuntu 26 canary exercises native builds, service containers, all supported browser engines, the
-production Compose path, and image tooling ahead of GitHub's hosted-runner migration. Canary latency
+Ubuntu 26 canary retains the production Compose path and image tooling ahead of GitHub's
+hosted-runner migration. Primary Ubuntu 26 CI covers native builds, service containers, and all
+supported browser engines without running a duplicate canary suite. Canary latency
 is not target-region capacity evidence, and these controls do not complete a pending readiness gate.
 
 The final technical closure pass adds the hosted single-VM observability overlay, authenticated
@@ -181,10 +182,11 @@ only destination IDs on import. Older importers can reject the version rather th
 Pack references. Cross-workspace imports with private baseline media return an explicit validation
 failure instead of altering the baseline under an unchanged hash.
 
-Still pending for the Recovery Pack epic: live intervention-card playback; insertion into
+Still pending after the foundation slice: live intervention-card playback (implemented in the
+increment below); insertion into
 Presentation, practice, and Companion; source-authoring proposals and content-hash-bound citation
 approval; QTI/CSV Pack exports with loss reports; and real preparation-time/quality validation.
-The Round update workflow is described in the next checkpoint.
+The Round update and live-card workflows are described in the next checkpoints.
 
 Verification includes memory/PostgreSQL conformance, tenant isolation, media and account-deletion
 races, receipt recovery, native roundtrips, type/lint checks, and production builds. Browser workflows
@@ -245,6 +247,58 @@ and independent review evidence remain separate requirements.
 The session-ordering unit tests disable only background process-metric collectors, whose sampling
 intervals otherwise survive fake-clock transitions and block subsequent retries while catching up;
 service-metric assertions and production collectors are unchanged.
+
+## Recovery Pack live Round cards — 2026-10-05
+
+This increment makes the frozen intervention cards usable in live Rounds. After revealing a
+Pack-backed main diagnostic, the host explicitly previews one card and starts an explanation or
+worked-example intervention through the existing version-fenced, idempotent host command path.
+Generic interventions, finish, and linked-recheck controls remain available. Participants and
+presenters receive only the selected active card's plain text and citations, not the other cards,
+future questions, delayed probe, or full Pack snapshot. Pre-reveal Pack playback is intentionally
+unsupported because authored card text can disclose the answer.
+
+Playback uses the exact insertion's accepted update baseline, or its original immutable snapshot
+when no update has been accepted. It never fetches the latest source Pack, and source deletion does
+not change an existing room. New sessions freeze eligibility from both `FEATURE_RECOVERY_PACKS`
+and the separate default-off `FEATURE_RECOVERY_PACK_LIVE_CARDS`, plus the evidence workspace
+allowlist. Ordinary rooms and v1–v5 legacy rooms stay v5-readable through commands and restart;
+only new eligible live-card rooms write v6. Disabling either flag prevents eligibility in new
+rooms while active enabled rooms remain usable. Keep the live-card switch off during the canary
+and drain every old v5 server/worker before enabling it. Once enabled rooms or reference-bearing
+decision evidence exist, rollback requires a v6-capable, live-card-aware server/worker; flag disable
+alone cannot make an older binary compatible.
+
+Migration `052_recovery_pack_live_cards.sql` persists aggregate insertion/Pack/version/hash/card
+references on the existing forced-RLS intervention table. Reports and CSV retain this attribution
+even without Decision Replay; captured start/finish timeline events include the same reference
+when replay is enabled. No card body, raw learner response, or new learner identity is added to
+decision evidence. Session retention, deletion, and account export cover the copied references.
+
+The existing browser sign-in fixtures now wait for hydration, confirmed consent, and the completed
+dashboard redirect before navigating to the next workflow. This addresses the WebKit navigation
+race seen in CI without loosening feature assertions or raising timeouts.
+
+Verification passes 219 contract, 30 engine, 340 server, 87 memory database, and 364 web tests,
+167 support checks, and 45 isolated PostgreSQL tests. Compatibility regressions cover authoring-only
+v5 creation, commands, cached reads, cold restart, legacy upcasts, actual snapshot versions, separate
+flag/allowlist requirements, enabled v6 persistence after flag disable, and older deployment receipts.
+The PostgreSQL path includes durable card
+and decision-event references, source deletion, cold repository restart, tenant denial, account
+export, and retention cascade. The browser journey passes desktop Chromium, Android Chromium,
+and iPhone WebKit, including mobile participant contexts, host-only previews, socket-frame leakage
+checks, escaped card content, citations, participant/presenter reconnect, linked recovery evidence,
+and zero automated accessibility findings across all three live roles. The previously failing
+WebKit foundation sign-in workflow passes three consecutive repeats. Firefox remains unverified
+locally because its profile cannot launch; the environment-gated server multi-writer test remains
+skipped in the standard package run. Automated scans do not replace manual assistive-technology
+or independent review evidence. Lint, typecheck, formatting, Docker-context checks, and production
+builds also pass.
+
+Next Pack slices remain Presentation/practice/Companion insertion, source-authoring proposals with
+content-hash-bound citation approval, and QTI/CSV Pack portability with explicit loss reports.
+Delayed Recovery Trail and Concept Health remain later incremental capabilities. Partner-evidence
+and staging decisions remain deferred; this implementation does not mark their gates as passed.
 
 ## Access/resilience provisional slice
 

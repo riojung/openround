@@ -6,6 +6,8 @@ import {
   questionConfidence,
   questionDelivery,
   questionPurpose,
+  RecoveryPackCardSelectionSchema,
+  RecoveryPackLiveCardSchema,
   type BrandTheme,
   type AvatarId,
   type ConfidenceValue,
@@ -17,6 +19,9 @@ import {
   type PublicQuestion,
   type QuestionDraft,
   type QuizDraft,
+  type RecoveryPackCardReference,
+  type RecoveryPackCardSelection,
+  type RecoveryPackLiveCard,
   type ResponseDistribution,
   type ResponsePayload,
   type ResolvedSessionSettings,
@@ -28,9 +33,10 @@ import {
 import { resolveExperienceTheme } from "@openround/experience";
 import { deriveCheckpointInsight } from "@openround/insights";
 
-// Time mode is additive within v5. Keep newly created timed rooms readable by prior v5 binaries
-// during rolling deployment and rollback; legacy snapshots resolve a missing mode to timed.
-export const CURRENT_GAME_STATE_SCHEMA_VERSION = 5;
+// Ordinary rooms retain v5 readability during flag-off canaries. Enabled live Pack rooms use
+// v6 to fence old writers that cannot retain card projections and decision/report attribution.
+export const BASE_GAME_STATE_SCHEMA_VERSION = 5;
+export const CURRENT_GAME_STATE_SCHEMA_VERSION = 6;
 
 /** Browser-safe stable fallback used for legacy and avatar-less participants. */
 export function avatarIdForSeed(seed: string): AvatarId {
@@ -112,11 +118,13 @@ export interface EngineIntervention {
   sourceRoundId: string;
   startedAtMs: number;
   finishedAtMs: number | null;
+  recoveryPackCard?: RecoveryPackCardReference;
 }
 
 export interface GameState {
   stateSchemaVersion: number;
   uxBeta?: boolean;
+  recoveryPackCardsEnabled?: boolean;
   sessionId: string;
   code: string;
   quiz: QuizDraft;
@@ -232,13 +240,28 @@ export function upgradeGameState(input: GameState): GameState {
   const participants = participantsWithAvatars(legacy.participants);
   const settings = resolvedSettings(legacy.settings);
   if (legacy.stateSchemaVersion === CURRENT_GAME_STATE_SCHEMA_VERSION) {
-    return { ...legacy, participants, settings };
+    return {
+      ...legacy,
+      participants,
+      settings,
+      recoveryPackCardsEnabled: legacy.recoveryPackCardsEnabled ?? false,
+    };
+  }
+  if (legacy.stateSchemaVersion === BASE_GAME_STATE_SCHEMA_VERSION) {
+    return {
+      ...legacy,
+      participants,
+      settings,
+      stateSchemaVersion: BASE_GAME_STATE_SCHEMA_VERSION,
+      recoveryPackCardsEnabled: false,
+    };
   }
   const category = legacy.quiz.category ?? "general";
   const presetId = legacy.quiz.experiencePreset?.id;
   return {
     ...legacy,
-    stateSchemaVersion: CURRENT_GAME_STATE_SCHEMA_VERSION,
+    stateSchemaVersion: BASE_GAME_STATE_SCHEMA_VERSION,
+    recoveryPackCardsEnabled: false,
     roundKind: legacy.roundKind ?? "main",
     sourceRoundId: legacy.sourceRoundId ?? null,
     intervention: legacy.intervention ?? null,
@@ -285,11 +308,15 @@ export function createGameState(input: {
   brandTheme?: BrandTheme | null;
   experienceTheme?: ExperienceThemeSnapshot;
   uxBeta?: boolean;
+  recoveryPackCardsEnabled?: boolean;
 }): GameState {
   const brandTheme = input.brandTheme ?? null;
   return {
-    stateSchemaVersion: CURRENT_GAME_STATE_SCHEMA_VERSION,
+    stateSchemaVersion: input.recoveryPackCardsEnabled
+      ? CURRENT_GAME_STATE_SCHEMA_VERSION
+      : BASE_GAME_STATE_SCHEMA_VERSION,
     uxBeta: input.uxBeta,
+    recoveryPackCardsEnabled: input.recoveryPackCardsEnabled ?? false,
     sessionId: input.sessionId,
     code: input.code,
     quiz: input.quiz,
@@ -486,6 +513,70 @@ function openQuestion(
   );
 }
 
+/** Resolve only the accepted immutable snapshot, never the current source Pack publication. */
+function frozenRecoveryPackCards(state: GameState): RecoveryPackLiveCard[] {
+  const question =
+    state.questionIndex === null ? undefined : state.quiz.questions[state.questionIndex];
+  if (
+    !state.recoveryPackCardsEnabled ||
+    state.roundKind !== "main" ||
+    !question ||
+    questionDelivery(question) !== "main" ||
+    questionPurpose(question) !== "diagnostic" ||
+    state.quiz.questions.filter((item) => item.id === question.id).length !== 1
+  )
+    return [];
+  const insertions = state.quiz.recoveryPackInsertions ?? [];
+  const owners = insertions.filter((insertion) => insertion.diagnosticQuestionId === question.id);
+  if (owners.length !== 1) return [];
+  if (
+    insertions
+      .flatMap((insertion) => [insertion.diagnosticQuestionId, insertion.recheckQuestionId])
+      .filter((id) => id === question.id).length !== 1
+  )
+    return [];
+  const insertion = owners[0]!;
+  if (insertions.filter((item) => item.id === insertion.id).length !== 1) return [];
+  const baseline = insertion.updateBaseline ?? {
+    packVersionId: insertion.packVersionId,
+    packVersion: insertion.packVersion,
+    contentHash: insertion.contentHash,
+    content: insertion.originalContent,
+  };
+  const cards = baseline.content.interventions;
+  if (cards.length > 5 || new Set(cards.map((card) => card.id)).size !== cards.length) return [];
+  const result = cards.map((card) =>
+    RecoveryPackLiveCardSchema.safeParse({
+      reference: {
+        insertionId: insertion.id,
+        packId: insertion.packId,
+        packVersionId: baseline.packVersionId,
+        packVersion: baseline.packVersion,
+        contentHash: baseline.contentHash,
+        cardId: card.id,
+      },
+      title: card.title,
+      body: card.body,
+      citations: card.citations,
+    }),
+  );
+  return result.every((item) => item.success) ? result.map((item) => item.data!) : [];
+}
+
+function sameRecoveryPackCardReference(
+  left: RecoveryPackCardReference,
+  right: RecoveryPackCardReference,
+) {
+  return (
+    left.insertionId === right.insertionId &&
+    left.packId === right.packId &&
+    left.packVersionId === right.packVersionId &&
+    left.packVersion === right.packVersion &&
+    left.contentHash === right.contentHash &&
+    left.cardId === right.cardId
+  );
+}
+
 export function applyHostCommand(
   state: GameState,
   input: {
@@ -496,6 +587,7 @@ export function applyHostCommand(
     interventionType?: InterventionType;
     recheckMode?: "linked" | "revote";
     recheckQuestionId?: string;
+    recoveryPackCard?: RecoveryPackCardSelection;
     nowMs: number;
     newRoundId: () => string;
     newInterventionId?: () => string;
@@ -507,6 +599,17 @@ export function applyHostCommand(
   }
   if (input.expectedVersion !== state.version) {
     throw new EngineError("STALE_VERSION", "Session state changed; synchronize and retry");
+  }
+  if (
+    input.recoveryPackCard &&
+    (!RecoveryPackCardSelectionSchema.safeParse(input.recoveryPackCard).success ||
+      input.action !== "intervention.start" ||
+      (input.interventionType !== "explain" && input.interventionType !== "example"))
+  ) {
+    throw new EngineError(
+      "CONFLICT",
+      "Recovery Pack cards require an explanation or example intervention",
+    );
   }
 
   let result: TransitionResult;
@@ -620,12 +723,26 @@ export function applyHostCommand(
         );
       }
       const returnPhase = state.phase as "question_locked" | "question_reveal";
+      const selectedCard = input.recoveryPackCard
+        ? frozenRecoveryPackCards(state).find(
+            (card) =>
+              card.reference.insertionId === input.recoveryPackCard!.insertionId &&
+              card.reference.cardId === input.recoveryPackCard!.cardId,
+          )
+        : undefined;
+      if (input.recoveryPackCard && !selectedCard) {
+        throw new EngineError(
+          "CONFLICT",
+          "This Recovery Pack card is not available for the current diagnostic",
+        );
+      }
       const activeIntervention: EngineIntervention = {
         id: (input.newInterventionId ?? input.newRoundId)(),
         type: interventionType,
         sourceRoundId: state.roundId,
         startedAtMs: input.nowMs,
         finishedAtMs: null,
+        ...(selectedCard ? { recoveryPackCard: selectedCard.reference } : {}),
       };
       result = nextState(
         state,
@@ -1130,10 +1247,22 @@ export function snapshotForRole(
     state.phase !== "lobby" &&
     state.phase !== "question_open" &&
     state.phase !== "paused";
+  const recoveryPackCards = frozenRecoveryPackCards(state);
+  const activeRecoveryPackCard =
+    state.phase === "intervention" &&
+    state.interventionReturnPhase === "question_reveal" &&
+    state.intervention?.finishedAtMs === null &&
+    state.intervention.sourceRoundId === state.roundId &&
+    (state.intervention.type === "explain" || state.intervention.type === "example") &&
+    state.intervention.recoveryPackCard
+      ? recoveryPackCards.find((card) =>
+          sameRecoveryPackCardReference(card.reference, state.intervention!.recoveryPackCard!),
+        )
+      : undefined;
   return {
     mode: "live",
     uxBeta: state.uxBeta ?? false,
-    stateSchemaVersion: CURRENT_GAME_STATE_SCHEMA_VERSION,
+    stateSchemaVersion: state.stateSchemaVersion,
     sessionId: state.sessionId,
     code: state.code,
     version: state.version,
@@ -1183,6 +1312,9 @@ export function snapshotForRole(
             state.intervention.finishedAtMs === null
               ? null
               : new Date(state.intervention.finishedAtMs).toISOString(),
+          ...(state.intervention.recoveryPackCard
+            ? { recoveryPackCard: state.intervention.recoveryPackCard }
+            : {}),
         }
       : null,
     insight: insightVisible
@@ -1204,5 +1336,9 @@ export function snapshotForRole(
       options.role !== "participant" && insightVisible
         ? distributionFor(state, question)
         : undefined,
+    ...(options.role === "host" && state.phase === "question_reveal" && recoveryPackCards.length > 0
+      ? { recoveryPackCards }
+      : {}),
+    ...(activeRecoveryPackCard ? { recoveryPackCard: activeRecoveryPackCard } : {}),
   };
 }

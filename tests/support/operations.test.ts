@@ -25,6 +25,7 @@ import {
   REMOTE_REMOVE_INCOMING_SCRIPT,
   REMOTE_RESTORE_PREVIOUS_SCRIPT,
   REMOTE_WRITE_SCRIPT,
+  assertConfigCheckSummary,
   assertProductionReleaseRevision,
   assertRemoteRollbackSource,
   assertRemoteTargetNotActive,
@@ -68,6 +69,8 @@ import {
   validateReleaseTag,
 } from "../../scripts/ops/release-acceptance.mjs";
 import { REMOTE_SERVICE_SCRIPT, main as serviceMain } from "../../scripts/ops/service.mjs";
+import { ConfigSchema } from "../../apps/server/src/config.js";
+import { createConfigCheckSummary } from "../../apps/server/src/config-check-summary.js";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const buildId = "a".repeat(40);
@@ -1272,6 +1275,12 @@ describe("operations environment contract", () => {
     expect(validateEnvFileKeys(singleVmRuntimeEnvironment(), "single-vm-runtime")).toContain(
       "DATABASE_URL",
     );
+    expect(
+      validateEnvFileKeys(
+        `${singleVmRuntimeEnvironment()}FEATURE_RECOVERY_PACK_LIVE_CARDS=false\n`,
+        "single-vm-runtime",
+      ),
+    ).toContain("FEATURE_RECOVERY_PACK_LIVE_CARDS");
     expect(() =>
       validateEnvFileKeys(
         singleVmRuntimeEnvironment().replace("COMMUNITY_MODE=false\n", ""),
@@ -1309,6 +1318,20 @@ describe("operations environment contract", () => {
         "checked Fly environment",
       ),
     ).toThrow("Fly secrets and checked Fly environment must not both define: PUBLIC_API_URL");
+  });
+
+  it("distributes live-card playback as a separate default-off environment flag", async () => {
+    const [example, compose, singleVmCompose] = await Promise.all(
+      [".env.example", "compose.yaml", "compose.single-vm.yaml"].map((path) =>
+        readFile(join(repositoryRoot, path), "utf8"),
+      ),
+    );
+    expect(example).toMatch(/^FEATURE_RECOVERY_PACK_LIVE_CARDS=false$/m);
+    for (const source of [compose, singleVmCompose]) {
+      expect(source).toContain("FEATURE_RECOVERY_PACK_LIVE_CARDS:");
+      expect(source).toContain("${FEATURE_RECOVERY_PACK_LIVE_CARDS:-false}");
+      expect(source).toContain("${FEATURE_RECOVERY_PACKS:-false}");
+    }
   });
 
   it("keeps deployment credentials out of every Docker build context", async () => {
@@ -1511,6 +1534,18 @@ describe("deployment configuration and manifest validation", () => {
 
     expect(validateFlyRuntimeEnvironment(serverEnvironment, checkedConfig)).toBe(serverEnvironment);
     expect(validateFlyWebEnvironment(webEnvironment, checkedConfig)).toBe(webEnvironment);
+    expect(serverEnvironment.FEATURE_RECOVERY_PACK_LIVE_CARDS).toBe("false");
+    expect(() =>
+      validateFlyRuntimeEnvironment(
+        { ...serverEnvironment, FEATURE_RECOVERY_PACK_LIVE_CARDS: "true" },
+        checkedConfig,
+      ),
+    ).toThrow("Fly [env] FEATURE_RECOVERY_PACK_LIVE_CARDS must be false");
+    const missingLiveCardsFlag = { ...serverEnvironment };
+    Reflect.deleteProperty(missingLiveCardsFlag, "FEATURE_RECOVERY_PACK_LIVE_CARDS");
+    expect(() => validateFlyRuntimeEnvironment(missingLiveCardsFlag, checkedConfig)).toThrow(
+      "Fly [env] FEATURE_RECOVERY_PACK_LIVE_CARDS must be false",
+    );
     expect(serverEnvironment.OPENROUND_DEPLOYMENT_ENVIRONMENT).toBe("staging");
     expect(() =>
       validateFlyRuntimeEnvironment(
@@ -1555,6 +1590,7 @@ describe("deployment configuration and manifest validation", () => {
       "production",
     );
     expect(productionServerEnvironment.OPENROUND_DEPLOYMENT_ENVIRONMENT).toBe("production");
+    expect(productionServerEnvironment.FEATURE_RECOVERY_PACK_LIVE_CARDS).toBe("false");
     expect(
       validateFlyRuntimeEnvironment(productionServerEnvironment, checkedProductionConfig),
     ).toBe(productionServerEnvironment);
@@ -1833,6 +1869,116 @@ describe("deployment configuration and manifest validation", () => {
         buildId,
       ),
     ).toThrow("feature flags contains an unexpected field set");
+  });
+
+  it("preserves older receipt summaries and accepts only boolean optional rollout flags", () => {
+    const config = validateDeployConfig(singleVmConfig(), "staging");
+    const oldSummary = receiptConfigCheckSummary(config);
+    const original = JSON.stringify(oldSummary);
+
+    expect(validateReceiptConfigCheckSummary(oldSummary, config, buildId)).toBe(oldSummary);
+    expect(JSON.stringify(oldSummary)).toBe(original);
+    expect(oldSummary.featureFlags).not.toHaveProperty("liveFlexMode");
+    expect(oldSummary.featureFlags).not.toHaveProperty("recoveryPackLiveCards");
+    expect(() =>
+      validateReceiptConfigCheckSummary(
+        {
+          ...oldSummary,
+          featureFlags: {
+            ...oldSummary.featureFlags,
+            liveFlexMode: false,
+            recoveryPackLiveCards: false,
+            unreviewedFlag: false,
+          },
+        },
+        config,
+        buildId,
+      ),
+    ).toThrow("feature flags contains an unexpected field set");
+    for (const flag of ["liveFlexMode", "recoveryPackLiveCards"]) {
+      for (const value of [false, true]) {
+        const summary = {
+          ...oldSummary,
+          featureFlags: { ...oldSummary.featureFlags, [flag]: value },
+        };
+        expect(validateReceiptConfigCheckSummary(summary, config, buildId)).toBe(summary);
+      }
+      for (const value of ["false", 0, null, undefined]) {
+        expect(() =>
+          validateReceiptConfigCheckSummary(
+            { ...oldSummary, featureFlags: { ...oldSummary.featureFlags, [flag]: value } },
+            config,
+            buildId,
+          ),
+        ).toThrow(`invalid feature flag ${flag}`);
+      }
+    }
+  });
+
+  it("accepts the current server's redaction-safe configuration summary", () => {
+    const config = validateDeployConfig(singleVmConfig(), "staging");
+    const serverConfig = ConfigSchema.parse({
+      NODE_ENV: "test",
+      OPENROUND_BUILD_ID: buildId,
+      PUBLIC_API_URL: config.publicApiUrl,
+      WEB_ORIGIN: config.publicWebUrl,
+      COMMUNITY_MODE: "false",
+      DATABASE_URL: "postgresql://runtime:fixture@database.test/openround",
+      REDIS_URL: "redis://cache.test:6379",
+      SMTP_URL: "smtp://mail.test:1025",
+      BILLING_MODE: config.billingMode,
+      S3_ENDPOINT: "http://storage.test:9000",
+      MEDIA_SCAN_MODE: "clamav",
+      CLAMAV_HOST: "clamav.test",
+      METRICS_ENABLED: "true",
+      METRICS_TOKEN: "fixture-metrics-token-long-enough",
+      OPENROUND_LOG_SHIPPING_MODE: "external-host-agent",
+      TRACING_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://collector.test:4318/v1/traces",
+      FEATURE_LIVE_FLEX_MODE: "true",
+      FEATURE_RECOVERY_PACK_LIVE_CARDS: "true",
+    });
+    const summary = createConfigCheckSummary({ ...serverConfig, NODE_ENV: "production" });
+
+    expect(summary.featureFlags.liveFlexMode).toBe(true);
+    expect(summary.featureFlags.recoveryPackLiveCards).toBe(true);
+    expect(validateReceiptConfigCheckSummary(summary, config, buildId)).toBe(summary);
+  });
+
+  it("keeps exact Fly live-card checks disabled while accepting older rollback image summaries", () => {
+    const config = validateDeployConfig(stagingConfig(), "staging");
+    const summary = receiptConfigCheckSummary(config);
+    const flySummary = {
+      ...summary,
+      metrics: "disabled",
+      featureFlags: {
+        ...summary.featureFlags,
+        signups: false,
+        roundExperiences: false,
+        audiencePulse: false,
+        roomChat: false,
+      },
+    };
+    expect(() => assertConfigCheckSummary(flySummary, config, buildId)).not.toThrow();
+    expect(() =>
+      assertConfigCheckSummary(
+        {
+          ...flySummary,
+          featureFlags: { ...flySummary.featureFlags, recoveryPackLiveCards: false },
+        },
+        config,
+        buildId,
+      ),
+    ).not.toThrow();
+    for (const recoveryPackLiveCards of [true, "false", null, undefined]) {
+      expect(() =>
+        assertConfigCheckSummary(
+          { ...flySummary, featureFlags: { ...flySummary.featureFlags, recoveryPackLiveCards } },
+          config,
+          buildId,
+        ),
+      ).toThrow("left feature flag recoveryPackLiveCards enabled");
+    }
   });
 
   it("requires a valid pinned key for the exact SSH target", async () => {

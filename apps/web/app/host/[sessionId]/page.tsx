@@ -7,6 +7,7 @@ import type {
   EventEnvelope,
   HostAction,
   InterventionType,
+  RecoveryPackCardSelection,
   SessionStaffCredential,
   SessionSnapshot,
 } from "@openround/contracts";
@@ -27,6 +28,10 @@ import { JoinAccess } from "../../../components/join-access";
 import { useLocale } from "../../../components/locale-provider";
 import { ParticipantIdentity } from "../../../components/participant-avatar";
 import { QuestionMedia } from "../../../components/question-media";
+import {
+  RecoveryPackCardPicker,
+  RecoveryPackLiveCardView,
+} from "../../../components/recovery-pack-live-card";
 import { ResponseDistributionView } from "../../../components/response-distribution";
 import { QnaPanel } from "../../../components/qna-panel";
 import { apiFetch, humanError } from "../../../lib/api";
@@ -434,6 +439,7 @@ export default function HostPage() {
       participantId?: string;
       interventionType?: InterventionType;
       recheckMode?: "linked" | "revote";
+      recoveryPackCard?: RecoveryPackCardSelection;
     } = {},
   ) {
     if (!snapshot || commandPending) return;
@@ -892,6 +898,9 @@ export default function HostPage() {
                         {snapshot.explanation}
                       </p>
                     ) : null}
+                    {snapshot.phase === "intervention" && snapshot.recoveryPackCard ? (
+                      <RecoveryPackLiveCardView card={snapshot.recoveryPackCard} />
+                    ) : null}
                   </>
                 ) : null}
                 {snapshot.phase === "finished" ? (
@@ -915,6 +924,18 @@ export default function HostPage() {
                 ) : null}
               </HostStage>
               <RecoveryCompass phaseView={phaseView!} showSteps={uxBeta} snapshot={snapshot}>
+                {snapshot.phase === "question_reveal" &&
+                snapshot.roundKind === "main" &&
+                snapshot.recoveryPackCards?.length ? (
+                  <RecoveryPackCardPicker
+                    key={snapshot.roundId}
+                    cards={snapshot.recoveryPackCards}
+                    disabled={commandPending || !connected}
+                    onStart={(recoveryPackCard, interventionType) =>
+                      command("intervention.start", { recoveryPackCard, interventionType })
+                    }
+                  />
+                ) : null}
                 {snapshot.phase === "lobby" ? <JoinAccess code={snapshot.code} editable /> : null}
                 {uxBeta && snapshot.responseDistribution ? (
                   <ResponseDistributionView distribution={snapshot.responseDistribution} />

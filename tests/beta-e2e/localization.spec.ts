@@ -1,16 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
+import { betaEmail, signInBeta } from "./sign-in";
 
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
-const betaEmail = "ux-beta-e2e@example.com";
-
 async function signIn(page: Page) {
-  await page.goto("/signin");
-  await page.getByRole("button", { name: "Education" }).click();
-  await page.getByLabel("Email address").fill(betaEmail);
-  await page.getByLabel(/I accept the Terms/).check();
-  await page.getByRole("button", { name: "Send sign-in link" }).click();
-  await page.getByRole("link", { name: "Continue to dashboard" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  await signInBeta(page);
   await expect(page.locator("main#main")).toBeVisible();
 }
 

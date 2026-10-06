@@ -2,10 +2,17 @@ import { defineConfig, devices } from "@playwright/test";
 
 const e2eWebPort = 3100;
 const e2eApiPort = 4100;
+const productionWeb = process.env.PLAYWRIGHT_PRODUCTION === "true";
+const nextCommand = productionWeb
+  ? `NEXT_PUBLIC_API_URL=http://127.0.0.1:${e2eApiPort} pnpm --filter @openround/web build && cp -r apps/web/public apps/web/.next/standalone/apps/web/public && cp -r apps/web/.next/static apps/web/.next/standalone/apps/web/.next/static && PORT=${e2eWebPort} HOSTNAME=127.0.0.1 node apps/web/.next/standalone/apps/web/server.js`
+  : `NEXT_PUBLIC_API_URL=http://127.0.0.1:${e2eApiPort} pnpm --filter @openround/web exec next dev -p ${e2eWebPort}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
+  // Bound CI resource usage; these fixtures create independent creator accounts.
+  workers: process.env.CI ? 2 : undefined,
+  forbidOnly: Boolean(process.env.CI),
   expect: { timeout: 10_000 },
   timeout: 60_000,
   retries: process.env.CI ? 2 : 0,
@@ -14,7 +21,8 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${e2eWebPort}`,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
-    video: "retain-on-failure",
+    // Keep first-failure screenshots/traces, and record video only on CI retries.
+    video: process.env.CI ? "on-first-retry" : "retain-on-failure",
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
@@ -30,10 +38,10 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: `node scripts/prepare-playwright-next.mjs && NEXT_PUBLIC_API_URL=http://127.0.0.1:${e2eApiPort} pnpm --filter @openround/web exec next dev -p ${e2eWebPort}`,
+      command: `node scripts/prepare-playwright-next.mjs && ${nextCommand}`,
       port: e2eWebPort,
       reuseExistingServer: false,
-      timeout: 120_000,
+      timeout: productionWeb ? 180_000 : 120_000,
     },
   ],
 });

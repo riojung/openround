@@ -397,9 +397,14 @@ change—requires a new reviewed release build and tag.
 - A code rollback is safe only when the older images tolerate the current schema. Preserve
   expand/contract compatibility during every rollout window.
 - Presentation v2/custom geometry and capture-enabled Round sessions/Report V4 also constrain the
-  rollback target. Apply migrations through 048 before the current server and follow the
+  rollback target. Apply migrations through 052 before the current server and follow the
   [content, report, and deletion upgrade checklist](upgrade.md#recent-content-report-and-deletion-upgrades).
   An older image cannot undo a completed deletion or safely reconstruct missing decision events.
+- Keep `FEATURE_RECOVERY_PACK_LIVE_CARDS=false` throughout a mixed-version canary. Authoring-only
+  and ordinary rooms stay v5-readable; enabling live cards requires draining all v5 servers and
+  workers first. After enabled rooms or reference-bearing decision evidence exist, retain a
+  v6-capable, live-card-aware rollback target. Disabling the switch does not downgrade existing
+  rooms. Follow the [live-card compatibility checklist](upgrade.md#live-recovery-pack-card-compatibility).
 - Deploy a flex-capable image with `FEATURE_LIVE_FLEX_MODE=false` first, and retain that image as
   the approved rollback target before enabling flex creation. Do not roll back to a pre-flex image
   after flex creation is enabled: older code cannot accept untimed responses, reads null Round

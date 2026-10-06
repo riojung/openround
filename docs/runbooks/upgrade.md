@@ -10,6 +10,8 @@
    `DATABASE_MIGRATION_URL` in the long-lived server environment.
 4. Deploy to staging and run the synthetic creator, host, three-player, reconnect, finish, report, and deletion flow.
 5. Promote one canary, check error rate, event-loop lag, acknowledgement latency, reconnects, database pool, Redis latency, and reconciliation.
+   Keep `FEATURE_RECOVERY_PACK_LIVE_CARDS=false` while any v5 server or worker can receive traffic;
+   authoring-only and ordinary rooms remain v5-readable during this mixed-version window.
 6. Promote production only when thresholds remain normal.
 7. Roll back by deploying the prior immutable image. Do not reverse a destructive database migration; use the documented forward repair.
 8. Contract or remove old schema only in a later release after every running version has stopped using it.
@@ -17,7 +19,7 @@
 ## Recent content, report, and deletion upgrades
 
 The current feature code includes migrations through
-`051_recovery_pack_update_undo.sql`. Apply the complete ordered migration set with the restricted
+`052_recovery_pack_live_cards.sql`. Apply the complete ordered migration set with the restricted
 one-shot migration job before starting the new server; do not grant the runtime role ownership or
 direct mutation privileges on published Presentation versions.
 
@@ -47,6 +49,32 @@ After `updateBaseline` writes, choose an update-aware web/server rollback target
 can discard the accepted baseline when it saves, and an older media extractor may omit probe-only
 assets. Disabling the flag does not make such an older image a safe writer. Keep both expanded
 migrations during rollback and never rewrite published snapshots to downgrade their format.
+
+### Live Recovery Pack card compatibility
+
+Migration 052 adds nullable aggregate Pack/card attribution to existing session interventions;
+the session's forced workspace RLS and retention/deletion cascade still apply. Apply it before
+starting the new server. It does not link evidence to a mutable source Pack or add learner identity.
+
+Ordinary rooms and all v1–v5 legacy rooms retain game state v5 with live playback disabled through
+commands, caching, and restart. Only new live-card-eligible rooms write v6. Eligibility requires
+both `FEATURE_RECOVERY_PACKS=true` and the separate default-off
+`FEATURE_RECOVERY_PACK_LIVE_CARDS=true`, plus the evidence workspace allowlist. Authoring alone
+does not activate v6 writers. Snapshots report the room's actual schema version.
+
+Keep the live-card switch off throughout the canary. Drain and replace every v5 server and worker,
+then verify the serving image set before enabling it. Once enabled rooms or their reference-bearing
+decision evidence exist, use only a v6-capable, live-card-aware server/worker rollback target: old
+writers cannot preserve card projections and attribution. Disabling either flag prevents eligibility
+in new rooms without interrupting enabled active rooms or hiding copied content/reports; it does
+not downgrade existing v6 state. Cards resolve only from the room's immutable published Round
+snapshot (accepted update baseline when present), never from a latest source lookup. Text/citation
+cards are post-reveal only in this slice.
+
+Keep migration 052 during rollback. Rehearse authoring-only v5 creation, commands, and cold restart
+before enablement, then duplicate/stale commands,
+participant/presenter projection safety, empty-cache restart during a selected card, finish and
+linked recheck, source Pack deletion, and both Report V3/V4 attribution with CSV export.
 
 Before promotion, use synthetic records to verify legacy draft/history/published reads; move and
 resize slide text, save, undo/redo, publish, and compare preview with both live roles; verify narrow

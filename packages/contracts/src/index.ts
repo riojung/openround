@@ -926,6 +926,31 @@ export const RecoveryInterventionCardSchema = RecoveryInterventionCardDraftSchem
   body: z.string().trim().min(1).max(2_000),
 });
 
+export const RecoveryPackCardSelectionSchema = z
+  .object({
+    insertionId: z.string().uuid(),
+    cardId: z.string().uuid(),
+  })
+  .strict();
+export type RecoveryPackCardSelection = z.infer<typeof RecoveryPackCardSelectionSchema>;
+
+export const RecoveryPackCardReferenceSchema = z
+  .object({
+    insertionId: z.string().uuid(),
+    packId: z.string().uuid(),
+    packVersionId: z.string().uuid(),
+    packVersion: z.number().int().positive(),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    cardId: z.string().uuid(),
+  })
+  .strict();
+export type RecoveryPackCardReference = z.infer<typeof RecoveryPackCardReferenceSchema>;
+
+export const RecoveryPackLiveCardSchema = RecoveryInterventionCardSchema.omit({ id: true })
+  .extend({ reference: RecoveryPackCardReferenceSchema })
+  .strict();
+export type RecoveryPackLiveCard = z.infer<typeof RecoveryPackLiveCardSchema>;
+
 export const RecoveryPackDraftSchema = z.object({
   schemaVersion: z.literal(1).default(1),
   title: z.string().trim().max(160),
@@ -1484,6 +1509,7 @@ export const InterventionStateSchema = z.object({
   sourceRoundId: z.string().uuid(),
   startedAt: z.string().datetime(),
   finishedAt: z.string().datetime().nullable(),
+  recoveryPackCard: RecoveryPackCardReferenceSchema.optional(),
 });
 export type InterventionState = z.infer<typeof InterventionStateSchema>;
 
@@ -1660,6 +1686,8 @@ export const SessionSnapshotSchema = z.object({
   intervention: InterventionStateSchema.nullable().default(null),
   insight: CheckpointInsightSchema.optional(),
   responseDistribution: ResponseDistributionSchema.optional(),
+  recoveryPackCards: z.array(RecoveryPackLiveCardSchema).max(5).optional(),
+  recoveryPackCard: RecoveryPackLiveCardSchema.optional(),
 });
 export type ResolvedSessionSnapshot = z.output<typeof SessionSnapshotSchema>;
 export type SessionSnapshot = Omit<ResolvedSessionSnapshot, "settings"> & {
@@ -2310,8 +2338,20 @@ export const HostCommandSchema = z
     interventionType: InterventionTypeSchema.optional(),
     recheckMode: z.enum(["linked", "revote"]).optional(),
     recheckQuestionId: z.string().uuid().optional(),
+    recoveryPackCard: RecoveryPackCardSelectionSchema.optional(),
   })
   .superRefine((command, context) => {
+    if (
+      command.recoveryPackCard &&
+      (command.action !== "intervention.start" ||
+        (command.interventionType !== "explain" && command.interventionType !== "example"))
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Recovery Pack cards can only start an explanation or example intervention",
+        path: ["recoveryPackCard"],
+      });
+    }
     if (command.action === "kick" && !command.participantId) {
       context.addIssue({
         code: "custom",
@@ -2821,6 +2861,7 @@ export const SessionDecisionEventSchema = z.discriminatedUnion("type", [
       type: z.literal("intervention_started"),
       roundId: z.string().uuid(),
       interventionType: InterventionTypeSchema,
+      recoveryPackCard: RecoveryPackCardReferenceSchema.optional(),
     })
     .strict(),
   z
@@ -2829,6 +2870,7 @@ export const SessionDecisionEventSchema = z.discriminatedUnion("type", [
       type: z.literal("intervention_finished"),
       roundId: z.string().uuid(),
       interventionType: InterventionTypeSchema,
+      recoveryPackCard: RecoveryPackCardReferenceSchema.optional(),
     })
     .strict(),
   z
@@ -2920,6 +2962,7 @@ export const ReportV2Schema = z.object({
       linkedRecheckRoundId: z.string().uuid().nullable(),
       startedAt: z.string().datetime(),
       finishedAt: z.string().datetime().nullable(),
+      recoveryPackCard: RecoveryPackCardReferenceSchema.optional(),
     }),
   ),
   recovery: z.array(

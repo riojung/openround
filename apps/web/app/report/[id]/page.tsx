@@ -58,6 +58,11 @@ function RecoveryStory({ report }: { report: ReportV2 | ReportV3 | ReportV4 }) {
           label: item.type.replaceAll("_", " "),
           startedAt: item.startedAt,
           followedByLinkedRecheck: Boolean(item.linkedRecheckRoundId),
+          ...(item.recoveryPackCard
+            ? {
+                sourceReference: `Recovery Pack v${item.recoveryPackCard.packVersion} · card ${item.recoveryPackCard.cardId}`,
+              }
+            : {}),
         })),
         nextActionLabel: summary.unresolved.length ? "Target practice" : "Review evidence",
         nextAction: summary.nextAction,

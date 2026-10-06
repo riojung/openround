@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import type { PresentationDraft } from "@openround/contracts";
+import { signInBeta } from "./sign-in";
 
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
 const workspaceDestinations = [
@@ -15,13 +18,7 @@ const workspaceDestinations = [
 ] as const;
 
 async function signIn(page: Page) {
-  await page.goto("/signin");
-  await page.getByRole("button", { name: "Education" }).click();
-  await page.getByLabel("Email address").fill("ux-beta-e2e@example.com");
-  await page.getByLabel(/I accept the Terms/).check();
-  await page.getByRole("button", { name: "Send sign-in link" }).click();
-  await page.getByRole("link", { name: "Continue to dashboard" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  await signInBeta(page);
   await expect(page.getByRole("heading", { name: "Rounds", level: 1 })).toBeVisible();
 }
 
@@ -71,6 +68,65 @@ async function createPresentation(page: Page) {
   return (await response.json()).presentation.id as string;
 }
 
+async function createPublishedPresentationSession(page: Page) {
+  const title = `Appearance session ${randomUUID().slice(0, 8)}`;
+  const created = await page.request.post(`${apiUrl}/v1/presentations`, {
+    data: { title, description: "A populated Presentation card for the dark workspace scan." },
+  });
+  expect(created.status()).toBe(201);
+  const { presentation } = (await created.json()) as {
+    presentation: { id: string; draftRevision: number; draft: PresentationDraft };
+  };
+  const saved = await page.request.put(`${apiUrl}/v1/presentations/${presentation.id}/draft`, {
+    data: {
+      expectedRevision: presentation.draftRevision,
+      mutationId: randomUUID(),
+      schemaVersion: 2,
+      draft: {
+        ...presentation.draft,
+        blocks: [
+          {
+            id: randomUUID(),
+            kind: "question",
+            question: {
+              id: randomUUID(),
+              type: "numeric",
+              prompt: "What is two plus two?",
+              purpose: "diagnostic",
+              confidence: "off",
+              delivery: "main",
+              conceptKeys: ["addition"],
+              linkedRecheckQuestionId: null,
+              timeLimitSeconds: 30,
+              basePoints: 1_000,
+              explanation: "Two pairs contain four items.",
+              mediaId: null,
+              mediaAlt: null,
+              correctValue: "4",
+              tolerance: "0",
+              unit: null,
+            },
+          },
+        ],
+      },
+    },
+  });
+  expect(saved.status()).toBe(200);
+  const updated = (await saved.json()).presentation as { draftRevision: number };
+  const published = await page.request.post(
+    `${apiUrl}/v1/presentations/${presentation.id}/publish`,
+    {
+      data: { expectedDraftRevision: updated.draftRevision },
+    },
+  );
+  expect(published.status()).toBe(200);
+  const session = await page.request.post(`${apiUrl}/v1/presentation-sessions`, {
+    data: { presentationId: presentation.id },
+  });
+  expect(session.status()).toBe(201);
+  return title;
+}
+
 async function expectNoHorizontalOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
@@ -106,14 +162,14 @@ test("workspace Create flyout stays inside the mobile viewport @mobile", async (
   expect(createFlyoutBox!.x + createFlyoutBox!.width).toBeLessThanOrEqual(
     page.viewportSize()!.width,
   );
-  await expect(page.getByRole("link", { name: /^Round\b/ })).toBeVisible();
-  await expect(page.getByRole("link", { name: /^Presentation\b/ })).toBeVisible();
+  await expect(createFlyout.getByRole("link", { name: /^Round\b/ })).toBeVisible();
+  await expect(createFlyout.getByRole("link", { name: /^Presentation\b/ })).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
 
 test("professional workspace destinations pass automated accessibility checks", async ({
   page,
-}) => {
+}, testInfo) => {
   await signIn(page);
 
   for (const [path, heading] of workspaceDestinations) {
@@ -128,10 +184,32 @@ test("professional workspace destinations pass automated accessibility checks", 
     await page.goto(path);
     await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
     if (assignmentsResponse) {
-      expect((await assignmentsResponse).status()).toBe(200);
-      await expect(
-        page.getByRole("heading", { name: "No assignments yet", level: 2 }),
-      ).toBeVisible();
+      const response = await assignmentsResponse;
+      expect(response.status()).toBe(200);
+      const { items } = (await response.json()) as {
+        items: Array<{ id: string; title: string; purpose: string }>;
+      };
+      const assignments = items.filter((item) => item.purpose === "assignment");
+      // The initial seeded Chromium profile exercises the exact empty state. Later
+      // profiles share this backend and must render assignments created by earlier tests.
+      if (testInfo.project.name === "chromium-beta") expect(assignments).toEqual([]);
+      const emptyHeading = page.getByRole("heading", { name: "No assignments yet", level: 2 });
+      if (!assignments.length) {
+        await expect(emptyHeading).toBeVisible();
+      } else {
+        await expect(emptyHeading).toHaveCount(0);
+        for (const assignment of assignments) {
+          const card = page.getByRole("article").filter({
+            has: page.locator(`a[href="/practice/${assignment.id}"]`),
+          });
+          await expect(
+            card.getByRole("heading", { name: assignment.title, exact: true }),
+          ).toBeVisible();
+          await expect(
+            card.getByRole("link", { name: "Manage assignment", exact: true }),
+          ).toBeVisible();
+        }
+      }
       await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
     }
     await expectNoAxeViolations(page);
@@ -142,6 +220,9 @@ test("workspace appearance follows, overrides, and persists the system color mod
   page,
 }) => {
   await signIn(page);
+  // Populate the card in this test itself; the first browser must cover the same
+  // Presentation surface as later profiles instead of depending on their fixtures.
+  const presentationTitle = await createPublishedPresentationSession(page);
   await page.goto("/home");
 
   // Firefox does not preserve a media override across the authentication
@@ -190,6 +271,14 @@ test("workspace appearance follows, overrides, and persists the system color mod
     await page.goto(path);
     await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+    if (path === "/sessions") {
+      const presentationCard = page.getByRole("article").filter({
+        has: page.getByRole("heading", { name: presentationTitle, exact: true }),
+      });
+      await expect(presentationCard).toBeVisible();
+      await expect(presentationCard.locator(".eyebrow")).toHaveText("Presentation");
+      await expect(presentationCard.locator(".eyebrow")).toBeVisible();
+    }
     if (path === "/account") {
       await expect(page.locator(".settings-grid > .panel").first()).toHaveCSS(
         "background-color",
@@ -256,6 +345,12 @@ test("Round Builder follows system appearance changes", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
   await expect(page.getByLabel("Title")).toHaveValue("Misconception check");
+  // The theme attribute changes before button background transitions finish. Axe
+  // must inspect the final dark surface, not a light/dark interpolation.
+  await expect(page.getByRole("button", { name: "Preview", exact: true })).toHaveCSS(
+    "background-color",
+    "rgb(16, 44, 52)",
+  );
   await expectNoAxeViolations(page);
 });
 

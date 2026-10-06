@@ -181,14 +181,18 @@ const configCheckFeatureKeys = Object.freeze([
   "extendedQuestionTypes",
   "verifiedInstitution",
 ]);
+// Older deployed summaries and their receipt hashes remain valid without additive rollout flags.
+const optionalConfigCheckFeatureKeys = Object.freeze(["liveFlexMode", "recoveryPackLiveCards"]);
 
-function assertExactObjectKeys(value, expected, label) {
+function assertExactObjectKeys(value, expected, label, optional = []) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
   }
-  const actual = Object.keys(value).sort();
-  const required = [...expected].sort();
-  if (actual.length !== required.length || actual.some((key, index) => key !== required[index])) {
+  const allowed = new Set([...expected, ...optional]);
+  if (
+    Object.keys(value).some((key) => !allowed.has(key)) ||
+    expected.some((key) => !Object.hasOwn(value, key))
+  ) {
     throw new Error(`${label} contains an unexpected field set`);
   }
 }
@@ -199,6 +203,7 @@ export function validateReceiptConfigCheckSummary(summary, config, buildId) {
     summary.featureFlags,
     configCheckFeatureKeys,
     "configuration feature flags",
+    optionalConfigCheckFeatureKeys,
   );
   const expected = {
     valid: true,
@@ -222,7 +227,7 @@ export function validateReceiptConfigCheckSummary(summary, config, buildId) {
       throw new Error(`The deployed configuration summary returned unexpected ${key}`);
     }
   }
-  for (const key of configCheckFeatureKeys) {
+  for (const key of Object.keys(summary.featureFlags)) {
     if (typeof summary.featureFlags[key] !== "boolean") {
       throw new Error(`The deployed configuration summary returned invalid feature flag ${key}`);
     }
@@ -984,7 +989,7 @@ export async function waitForMediaHealth(config) {
   throw new Error(`Media health did not converge before timeout (${lastProblem})`);
 }
 
-function assertConfigCheckSummary(summary, config, buildId) {
+export function assertConfigCheckSummary(summary, config, buildId) {
   const expected = {
     valid: true,
     buildId,
@@ -1024,6 +1029,16 @@ function assertConfigCheckSummary(summary, config, buildId) {
     if (summary.featureFlags?.[key] !== true) {
       throw new Error(`The exact server image config-check disabled core feature flag ${key}`);
     }
+  }
+  // Keep pre-flag rollback summaries valid; selecting a schema-compatible image is still required.
+  // A current image must confirm the exact Fly template keeps live-card playback disabled.
+  if (
+    Object.hasOwn(summary.featureFlags, "recoveryPackLiveCards") &&
+    summary.featureFlags.recoveryPackLiveCards !== false
+  ) {
+    throw new Error(
+      "The exact server image config-check left feature flag recoveryPackLiveCards enabled",
+    );
   }
 }
 

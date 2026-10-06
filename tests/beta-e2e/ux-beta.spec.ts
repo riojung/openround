@@ -1,20 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { betaEmail, signInBeta } from "./sign-in";
 
 const webUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_WEB_PORT ?? 3200)}`;
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
-const betaEmail = "ux-beta-e2e@example.com";
+
+test.afterEach(async ({ page }) => {
+  // Redirects can complete while a second mocked account/authoring request is
+  // still running. Drain route handlers before fixture teardown disposes responses.
+  await page.unrouteAll({ behavior: "wait" });
+});
 
 async function signIn(page: Page, email: string) {
-  await page.goto("/signin");
-  await page.getByRole("button", { name: "Education" }).click();
-  await page.getByLabel("Email address").fill(email);
-  const policyConsent = page.getByLabel(/I accept the Terms/);
-  await policyConsent.click();
-  await expect(policyConsent).toBeChecked();
-  await page.getByRole("button", { name: "Send sign-in link" }).click();
-  await page.getByRole("link", { name: "Continue to dashboard" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  await signInBeta(page, email);
   await expect(page.getByRole("button", { name: "Create", exact: true })).toBeVisible();
 }
 

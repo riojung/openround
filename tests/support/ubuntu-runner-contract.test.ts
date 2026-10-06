@@ -58,11 +58,9 @@ describe("GitHub-hosted runner migration contract", () => {
     expect(parsed.permissions).toEqual({ contents: "read" });
     expect(parsed.on?.pull_request?.paths).toContain(".github/workflows/*.yml");
     expect(parsed.on?.pull_request?.paths).toContain(".dockerignore");
+    expect(parsed.on).toHaveProperty("workflow_dispatch");
     expect(parsed.on?.schedule?.[0]?.cron).toBe("43 10 * * 2");
     const canaryJobs = [
-      ["ubuntu26-check", "Ubuntu 26 / check"],
-      ["ubuntu26-postgres-migration", "Ubuntu 26 / postgres migration"],
-      ["ubuntu26-browser-smoke", "Ubuntu 26 / browser smoke"],
       ["ubuntu26-production-compose", "Ubuntu 26 / production Compose"],
       ["ubuntu26-image-toolchain", "Ubuntu 26 / image toolchain"],
     ] as const;
@@ -83,23 +81,13 @@ describe("GitHub-hosted runner migration contract", () => {
       expect(requiredContexts.has(job)).toBe(false);
       expect(requiredContexts.has(displayName)).toBe(false);
     }
-    for (const job of [
-      "ubuntu26-check",
-      "ubuntu26-postgres-migration",
-      "ubuntu26-browser-smoke",
-      "ubuntu26-production-compose",
-    ]) {
+    expect(Object.keys(parsed.jobs).sort()).toEqual(canaryJobs.map(([job]) => job).sort());
+    for (const job of ["ubuntu26-production-compose"]) {
       const setupNode = parsed.jobs[job].steps?.find(({ uses }) =>
         uses?.startsWith("actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"),
       );
       expect(setupNode?.with?.["node-version"]).toBe(22);
     }
-    expect(parsed.jobs["ubuntu26-check"].steps?.some(({ run }) => run === "pnpm check")).toBe(true);
-    expect(
-      parsed.jobs["ubuntu26-browser-smoke"].steps?.some(
-        ({ run }) => run === "pnpm exec playwright install --with-deps chromium firefox webkit",
-      ),
-    ).toBe(true);
     expect(
       parsed.jobs["ubuntu26-production-compose"].steps?.some(
         ({ run }) => run === "pnpm smoke:restore",
@@ -145,7 +133,9 @@ describe("GitHub-hosted runner migration contract", () => {
     expect(runbook).toContain("replaces every GitHub-hosted `runs-on: ubuntu-latest` label");
     expect(runbook).toContain("temporary rollback");
     expect(runbook).toMatch(/do not replace, satisfy, or share a name with any required/);
-    expect(status).toMatch(/Ubuntu 26 canary exercises native builds/);
+    expect(status).toMatch(
+      /Ubuntu 26 canary retains the production Compose path and image tooling/,
+    );
     expect(status).toMatch(/do not complete a pending readiness gate/);
   });
 

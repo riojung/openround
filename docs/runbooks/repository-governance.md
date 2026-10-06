@@ -45,6 +45,59 @@ the release gate complete.
 - Prefer merge commits or squash merges consistently; never publish a release from an unreviewed
   branch tip.
 
+## CI cost and failure handling
+
+Keep the seven required contexts above stable; do not use workflow-level path filters that leave
+them pending or remove checks to hide failures. CI and Security cancel superseded pull-request
+runs, but retain main-push runs used by the signed-release acceptance policy.
+
+The Ubuntu 26 canary keeps only its distinct production Compose and image-toolchain jobs on
+runner-sensitive PRs and weekly/manual runs. Format/build/unit, PostgreSQL, and browser checks run
+once in primary CI on the same runner. Source SBOM generation remains a short required check;
+digest-bound release image SBOMs cover different artifacts and must not be removed.
+
+CodeQL scans the checked-in JavaScript/TypeScript sources with `build-mode: none`; a second full
+application install/build is unnecessary for this interpreted-language scan. See GitHub's
+[build-mode documentation](https://github.com/github/codeql-action/blob/2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2/init/action.yml).
+The primary CI job still validates the production build. Browser runs use one beta invocation for
+all four profiles, preserving their shared report/artifact set and avoiding four cold server starts.
+Beta remains serial because its seeded workspace includes shared mutable settings and evidence.
+CI builds the web app once per feature mode and serves its standalone production output, including
+public/static assets, rather than paying on-demand development compilation during every journey.
+First-failure traces and screenshots remain; CI video is recorded on the first retry.
+
+For a red run, inspect the failed job and annotations before retrying:
+
+```bash
+gh pr checks
+gh run view <run-id> --log-failed
+pnpm install --frozen-lockfile
+pnpm audit --audit-level low
+pnpm licenses:report
+git diff --exit-code -- THIRD_PARTY_NOTICES.md
+```
+
+An advisory requires the smallest patched dependency update, a reviewed lockfile/notices change,
+and a clean audit; never lower the threshold or suppress it just to pass. Notices and gitleaks run
+independently after an audit failure so one finding cannot hide another. A GitHub annotation that a
+hosted runner could not acquire the job is an infrastructure failure, not evidence of a product
+defect; a bounded `gh run rerun <run-id> --failed` is appropriate after verifying that cause.
+Browser failures require inspecting retained traces and fixing the underlying interaction or
+fixture isolation, not increasing timeouts or broadly retrying every step. Hosted timings are not
+capacity evidence and runner availability cannot be guaranteed by repository changes.
+
+To reproduce the browser mode used by CI locally, run these sequentially (both use the same Next
+output directory):
+
+```bash
+PLAYWRIGHT_PRODUCTION=true pnpm test:e2e
+PLAYWRIGHT_PRODUCTION=true pnpm test:e2e:beta
+```
+
+Omit the flag to keep the normal local development server. Do not run a build or another browser
+suite against that output directory while a suite is serving it. Full local tests also require all
+three installed browser engines; an engine that cannot launch locally is not a passing test.
+
 ## Release-tag ruleset specifications
 
 Release authority and immutability use two independent rulesets. The creation ruleset

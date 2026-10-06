@@ -8,6 +8,7 @@ export interface RecoveryStoryIntervention {
   label: string;
   startedAt?: string;
   followedByLinkedRecheck?: boolean;
+  sourceReference?: string;
 }
 
 export interface RecoveryStoryModel {
@@ -152,6 +153,9 @@ export function RecoveryStorySummary({
           {model.interventions.map((intervention) => (
             <li key={intervention.id}>
               <strong lang={contentLanguage}>{intervention.label}</strong>
+              {intervention.sourceReference ? (
+                <small lang="en-CA">{intervention.sourceReference}</small>
+              ) : null}
               <span>
                 {intervention.startedAt
                   ? new Date(intervention.startedAt).toLocaleTimeString(locale, {

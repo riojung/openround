@@ -34,6 +34,7 @@ describe("production configuration", () => {
     expect(config.FEATURE_PRESENTATION_REALTIME).toBe(false);
     expect(config.FEATURE_LIVE_FLEX_MODE).toBe(false);
     expect(config.FEATURE_RECOVERY_PACKS).toBe(false);
+    expect(config.FEATURE_RECOVERY_PACK_LIVE_CARDS).toBe(false);
     expect(config.FEATURE_QUESTION_HEALTH).toBe(false);
     expect(config.FEATURE_DECISION_REPLAY).toBe(false);
     expect(config.FEATURE_RECOVERY_TRAILS).toBe(false);
@@ -99,6 +100,7 @@ describe("production configuration", () => {
         FEATURE_PRESENTATION_REALTIME: "true",
         FEATURE_LIVE_FLEX_MODE: "true",
         FEATURE_RECOVERY_PACKS: "true",
+        FEATURE_RECOVERY_PACK_LIVE_CARDS: "true",
         FEATURE_QUESTION_HEALTH: "true",
         FEATURE_DECISION_REPLAY: "true",
         FEATURE_RECOVERY_TRAILS: "true",
@@ -122,6 +124,7 @@ describe("production configuration", () => {
       presentationRealtime: true,
       liveFlexMode: true,
       recoveryPacks: true,
+      recoveryPackLiveCards: true,
       questionHealth: true,
       decisionReplay: true,
       recoveryTrails: true,

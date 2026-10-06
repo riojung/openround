@@ -1,17 +1,12 @@
 import { randomUUID } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import { signInBeta } from "./sign-in";
 
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
 
 async function fixture(page: Page, deleted: "diagnostic" | "recheck" | null = null) {
-  await page.goto("/signin");
-  await page.getByRole("button", { name: "Education" }).click();
-  await page.getByLabel("Email address").fill("ux-beta-e2e@example.com");
-  await page.getByLabel(/I accept the Terms/).check();
-  await page.getByRole("button", { name: "Send sign-in link" }).click();
-  await page.getByRole("link", { name: "Continue to dashboard" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  await signInBeta(page);
   await expect(page.getByRole("heading", { name: "Rounds", exact: true })).toBeVisible();
   const title = `Pack update ${randomUUID().slice(0, 8)}`;
   const recheckId = randomUUID();

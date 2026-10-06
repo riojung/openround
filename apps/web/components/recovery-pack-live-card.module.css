@@ -1,0 +1,46 @@
+.card {
+  border: 1px solid var(--ui-border);
+  background: var(--experience-surface-strong, var(--ui-surface-soft));
+  color: var(--experience-text, var(--ui-text));
+  border-radius: 12px;
+  padding: 18px;
+  margin: 18px 0;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.card :global(.eyebrow) {
+  color: var(--experience-muted, var(--ui-text-muted));
+}
+.card h2,
+.card h4 {
+  font-size: clamp(1.25rem, 3vw, 2rem);
+  margin: 10px 0;
+}
+.body,
+.citations blockquote {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.body {
+  line-height: 1.7;
+}
+.citations ul {
+  padding-left: 20px;
+}
+.citations blockquote {
+  margin: 8px 0;
+}
+.picker {
+  border-top: 1px solid var(--ui-border);
+  padding-top: 16px;
+  margin-top: 16px;
+  min-width: 0;
+}
+.picker h3 {
+  font-size: 1.2rem;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}

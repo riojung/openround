@@ -10,18 +10,20 @@ inventory](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubun
 when reviewing a failure.
 
 The `Ubuntu 26 compatibility canary` workflow runs explicitly on `ubuntu-26.04`. It is scheduled
-weekly, can be dispatched manually, and runs on pull requests that change the canary or a
-runner-sensitive workflow, Dockerfile, Compose file, or lockfile. It covers:
+weekly, can be dispatched manually, and runs on runner-sensitive workflow, Dockerfile, Compose,
+and lockfile pull requests. Primary CI now runs on the same Ubuntu 26 image and retains the format,
+lint, type, unit, build, readiness, tracing, observability, PostgreSQL/RLS/multi-writer, and full
+desktop/mobile Chromium, Firefox, and WebKit checks. The canary no longer repeats those three jobs;
+it retains the two distinct checks:
 
-- the complete format, lint, type, unit, build, readiness, tracing, and observability checks;
-- PostgreSQL migration idempotency, PostgreSQL RLS tests, Valkey, and multi-writer behavior;
-- Chromium, Firefox, WebKit, desktop, and mobile browser journeys;
 - the production Compose media, observability, multi-process, backup/restore, and restart paths;
 - Buildx plus server/web image builds, with Trivy and Cosign installation/version checks.
 
 Every canary job has an explicit `Ubuntu 26 / ...` display name and a prefixed job identifier.
 These contexts do not replace, satisfy, or share a name with any required `CI` or `Security`
 context. A scheduled canary result therefore cannot be mistaken for a required pull-request check.
+Production-path smoke continues on every `main` push. Removing duplicate jobs does not close the
+two-scheduled-run acceptance gate below or remove any release, capacity, signing, or restore gate.
 
 The canary deliberately disables hosted-runner latency assertions in its 100-client Compose sample.
 It checks correctness, restart recovery, response uniqueness, and report reconciliation; variable

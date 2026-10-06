@@ -354,6 +354,10 @@
   margin: 0;
 }
 
+.listCard :global(.eyebrow) {
+  color: var(--ui-accent-ink);
+}
+
 .listCardActions {
   display: flex;
   align-items: center;

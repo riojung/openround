@@ -44,6 +44,7 @@ export function createConfigCheckSummary(config: AppConfig) {
       presentationRealtime: config.FEATURE_PRESENTATION_REALTIME,
       liveFlexMode: config.FEATURE_LIVE_FLEX_MODE,
       recoveryPacks: config.FEATURE_RECOVERY_PACKS,
+      recoveryPackLiveCards: config.FEATURE_RECOVERY_PACK_LIVE_CARDS,
       questionHealth: config.FEATURE_QUESTION_HEALTH,
       decisionReplay: config.FEATURE_DECISION_REPLAY,
       recoveryTrails: config.FEATURE_RECOVERY_TRAILS,

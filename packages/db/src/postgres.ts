@@ -6,6 +6,7 @@ import { upgradeGameState, type EngineAnswer, type GameState } from "@openround/
 import {
   MAX_SESSION_DECISION_EVENTS,
   QUESTION_HEALTH_POST_USE_MAX_REPORTS,
+  RecoveryPackCardReferenceSchema,
   ReportSchema,
   ResponsePayloadSchema,
   SessionDecisionEventSchema,
@@ -1250,8 +1251,8 @@ export class PostgresRepository implements Repository {
       await client.query(
         `INSERT INTO session_interventions
            (id, workspace_id, session_id, source_round_id, facilitator_id, kind, status,
-            linked_recheck_round_id, started_at, finished_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            linked_recheck_round_id, started_at, finished_at, recovery_pack_card)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
          ON CONFLICT (id) DO UPDATE SET
            status = EXCLUDED.status,
            linked_recheck_round_id = EXCLUDED.linked_recheck_round_id,
@@ -1267,6 +1268,9 @@ export class PostgresRepository implements Repository {
           linkedRecheckRoundId ?? null,
           new Date(intervention.startedAtMs),
           intervention.finishedAtMs === null ? null : new Date(intervention.finishedAtMs),
+          intervention.recoveryPackCard
+            ? JSON.stringify(RecoveryPackCardReferenceSchema.parse(intervention.recoveryPackCard))
+            : null,
         ],
       );
     }
@@ -4851,6 +4855,9 @@ export class PostgresRepository implements Repository {
             sourceRoundId: String(row.source_round_id),
             startedAtMs: date(row.started_at).getTime(),
             finishedAtMs: row.finished_at ? date(row.finished_at).getTime() : null,
+            ...(row.recovery_pack_card
+              ? { recoveryPackCard: RecoveryPackCardReferenceSchema.parse(row.recovery_pack_card) }
+              : {}),
           })),
           qna: {
             questions: Number(qnaResult.rows[0]?.questions ?? 0),
