@@ -4,6 +4,10 @@
   background: var(--ui-canvas);
 }
 
+.packReviews {
+  margin: 12px 18px;
+}
+
 .skipLink {
   position: fixed;
   z-index: 100;

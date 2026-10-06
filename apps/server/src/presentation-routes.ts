@@ -536,29 +536,56 @@ export async function registerPresentationRoutes(
       : parsedContent.error.issues.map((issue) =>
           presentationPublishIssue(id, presentation.draft, issue.path, issue.message),
         );
-    const mediaReferences = presentation.draft.blocks.flatMap((block, blockIndex) => {
-      const mediaId = block.kind === "content" ? block.mediaId : block.question.mediaId;
-      if (!mediaId) return [];
-      const fieldPath =
-        block.kind === "content"
-          ? (["blocks", blockIndex, "mediaId"] as const)
-          : (["blocks", blockIndex, "question", "mediaId"] as const);
-      return [{ mediaId, fieldPath }];
-    });
-    const mediaStatuses = await Promise.all(
-      mediaReferences.map(async (reference) => ({
-        ...reference,
-        media: await repository.getMediaAsset(creator.workspaceId, reference.mediaId),
-      })),
+    const mediaReferences: Array<{ mediaId: string; fieldPath: readonly PropertyKey[] }> =
+      presentation.draft.blocks.flatMap((block, blockIndex) => {
+        const mediaId = block.kind === "content" ? block.mediaId : block.question.mediaId;
+        if (!mediaId) return [];
+        const fieldPath =
+          block.kind === "content"
+            ? (["blocks", blockIndex, "mediaId"] as const)
+            : (["blocks", blockIndex, "question", "mediaId"] as const);
+        return [{ mediaId, fieldPath }];
+      });
+    // Frozen authoring references are retained/exported too, even after their local copies change.
+    for (const [index, insertion] of (presentation.draft.recoveryPackInsertions ?? []).entries()) {
+      const baselines = [
+        {
+          content: insertion.originalContent,
+          path: ["recoveryPackInsertions", index, "originalContent"],
+        },
+        ...(insertion.updateBaseline
+          ? [
+              {
+                content: insertion.updateBaseline.content,
+                path: ["recoveryPackInsertions", index, "updateBaseline", "content"],
+              },
+            ]
+          : []),
+      ];
+      for (const { content, path } of baselines) {
+        for (const role of ["diagnostic", "recheck", "delayedProbe"] as const) {
+          const mediaId = content[role]?.mediaId;
+          if (mediaId) mediaReferences.push({ mediaId, fieldPath: [...path, role, "mediaId"] });
+        }
+      }
+    }
+    const mediaById = new Map(
+      await Promise.all(
+        [...new Set(mediaReferences.map((reference) => reference.mediaId))].map(
+          async (mediaId) =>
+            [mediaId, await repository.getMediaAsset(creator.workspaceId, mediaId)] as const,
+        ),
+      ),
     );
-    for (const reference of mediaStatuses) {
-      if (reference.media?.scanStatus === "clean") continue;
+    for (const reference of mediaReferences) {
+      const media = mediaById.get(reference.mediaId);
+      if (media?.scanStatus === "clean") continue;
       validationIssues.push(
         presentationPublishIssue(
           id,
           presentation.draft,
           reference.fieldPath,
-          reference.media
+          media
             ? "This image must finish security scanning before publishing"
             : "This image is unavailable or does not belong to this workspace",
         ),
@@ -897,7 +924,7 @@ export async function registerPresentationRoutes(
   app.post("/v1/presentations/:id/history/:revision/restore", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
-    if (requirePresentationWorkspace(creator, reply, request.id) !== true) return;
+    // Recovery of existing drafts remains available when new Presentation authoring is paused.
     if (requireEditor(creator, reply, request.id) !== true) return;
     const { id, revision } = HistoryParamsSchema.parse(request.params);
     const input = RestoreHistorySchema.parse(request.body);

@@ -28,9 +28,13 @@ export function recoveryPackMediaIds(content: RecoveryPackDraft) {
 }
 
 export function presentationMediaIds(content: PresentationDraft | PresentationContent) {
-  return uniqueMediaIds(
-    content.blocks.map((block) =>
+  return uniqueMediaIds([
+    ...content.blocks.map((block) =>
       block.kind === "content" ? block.mediaId : block.question.mediaId,
     ),
-  );
+    ...(content.recoveryPackInsertions ?? []).flatMap((insertion) => [
+      ...recoveryPackMediaIds(insertion.originalContent),
+      ...(insertion.updateBaseline ? recoveryPackMediaIds(insertion.updateBaseline.content) : []),
+    ]),
+  ]);
 }

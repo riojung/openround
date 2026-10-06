@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { recoveryPackDraftFromPair } from "./recovery-packs";
 import {
   addContentTextElement,
   applyContentSlideLayout,
@@ -20,6 +22,8 @@ import {
   setContentSlideMedia,
 } from "./presentation-builder";
 import {
+  RecoveryPackContentSchema,
+  recoveryPackContentHash,
   resolveContentSlideFrames,
   regionForContentSlideFrame,
   contentSlideMediaFrame,
@@ -281,10 +285,92 @@ describe("presentation builder model", () => {
     slide.textElements[0]!.region = "bottom_left";
 
     expect(normalizePresentationRecoveryDraft(current)).toEqual(current);
-    expect(() => normalizePresentationRecoveryDraft({ ...current, schemaVersion: 3 })).toThrow();
+    expect(normalizePresentationRecoveryDraft({ ...current, schemaVersion: 3 }).schemaVersion).toBe(
+      3,
+    );
+    expect(() => normalizePresentationRecoveryDraft({ ...current, schemaVersion: 4 })).toThrow();
     expect(() =>
       normalizePresentationRecoveryDraft({ schemaVersion: 1, blocks: "invalid" }),
     ).toThrow();
+  });
+
+  it("preserves schema3 frozen Pack baselines through local recovery, type changes, duplication and deletion", () => {
+    const current = draft();
+    const diagnostic = current.blocks[1]!;
+    if (diagnostic.kind !== "question") throw new Error("Expected a question");
+    diagnostic.question.explanation = "Review the evidence before deciding.";
+    diagnostic.question.conceptKeys = ["evidence"];
+    const recheck = {
+      id: randomUUID(),
+      kind: "question" as const,
+      question: {
+        ...structuredClone(diagnostic.question),
+        id: randomUUID(),
+        prompt: "Which signal explains this new case?",
+        delivery: "recheck" as const,
+        linkedRecheckQuestionId: null,
+      },
+    };
+    if ("choices" in recheck.question) {
+      recheck.question.choices = recheck.question.choices.map((choice) => ({
+        ...choice,
+        id: randomUUID(),
+      }));
+    }
+    diagnostic.question.linkedRecheckQuestionId = recheck.question.id;
+    const content = RecoveryPackContentSchema.parse(
+      recoveryPackDraftFromPair(
+        "Evidence recovery",
+        diagnostic.question,
+        recheck.question,
+        randomUUID(),
+      ),
+    );
+    const baseline = {
+      id: randomUUID(),
+      packId: randomUUID(),
+      packVersionId: randomUUID(),
+      packVersion: 1,
+      contentHash: recoveryPackContentHash(content),
+      diagnosticQuestionId: diagnostic.question.id,
+      recheckQuestionId: recheck.question.id,
+      originalContent: content,
+    };
+    diagnostic.question.recoveryPackSource = {
+      artifactType: "recovery_pack",
+      packId: baseline.packId,
+      packVersionId: baseline.packVersionId,
+      packVersion: baseline.packVersion,
+      contentHash: baseline.contentHash,
+      sourceItemId: content.diagnostic.id,
+      role: "diagnostic",
+    };
+    const withPack: PresentationDraft = {
+      ...current,
+      schemaVersion: 3,
+      blocks: [...current.blocks, recheck],
+      recoveryPackInsertions: [baseline],
+    };
+    expect(normalizePresentationRecoveryDraft(withPack).recoveryPackInsertions).toEqual([baseline]);
+    const changed = changePresentationQuestionType(withPack, diagnostic.id, "numeric");
+    const changedDiagnostic = changed.blocks.find((block) => block.id === diagnostic.id);
+    expect(
+      changedDiagnostic?.kind === "question" && changedDiagnostic.question.recoveryPackSource,
+    ).toEqual(diagnostic.question.recoveryPackSource);
+    expect(changed.recoveryPackInsertions).toEqual([baseline]);
+    const duplicated = {
+      ...withPack,
+      blocks: [...withPack.blocks, duplicatePresentationBlock(diagnostic)],
+    };
+    expect(normalizePresentationRecoveryDraft(duplicated).recoveryPackInsertions).toEqual([
+      baseline,
+    ]);
+    const removed = removePresentationBlock(
+      removePresentationBlock(withPack, recheck.id),
+      diagnostic.id,
+    );
+    expect(normalizePresentationRecoveryDraft(removed).recoveryPackInsertions).toEqual([baseline]);
+    expect(removed.schemaVersion).toBe(3);
   });
 
   it("creates response-specific defaults without conflating opinion and diagnostic blocks", () => {

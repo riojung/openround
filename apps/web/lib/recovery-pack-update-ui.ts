@@ -52,6 +52,16 @@ export function recoveryPackReviewIsCurrent(
   return review.draftRevision === draftRevision && reviewedDraft === currentDraft;
 }
 
+export function recoveryPackUndoIsCurrent(
+  undo: { appliedRevision: number; draftSignature: string } | null,
+  currentDraftRevision: number,
+  draftSignature: string,
+) {
+  return Boolean(
+    undo && undo.appliedRevision === currentDraftRevision && undo.draftSignature === draftSignature,
+  );
+}
+
 /** Includes every persisted question field, not only the prompt/answer visible in the editor. */
 export function recoveryPackChangedFields(
   baseline: QuestionDraft,

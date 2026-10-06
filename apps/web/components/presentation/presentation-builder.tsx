@@ -13,6 +13,9 @@ import {
   type SetStateAction,
 } from "react";
 import {
+  InsertRecoveryPackIntoPresentationSchema,
+  ApplyPresentationRecoveryPackUpdateSchema,
+  PresentationRecoveryPackUpdatePreviewSchema,
   resolveContentSlideFrames,
   regionForContentSlideFrame,
   type ContentSlideFrame,
@@ -22,6 +25,8 @@ import {
   type PresentationDraft,
   type QuestionDraft,
   type QuestionType,
+  type ApplyPresentationRecoveryPackUpdate,
+  type PresentationRecoveryPackUpdatePreview,
 } from "@openround/contracts";
 import { ApiClientError, apiFetch, humanError } from "../../lib/api";
 import {
@@ -52,15 +57,29 @@ import {
   updateContentTextElement,
 } from "../../lib/presentation-builder";
 import { RecoverableOperationQueue } from "../../lib/recoverable-operation-queue";
-import { retryWithBackoff } from "../../lib/retry";
+import { isRetryableSaveError, retryWithBackoff } from "../../lib/retry";
+import {
+  presentationPackDraftIsCurrent,
+  presentationPackSelectedBlock,
+} from "../../lib/presentation-pack-update-ui";
 import { AuthoringAssistant } from "../authoring-assistant";
 import { ResponseEditor } from "../editor/response-editor";
 import { MediaEditor } from "../editor/media-editor";
+import type { RecoveryPackUpdateUndo } from "../editor/recovery-pack-update-panel";
 import { ContentSlideView, contentSlideRegionLabels } from "./content-slide-view";
 import { isChoiceQuestion } from "../editor/types";
 import { useLocale } from "../locale-provider";
 import { questionTypeOptions, responseTypeLabel } from "../workspace/workspace-model";
 import { recordAuthoringEvent } from "../workspace/product-events";
+import { useWorkspace } from "../workspace/workspace-provider";
+import {
+  RecoveryPackPresentationPicker,
+  RecoveryPackPresentationReferences,
+} from "./recovery-pack-insertion";
+import {
+  PresentationRecoveryPackUpdateReview,
+  type PresentationRecoveryPackUpdateApplied,
+} from "./recovery-pack-update-review";
 import styles from "./presentation-builder.module.css";
 
 interface PresentationRecord {
@@ -282,6 +301,39 @@ function PresentationPreview({
 }
 
 export function PresentationBuilder({ presentationId }: { presentationId: string }) {
+  const { creator, error, refreshAccount } = useWorkspace();
+  const [retryingAccount, setRetryingAccount] = useState(false);
+  const { t } = useLocale();
+  return creator ? (
+    <PresentationEditor
+      key={`${creator.workspaceId}:${presentationId}`}
+      presentationId={presentationId}
+    />
+  ) : (
+    <main className={styles.loading}>
+      <div className={styles.loadingMark} aria-hidden="true" />
+      <p lang={error ? "en-CA" : undefined} role={error ? "alert" : "status"}>
+        {error || t("delivery.presentationBuilder.opening")}
+      </p>
+      {error ? (
+        <button
+          disabled={retryingAccount}
+          lang="en-CA"
+          onClick={() => {
+            setRetryingAccount(true);
+            void refreshAccount().finally(() => setRetryingAccount(false));
+          }}
+          type="button"
+        >
+          {retryingAccount ? "Retrying workspace…" : "Retry workspace"}
+        </button>
+      ) : null}
+    </main>
+  );
+}
+
+function PresentationEditor({ presentationId }: { presentationId: string }) {
+  const { canEdit, productFeatures } = useWorkspace();
   const { locale, t } = useLocale();
   const router = useRouter();
   const recoveryKey = `presentation:${presentationId}`;
@@ -307,9 +359,27 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
   const [publishedRound, setPublishedRound] = useState<PublishedRoundQuestionSource | null>(null);
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const [importingQuestions, setImportingQuestions] = useState(false);
+  const [preparingImport, setPreparingImport] = useState(false);
+  const importPreparation = useRef(false);
   const [mediaUploadsEnabled, setMediaUploadsEnabled] = useState(false);
   const [mediaState, setMediaState] = useState<"idle" | "uploading" | "scanning">("idle");
   const [mediaPreviewUrl, setMediaPreviewUrl] = useState("");
+  const [packImportOpen, setPackImportOpen] = useState(false);
+  const [packBusy, setPackBusy] = useState(false);
+  const [packError, setPackError] = useState("");
+  const [packRetryVersionId, setPackRetryVersionId] = useState<string | null>(null);
+  const packOperation = useRef(false);
+  const packPending = useRef<{ body: string; draftJson: string; versionId: string } | null>(null);
+  const [packUpdateBusy, setPackUpdateBusy] = useState(false);
+  const [packUpdateReceiptPending, setPackUpdateReceiptPending] = useState(false);
+  const packUpdateOperation = useRef(false);
+  const packUpdatePending = useRef<{
+    path: string;
+    body: string;
+    draftJson: string;
+    expectedRevision: number;
+  } | null>(null);
+  const alive = useRef(true);
   const revisionRef = useRef(0);
   const lastSavedJson = useRef("");
   const latestDraftJson = useRef("");
@@ -319,6 +389,16 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
   const sourceImportDialogRef = useRef<HTMLDivElement>(null);
   const firstBlockTracked = useRef(false);
   const previousBlockCount = useRef<number | null>(null);
+  const canInsertPack =
+    canEdit && Boolean(productFeatures?.presentations && productFeatures?.recoveryPacks);
+  const builderMutationBlocked = packImportOpen || packUpdateBusy || packUpdateReceiptPending;
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const selectedBlock = draft?.blocks.find((block) => block.id === selectedBlockId) ?? null;
   const selectedTextElement =
@@ -497,6 +577,13 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
 
   const commit = useCallback(
     (value: SetStateAction<PresentationDraft>, historyKey?: string) => {
+      if (
+        packOperation.current ||
+        packPending.current ||
+        packUpdateOperation.current ||
+        packUpdatePending.current
+      )
+        return;
       setDraft((current) => {
         if (!current) return current;
         const next = typeof value === "function" ? value(current) : value;
@@ -566,13 +653,13 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
   );
 
   useEffect(() => {
-    if (!loaded || !draft) return;
+    if (!loaded || !draft || packImportOpen || packUpdateBusy || packUpdateReceiptPending) return;
     const serialized = JSON.stringify(draft);
     if (serialized === lastSavedJson.current) return;
     setSaveState("dirty");
     const timer = window.setTimeout(() => void enqueueSave(draft), 700);
     return () => window.clearTimeout(timer);
-  }, [draft, enqueueSave, loaded]);
+  }, [draft, enqueueSave, loaded, packImportOpen, packUpdateBusy, packUpdateReceiptPending]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -580,14 +667,16 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
         saveState === "dirty" ||
         saveState === "saving" ||
         saveState === "error" ||
-        saveState === "conflict"
+        saveState === "conflict" ||
+        packPending.current !== null ||
+        packUpdatePending.current !== null
       ) {
         event.preventDefault();
       }
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [saveState]);
+  }, [saveState, packRetryVersionId, packUpdateReceiptPending]);
 
   function guardBuilderExit(event: MouseEvent<HTMLAnchorElement>) {
     if (!draft) return;
@@ -715,6 +804,13 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
   }
 
   function undo() {
+    if (
+      packOperation.current ||
+      packPending.current ||
+      packUpdateOperation.current ||
+      packUpdatePending.current
+    )
+      return;
     const previous = undoStack.at(-1);
     if (!previous || !draft) return;
     setRedoStack((history) => [...history, draft].slice(-HISTORY_LIMIT));
@@ -730,6 +826,13 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
   }
 
   function redo() {
+    if (
+      packOperation.current ||
+      packPending.current ||
+      packUpdateOperation.current ||
+      packUpdatePending.current
+    )
+      return;
     const next = redoStack.at(-1);
     if (!next || !draft) return;
     setUndoStack((history) => [...history, draft].slice(-HISTORY_LIMIT));
@@ -879,24 +982,357 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
   }
 
   function openRoundImport() {
+    if (
+      importPreparation.current ||
+      packOperation.current ||
+      packImportOpen ||
+      sourceImportOpen ||
+      packUpdateOperation.current ||
+      packUpdatePending.current
+    )
+      return;
     const first = roundSources[0]?.id ?? "";
     setSelectedRoundId((current) => current || first);
     setRoundImportOpen(true);
     setError("");
   }
 
+  async function openPackImport() {
+    if (
+      !draft ||
+      !canInsertPack ||
+      packOperation.current ||
+      packUpdateOperation.current ||
+      packUpdatePending.current ||
+      importPreparation.current ||
+      sourceImportOpen ||
+      roundImportOpen ||
+      mediaState !== "idle"
+    )
+      return;
+    packOperation.current = true;
+    setPackImportOpen(true);
+    setPackBusy(true);
+    setPackError("");
+    try {
+      // Drain already queued autosaves before deciding whether another save is needed.
+      await saveQueue.current.enqueue(async () => undefined);
+      if (!alive.current) return;
+      await enqueueSave(draft);
+      await saveQueue.current.enqueue(async () => undefined);
+      if (
+        lastSavedJson.current !== JSON.stringify(draft) ||
+        latestDraftJson.current !== lastSavedJson.current
+      ) {
+        throw new Error("Save the latest Presentation changes before inserting a Pack.");
+      }
+    } catch (caught) {
+      if (alive.current) setPackError(humanError(caught));
+    } finally {
+      packOperation.current = false;
+      if (alive.current) setPackBusy(false);
+    }
+  }
+
+  async function insertRecoveryPack(versionId: string) {
+    if (
+      !draft ||
+      (!canInsertPack && !packPending.current) ||
+      packOperation.current ||
+      packUpdateOperation.current ||
+      packUpdatePending.current
+    )
+      return;
+    packOperation.current = true;
+    setPackBusy(true);
+    setPackError("");
+    try {
+      if (!packPending.current) {
+        const draftJson = JSON.stringify(draft);
+        if (latestDraftJson.current !== draftJson || lastSavedJson.current !== draftJson) {
+          throw new Error("Save the latest Presentation changes before inserting a Pack.");
+        }
+        const request = InsertRecoveryPackIntoPresentationSchema.parse({
+          packVersionId: versionId,
+          afterBlockId: selectedBlockId,
+          expectedRevision: revisionRef.current,
+          mutationId: crypto.randomUUID(),
+        });
+        packPending.current = { body: JSON.stringify(request), draftJson, versionId };
+      }
+      const pending = packPending.current;
+      const response = await apiFetch<{
+        presentation: PresentationRecord;
+        insertedBlockIds: string[];
+      }>(`/v1/presentations/${presentationId}/recovery-packs/insert`, {
+        method: "POST",
+        body: pending.body,
+      });
+      if (!alive.current) return;
+      if (latestDraftJson.current !== pending.draftJson) {
+        throw new ApiClientError(
+          "Your local changes were preserved. Reload the current draft after preserving a local copy.",
+          "STALE_DRAFT",
+          409,
+        );
+      }
+      setUndoStack((history) => [...history, draft].slice(-HISTORY_LIMIT));
+      setRedoStack([]);
+      lastHistoryCommit.current = null;
+      setRecord(response.presentation);
+      setDraft(response.presentation.draft);
+      revisionRef.current = response.presentation.draftRevision;
+      lastSavedJson.current = JSON.stringify(response.presentation.draft);
+      latestDraftJson.current = lastSavedJson.current;
+      setSelectedBlockId(response.insertedBlockIds[0] ?? selectedBlockId);
+      setInspectorTab("build");
+      setSaveState("saved");
+      setError("");
+      packPending.current = null;
+      setPackRetryVersionId(null);
+      setPackImportOpen(false);
+      await clearBuilderRecovery(recoveryKey).catch(() => undefined);
+    } catch (caught) {
+      if (!alive.current) return;
+      if (
+        packPending.current &&
+        (isRetryableSaveError(caught) || !(caught instanceof ApiClientError))
+      ) {
+        setPackRetryVersionId(packPending.current.versionId);
+      } else {
+        packPending.current = null;
+        setPackRetryVersionId(null);
+        if (caught instanceof ApiClientError && (caught.status === 409 || caught.status === 412)) {
+          setSaveState("conflict");
+          setError(humanError(caught));
+        }
+      }
+      setPackError(humanError(caught));
+    } finally {
+      packOperation.current = false;
+      if (alive.current) setPackBusy(false);
+    }
+  }
+
+  function assertPackDraftCurrent(signature: string, expectedRevision: number) {
+    if (
+      !alive.current ||
+      !presentationPackDraftIsCurrent({
+        expectedSignature: signature,
+        currentSignature: latestDraftJson.current,
+        savedSignature: lastSavedJson.current,
+        expectedRevision,
+        currentRevision: revisionRef.current,
+      })
+    ) {
+      throw new ApiClientError(
+        "The Presentation changed. Your local work was preserved; save or reload before reviewing again.",
+        "STALE_DRAFT",
+        409,
+      );
+    }
+  }
+
+  async function reviewPackUpdate(
+    insertionId: string,
+  ): Promise<PresentationRecoveryPackUpdatePreview> {
+    if (
+      !draft ||
+      packUpdateOperation.current ||
+      packUpdatePending.current ||
+      packOperation.current ||
+      packPending.current ||
+      importPreparation.current ||
+      roundImportOpen ||
+      sourceImportOpen ||
+      packImportOpen ||
+      mediaState !== "idle" ||
+      saveState === "conflict"
+    )
+      throw new Error("Finish saving or reload this Presentation before reviewing a Pack update.");
+    const captured = draft;
+    const signature = JSON.stringify(captured);
+    packUpdateOperation.current = true;
+    setPackUpdateBusy(true);
+    try {
+      await saveQueue.current.enqueue(async () => undefined);
+      if (!alive.current || latestDraftJson.current !== signature) {
+        throw new Error("The local Presentation changed before review. Review its latest draft.");
+      }
+      if (lastSavedJson.current !== signature) {
+        if (!canEdit)
+          throw new Error("Reload the saved Presentation before reviewing a Pack update.");
+        await enqueueSave(captured);
+      }
+      await saveQueue.current.enqueue(async () => undefined);
+      const expectedRevision = revisionRef.current;
+      assertPackDraftCurrent(signature, expectedRevision);
+      const response = await apiFetch<{ review: unknown }>(
+        `/v1/presentations/${presentationId}/recovery-packs/update-review`,
+        { method: "POST", body: JSON.stringify({ insertionId }) },
+      );
+      const review = PresentationRecoveryPackUpdatePreviewSchema.parse(response.review);
+      assertPackDraftCurrent(signature, expectedRevision);
+      if (
+        review.presentationId !== presentationId ||
+        review.insertionId !== insertionId ||
+        review.draftRevision !== expectedRevision
+      ) {
+        throw new Error(
+          "The Presentation changed during review. Reload or review its saved draft.",
+        );
+      }
+      return review;
+    } finally {
+      packUpdateOperation.current = false;
+      if (alive.current) setPackUpdateBusy(false);
+    }
+  }
+
+  async function runPackDraftMutation(
+    path: string,
+    body: string,
+    expectedRevision: number,
+    validate?: (response: PresentationRecoveryPackUpdateApplied) => boolean,
+  ): Promise<PresentationRecoveryPackUpdateApplied> {
+    if (
+      !draft ||
+      !canEdit ||
+      packUpdateOperation.current ||
+      packOperation.current ||
+      packPending.current ||
+      importPreparation.current ||
+      packImportOpen ||
+      roundImportOpen ||
+      sourceImportOpen ||
+      mediaState !== "idle"
+    ) {
+      throw new Error("Finish the current operation before changing the Presentation draft.");
+    }
+    const signature = JSON.stringify(draft);
+    const pending = packUpdatePending.current;
+    if (pending && (pending.path !== path || pending.body !== body)) {
+      throw new Error("Retry the outstanding Pack acknowledgement before making another change.");
+    }
+    if (!pending && saveState === "conflict") {
+      throw new Error("Preserve your local changes and reload the current Presentation first.");
+    }
+    assertPackDraftCurrent(pending?.draftJson ?? signature, expectedRevision);
+    packUpdateOperation.current = true;
+    setPackUpdateBusy(true);
+    if (!pending)
+      packUpdatePending.current = { path, body, draftJson: signature, expectedRevision };
+    try {
+      await saveQueue.current.enqueue(async () => undefined);
+      assertPackDraftCurrent(signature, expectedRevision);
+      const response = await apiFetch<PresentationRecoveryPackUpdateApplied>(path, {
+        method: "POST",
+        body,
+      });
+      assertPackDraftCurrent(signature, expectedRevision);
+      if (
+        response.presentation.id !== presentationId ||
+        response.presentation.draftRevision !== expectedRevision + 1 ||
+        (validate && !validate(response))
+      ) {
+        throw new ApiClientError(
+          "The Presentation response changed. Reload its current draft before continuing.",
+          "STALE_DRAFT",
+          409,
+        );
+      }
+      const next = response.presentation as PresentationRecord;
+      setSelectedBlockId((current) => presentationPackSelectedBlock(draft, next.draft, current));
+      setRecord(next);
+      setDraft(next.draft);
+      revisionRef.current = next.draftRevision;
+      lastSavedJson.current = JSON.stringify(next.draft);
+      latestDraftJson.current = lastSavedJson.current;
+      setUndoStack([]);
+      setRedoStack([]);
+      lastHistoryCommit.current = null;
+      packUpdatePending.current = null;
+      setPackUpdateReceiptPending(false);
+      setSaveState("saved");
+      setError("");
+      await clearBuilderRecovery(recoveryKey).catch(() => undefined);
+      return response;
+    } catch (caught) {
+      if (alive.current) {
+        const retryable = isRetryableSaveError(caught) || !(caught instanceof ApiClientError);
+        if (retryable) {
+          setPackUpdateReceiptPending(true);
+          setSaveState("error");
+        } else {
+          packUpdatePending.current = null;
+          setPackUpdateReceiptPending(false);
+          if (
+            caught instanceof ApiClientError &&
+            (caught.status === 409 || caught.status === 412)
+          ) {
+            setSaveState("conflict");
+            setError(humanError(caught));
+          }
+        }
+      }
+      throw caught;
+    } finally {
+      packUpdateOperation.current = false;
+      if (alive.current) setPackUpdateBusy(false);
+    }
+  }
+
+  async function applyPackUpdate(input: ApplyPresentationRecoveryPackUpdate) {
+    if (!canInsertPack && !packUpdatePending.current) {
+      throw new Error("Pack update authoring is not enabled for this Presentation.");
+    }
+    const request = ApplyPresentationRecoveryPackUpdateSchema.parse(input);
+    return runPackDraftMutation(
+      `/v1/presentations/${presentationId}/recovery-packs/update`,
+      JSON.stringify(request),
+      request.expectedRevision,
+      (response) =>
+        response.undo.sourceRevision === request.expectedRevision &&
+        response.undo.appliedRevision === response.presentation.draftRevision,
+    );
+  }
+
+  async function undoPackUpdate(input: RecoveryPackUpdateUndo) {
+    await runPackDraftMutation(
+      `/v1/presentations/${presentationId}/history/${input.sourceRevision}/restore`,
+      JSON.stringify({ expectedRevision: input.expectedRevision, mutationId: input.mutationId }),
+      input.expectedRevision,
+    );
+  }
+
   async function openSourceImport() {
-    if (!draft) return;
+    if (
+      !draft ||
+      importPreparation.current ||
+      packOperation.current ||
+      packUpdateOperation.current ||
+      packUpdatePending.current ||
+      packImportOpen ||
+      roundImportOpen ||
+      sourceImportOpen
+    )
+      return;
+    importPreparation.current = true;
+    setPreparingImport(true);
     setError("");
     try {
       await enqueueSave(draft);
+      if (!alive.current) return;
       const serialized = JSON.stringify(draft);
       if (lastSavedJson.current !== serialized || latestDraftJson.current !== serialized) {
         throw new Error("Save this Presentation before inserting source proposals.");
       }
       setSourceImportOpen(true);
     } catch (caught) {
-      setError(humanError(caught));
+      if (alive.current) setError(humanError(caught));
+    } finally {
+      importPreparation.current = false;
+      if (alive.current) setPreparingImport(false);
     }
   }
 
@@ -909,11 +1345,21 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
   }
 
   async function importRoundQuestions() {
-    if (!draft || !publishedRound || !selectedQuestionIds.length) return;
+    if (
+      !draft ||
+      !publishedRound ||
+      !selectedQuestionIds.length ||
+      importPreparation.current ||
+      packOperation.current ||
+      packImportOpen
+    )
+      return;
+    importPreparation.current = true;
     setImportingQuestions(true);
     setError("");
     try {
       await enqueueSave(draft);
+      if (!alive.current) return;
       const serialized = JSON.stringify(draft);
       if (lastSavedJson.current !== serialized || latestDraftJson.current !== serialized) {
         throw new Error("Save this Presentation before importing questions.");
@@ -946,12 +1392,13 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
     } catch (caught) {
       setError(humanError(caught));
     } finally {
-      setImportingQuestions(false);
+      importPreparation.current = false;
+      if (alive.current) setImportingQuestions(false);
     }
   }
 
   async function publish() {
-    if (!draft) return;
+    if (!draft || packUpdateOperation.current || packUpdatePending.current) return;
     if (issues.length) {
       recordAuthoringEvent("publish_blocked", "presentation");
       setInspectorOpen(true);
@@ -1038,7 +1485,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
       <a className={styles.skipLink} href="#presentation-canvas">
         {t("delivery.presentationBuilder.skipCanvas")}
       </a>
-      <header className={styles.commandBar}>
+      <header className={styles.commandBar} inert={builderMutationBlocked}>
         <h1 className="sr-only">
           {builderTitleParts[0]}
           <span lang={draft.title ? "" : locale}>
@@ -1117,7 +1564,12 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
       </header>
 
       {recovery ? (
-        <div className={styles.recoveryBanner} lang="en-CA" role="status">
+        <div
+          className={styles.recoveryBanner}
+          inert={builderMutationBlocked}
+          lang="en-CA"
+          role="status"
+        >
           <span>
             A newer local edit from{" "}
             <time dateTime={recovery.savedAt} lang={locale}>
@@ -1167,7 +1619,7 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
         </div>
       ) : null}
       {error ? (
-        <div className={styles.errorBanner} role="alert">
+        <div className={styles.errorBanner} inert={builderMutationBlocked} role="alert">
           <span lang="en-CA">{error}</span>
           {saveState === "error" ? (
             <button onClick={() => void enqueueSave(draft)} type="button">
@@ -1190,8 +1642,44 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
         </div>
       ) : null}
 
+      {draft.recoveryPackInsertions?.length ? (
+        <section
+          className={styles.packReviews}
+          aria-label="Presentation Recovery Pack updates"
+          inert={packImportOpen}
+        >
+          {packUpdateReceiptPending ? (
+            <p className="notice" role="status" lang="en-CA">
+              Editing is paused until the outstanding Pack acknowledgement is recovered. Retry the
+              same update or undo below; it cannot create a duplicate revision.
+            </p>
+          ) : null}
+          {draft.recoveryPackInsertions.map((insertion) => (
+            <PresentationRecoveryPackUpdateReview
+              key={insertion.id}
+              presentationId={presentationId}
+              insertionId={insertion.id}
+              title={(insertion.updateBaseline?.content ?? insertion.originalContent).title}
+              canEdit={canEdit}
+              featureEnabled={canInsertPack}
+              currentDraftRevision={record.draftRevision}
+              draftSignature={JSON.stringify(draft)}
+              draftSaved={
+                saveState !== "conflict" && JSON.stringify(draft) === lastSavedJson.current
+              }
+              mutationBusy={packUpdateBusy || packBusy || preparingImport || importingQuestions}
+              receiptRetryable={packUpdateReceiptPending}
+              onReview={reviewPackUpdate}
+              onApply={applyPackUpdate}
+              onUndo={undoPackUpdate}
+            />
+          ))}
+        </section>
+      ) : null}
+
       <div
         className={`${styles.workspace} ${mapOpen ? "" : styles.mapClosed} ${inspectorOpen ? "" : styles.inspectorClosed}`}
+        inert={builderMutationBlocked}
       >
         <aside
           className={styles.map}
@@ -1294,16 +1782,35 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
             <button onClick={() => addBlock(createQuestionBlock())} type="button">
               + {t("delivery.builder.addQuestion")}
             </button>
-            <button disabled={!roundSources.length} onClick={openRoundImport} type="button">
+            <button
+              disabled={!roundSources.length || preparingImport}
+              onClick={openRoundImport}
+              type="button"
+            >
               + {t("delivery.presentationBuilder.fromPublishedRound")}
             </button>
-            <button onClick={() => void openSourceImport()} type="button">
+            <button
+              disabled={preparingImport}
+              onClick={() => void openSourceImport()}
+              type="button"
+            >
               + {t("delivery.presentationBuilder.fromTrustedSource")}
             </button>
+            {canInsertPack ? (
+              <button
+                disabled={mediaState !== "idle" || preparingImport}
+                lang="en-CA"
+                onClick={() => void openPackImport()}
+                type="button"
+              >
+                + From Recovery Pack
+              </button>
+            ) : null}
           </div>
         </aside>
 
         <main className={styles.canvasArea} id="presentation-canvas">
+          <RecoveryPackPresentationReferences insertions={draft.recoveryPackInsertions ?? []} />
           {!mapOpen ? (
             <button
               className={styles.floatingMapButton}
@@ -2224,6 +2731,19 @@ export function PresentationBuilder({ presentationId }: { presentationId: string
             </div>
           </section>
         </div>
+      ) : null}
+      {packImportOpen ? (
+        <RecoveryPackPresentationPicker
+          afterSelectedBlock={Boolean(selectedBlockId)}
+          busy={packBusy}
+          error={packError}
+          onClose={() => {
+            if (packOperation.current || packPending.current) return;
+            setPackImportOpen(false);
+          }}
+          onInsert={(versionId) => void insertRecoveryPack(versionId)}
+          retryVersionId={packRetryVersionId}
+        />
       ) : null}
     </div>
   );

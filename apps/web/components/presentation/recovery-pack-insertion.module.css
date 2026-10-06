@@ -1,0 +1,90 @@
+.backdrop {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: var(--ui-overlay);
+}
+
+.dialog {
+  width: min(680px, 100%);
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  color: var(--ui-text);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-lg);
+}
+
+.dialog h2,
+.dialog h3,
+.references h2 {
+  color: var(--ui-text-strong);
+}
+
+.dialog p,
+.references p,
+.references li {
+  line-height: 1.55;
+}
+
+.field {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.field select,
+.actions button {
+  min-height: 44px;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 0.5rem;
+  padding: 0.6rem;
+  color: var(--ui-text);
+  background: var(--ui-surface-raised);
+}
+
+.preview,
+.references {
+  border: 1px solid var(--ui-border);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  background: var(--ui-surface-soft);
+}
+
+.preview dt {
+  font-weight: 700;
+}
+
+.preview dd {
+  margin: 0.25rem 0 1rem;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.references {
+  margin-bottom: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.references summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.references details + details {
+  margin-top: 0.75rem;
+}
+
+.plaintext {
+  white-space: pre-wrap;
+}

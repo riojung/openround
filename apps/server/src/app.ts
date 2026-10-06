@@ -52,6 +52,8 @@ import { registerLibraryRoutes } from "./library-routes.js";
 import { registerLiveRoomRoutes } from "./live-room-routes.js";
 import { registerQuestionHealthRoutes } from "./question-health-routes.js";
 import { registerRecoveryPackRoutes } from "./recovery-pack-routes.js";
+import { registerRecoveryPackPresentationRoutes } from "./recovery-pack-presentation-routes.js";
+import { registerRecoveryPackPresentationUpdateRoutes } from "./recovery-pack-presentation-update-routes.js";
 import {
   evidenceWorkspaceFeatureEnabled,
   professionalWorkspaceEligible,
@@ -362,6 +364,22 @@ export async function buildApp(
   });
   await registerQuestionHealthRoutes(app, { config, repository, auth });
   await registerRecoveryPackRoutes(app, { config, repository, packs: recoveryPacks, auth });
+  await registerRecoveryPackPresentationRoutes(app, {
+    config,
+    repository,
+    presentations,
+    packs: recoveryPacks,
+    auth,
+    workspaceEnabled: presentationsEnabled,
+  });
+  await registerRecoveryPackPresentationUpdateRoutes(app, {
+    config,
+    repository,
+    presentations,
+    packs: recoveryPacks,
+    auth,
+    workspaceEnabled: presentationsEnabled,
+  });
   await registerLiveRoomRoutes(app, {
     repository,
     sessions,

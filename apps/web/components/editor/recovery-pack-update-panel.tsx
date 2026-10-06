@@ -16,13 +16,14 @@ import {
   recoveryPackSelectedChoices,
   recoveryPackSelectedLinkIssue,
   recoveryPackUpdateAvailable,
+  recoveryPackUndoIsCurrent,
   type RecoveryPackSelections,
 } from "../../lib/recovery-pack-update-ui";
 import { clientUuid } from "../../lib/uuid";
 import styles from "./recovery-pack-update-panel.module.css";
 
-export interface RecoveryPackUpdateApplied {
-  quiz: { id: string; draft: QuizDraft; draftRevision: number };
+export interface RecoveryPackUpdateApplied<TDraft = QuizDraft> {
+  quiz: { id: string; draft: TDraft; draftRevision: number };
   undo: { sourceRevision: number; appliedRevision: number };
 }
 export interface RecoveryPackUpdateUndo {
@@ -38,8 +39,10 @@ const statusLabels = {
   conflict: "Local copy and Pack both changed — choose explicitly",
 };
 
-export function RecoveryPackUpdatePanel({
+export function RecoveryPackUpdatePanel<TDraft = QuizDraft>({
   quizId,
+  artifactLabel = "Round",
+  allowDisabledReceiptRetry = false,
   insertionId,
   title,
   canEdit,
@@ -55,6 +58,8 @@ export function RecoveryPackUpdatePanel({
   onUndo,
 }: {
   quizId: string;
+  artifactLabel?: "Round" | "Presentation";
+  allowDisabledReceiptRetry?: boolean;
   insertionId: string;
   title: string;
   referenceContent?: RecoveryPackContent;
@@ -66,7 +71,7 @@ export function RecoveryPackUpdatePanel({
   mutationBusy: boolean;
   receiptRetryable: boolean;
   onReview: (insertionId: string) => Promise<RecoveryPackUpdatePreview>;
-  onApply: (input: ApplyRecoveryPackUpdate) => Promise<RecoveryPackUpdateApplied>;
+  onApply: (input: ApplyRecoveryPackUpdate) => Promise<RecoveryPackUpdateApplied<TDraft>>;
   onUndo: (input: RecoveryPackUpdateUndo) => Promise<void>;
 }) {
   const [review, setReview] = useState<RecoveryPackUpdatePreview | null>(null);
@@ -76,7 +81,7 @@ export function RecoveryPackUpdatePanel({
   const [announcement, setAnnouncement] = useState("");
   const [retryOperation, setRetryOperation] = useState<"apply" | "undo" | null>(null);
   const [undo, setUndo] = useState<
-    (RecoveryPackUpdateApplied["undo"] & { draftSignature: string }) | null
+    (RecoveryPackUpdateApplied<TDraft>["undo"] & { draftSignature: string }) | null
   >(null);
   const reviewedDraft = useRef("");
   const currentDraft = useRef(draftSignature);
@@ -96,11 +101,11 @@ export function RecoveryPackUpdatePanel({
     ),
   );
   const choices = review ? recoveryPackSelectedChoices(review, selections) : null;
-  const linkIssue = review ? recoveryPackSelectedLinkIssue(review, choices) : null;
+  const linkIssue = review
+    ? (recoveryPackSelectedLinkIssue(review, choices)?.replaceAll("Round", artifactLabel) ?? null)
+    : null;
   const updateAvailable = Boolean(review && recoveryPackUpdateAvailable(review));
-  const canUndo = Boolean(
-    undo && undo.appliedRevision === currentDraftRevision && undo.draftSignature === draftSignature,
-  );
+  const canUndo = recoveryPackUndoIsCurrent(undo, currentDraftRevision, draftSignature);
   const blocked = busy || mutationBusy;
 
   useEffect(() => {
@@ -174,7 +179,7 @@ export function RecoveryPackUpdatePanel({
       !choices ||
       !current ||
       !canEdit ||
-      !featureEnabled ||
+      (!featureEnabled && !(retry && allowDisabledReceiptRetry)) ||
       blocked ||
       (!draftSaved && !(retry && receiptRetryable)) ||
       (!retry && linkIssue)
@@ -210,7 +215,7 @@ export function RecoveryPackUpdatePanel({
       setReview(null);
       setUndo({ ...result.undo, draftSignature: JSON.stringify(result.quiz.draft) });
       setAnnouncement(
-        "Pack update saved as one draft revision. Published Rounds and the original inserted baseline are unchanged.",
+        `Pack update saved as one draft revision. Published ${artifactLabel === "Round" ? "Rounds" : "Presentations"} and the original inserted baseline are unchanged.`,
       );
     } catch (caught) {
       if (alive.current) setRetryOperation("apply");
@@ -280,7 +285,7 @@ export function RecoveryPackUpdatePanel({
         </details>
       ) : null}
       <p className={styles.status} role="status" aria-live="polite">
-        {blocked ? "Saving or reviewing the Round draft…" : announcement}
+        {blocked ? `Saving or reviewing the ${artifactLabel} draft…` : announcement}
       </p>
       {error ? (
         <p className="error" role="alert">
@@ -296,14 +301,14 @@ export function RecoveryPackUpdatePanel({
         Review latest Pack version
       </button>
       <p className="muted">
-        Review first saves pending Round edits. Applying affects only this draft; existing published
-        content never changes.
+        Review first saves pending {artifactLabel} edits. Applying affects only this draft; existing
+        published content never changes.
       </p>
       {review ? (
         <>
           <p>
             Compared baseline version {review.baselineVersion} with published version{" "}
-            {review.latestVersion} at Round revision {review.draftRevision}.
+            {review.latestVersion} at {artifactLabel} revision {review.draftRevision}.
           </p>
           {!updateAvailable ? (
             <p className="notice">
@@ -435,7 +440,7 @@ export function RecoveryPackUpdatePanel({
           disabled={
             blocked ||
             !canEdit ||
-            (retryOperation === "apply" && !featureEnabled) ||
+            (retryOperation === "apply" && !featureEnabled && !allowDisabledReceiptRetry) ||
             (retryOperation === "apply" ? !current : !canUndo)
           }
           onClick={() =>

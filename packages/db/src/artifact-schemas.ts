@@ -17,6 +17,8 @@ export const ROUND_DRAFT_SCHEMA_VERSION = 1;
 export const ROUND_CONTENT_SCHEMA_VERSION = 1;
 export const PRESENTATION_DRAFT_SCHEMA_VERSION = 2;
 export const PRESENTATION_CONTENT_SCHEMA_VERSION = 2;
+/** Complete frozen Pack baselines opt into v3; pre-existing question provenance stays valid in v2. */
+export const PRESENTATION_RECOVERY_PACK_SCHEMA_VERSION = 3;
 export const RECOVERY_PACK_DRAFT_SCHEMA_VERSION = 1;
 export const RECOVERY_PACK_CONTENT_SCHEMA_VERSION = 1;
 
@@ -82,18 +84,36 @@ const recoveryPackContentUpcasters = new Map<number, Upcaster<RecoveryPackConten
 ]);
 
 const presentationDraftUpcasters = new Map<number, Upcaster<PresentationDraft>>([
-  [1, (value) => PresentationDraftSchema.parse(migratePresentationV1(value))],
+  [
+    1,
+    (value) =>
+      PresentationDraftSchema.parse(withPresentationSchemaVersion(migratePresentationV1(value), 2)),
+  ],
   [
     PRESENTATION_DRAFT_SCHEMA_VERSION,
     (value) => PresentationDraftSchema.parse(withPresentationSchemaVersion(value, 2)),
   ],
+  [
+    PRESENTATION_RECOVERY_PACK_SCHEMA_VERSION,
+    (value) => PresentationDraftSchema.parse(withPresentationSchemaVersion(value, 3)),
+  ],
 ]);
 
 const presentationContentUpcasters = new Map<number, Upcaster<PresentationContent>>([
-  [1, (value) => PresentationContentSchema.parse(migratePresentationV1(value))],
+  [
+    1,
+    (value) =>
+      PresentationContentSchema.parse(
+        withPresentationSchemaVersion(migratePresentationV1(value), 2),
+      ),
+  ],
   [
     PRESENTATION_CONTENT_SCHEMA_VERSION,
     (value) => PresentationContentSchema.parse(withPresentationSchemaVersion(value, 2)),
+  ],
+  [
+    PRESENTATION_RECOVERY_PACK_SCHEMA_VERSION,
+    (value) => PresentationContentSchema.parse(withPresentationSchemaVersion(value, 3)),
   ],
 ]);
 

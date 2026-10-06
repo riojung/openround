@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 import { signInBeta } from "./sign-in";
 
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
+
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "wait" });
+});
 
 async function recoveryPackWorkflow(page: Page) {
   test.setTimeout(120_000);
@@ -184,4 +188,673 @@ test("Recovery Pack published-source authoring, insertion, and disabled-rollout 
 
 test("Recovery Pack authoring and disabled-rollout readability @mobile", async ({ page }) => {
   await recoveryPackWorkflow(page);
+});
+
+async function presentationPackWorkflow(page: Page, browser: Browser, testInfo: TestInfo) {
+  test.setTimeout(120_000);
+  page.setDefaultTimeout(10_000);
+  await signInBeta(page);
+  await expect(page.getByRole("heading", { name: "Rounds", exact: true })).toBeVisible();
+  const title = `Presentation Pack ${randomUUID().slice(0, 8)}`;
+  const recheckId = randomUUID();
+  const diagnostic = {
+    id: randomUUID(),
+    type: "numeric",
+    prompt: "Diagnostic: what is half of eight?",
+    correctValue: "4",
+    tolerance: "0",
+    unit: null,
+    purpose: "diagnostic",
+    confidence: "off",
+    delivery: "main",
+    conceptKeys: ["halves"],
+    linkedRecheckQuestionId: recheckId,
+    timeLimitSeconds: 30,
+    basePoints: 1_000,
+    explanation: "Private diagnostic explanation: divide into two equal groups.",
+    mediaId: null,
+    mediaAlt: null,
+  };
+  const recheckPrompt = `Private future recheck ${randomUUID().slice(0, 8)}`;
+  const cardBody = `Facilitator-only contrast guidance ${randomUUID().slice(0, 8)}`;
+  const citationName = `Facilitator citation ${randomUUID().slice(0, 8)}`;
+  const packCreated = await page.request.post(`${apiUrl}/v1/recovery-packs`, {
+    data: {
+      draft: {
+        schemaVersion: 1,
+        title,
+        description: "Two linked checkpoints with frozen cards.",
+        diagnostic,
+        recheck: {
+          ...diagnostic,
+          id: recheckId,
+          delivery: "recheck",
+          linkedRecheckQuestionId: null,
+          prompt: recheckPrompt,
+          correctValue: "6",
+        },
+        interventions: [
+          {
+            id: randomUUID(),
+            title: "Compare two equal groups",
+            body: cardBody,
+            citations: [
+              {
+                sourceName: citationName,
+                sourceDigest: "a".repeat(64),
+                locator: "p. 3",
+                excerpt: "Two groups",
+              },
+            ],
+          },
+        ],
+        delayedProbe: null,
+        conceptKeys: ["halves"],
+        misconceptionKeys: [],
+        citations: [],
+      },
+    },
+  });
+  expect(packCreated.status()).toBe(201);
+  const pack = (await packCreated.json()).pack;
+  const packPublished = await page.request.post(`${apiUrl}/v1/recovery-packs/${pack.id}/publish`, {
+    data: { expectedDraftRevision: pack.draftRevision },
+  });
+  expect(packPublished.status()).toBe(200);
+  const sourceVersion = (await packPublished.json()).version;
+  const created = await page.request.post(`${apiUrl}/v1/presentations`, {
+    data: { title: `Destination ${title}`, description: "" },
+  });
+  expect(created.status()).toBe(201);
+  const presentation = (await created.json()).presentation;
+  await page.goto(`/presentation/${presentation.id}`);
+  await page.getByRole("button", { name: "Hide inspector", exact: true }).click();
+  const presentationTitle = `Saved local edit ${title}`;
+  await page.getByLabel("Presentation title", { exact: true }).fill(presentationTitle);
+  await page
+    .locator("#presentation-canvas")
+    .getByLabel("Slide title", { exact: true })
+    .fill("Context for linked recovery");
+  await page.getByRole("button", { name: "+ From Recovery Pack", exact: true }).click();
+  const picker = page.getByRole("dialog", { name: "Insert a published Recovery Pack" });
+  await expect(picker).toBeVisible();
+  await picker.getByLabel("Published Recovery Pack").selectOption(pack.id);
+  await expect(picker.getByRole("region", { name: "Published Pack preview" })).toContainText(title);
+  await expect(picker.getByRole("button", { name: "Insert Pack checkpoints" })).toBeEnabled();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  const insertionBodies: string[] = [];
+  let loseAcknowledgement = true;
+  await page.route(
+    `**/v1/presentations/${presentation.id}/recovery-packs/insert`,
+    async (route) => {
+      insertionBodies.push(route.request().postData()!);
+      if (loseAcknowledgement) {
+        loseAcknowledgement = false;
+        const accepted = await route.fetch();
+        expect(accepted.status()).toBe(200);
+        await route.abort("failed");
+      } else await route.continue();
+    },
+  );
+  await picker.getByRole("button", { name: "Insert Pack checkpoints" }).click();
+  await expect(picker.getByRole("button", { name: "Retry Pack insertion" })).toBeEnabled();
+  await expect(page.locator("header")).toHaveAttribute("inert", "");
+  await expect(picker.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await picker.getByRole("button", { name: "Retry Pack insertion" }).click();
+  await expect(picker).toHaveCount(0);
+  expect(insertionBodies).toHaveLength(2);
+  expect(insertionBodies[1]).toBe(insertionBodies[0]);
+  const insertedResponse = await page.request.get(`${apiUrl}/v1/presentations/${presentation.id}`);
+  expect(insertedResponse.status()).toBe(200);
+  const inserted = (await insertedResponse.json()).presentation;
+  expect(inserted.draft.title).toBe(presentationTitle);
+  expect(inserted.draftRevision).toBe(presentation.draftRevision + 2);
+  expect(inserted.draft.schemaVersion).toBe(3);
+  expect(inserted.draft.blocks).toHaveLength(presentation.draft.blocks.length + 2);
+  expect(inserted.draft.recoveryPackInsertions).toHaveLength(1);
+  expect(inserted.draft.recoveryPackInsertions[0].packVersionId).toBe(sourceVersion.id);
+  const baseline = inserted.draft.recoveryPackInsertions;
+  await page.getByRole("button", { name: "Collapse map", exact: true }).click();
+  const references = page.getByRole("region", {
+    name: "Recovery Pack facilitator references",
+    exact: true,
+  });
+  await references.locator("summary").click();
+  await expect(references).toContainText(cardBody);
+  await expect(references).toContainText(citationName);
+  await expect(references).toContainText("Presentation live card playback is not available yet.");
+  await page.getByRole("button", { name: "Open inspector", exact: true }).click();
+  const editedPrompt = `Edited diagnostic ${randomUUID().slice(0, 8)}`;
+  const savedResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      new URL(response.url()).pathname === `/v1/presentations/${presentation.id}/draft`,
+  );
+  await page.getByLabel("Question prompt", { exact: true }).fill(editedPrompt);
+  const saved = await savedResponse;
+  expect(saved.status()).toBe(200);
+  expect(saved.request().postDataJSON()).toMatchObject({
+    schemaVersion: 2,
+    draft: { schemaVersion: 3 },
+  });
+  expect((await saved.json()).presentation.draft.recoveryPackInsertions).toEqual(baseline);
+  await expect(page.locator('header [role="status"]')).toHaveText("Saved");
+  const publishResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `/v1/presentations/${presentation.id}/publish`,
+  );
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  const published = await publishResponse;
+  expect(published.status()).toBe(200);
+  expect((await published.json()).version.content.recoveryPackInsertions).toEqual(baseline);
+  const removed = await page.request.delete(`${apiUrl}/v1/recovery-packs/${pack.id}`);
+  expect(removed.status()).toBe(204);
+  await page.route("**/v1/auth/me", async (route) => {
+    const response = await route.fetch();
+    const account = await response.json();
+    await route.fulfill({
+      response,
+      json: { ...account, productFeatures: { ...account.productFeatures, recoveryPacks: false } },
+    });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Hide inspector", exact: true }).click();
+  await page.getByRole("button", { name: "Collapse map", exact: true }).click();
+  await expect(page.getByRole("button", { name: "+ From Recovery Pack", exact: true })).toHaveCount(
+    0,
+  );
+  await expect(references).toBeVisible();
+  await references.locator("summary").click();
+  await expect(references).toContainText(cardBody);
+  await expect(references).toContainText(citationName);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+
+  const { viewport, isMobile, hasTouch, userAgent, deviceScaleFactor } = testInfo.project.use;
+  const participantContext = await browser.newContext({
+    baseURL: new URL(page.url()).origin,
+    viewport,
+    isMobile,
+    hasTouch,
+    userAgent,
+    deviceScaleFactor,
+  });
+  try {
+    await page.goto(`/presentation/${presentation.id}/host`);
+    await page.getByRole("button", { name: "Start live session", exact: true }).click();
+    await expect(page).toHaveURL(/\/presentation-session\/[^/]+\/host$/);
+    const sessionId = new URL(page.url()).pathname.split("/")[2]!;
+    const sessionResponse = await page.request.get(
+      `${apiUrl}/v1/presentation-sessions/${sessionId}`,
+    );
+    const { snapshot } = await sessionResponse.json();
+    const participant = await participantContext.newPage();
+    let leakedReference = false;
+    participant.on("websocket", (socket) =>
+      socket.on("framereceived", ({ payload }) => {
+        const text = payload.toString();
+        if (
+          [cardBody, citationName, recheckPrompt, diagnostic.explanation].some((secret) =>
+            text.includes(secret),
+          )
+        )
+          leakedReference = true;
+      }),
+    );
+    await participant.goto(`/join?code=${snapshot.code}`);
+    await participant.getByLabel("Nickname", { exact: true }).fill("Pack participant");
+    await participant.getByRole("button", { name: "Join a Presentation", exact: true }).click();
+    await expect(participant).toHaveURL(`/presentation-session/${sessionId}/play`);
+    await page.getByRole("button", { name: "Start Presentation", exact: true }).click();
+    await page.getByRole("button", { name: "Next block", exact: true }).click();
+    await expect(
+      participant.getByRole("heading", { name: editedPrompt, exact: true }),
+    ).toBeVisible();
+    await expect(
+      participant.getByRole("region", { name: "Recovery Pack facilitator references" }),
+    ).toHaveCount(0);
+    for (const secret of [cardBody, citationName, recheckPrompt, diagnostic.explanation])
+      await expect(participant.getByText(secret, { exact: true })).toHaveCount(0);
+    expect(leakedReference).toBe(false);
+  } finally {
+    await participantContext.close();
+  }
+}
+
+test("Presentation Pack insertion drains edits, recovers lost ACK, and retains private frozen references", async ({
+  page,
+  browser,
+}, testInfo) => {
+  await presentationPackWorkflow(page, browser, testInfo);
+});
+
+test("Presentation Pack insertion and frozen references @mobile", async ({
+  page,
+  browser,
+}, testInfo) => {
+  await presentationPackWorkflow(page, browser, testInfo);
+});
+
+test("Presentation workspace retry and deferred import preparation preserve one active dialog", async ({
+  page,
+}) => {
+  await signInBeta(page);
+  await expect(page.getByRole("heading", { name: "Rounds", exact: true })).toBeVisible();
+  const title = `Import barrier ${randomUUID().slice(0, 8)}`;
+  const created = await page.request.post(`${apiUrl}/v1/presentations`, {
+    data: { title, description: "" },
+  });
+  expect(created.status()).toBe(201);
+  const presentation = (await created.json()).presentation;
+  let failWorkspace = true;
+  await page.route("**/v1/auth/me", async (route) => {
+    if (failWorkspace) {
+      failWorkspace = false;
+      await route.fulfill({
+        status: 503,
+        json: {
+          error: { code: "UNAVAILABLE", message: "Workspace lookup temporarily unavailable" },
+        },
+      });
+    } else await route.continue();
+  });
+  await page.goto(`/presentation/${presentation.id}`);
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Workspace lookup temporarily unavailable" }),
+  ).toHaveText("Workspace lookup temporarily unavailable");
+  await page.getByRole("button", { name: "Retry workspace", exact: true }).click();
+  await expect(page.getByLabel("Presentation title", { exact: true })).toHaveValue(title);
+  let releaseSave!: () => void;
+  let noteSaveStarted!: () => void;
+  const saveStarted = new Promise<void>((resolve) => {
+    noteSaveStarted = resolve;
+  });
+  const acknowledgement = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await page.route(`**/v1/presentations/${presentation.id}/draft`, async (route) => {
+    const response = await route.fetch();
+    noteSaveStarted();
+    await acknowledgement;
+    await route.fulfill({ response });
+  });
+  try {
+    await page.getByLabel("Presentation title", { exact: true }).fill(`${title} — pending edit`);
+    await page.getByRole("button", { name: "+ From trusted source", exact: true }).click();
+    await saveStarted;
+    await expect(
+      page.getByRole("button", { name: "+ From Recovery Pack", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "+ From published Round", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("dialog", { name: "Insert a published Recovery Pack" }),
+    ).toHaveCount(0);
+    releaseSave();
+    const source = page.getByRole("dialog", { name: "Insert from a trusted source" });
+    await expect(source).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await source.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(source).toHaveCount(0);
+    await page.getByRole("button", { name: "+ From Recovery Pack", exact: true }).click();
+    const pack = page.getByRole("dialog", { name: "Insert a published Recovery Pack" });
+    await expect(pack).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await pack.getByRole("button", { name: "Cancel", exact: true }).click();
+  } finally {
+    releaseSave();
+  }
+});
+
+async function presentationPackUpdateWorkflow(page: Page) {
+  test.setTimeout(120_000);
+  page.setDefaultTimeout(10_000);
+  await signInBeta(page);
+  await expect(page.getByRole("heading", { name: "Rounds", exact: true })).toBeVisible();
+  const title = `Presentation update ${randomUUID().slice(0, 8)}`;
+  const recheckId = randomUUID();
+  const diagnostic = {
+    id: randomUUID(),
+    type: "numeric",
+    prompt: "Original diagnostic situation",
+    correctValue: "2",
+    tolerance: "0",
+    unit: null,
+    purpose: "diagnostic",
+    confidence: "off",
+    delivery: "main",
+    conceptKeys: ["ratios"],
+    linkedRecheckQuestionId: recheckId,
+    timeLimitSeconds: 30,
+    basePoints: 100,
+    explanation: "Compare two ratios.",
+    mediaId: null,
+    mediaAlt: null,
+  };
+  const content = {
+    schemaVersion: 1,
+    title,
+    description: "Original accepted context",
+    diagnostic,
+    recheck: {
+      ...diagnostic,
+      id: recheckId,
+      prompt: "Original transfer situation",
+      delivery: "recheck",
+      linkedRecheckQuestionId: null,
+    },
+    interventions: [
+      { id: randomUUID(), title: "Original card", body: "Original frozen facilitator guidance" },
+    ],
+    conceptKeys: ["ratios"],
+    misconceptionKeys: [],
+    citations: [],
+    delayedProbe: null,
+  };
+  const createdPack = await page.request.post(`${apiUrl}/v1/recovery-packs`, {
+    data: { draft: content },
+  });
+  expect(createdPack.status()).toBe(201);
+  let pack = (await createdPack.json()).pack;
+  const firstPublished = await page.request.post(`${apiUrl}/v1/recovery-packs/${pack.id}/publish`, {
+    data: { expectedDraftRevision: pack.draftRevision },
+  });
+  expect(firstPublished.status()).toBe(200);
+  const firstVersion = (await firstPublished.json()).version;
+  const createdPresentation = await page.request.post(`${apiUrl}/v1/presentations`, {
+    data: { title, description: "" },
+  });
+  expect(createdPresentation.status()).toBe(201);
+  const target = (await createdPresentation.json()).presentation;
+  const emptySaved = await page.request.put(`${apiUrl}/v1/presentations/${target.id}/draft`, {
+    data: {
+      draft: { ...target.draft, blocks: [] },
+      expectedRevision: target.draftRevision,
+      mutationId: randomUUID(),
+      schemaVersion: 2,
+    },
+  });
+  expect(emptySaved.status()).toBe(200);
+  const empty = (await emptySaved.json()).presentation;
+  const insertedResponse = await page.request.post(
+    `${apiUrl}/v1/presentations/${target.id}/recovery-packs/insert`,
+    {
+      data: {
+        packVersionId: firstVersion.id,
+        afterBlockId: null,
+        expectedRevision: empty.draftRevision,
+        mutationId: randomUUID(),
+      },
+    },
+  );
+  expect(insertedResponse.status()).toBe(200);
+  const inserted = (await insertedResponse.json()).presentation;
+  const insertion = inserted.draft.recoveryPackInsertions[0];
+  const originallyPublished = await page.request.post(
+    `${apiUrl}/v1/presentations/${target.id}/publish`,
+    {
+      data: { expectedDraftRevision: inserted.draftRevision },
+    },
+  );
+  expect(originallyPublished.status()).toBe(200);
+  const originalPresentationVersion = (await originallyPublished.json()).version;
+  // Model normal local deletion: unlink the diagnostic before deleting its paired recheck.
+  const localSaved = await page.request.put(`${apiUrl}/v1/presentations/${target.id}/draft`, {
+    data: {
+      draft: {
+        ...inserted.draft,
+        blocks: inserted.draft.blocks
+          .filter(
+            (block: { question: { id: string } }) =>
+              block.question.id !== insertion.recheckQuestionId,
+          )
+          .map((block: { question: { id: string } }) => ({
+            ...block,
+            question: { ...block.question, linkedRecheckQuestionId: null },
+          })),
+      },
+      expectedRevision: inserted.draftRevision,
+      mutationId: randomUUID(),
+      schemaVersion: 2,
+    },
+  });
+  expect(localSaved.status()).toBe(200);
+  const sourceSaved = await page.request.put(`${apiUrl}/v1/recovery-packs/${pack.id}/draft`, {
+    data: {
+      draft: {
+        ...pack.draft,
+        diagnostic: { ...pack.draft.diagnostic, prompt: "Reviewed V2 diagnostic" },
+        recheck: { ...pack.draft.recheck, prompt: "Reviewed V2 transfer" },
+        interventions: [
+          { ...pack.draft.interventions[0], body: "Reviewed V2 facilitator guidance" },
+        ],
+      },
+      expectedRevision: pack.draftRevision,
+      mutationId: randomUUID(),
+    },
+  });
+  expect(sourceSaved.status()).toBe(200);
+  pack = (await sourceSaved.json()).pack;
+  const secondPublished = await page.request.post(
+    `${apiUrl}/v1/recovery-packs/${pack.id}/publish`,
+    {
+      data: { expectedDraftRevision: pack.draftRevision },
+    },
+  );
+  expect(secondPublished.status()).toBe(200);
+  const secondVersion = (await secondPublished.json()).version;
+  await page.goto(`/presentation/${target.id}`);
+  await page.getByRole("button", { name: "Hide inspector", exact: true }).click();
+  await page.getByRole("button", { name: "Collapse map", exact: true }).click();
+  const reviews = page.getByRole("region", {
+    name: "Presentation Recovery Pack updates",
+    exact: true,
+  });
+  const panel = reviews
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: `Review Pack updates · ${title}` }) })
+    .first();
+  await panel.locator("summary").first().click();
+  let releaseReview!: () => void;
+  const reviewGate = new Promise<void>((resolve) => {
+    releaseReview = resolve;
+  });
+  let reviewStarted = false;
+  await page.route(
+    `**/v1/presentations/${target.id}/recovery-packs/update-review`,
+    async (route) => {
+      reviewStarted = true;
+      await reviewGate;
+      await route.continue();
+    },
+  );
+  try {
+    const pendingTitle = `${title} — pending local edit`;
+    await page.getByLabel("Presentation title", { exact: true }).fill(pendingTitle);
+    await panel.getByRole("button", { name: "Review latest Pack version" }).click();
+    await expect.poll(() => reviewStarted).toBe(true);
+    await expect(page.locator("header")).toHaveAttribute("inert", "");
+    const savedBeforeReview = await page.request.get(`${apiUrl}/v1/presentations/${target.id}`);
+    expect((await savedBeforeReview.json()).presentation.draft.title).toBe(pendingTitle);
+    releaseReview();
+    await expect(panel.getByLabel("Diagnostic update choice")).toHaveValue("");
+    await expect(panel.getByLabel("Recheck update choice")).toHaveValue("");
+  } finally {
+    releaseReview();
+  }
+  await page.unroute(`**/v1/presentations/${target.id}/recovery-packs/update-review`);
+  const currentTitle = `${title} — newer local edit`;
+  await page.getByLabel("Presentation title", { exact: true }).fill(currentTitle);
+  await expect(panel.getByRole("button", { name: "Apply reviewed Pack update" })).toHaveCount(0);
+  await panel.getByRole("button", { name: "Review latest Pack version" }).click();
+  await expect(panel.getByLabel("Diagnostic update choice")).toHaveValue("");
+  await panel.getByLabel("Diagnostic update choice").selectOption("keep_local");
+  await panel.getByLabel("Recheck update choice").selectOption("use_latest");
+  await expect(panel.getByRole("alert", { name: "Linked checkpoint choices" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Apply reviewed Pack update" })).toBeDisabled();
+  await panel.getByLabel("Diagnostic update choice").selectOption("use_latest");
+  await expect(panel.getByRole("alert", { name: "Linked checkpoint choices" })).toHaveCount(0);
+  const comparison = panel
+    .locator("details")
+    .filter({
+      has: page.locator("summary", { hasText: "Pack context comparison: baseline and latest" }),
+    })
+    .first();
+  await comparison.locator("summary").first().click();
+  await expect(comparison).toContainText("Original frozen facilitator guidance");
+  await expect(comparison).toContainText("Reviewed V2 facilitator guidance");
+  const references = page.getByRole("region", {
+    name: "Recovery Pack facilitator references",
+    exact: true,
+  });
+  await references.locator("summary").click();
+  await expect(references).toContainText("Original frozen facilitator guidance");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  // Publish V3 after reviewing V2: apply must remain pinned to the exact reviewed version.
+  const thirdSaved = await page.request.put(`${apiUrl}/v1/recovery-packs/${pack.id}/draft`, {
+    data: {
+      draft: {
+        ...pack.draft,
+        diagnostic: { ...pack.draft.diagnostic, prompt: "Later V3 diagnostic" },
+        interventions: [{ ...pack.draft.interventions[0], body: "Later V3 facilitator guidance" }],
+      },
+      expectedRevision: pack.draftRevision,
+      mutationId: randomUUID(),
+    },
+  });
+  expect(thirdSaved.status()).toBe(200);
+  const thirdPublished = await page.request.post(`${apiUrl}/v1/recovery-packs/${pack.id}/publish`, {
+    data: { expectedDraftRevision: (await thirdSaved.json()).pack.draftRevision },
+  });
+  expect(thirdPublished.status()).toBe(200);
+  const thirdVersion = (await thirdPublished.json()).version;
+  const updateBodies: string[] = [];
+  let loseUpdate = true;
+  await page.route(`**/v1/presentations/${target.id}/recovery-packs/update`, async (route) => {
+    updateBodies.push(route.request().postData()!);
+    if (loseUpdate) {
+      loseUpdate = false;
+      expect((await route.fetch()).status()).toBe(200);
+      await route.abort("failed");
+    } else await route.continue();
+  });
+  await panel.getByRole("button", { name: "Apply reviewed Pack update" }).click();
+  await expect(
+    panel.getByRole("button", { name: "Retry Pack update acknowledgement" }),
+  ).toBeEnabled();
+  await expect(page.locator("header")).toHaveAttribute("inert", "");
+  await panel.getByRole("button", { name: "Retry Pack update acknowledgement" }).click();
+  await expect(panel.getByRole("button", { name: "Undo this Pack update" })).toBeEnabled();
+  expect(updateBodies).toHaveLength(2);
+  expect(updateBodies[0]).toBe(updateBodies[1]);
+  expect(JSON.parse(updateBodies[0]!).packVersionId).toBe(secondVersion.id);
+  await expect(references).toContainText("Reviewed V2 facilitator guidance");
+  const afterApply = (
+    await (await page.request.get(`${apiUrl}/v1/presentations/${target.id}`)).json()
+  ).presentation;
+  expect(afterApply.draftRevision).toBe(JSON.parse(updateBodies[0]!).expectedRevision + 1);
+  expect(afterApply.draft.blocks).toHaveLength(2);
+  expect(afterApply.draft.blocks[0].id).toBe(inserted.draft.blocks[0].id);
+  expect(afterApply.draft.blocks[0].question.prompt).toBe("Reviewed V2 diagnostic");
+  expect(afterApply.draft.blocks[0].question.linkedRecheckQuestionId).toBe(
+    insertion.recheckQuestionId,
+  );
+  expect(afterApply.draft.blocks[1].question.delivery).toBe("recheck");
+  expect(afterApply.draft.recoveryPackInsertions[0].originalContent).toEqual(
+    insertion.originalContent,
+  );
+  expect(afterApply.draft.recoveryPackInsertions[0].updateBaseline.packVersionId).toBe(
+    secondVersion.id,
+  );
+  const publishedBeforeUndo = await page.request.get(`${apiUrl}/v1/presentations/${target.id}`);
+  const publishedIdentity = (await publishedBeforeUndo.json()).presentation;
+  expect(publishedIdentity.currentVersionId).toBe(originalPresentationVersion.id);
+  expect(publishedIdentity.hasUnpublishedChanges).toBe(true);
+  const undoBodies: string[] = [];
+  let loseUndo = true;
+  await page.route(`**/v1/presentations/${target.id}/history/*/restore`, async (route) => {
+    undoBodies.push(route.request().postData()!);
+    if (loseUndo) {
+      loseUndo = false;
+      expect((await route.fetch()).status()).toBe(200);
+      await route.abort("failed");
+    } else await route.continue();
+  });
+  await panel.getByRole("button", { name: "Undo this Pack update" }).click();
+  await expect(panel.getByRole("button", { name: "Retry undo acknowledgement" })).toBeEnabled();
+  await panel.getByRole("button", { name: "Retry undo acknowledgement" }).click();
+  await expect(panel.getByRole("status")).toContainText("Pack update undone");
+  expect(undoBodies).toHaveLength(2);
+  expect(undoBodies[0]).toBe(undoBodies[1]);
+  await expect(references).toContainText("Original frozen facilitator guidance");
+  const afterUndo = (
+    await (await page.request.get(`${apiUrl}/v1/presentations/${target.id}`)).json()
+  ).presentation;
+  expect(afterUndo.draftRevision).toBe(afterApply.draftRevision + 1);
+  expect(afterUndo.draft.title).toBe(currentTitle);
+  expect(afterUndo.draft.blocks).toHaveLength(1);
+  expect(afterUndo.draft.recoveryPackInsertions[0].updateBaseline).toBeUndefined();
+  await panel.getByRole("button", { name: "Review latest Pack version" }).click();
+  await expect(panel.getByLabel("Diagnostic update choice")).toHaveValue("");
+  await panel.getByLabel("Diagnostic update choice").selectOption("use_latest");
+  await panel.getByLabel("Recheck update choice").selectOption("use_latest");
+  await panel.getByRole("button", { name: "Apply reviewed Pack update" }).click();
+  await expect(panel.getByRole("button", { name: "Undo this Pack update" })).toBeEnabled();
+  await expect(references).toContainText("Later V3 facilitator guidance");
+  await page.getByLabel("Presentation title", { exact: true }).fill(`${title} — later work`);
+  await expect(panel.getByRole("button", { name: "Undo this Pack update" })).toBeDisabled();
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get(`${apiUrl}/v1/presentations/${target.id}`)).json())
+          .presentation.draft.title,
+    )
+    .toBe(`${title} — later work`);
+  await expect(panel.getByRole("button", { name: "Undo this Pack update" })).toBeDisabled();
+  const finalDraft = (
+    await (await page.request.get(`${apiUrl}/v1/presentations/${target.id}`)).json()
+  ).presentation;
+  expect(finalDraft.draft.recoveryPackInsertions[0].updateBaseline.packVersionId).toBe(
+    thirdVersion.id,
+  );
+  const published = await page.request.post(`${apiUrl}/v1/presentations/${target.id}/publish`, {
+    data: { expectedDraftRevision: finalDraft.draftRevision },
+  });
+  expect(published.status()).toBe(200);
+  expect(
+    (await published.json()).version.content.recoveryPackInsertions[0].updateBaseline.packVersionId,
+  ).toBe(thirdVersion.id);
+  await page.route("**/v1/auth/me", async (route) => {
+    const response = await route.fetch();
+    const account = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        ...account,
+        productFeatures: { ...account.productFeatures, recoveryPacks: false, presentations: false },
+      },
+    });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Hide inspector", exact: true }).click();
+  await page.getByRole("button", { name: "Collapse map", exact: true }).click();
+  await panel.locator("summary").first().click();
+  await expect(panel).toContainText("Pack update authoring is disabled");
+  await panel.getByRole("button", { name: "Review latest Pack version" }).click();
+  await expect(panel).toContainText("already up to date");
+  await expect(panel.getByRole("button", { name: "Apply reviewed Pack update" })).toBeDisabled();
+  await references.locator("summary").click();
+  await expect(references).toContainText("Later V3 facilitator guidance");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+}
+
+test("Presentation Pack updates fence drafts, pin review intent, and recover apply/undo ACKs", async ({
+  page,
+}) => {
+  await presentationPackUpdateWorkflow(page);
+});
+
+test("Presentation Pack update review and fenced undo @mobile", async ({ page }) => {
+  await presentationPackUpdateWorkflow(page);
 });
