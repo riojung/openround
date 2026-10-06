@@ -40,7 +40,7 @@ This file is not legal advice.
 | @aws/lambda-invoke-store                   | 0.3.0            | [Project page](https://github.com/awslabs/aws-lambda-invoke-store)                                                                           |
 | @grpc/grpc-js                              | 1.14.5           | [Project page](https://grpc.io/)                                                                                                             |
 | @grpc/proto-loader                         | 0.8.1            | [Project page](https://grpc.io/)                                                                                                             |
-| @img/sharp-platform-binary                 | 0.35.4           | [Project page](https://sharp.pixelplumbing.com)                                                                                              |
+| @img/sharp-platform-binary                 | 0.35.5           | [Project page](https://sharp.pixelplumbing.com)                                                                                              |
 | @opentelemetry/api                         | 1.9.1            | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/api)                                                             |
 | @opentelemetry/api-logs                    | 0.221.0, 0.222.0 | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/api-logs)                                  |
 | @opentelemetry/configuration               | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/configuration)                             |
@@ -90,7 +90,7 @@ This file is not legal advice.
 | pdfjs-dist                                 | 6.3.289          | [Project page](https://mozilla.github.io/pdf.js/)                                                                                            |
 | playwright                                 | 1.63.0           | [Project page](https://playwright.dev)                                                                                                       |
 | playwright-core                            | 1.63.0           | [Project page](https://playwright.dev)                                                                                                       |
-| sharp                                      | 0.35.4           | [Project page](https://sharp.pixelplumbing.com)                                                                                              |
+| sharp                                      | 0.35.5           | [Project page](https://sharp.pixelplumbing.com)                                                                                              |
 
 ### BlueOak-1.0.0
 
@@ -155,7 +155,7 @@ This file is not legal advice.
 
 | Package                            | Version | Project                                         |
 | ---------------------------------- | ------- | ----------------------------------------------- |
-| @img/sharp-libvips-platform-binary | 1.3.3   | [Project page](https://sharp.pixelplumbing.com) |
+| @img/sharp-libvips-platform-binary | 1.3.4   | [Project page](https://sharp.pixelplumbing.com) |
 
 ### MIT
 

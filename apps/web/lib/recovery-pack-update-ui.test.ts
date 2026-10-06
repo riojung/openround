@@ -7,6 +7,7 @@ import {
   recoveryPackSelectedChoices,
   recoveryPackSelectedLinkIssue,
   recoveryPackUpdateAvailable,
+  recoveryPackUndoIsCurrent,
 } from "./recovery-pack-update-ui";
 
 const ids = {
@@ -144,6 +145,13 @@ describe("Recovery Pack update controls", () => {
     expect(recoveryPackReviewIsCurrent(preview, 3, "original", "original")).toBe(true);
     expect(recoveryPackReviewIsCurrent(preview, 4, "original", "original")).toBe(false);
     expect(recoveryPackReviewIsCurrent(preview, 3, "original", "edited")).toBe(false);
+  });
+  it("bounds update undo to the unchanged applied revision, independently of feature rollout", () => {
+    const undo = { appliedRevision: 4, draftSignature: "accepted" };
+    expect(recoveryPackUndoIsCurrent(undo, 4, "accepted")).toBe(true);
+    expect(recoveryPackUndoIsCurrent(undo, 5, "accepted")).toBe(false);
+    expect(recoveryPackUndoIsCurrent(undo, 4, "new local edit")).toBe(false);
+    expect(recoveryPackUndoIsCurrent(null, 4, "accepted")).toBe(false);
   });
   it("uses the shared semantic rules instead of flagging copy IDs, defaults, or decimal notation", () => {
     const copiedIds = {

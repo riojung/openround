@@ -295,10 +295,90 @@ skipped in the standard package run. Automated scans do not replace manual assis
 or independent review evidence. Lint, typecheck, formatting, Docker-context checks, and production
 builds also pass.
 
-Next Pack slices remain Presentation/practice/Companion insertion, source-authoring proposals with
+Next Pack slices remain Presentation live cards, practice/Companion insertion, source-authoring proposals with
 content-hash-bound citation approval, and QTI/CSV Pack portability with explicit loss reports.
 Delayed Recovery Trail and Concept Health remain later incremental capabilities. Partner-evidence
 and staging decisions remain deferred; this implementation does not mark their gates as passed.
+
+## Recovery Pack Presentation draft insertion — 2026-10-06
+
+The next incremental implementation inserts an immutable published Pack's diagnostic and linked
+recheck into a Presentation draft, with fresh block/question/choice IDs and a complete frozen
+Pack/version baseline. The baseline retains cards, citations, concepts, and the optional delayed
+probe; the builder displays cards and citations as read-only facilitator references, not live
+card playback. Local edits and deletion do not rewrite the
+source or baseline; source deletion and feature disable do not hide existing references.
+
+`POST /v1/presentations/:id/recovery-packs/insert` requires editor/owner access, both feature gates
+and workspace allowlists, an expected revision, and a stable mutation ID. The builder drains
+autosaves before insertion, prevents concurrent local edits during the operation, and retains the
+exact request for lost-acknowledgement retry. Server receipts resolve retries before rollout,
+stale-state, and source checks, including after a flag/allowlist pause; new insertions remain blocked.
+Retries never duplicate the pair or overwrite later edits. A serialized UTF-8 bound leaves room
+for subsequent saves.
+
+Presentation documents containing complete Pack baselines declare schema v3; ordinary and legacy
+documents, including existing question-level Pack provenance, remain v2. The draft request envelope
+remains v2. Explicit readers preserve provenance across draft,
+history, publish, browser recovery, and Round-question imports. Migration 053 retains baseline-only
+media across draft/history/published snapshots, including after copied questions change or are
+deleted. Existing RLS, account export/deletion, and retention mechanisms cover these snapshots.
+Live projections continue to omit frozen references, cards, future probes, and pre-reveal answers.
+
+Verification passed 243 contract, 102 memory/database, 351 server, 372 web, and 178 support tests,
+plus all 49 isolated PostgreSQL tests. The new Presentation insertion journey passed desktop
+Chromium, Android Chromium, and iPhone WebKit without retries, including acknowledgement loss,
+autosave/publish, source deletion, disabled-feature references, automated accessibility, and live
+privacy checks. All seven browser scenarios, including existing Round Pack journeys and the
+workspace-retry/import-dialog race regression, passed in one combined production run without
+retries. `pnpm check` passed formatting, Docker-context checks, lint, typecheck, package/support tests,
+and production builds. Firefox remains unverified locally, and the environment-gated server multi-writer test
+remains skipped in the standard package run. Manual assistive-technology and independent reviews
+remain separate requirements.
+
+Remaining Pack work: Presentation live cards, practice and Companion
+insertion, source-authoring/citation approval, and QTI/CSV loss reports. Partner-evidence and staging
+remain deferred; this source implementation makes no launch, capacity, or evidence-gate claim.
+
+## Recovery Pack Presentation update review and undo — 2026-10-06
+
+Presentation drafts now reuse the Round three-way Pack comparison: the frozen original or last
+accepted baseline, the exact reviewed immutable Pack version, and local diagnostic/recheck copies.
+Unchanged copies can take source changes; conflicting edits and deleted copies require explicit
+choices. Existing question/block IDs, unrelated slides, block metadata, and kept local edits remain
+intact. Restored checkpoints are placed next to their sibling, or appended as a pair when both are
+missing. Accepting context advances a separate frozen baseline without changing original evidence,
+published Presentation versions, or active sessions.
+
+`POST /v1/presentations/:id/recovery-packs/update-review` returns an authoritative saved-draft
+comparison. `POST /v1/presentations/:id/recovery-packs/update` requires editor/owner access, both
+rollout gates/allowlists, the exact reviewed version ID, expected revision, mutation ID, and role
+choices. A stale request resolves an existing receipt before checking source availability or paused
+flags; it cannot overwrite subsequent edits. New applies are blocked when disabled. The builder
+drains autosaves, fences local edits and stale callbacks, and retains the exact request after
+acknowledgement loss. Frozen references display the accepted version's cards/citations.
+
+Undo uses existing revision-fenced history restore and is offered only while the accepted update
+remains the unchanged current draft. Migration 054 adds nullable undo-source metadata to existing
+Presentation mutation receipts. Memory and PostgreSQL retain that source snapshot even when it
+exceeds normal age/count limits, then release the exception after another meaningful edit. Existing
+tenant RLS, media references, export/deletion, and parent cascades remain in force. Comparisons,
+receipt recovery, and fenced history restore remain available after either rollout is paused.
+
+Verification: `pnpm check` passed formatting, Docker-context checks, lint, typecheck, all 1,361
+package/support tests, and production builds. All 51 isolated PostgreSQL tests passed. The combined
+production Pack browser suite passed 10/10 scenarios without retries across desktop Chromium,
+Android Chromium, and iPhone WebKit, including all prior journeys plus dirty-save fencing,
+deleted-copy conflicts, a pinned reviewed version, lost apply/undo acknowledgements, immutable
+published-version identity, accepted references, later-edit undo invalidation, and disabled-feature
+reads. Automated accessibility scans found no violations in the tested update journeys. An initial
+browser-only assertion was corrected to match the documented Presentation read response; the
+server test independently verifies that the frozen published content is unchanged.
+
+Firefox remains unverified locally, and the environment-gated multi-writer test remains skipped in
+the standard package run. Manual assistive-technology and independent reviews remain separate.
+Live Presentation card playback is not part of this slice. No new CI jobs, participant caps, release
+promises, or partner-evidence claims are introduced.
 
 ## Access/resilience provisional slice
 

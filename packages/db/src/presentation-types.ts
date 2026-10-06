@@ -56,6 +56,8 @@ export interface PresentationDraftUpdate {
   mutationId: string;
   editorId: string;
   draftHash: string;
+  /** Retain the pre-update draft while this accepted Recovery Pack update is current. */
+  recoveryPackUpdateSourceRevision?: number | null;
 }
 
 export interface PresentationRepository {

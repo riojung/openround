@@ -485,13 +485,33 @@ acceptance coverage. PR #69 added owner-only deletion for archived Library conte
 finished/expired session history. Question Health and live flex also remain gated. The feature
 slices are implemented; the next product work is validation and separate release-readiness evidence.
 
+### Incremental feature checkpoint — 2026-10-06
+
+Following the deferred partner-evidence/staging decision, implementation continues in small
+feature slices without claiming those gates passed. Recovery Packs now have immutable publication,
+Round draft insertion, three-way Round update review/undo, and frozen live Round intervention cards.
+The current increment adds Presentation draft insertion with revision-fenced lost-acknowledgement
+replay, independently copied diagnostic/recheck blocks, and complete frozen facilitator references.
+Presentation snapshots with complete Pack baselines explicitly use schema v3; ordinary and legacy
+documents, including previously imported question-level Pack provenance, remain v2.
+
+Presentation three-way update review/undo now reuses the Round merge workflow, preserving local
+slides/block metadata and frozen original evidence while accepting reviewed context separately.
+Current-update history protection retains a fenced undo source; reads, exact receipt retries, and
+undo survive a rollout pause. This remains a draft-only capability, not live card playback.
+
+Presentation live card playback remains next, followed by practice and
+Companion insertion, source-authoring/citation approval, and explicit QTI/CSV Pack loss reporting.
+Delayed Recovery Trail and Concept Health remain later capabilities. This checkpoint does not
+change public participant caps, launch readiness, or the institution/video delivery deferrals.
+
 ### Phase 0 — prove and harden the product (weeks 0–10, overlapping tracks)
 
 **Outcome:** know whether the current Recovery Loop solves a recurring problem and can run safely
 outside a developer machine.
 
 The phases below preserve the original proposed timing. Their scope and implementation state have
-since changed; use the 2026-10-04 implementation checkpoint and phase updates as current status.
+since changed; use the dated implementation checkpoints and phase updates as current status.
 
 Product and research work:
 

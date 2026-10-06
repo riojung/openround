@@ -41,4 +41,34 @@ describe("Recovery Pack update panel", () => {
     expect(markup).toContain("Existing references and update comparisons remain readable");
     expect(markup).not.toContain('disabled=""');
   });
+  it("labels Presentation review and saving without changing the default Round copy", () => {
+    const markup = renderToStaticMarkup(
+      <RecoveryPackUpdatePanel
+        quizId="presentation"
+        artifactLabel="Presentation"
+        allowDisabledReceiptRetry
+        insertionId="insertion"
+        title="Ratios"
+        canEdit
+        featureEnabled={false}
+        currentDraftRevision={3}
+        draftSignature="original"
+        draftSaved
+        mutationBusy
+        receiptRetryable={false}
+        onReview={async () => {
+          throw new Error("unused");
+        }}
+        onApply={async () => {
+          throw new Error("unused");
+        }}
+        onUndo={async () => {
+          throw new Error("unused");
+        }}
+      />,
+    );
+    expect(markup).toContain("Saving or reviewing the Presentation draft");
+    expect(markup).toContain("Review first saves pending Presentation edits");
+    expect(markup).not.toContain("Round");
+  });
 });

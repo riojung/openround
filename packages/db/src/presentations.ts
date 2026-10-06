@@ -32,6 +32,7 @@ interface PresentationMutationReceipt {
   expectedRevision: number;
   resultingRevision: number;
   draftHash: string;
+  recoveryPackUpdateSourceRevision: number | null;
   createdAt: Date;
 }
 
@@ -40,7 +41,7 @@ function clone<T>(value: T): T {
 }
 
 function normalizePresentationRecord(input: PresentationRecord): PresentationRecord {
-  const draftSchemaVersion = input.draftSchemaVersion ?? PRESENTATION_DRAFT_SCHEMA_VERSION;
+  const draftSchemaVersion = input.draftSchemaVersion ?? input.draft.schemaVersion;
   const draft = upcastPresentationDraft(input.draft, draftSchemaVersion);
   return {
     ...input,
@@ -52,7 +53,7 @@ function normalizePresentationRecord(input: PresentationRecord): PresentationRec
 }
 
 function normalizePresentationVersion(input: PresentationVersionRecord): PresentationVersionRecord {
-  const contentSchemaVersion = input.contentSchemaVersion ?? PRESENTATION_CONTENT_SCHEMA_VERSION;
+  const contentSchemaVersion = input.contentSchemaVersion ?? input.content.schemaVersion;
   return {
     ...input,
     content: upcastPresentationContent(input.content, contentSchemaVersion),
@@ -97,14 +98,31 @@ function assertMutationMatches(
   receipt: PresentationMutationReceipt,
   input: Pick<
     PresentationDraftUpdate,
-    "workspaceId" | "presentationId" | "expectedRevision" | "mutationId" | "draftHash"
+    | "workspaceId"
+    | "presentationId"
+    | "expectedRevision"
+    | "mutationId"
+    | "draftHash"
+    | "recoveryPackUpdateSourceRevision"
   >,
 ) {
   if (
     receipt.workspaceId !== input.workspaceId ||
     receipt.presentationId !== input.presentationId ||
     receipt.expectedRevision !== input.expectedRevision ||
-    receipt.draftHash !== input.draftHash
+    receipt.draftHash !== input.draftHash ||
+    receipt.recoveryPackUpdateSourceRevision !== (input.recoveryPackUpdateSourceRevision ?? null)
+  ) {
+    throw new PresentationMutationConflictError(input.mutationId);
+  }
+}
+
+function assertRecoveryPackUpdateSource(input: PresentationDraftUpdate) {
+  if (
+    input.recoveryPackUpdateSourceRevision != null &&
+    (!Number.isSafeInteger(input.recoveryPackUpdateSourceRevision) ||
+      input.recoveryPackUpdateSourceRevision < 0 ||
+      input.recoveryPackUpdateSourceRevision !== input.expectedRevision)
   ) {
     throw new PresentationMutationConflictError(input.mutationId);
   }
@@ -193,6 +211,10 @@ function mapMutationReceipt(row: QueryResultRow): PresentationMutationReceipt {
     expectedRevision: Number(row.expected_revision),
     resultingRevision: Number(row.resulting_revision),
     draftHash: String(row.draft_hash),
+    recoveryPackUpdateSourceRevision:
+      row.recovery_pack_update_source_revision == null
+        ? null
+        : Number(row.recovery_pack_update_source_revision),
     createdAt: row.created_at instanceof Date ? row.created_at : new Date(String(row.created_at)),
   };
 }
@@ -334,6 +356,7 @@ export class MemoryPresentationRepository
     if (!presentation || presentation.workspaceId !== input.workspaceId) {
       return null;
     }
+    assertRecoveryPackUpdateSource(input);
     const key = mutationKey(input.workspaceId, input.mutationId);
     const retry = this.mutations.get(key);
     if (retry) {
@@ -350,6 +373,9 @@ export class MemoryPresentationRepository
     }
     const meaningful =
       JSON.stringify(normalizePresentationRecord(presentation).draft) !== JSON.stringify(draft);
+    if (input.recoveryPackUpdateSourceRevision != null && !meaningful) {
+      throw new PresentationMutationConflictError(input.mutationId);
+    }
     if (meaningful) {
       this.repository?.validateMediaReferences(input.workspaceId, presentationMediaIds(draft));
     }
@@ -361,6 +387,7 @@ export class MemoryPresentationRepository
       expectedRevision: input.expectedRevision,
       resultingRevision: revision,
       draftHash: input.draftHash,
+      recoveryPackUpdateSourceRevision: input.recoveryPackUpdateSourceRevision ?? null,
       createdAt: updatedAt,
     });
     if (!meaningful) return clone(normalizePresentationRecord(presentation));
@@ -425,11 +452,23 @@ export class MemoryPresentationRepository
   }
 
   private async pruneHistory(presentationId: string, now: Date) {
+    const currentRevision = this.presentations.get(presentationId)?.draftRevision;
+    const protectedSourceRevisions = new Set(
+      [...this.mutations.values()]
+        .filter(
+          (receipt) =>
+            receipt.presentationId === presentationId &&
+            receipt.resultingRevision === currentRevision &&
+            receipt.recoveryPackUpdateSourceRevision != null,
+        )
+        .map((receipt) => receipt.recoveryPackUpdateSourceRevision!),
+    );
     const snapshots = [...this.history.entries()]
       .filter(([, item]) => item.presentationId === presentationId)
       .sort((left, right) => right[1].revision - left[1].revision);
     const cutoff = now.getTime() - 30 * 24 * 60 * 60 * 1_000;
     for (const [index, [key, snapshot]] of snapshots.entries()) {
+      if (protectedSourceRevisions.has(snapshot.revision)) continue;
       if (index >= 20 || snapshot.createdAt.getTime() < cutoff) {
         this.history.delete(key);
         await this.repository?.replaceMediaReferences(
@@ -442,7 +481,14 @@ export class MemoryPresentationRepository
       }
     }
     for (const [key, receipt] of this.mutations) {
-      if (receipt.presentationId === presentationId && receipt.createdAt.getTime() < cutoff) {
+      if (
+        receipt.presentationId === presentationId &&
+        receipt.createdAt.getTime() < cutoff &&
+        !(
+          receipt.recoveryPackUpdateSourceRevision != null &&
+          receipt.resultingRevision === currentRevision
+        )
+      ) {
         this.mutations.delete(key);
       }
     }
@@ -468,6 +514,10 @@ export class MemoryPresentationRepository
         version.contentHash === normalizedInput.contentHash,
     );
     const version = existing ? normalizePresentationVersion(existing) : clone(normalizedInput);
+    this.repository?.validateMediaReferences(
+      input.workspaceId,
+      presentationMediaIds(version.content),
+    );
     this.versions.set(version.id, version);
     Object.assign(presentation, {
       status: "published",
@@ -730,6 +780,7 @@ export class PostgresPresentationRepository implements PresentationRepository {
         [input.workspaceId, input.presentationId],
       );
       if (!locked.rows[0]) return null;
+      assertRecoveryPackUpdateSource(input);
       const retried = await client.query(
         `SELECT * FROM presentation_draft_mutations
          WHERE workspace_id = $1 AND mutation_id = $2`,
@@ -754,11 +805,15 @@ export class PostgresPresentationRepository implements PresentationRepository {
         [JSON.stringify(locked.rows[0].draft), JSON.stringify(draft)],
       );
       const meaningful = comparison.rows[0]?.meaningful ?? true;
+      if (input.recoveryPackUpdateSourceRevision != null && !meaningful) {
+        throw new PresentationMutationConflictError(input.mutationId);
+      }
       const revision = meaningful ? currentRevision + 1 : currentRevision;
       await client.query(
         `INSERT INTO presentation_draft_mutations
-           (mutation_id, workspace_id, presentation_id, expected_revision, resulting_revision, draft_hash)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
+           (mutation_id, workspace_id, presentation_id, expected_revision, resulting_revision,
+            draft_hash, recovery_pack_update_source_revision)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
         [
           input.mutationId,
           input.workspaceId,
@@ -766,6 +821,7 @@ export class PostgresPresentationRepository implements PresentationRepository {
           input.expectedRevision,
           revision,
           input.draftHash,
+          input.recoveryPackUpdateSourceRevision ?? null,
         ],
       );
       if (!meaningful) return mapPresentation(locked.rows[0]);
@@ -802,24 +858,45 @@ export class PostgresPresentationRepository implements PresentationRepository {
           input.mutationId,
         ],
       );
-      await client.query(
-        `DELETE FROM presentation_draft_history history
-         WHERE history.workspace_id = $1 AND history.presentation_id = $2
-           AND (history.created_at < now() - interval '30 days' OR history.id NOT IN (
-             SELECT kept.id FROM presentation_draft_history kept
-             WHERE kept.workspace_id = $1 AND kept.presentation_id = $2
-             ORDER BY kept.revision DESC LIMIT 20
-           ))`,
-        [input.workspaceId, input.presentationId],
-      );
-      await client.query(
-        `DELETE FROM presentation_draft_mutations
-         WHERE workspace_id = $1 AND presentation_id = $2
-           AND created_at < now() - interval '30 days'`,
-        [input.workspaceId, input.presentationId],
-      );
+      await this.pruneHistory(client, input.workspaceId, input.presentationId);
       return mapPresentation(updated.rows[0]!);
     });
+  }
+
+  private async pruneHistory(client: PoolClient, workspaceId: string, presentationId: string) {
+    await client.query(
+      `DELETE FROM presentation_draft_history history
+       WHERE history.workspace_id = $1 AND history.presentation_id = $2
+         AND (history.created_at < now() - interval '30 days' OR history.id NOT IN (
+           SELECT kept.id FROM presentation_draft_history kept
+           WHERE kept.workspace_id = $1 AND kept.presentation_id = $2
+           ORDER BY kept.revision DESC LIMIT 20
+         ))
+         AND NOT EXISTS (
+           SELECT 1 FROM presentation_draft_mutations mutation
+           JOIN presentations presentation
+             ON presentation.workspace_id = mutation.workspace_id
+            AND presentation.id = mutation.presentation_id
+           WHERE mutation.workspace_id = history.workspace_id
+             AND mutation.presentation_id = history.presentation_id
+             AND mutation.recovery_pack_update_source_revision = history.revision
+             AND mutation.resulting_revision = presentation.draft_revision
+         )`,
+      [workspaceId, presentationId],
+    );
+    await client.query(
+      `DELETE FROM presentation_draft_mutations mutation
+       WHERE mutation.workspace_id = $1 AND mutation.presentation_id = $2
+         AND mutation.created_at < now() - interval '30 days'
+         AND NOT EXISTS (
+           SELECT 1 FROM presentations presentation
+           WHERE presentation.workspace_id = mutation.workspace_id
+             AND presentation.id = mutation.presentation_id
+             AND mutation.recovery_pack_update_source_revision IS NOT NULL
+             AND mutation.resulting_revision = presentation.draft_revision
+         )`,
+      [workspaceId, presentationId],
+    );
   }
 
   async publishPresentation(input: PresentationVersionRecord, expectedDraftRevision: number) {
@@ -936,8 +1013,14 @@ export class PostgresPresentationRepository implements PresentationRepository {
       });
     const replayed = await replayReceipt();
     if (replayed.handled) return replayed.presentation;
-    const history = await this.listPresentationHistory(input.workspaceId, input.presentationId, 20);
-    const snapshot = history.find((item) => item.revision === input.historyRevision);
+    const snapshot = await this.transaction(input.workspaceId, async (client) => {
+      const history = await client.query(
+        `SELECT * FROM presentation_draft_history
+         WHERE workspace_id = $1 AND presentation_id = $2 AND revision = $3`,
+        [input.workspaceId, input.presentationId, input.historyRevision],
+      );
+      return history.rows[0] ? mapPresentationHistory(history.rows[0]) : null;
+    });
     if (!snapshot) {
       const racedReplay = await replayReceipt();
       return racedReplay.handled ? racedReplay.presentation : null;

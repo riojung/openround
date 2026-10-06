@@ -435,6 +435,7 @@ export function changePresentationQuestionType(
     mediaId: previous.mediaId,
     mediaAlt: previous.mediaAlt,
     sourceCitations: previous.sourceCitations,
+    recoveryPackSource: previous.recoveryPackSource,
   };
   const detachedRecheck = opinionOnly && (previous.delivery ?? "main") === "recheck";
   const detachedTargetId = opinionOnly ? previous.linkedRecheckQuestionId : null;

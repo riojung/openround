@@ -9,7 +9,6 @@ import {
   RecoveryPackContentSchema,
   RecoveryPackJsonSchema,
   UpdateRecoveryPackSchema,
-  type QuestionDraft,
   type RecoveryPackDraft,
 } from "@openround/contracts";
 import {
@@ -23,7 +22,6 @@ import {
   WorkspaceDeletionInProgressError,
   type CreatorContext,
   type RecoveryPackRepository,
-  type RecoveryPackVersionRecord,
   type Repository,
 } from "@openround/db";
 import type { AuthService } from "./auth.js";
@@ -31,6 +29,8 @@ import type { AppConfig } from "./config.js";
 import { evidenceWorkspaceFeatureEnabled } from "./workspace-rollout.js";
 import { RECOVERY_PACK_BODY_LIMIT, ROUND_PACK_INSERTION_DRAFT_LIMIT } from "./draft-limits.js";
 import { registerRecoveryPackUpdateRoutes } from "./recovery-pack-update-routes.js";
+import { recoveryPackQuestions } from "./recovery-pack-copies.js";
+export { recoveryPackQuestions } from "./recovery-pack-copies.js";
 
 const IdParams = z.object({ id: z.string().uuid() });
 const VersionParams = z.object({ versionId: z.string().uuid() });
@@ -44,14 +44,6 @@ function hash(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-function deterministicUuid(seed: string) {
-  const chars = hash(seed).slice(0, 32).split("");
-  chars[12] = "5";
-  chars[16] = (8 + (parseInt(chars[16]!, 16) & 3)).toString(16);
-  const value = chars.join("");
-  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
-}
-
 function apiError(
   reply: FastifyReply,
   status: number,
@@ -60,37 +52,6 @@ function apiError(
   requestId: string,
 ) {
   return reply.code(status).send({ error: { code, message, requestId } });
-}
-
-/** Copy only the immediate pair. Cards and the optional probe remain in the frozen baseline. */
-export function recoveryPackQuestions(
-  version: RecoveryPackVersionRecord,
-  mutationId: string,
-): QuestionDraft[] {
-  const diagnosticId = deterministicUuid(`${mutationId}:diagnostic:${version.id}`);
-  const recheckId = deterministicUuid(`${mutationId}:recheck:${version.id}`);
-  return (["diagnostic", "recheck"] as const).map((role) => {
-    const source = version.content[role];
-    const copied = structuredClone(source);
-    copied.id = role === "diagnostic" ? diagnosticId : recheckId;
-    copied.linkedRecheckQuestionId = role === "diagnostic" ? recheckId : null;
-    copied.recoveryPackSource = {
-      artifactType: "recovery_pack",
-      packId: version.packId,
-      packVersionId: version.id,
-      packVersion: version.version,
-      sourceItemId: source.id,
-      role,
-      contentHash: hash(source),
-    };
-    if ("choices" in copied) {
-      copied.choices = copied.choices.map((choice) => ({
-        ...choice,
-        id: deterministicUuid(`${mutationId}:${role}:${choice.id}`),
-      }));
-    }
-    return copied;
-  });
 }
 
 export async function registerRecoveryPackRoutes(

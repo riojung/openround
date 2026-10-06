@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import {
   ProductEventNameSchema,
   type AuthoringDraft,
@@ -43,7 +43,18 @@ import { discoverMigrations, runMigrations } from "../src/migrations.js";
 import { createLibraryDeletionFixture } from "./support/library-deletion-fixtures.js";
 import { expectPresentationSessionRepositoryConformance } from "./support/presentation-session-conformance.js";
 import { expectRecoveryPackDraftUndoConformance } from "./support/recovery-pack-draft-undo-conformance.js";
+import {
+  expectPresentationPackUndoConformance,
+  expectPresentationPackUndoRetentionConformance,
+} from "./support/presentation-pack-undo-conformance.js";
 import { expectRecoveryPackUpdateMediaConformance } from "./support/recovery-pack-update-media-conformance.js";
+import {
+  expectPresentationPackHistoryMediaConformance,
+  expectPresentationPackInvalidMediaConformance,
+  expectPresentationPackMediaConformance,
+  presentationPackContent,
+  presentationPackMediaDraft,
+} from "./support/presentation-pack-media-conformance.js";
 import {
   expectRecoveryPackRepositoryConformance,
   recoveryPackDraft,
@@ -77,6 +88,133 @@ function publishableRound(title: string): QuizDraft {
 }
 
 describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
+  it("backfills frozen Presentation Pack media on populated pre-053 documents without rewriting them", async () => {
+    const schema = `openround_pack_media_upgrade_${randomUUID().replaceAll("-", "")}`;
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const prePackDirectory = await mkdtemp(join(tmpdir(), "openround-pre-presentation-pack-"));
+    const adminPool = new Pool({ connectionString: adminUrl });
+    let isolatedPool: Pool | undefined;
+    try {
+      const migrations = await discoverMigrations(migrationsDirectory);
+      for (const migration of migrations.filter(({ version }) => version <= 52)) {
+        await writeFile(join(prePackDirectory, migration.fileName), migration.sql);
+      }
+      await adminPool.query(`CREATE SCHEMA "${schema}"`);
+      const isolatedUrl = new URL(adminUrl!);
+      isolatedUrl.searchParams.set("options", `-csearch_path=${schema},public`);
+      isolatedPool = new Pool({ connectionString: isolatedUrl.toString(), max: 1 });
+      await runMigrations(isolatedPool, prePackDirectory);
+      const userId = randomUUID();
+      const workspaceId = randomUUID();
+      const presentationId = randomUUID();
+      const versionId = randomUUID();
+      const historyId = randomUUID();
+      const originalIds = Array.from({ length: 3 }, () => randomUUID());
+      const acceptedIds = Array.from({ length: 3 }, () => randomUUID());
+      const localMediaId = randomUUID();
+      const draft = presentationPackMediaDraft(presentationPackContent(originalIds));
+      const acceptedContent = presentationPackContent(acceptedIds);
+      draft.recoveryPackInsertions![0]!.updateBaseline = {
+        packVersionId: randomUUID(),
+        packVersion: 2,
+        contentHash: recoveryPackContentHash(acceptedContent),
+        content: acceptedContent,
+      };
+      const recheck = draft.blocks[1]!;
+      if (recheck.kind === "question") {
+        recheck.question.mediaId = localMediaId;
+        recheck.question.mediaAlt = "Locally edited recheck diagram";
+      }
+      await isolatedPool.query("SELECT set_config('app.system_access', 'on', false)");
+      await isolatedPool.query("INSERT INTO users (id, email) VALUES ($1, $2)", [
+        userId,
+        `presentation-pack-upgrade-${userId}@example.com`,
+      ]);
+      await isolatedPool.query(
+        "INSERT INTO workspaces (id, name, segment, owner_id) VALUES ($1, 'Pack migration', 'education', $2)",
+        [workspaceId, userId],
+      );
+      for (const id of [...originalIds, ...acceptedIds, localMediaId]) {
+        await isolatedPool.query(
+          `INSERT INTO media_assets
+             (id, workspace_id, object_key, mime_type, size_bytes, scan_status, alt_text)
+           VALUES ($1, $2, $3, 'image/png', 10, 'clean', 'Frozen diagram')`,
+          [id, workspaceId, `media/${workspaceId}/${id}.png`],
+        );
+      }
+      await isolatedPool.query(
+        `INSERT INTO presentations
+           (id, workspace_id, title, description, draft, draft_schema_version, last_edited_by)
+         VALUES ($1, $2, $3, '', $4::jsonb, 3, $5)`,
+        [presentationId, workspaceId, draft.title, JSON.stringify(draft), userId],
+      );
+      await isolatedPool.query(
+        `INSERT INTO presentation_versions
+           (id, workspace_id, presentation_id, version, content, content_schema_version,
+            content_hash, source_draft_revision)
+         VALUES ($1, $2, $3, 1, $4::jsonb, 3, 'frozen-pack-migration', 0)`,
+        [versionId, workspaceId, presentationId, JSON.stringify(draft)],
+      );
+      await isolatedPool.query(
+        `INSERT INTO presentation_draft_history
+           (id, workspace_id, presentation_id, revision, draft, draft_schema_version, saved_by)
+         VALUES ($1, $2, $3, 0, $4::jsonb, 3, $5)`,
+        [historyId, workspaceId, presentationId, JSON.stringify(draft), userId],
+      );
+      const existing = await isolatedPool.query<{ media_id: string }>(
+        "SELECT media_id FROM media_references WHERE workspace_id = $1",
+        [workspaceId],
+      );
+      expect(existing.rows.map(({ media_id }) => media_id)).toEqual([
+        localMediaId,
+        localMediaId,
+        localMediaId,
+      ]);
+      await isolatedPool.query("SELECT set_config('app.system_access', 'off', false)");
+      await runMigrations(isolatedPool, migrationsDirectory);
+      await runMigrations(isolatedPool, migrationsDirectory);
+      await isolatedPool.query("SELECT set_config('app.workspace_id', $1, false)", [workspaceId]);
+      const references = await isolatedPool.query<{
+        media_id: string;
+        owner_type: string;
+        owner_id: string;
+      }>("SELECT media_id, owner_type, owner_id FROM media_references WHERE workspace_id = $1", [
+        workspaceId,
+      ]);
+      expect(references.rows).toHaveLength(21);
+      for (const [ownerType, ownerId] of [
+        ["presentation_draft", presentationId],
+        ["presentation_version", versionId],
+        ["presentation_history", historyId],
+      ]) {
+        expect(
+          references.rows
+            .filter(({ owner_type, owner_id }) => owner_type === ownerType && owner_id === ownerId)
+            .map(({ media_id }) => media_id)
+            .sort(),
+        ).toEqual([...originalIds, ...acceptedIds, localMediaId].sort());
+      }
+      const documents = await isolatedPool.query<{ document: unknown }>(
+        `SELECT draft AS document FROM presentations WHERE id = $1
+         UNION ALL SELECT content FROM presentation_versions WHERE id = $2
+         UNION ALL SELECT draft FROM presentation_draft_history WHERE id = $3`,
+        [presentationId, versionId, historyId],
+      );
+      expect(documents.rows.map(({ document }) => document)).toEqual([draft, draft, draft]);
+      await expect(
+        isolatedPool.query(
+          "UPDATE presentation_versions SET content_hash = 'changed' WHERE id = $1",
+          [versionId],
+        ),
+      ).rejects.toMatchObject({ code: "55000" });
+    } finally {
+      await isolatedPool?.end();
+      await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      await adminPool.end();
+      await rm(prePackDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("backfills revision metadata on a populated pre-018 schema and restores immutability", async () => {
     const schema = `openround_upgrade_${randomUUID().replaceAll("-", "")}`;
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
@@ -677,6 +815,10 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
 
   beforeAll(async () => {
     const adminPool = new Pool({ connectionString: adminUrl });
+    const database = await adminPool.query<{ current_database: string }>(
+      "SELECT current_database()",
+    );
+    const databaseIdentifier = database.rows[0]!.current_database.replaceAll('"', '""');
     await adminPool.query(`
       DO $$
       BEGIN
@@ -688,7 +830,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         END IF;
       END $$;
       GRANT openround_runtime TO openround_test_app;
-      GRANT CONNECT ON DATABASE openround TO openround_test_app;
+      GRANT CONNECT ON DATABASE "${databaseIdentifier}" TO openround_test_app;
     `);
     await adminPool.end();
 
@@ -752,6 +894,8 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 50, name: "recovery_pack_update_media" },
       { version: 51, name: "recovery_pack_update_undo" },
       { version: 52, name: "recovery_pack_live_cards" },
+      { version: 53, name: "recovery_pack_presentation_media" },
+      { version: 54, name: "recovery_pack_presentation_undo" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -925,9 +1069,179 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     });
   });
 
+  it("retains old Presentation Pack Undo sources and accepted media with scoped, fenced receipt replay", async () => {
+    const owner = await creator("presentation-pack-update-undo");
+    const other = await creator("presentation-pack-update-undo-other");
+    await expectPresentationPackUndoConformance({
+      repository,
+      workspaceId: owner.workspaceId,
+      otherWorkspaceId: other.workspaceId,
+      editorId: owner.userId,
+    });
+    const client = await runtimePool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+      const marked = await client.query<{ presentation_id: string }>(
+        `SELECT presentation_id FROM presentation_draft_mutations
+         WHERE workspace_id = $1 AND recovery_pack_update_source_revision IS NOT NULL LIMIT 1`,
+        [owner.workspaceId],
+      );
+      expect(marked.rows).toHaveLength(1);
+      for (const [sourceRevision, expectedRevision, resultingRevision] of [
+        [-1, 0, 1],
+        [0, 1, 2],
+        [0, 0, 0],
+        [0, 0, 2],
+      ]) {
+        await client.query("SAVEPOINT invalid_pack_undo_metadata");
+        await expect(
+          client.query(
+            `INSERT INTO presentation_draft_mutations
+               (mutation_id, workspace_id, presentation_id, expected_revision,
+                resulting_revision, draft_hash, recovery_pack_update_source_revision)
+             VALUES ($1,$2,$3,$4,$5,'invalid-pack-metadata',$6)`,
+            [
+              randomUUID(),
+              owner.workspaceId,
+              marked.rows[0]!.presentation_id,
+              expectedRevision,
+              resultingRevision,
+              sourceRevision,
+            ],
+          ),
+        ).rejects.toMatchObject({ code: "23514" });
+        await client.query("ROLLBACK TO SAVEPOINT invalid_pack_undo_metadata");
+      }
+      expect(
+        (
+          await client.query<{ relforcerowsecurity: boolean }>(
+            "SELECT relforcerowsecurity FROM pg_class WHERE oid = 'presentation_draft_mutations'::regclass",
+          )
+        ).rows,
+      ).toEqual([{ relforcerowsecurity: true }]);
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [other.workspaceId]);
+      expect(
+        (
+          await client.query("SELECT * FROM presentation_draft_mutations WHERE workspace_id = $1", [
+            owner.workspaceId,
+          ])
+        ).rows,
+      ).toEqual([]);
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+  });
+
+  it("preserves aged current Presentation Pack receipts and restores protected sources beyond latest twenty", async () => {
+    const owner = await creator("presentation-pack-undo-retention");
+    const presentations = new PostgresPresentationRepository(repository);
+    const internals = presentations as unknown as {
+      pruneHistory(client: PoolClient, workspaceId: string, presentationId: string): Promise<void>;
+    };
+    async function scoped<T>(work: (client: PoolClient) => Promise<T>) {
+      const client = await runtimePool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+        const result = await work(client);
+        await client.query("COMMIT");
+        return result;
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+    await expectPresentationPackUndoRetentionConformance({
+      presentations,
+      workspaceId: owner.workspaceId,
+      editorId: owner.userId,
+      harness: {
+        ageReceiptAndOverflowHistory: (current, mutationIds) =>
+          scoped(async (client) => {
+            await client.query(
+              `UPDATE presentation_draft_mutations SET created_at = now() - interval '31 days'
+               WHERE workspace_id = $1 AND mutation_id = ANY($2::uuid[])`,
+              [owner.workspaceId, mutationIds],
+            );
+            for (let revision = 100; revision < 125; revision++) {
+              await client.query(
+                `INSERT INTO presentation_draft_history
+                 (id, workspace_id, presentation_id, revision, draft, draft_schema_version, saved_by)
+               VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+                [
+                  randomUUID(),
+                  owner.workspaceId,
+                  current.id,
+                  revision,
+                  JSON.stringify(current.draft),
+                  current.draftSchemaVersion,
+                  owner.userId,
+                ],
+              );
+            }
+          }),
+        prune: (presentationId) =>
+          scoped((client) => internals.pruneHistory(client, owner.workspaceId, presentationId)),
+        historyRevisions: (presentationId) =>
+          scoped(async (client) => {
+            const result = await client.query<{ revision: string }>(
+              "SELECT revision FROM presentation_draft_history WHERE workspace_id = $1 AND presentation_id = $2",
+              [owner.workspaceId, presentationId],
+            );
+            return result.rows.map(({ revision }) => Number(revision));
+          }),
+        receiptSource: (mutationId) =>
+          scoped(async (client) => {
+            const result = await client.query<{
+              recovery_pack_update_source_revision: string | null;
+            }>(
+              "SELECT recovery_pack_update_source_revision FROM presentation_draft_mutations WHERE workspace_id = $1 AND mutation_id = $2",
+              [owner.workspaceId, mutationId],
+            );
+            if (!result.rows[0]) return undefined;
+            const source = result.rows[0].recovery_pack_update_source_revision;
+            return source == null ? null : Number(source);
+          }),
+      },
+    });
+  });
+
   it("retains updated probe-only media across source deletion and immutable Round copies", async () => {
     const owner = await creator("recovery-pack-update-probe-media");
     await expectRecoveryPackUpdateMediaConformance({
+      repository,
+      workspaceId: owner.workspaceId,
+      editorId: owner.userId,
+    });
+  });
+
+  it("retains Presentation Pack originals and accepted baselines after source deletion and local edits", async () => {
+    const owner = await creator("presentation-pack-media");
+    await expectPresentationPackMediaConformance({
+      repository,
+      workspaceId: owner.workspaceId,
+      editorId: owner.userId,
+    });
+  });
+
+  it("rejects invalid private media in both Presentation Pack snapshots atomically", async () => {
+    const owner = await creator("presentation-pack-invalid-media");
+    const other = await creator("presentation-pack-invalid-media-other");
+    await expectPresentationPackInvalidMediaConformance({
+      repository,
+      workspaceId: owner.workspaceId,
+      otherWorkspaceId: other.workspaceId,
+      editorId: owner.userId,
+    });
+  });
+
+  it("releases Presentation Pack media when the last retained history snapshot is pruned", async () => {
+    const owner = await creator("presentation-pack-history-media");
+    await expectPresentationPackHistoryMediaConformance({
       repository,
       workspaceId: owner.workspaceId,
       editorId: owner.userId,

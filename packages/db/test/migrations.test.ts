@@ -22,6 +22,43 @@ afterEach(async () => {
 });
 
 describe("database migration discovery", () => {
+  it("stores Presentation Pack Undo metadata on existing tenant-scoped mutation receipts", async () => {
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migrations = await discoverMigrations(migrationsDirectory);
+    const migration = migrations.find(({ version }) => version === 54);
+    expect(migration?.name).toBe("recovery_pack_presentation_undo");
+    expect(migration?.sql).toContain("ALTER TABLE presentation_draft_mutations");
+    expect(migration?.sql).toContain(
+      "ADD COLUMN IF NOT EXISTS recovery_pack_update_source_revision bigint",
+    );
+    expect(migration?.sql).toContain("recovery_pack_update_source_revision IS NULL");
+    expect(migration?.sql).toContain("recovery_pack_update_source_revision >= 0");
+    expect(migration?.sql).toContain("recovery_pack_update_source_revision = expected_revision");
+    expect(migration?.sql).toContain("resulting_revision = expected_revision + 1");
+    expect(migration?.sql).toContain("presentation_draft_mutations_recovery_pack_undo_idx");
+    expect(migration?.sql).not.toContain("CREATE TABLE");
+    expect(migration?.sql).not.toContain("DISABLE ROW LEVEL SECURITY");
+  });
+
+  it("adds Presentation Pack baseline media edges without rewriting immutable documents", async () => {
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migrations = await discoverMigrations(migrationsDirectory);
+    const migration = migrations.find(({ version }) => version === 53);
+    expect(migration?.name).toBe("recovery_pack_presentation_media");
+    expect(migration?.sql).toContain("CREATE OR REPLACE FUNCTION openround_presentation_media_ids");
+    expect(migration?.sql).toContain("insertion->'originalContent'");
+    expect(migration?.sql).toContain("insertion->'updateBaseline'->'content'");
+    expect(migration?.sql).toContain("set_config('app.system_access', 'on', true)");
+    expect(migration?.sql).toContain("FROM presentations");
+    expect(migration?.sql).toContain("FROM presentation_versions");
+    expect(migration?.sql).toContain("FROM presentation_draft_history");
+    expect(migration?.sql).toContain("asset.workspace_id = documents.workspace_id");
+    expect(migration?.sql).toContain("asset.scan_status <> 'deleting'");
+    expect(migration?.sql).toContain("ON CONFLICT DO NOTHING");
+    expect(migration?.sql).not.toContain("UPDATE presentation");
+    expect(migration?.sql).not.toContain("CREATE TABLE");
+  });
+
   it("orders versioned migrations and computes stable checksums", async () => {
     const directory = await temporaryDirectory();
     await writeFile(join(directory, "010_later.sql"), "SELECT 10;\n");

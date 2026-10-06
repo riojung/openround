@@ -23,6 +23,13 @@ export {
   type RecoveryPackUpdateTarget,
 } from "./recovery-pack-updates";
 
+export {
+  applyPresentationRecoveryPackUpdate,
+  buildPresentationRecoveryPackUpdatePreview,
+  presentationRecoveryPackUpdateLinkIssue,
+  type PresentationRecoveryPackUpdateComparison,
+} from "./presentation-recovery-pack-updates";
+
 function isHttpOrHttpsUrl(value: string) {
   try {
     return ["http:", "https:"].includes(new URL(value).protocol);
@@ -1136,6 +1143,27 @@ export const ApplyRecoveryPackUpdateSchema = z.object({
     ),
 });
 export type ApplyRecoveryPackUpdate = z.infer<typeof ApplyRecoveryPackUpdateSchema>;
+
+/** Presentation IDs belong to the route; comparison and choice semantics are shared with Rounds. */
+export const PresentationRecoveryPackUpdatePreviewRequestSchema =
+  RecoveryPackUpdatePreviewRequestSchema.omit({ quizId: true }).strict();
+export type PresentationRecoveryPackUpdatePreviewRequest = z.infer<
+  typeof PresentationRecoveryPackUpdatePreviewRequestSchema
+>;
+
+export const PresentationRecoveryPackUpdatePreviewSchema = RecoveryPackUpdatePreviewSchema.omit({
+  quizId: true,
+}).extend({ presentationId: z.string().uuid() });
+export type PresentationRecoveryPackUpdatePreview = z.infer<
+  typeof PresentationRecoveryPackUpdatePreviewSchema
+>;
+
+export const ApplyPresentationRecoveryPackUpdateSchema = ApplyRecoveryPackUpdateSchema.omit({
+  quizId: true,
+}).strict();
+export type ApplyPresentationRecoveryPackUpdate = z.infer<
+  typeof ApplyPresentationRecoveryPackUpdateSchema
+>;
 
 export const CreateRecoveryPackSchema = z.object({ draft: RecoveryPackDraftSchema });
 export const UpdateRecoveryPackSchema = z.object({
@@ -3671,16 +3699,56 @@ function applyPresentationTopology(
   }
 }
 
+function applyPresentationRecoveryPackRules(
+  presentation: {
+    schemaVersion: 2 | 3;
+    recoveryPackInsertions?: RecoveryPackInsertion[];
+  },
+  ctx: z.RefinementCtx,
+) {
+  const issue = (path: (string | number)[], message: string) =>
+    ctx.addIssue({ code: "custom", path, message });
+  if (presentation.schemaVersion === 2) {
+    // v2 already retained question-level Pack provenance through shared Question contracts and
+    // Round imports. Only the new complete, frozen insertion baselines require embedded v3.
+    if (presentation.recoveryPackInsertions?.length) {
+      issue(["schemaVersion"], "Recovery Pack baselines require Presentation schema version 3");
+    }
+    return;
+  }
+
+  const insertionIds = new Set<string>();
+  const destinationIds = new Set<string>();
+  for (const [index, insertion] of (presentation.recoveryPackInsertions ?? []).entries()) {
+    const path = ["recoveryPackInsertions", index];
+    if (insertionIds.has(insertion.id)) {
+      issue([...path, "id"], "Recovery Pack insertion IDs must be unique");
+    }
+    insertionIds.add(insertion.id);
+    for (const field of ["diagnosticQuestionId", "recheckQuestionId"] as const) {
+      const id = insertion[field];
+      if (destinationIds.has(id)) {
+        issue([...path, field], "Recovery Pack destination questions must be distinct");
+      }
+      destinationIds.add(id);
+    }
+  }
+}
+
 export const PresentationDraftSchema = z
   .object({
     title: z.string().trim().max(160),
     description: z.string().trim().max(1_000).default(""),
     experiencePreset: ExperiencePresetRefSchema.default({ id: "focus", version: 1 }),
-    schemaVersion: z.literal(2).default(2),
+    schemaVersion: z.union([z.literal(2), z.literal(3)]).default(2),
     sourceDisclosure: PresentationSourceDisclosureSchema.optional(),
     blocks: z.array(PresentationBlockDraftSchema).max(200),
+    recoveryPackInsertions: z.array(RecoveryPackInsertionSchema).max(100).optional(),
   })
-  .superRefine((presentation, ctx) => applyPresentationTopology(presentation, ctx, false));
+  .superRefine((presentation, ctx) => {
+    applyPresentationTopology(presentation, ctx, false);
+    applyPresentationRecoveryPackRules(presentation, ctx);
+  });
 export type PresentationDraft = z.infer<typeof PresentationDraftSchema>;
 
 export const PresentationContentSchema = z
@@ -3688,12 +3756,14 @@ export const PresentationContentSchema = z
     title: z.string().trim().min(1, "Enter a presentation title").max(160),
     description: z.string().trim().max(1_000).default(""),
     experiencePreset: ExperiencePresetRefSchema.default({ id: "focus", version: 1 }),
-    schemaVersion: z.literal(2),
+    schemaVersion: z.union([z.literal(2), z.literal(3)]),
     sourceDisclosure: PresentationSourceDisclosureSchema.optional(),
     blocks: z.array(PresentationBlockSchema).min(1).max(200),
+    recoveryPackInsertions: z.array(RecoveryPackInsertionSchema).max(100).optional(),
   })
   .superRefine((presentation, ctx) => {
     applyPresentationTopology(presentation, ctx, true);
+    applyPresentationRecoveryPackRules(presentation, ctx);
     if (!presentation.blocks.some((block) => block.kind === "question")) {
       ctx.addIssue({
         code: "custom",
@@ -3724,10 +3794,11 @@ const legacyRegionByLayout = {
   callout: "top_center",
 } as const;
 
-/** Shared by persisted artifacts and browser recovery before validating the v2 contract. */
+/** Shared by persisted artifacts and browser recovery; already-current v3 metadata is retained. */
 export function migratePresentationV1(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const presentation = value as { blocks?: unknown; [key: string]: unknown };
+  if (presentation.schemaVersion === 3) return presentation;
   if (!Array.isArray(presentation.blocks)) return { ...presentation, schemaVersion: 2 };
   return {
     ...presentation,
@@ -3810,6 +3881,16 @@ export const CopyRoundQuestionsToPresentationSchema = z.object({
   expectedRevision: z.number().int().nonnegative(),
   mutationId: z.string().uuid(),
 });
+
+export const InsertRecoveryPackIntoPresentationSchema = z.object({
+  packVersionId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+  mutationId: z.string().uuid(),
+  afterBlockId: z.string().uuid().nullable().default(null),
+});
+export type InsertRecoveryPackIntoPresentation = z.infer<
+  typeof InsertRecoveryPackIntoPresentationSchema
+>;
 
 export const InsertAuthoringProposalsIntoPresentationSchema = z
   .object({

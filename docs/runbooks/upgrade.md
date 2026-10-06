@@ -50,6 +50,41 @@ can discard the accepted baseline when it saves, and an older media extractor ma
 assets. Disabling the flag does not make such an older image a safe writer. Keep both expanded
 migrations during rollback and never rewrite published snapshots to downgrade their format.
 
+### Recovery Pack Presentation insertion and update compatibility
+
+Apply migration `053_recovery_pack_presentation_media.sql` before enabling Presentation Pack
+insertion. It expands the existing media extractor and backfills draft, history, and published
+references for both original and accepted baselines, including probe-only assets; it adds no table
+or learner data. Keep the migration during a code rollback.
+
+Apply `054_recovery_pack_presentation_undo.sql` before deploying Presentation Pack updates. It adds
+nullable source-revision metadata and an index/check constraint to existing mutation receipts.
+The current accepted update protects its preceding snapshot from normal history pruning; a later
+meaningful draft edit releases this exception. Existing forced RLS, export/delete coverage, and
+parent cascades still apply. No new content schema version is introduced by updates.
+
+Ordinary and legacy Presentation documents remain schema v2, including existing question-level
+Pack provenance copied from Rounds. Complete frozen Pack baselines explicitly write schema v3,
+while the draft mutation request envelope remains v2. Deploy v3-aware web, server,
+and worker readers before enabling insertion through both `FEATURE_PRESENTATIONS` and
+`FEATURE_RECOVERY_PACKS` and their respective workspace allowlists. After any v3 writes, use only a
+v3-aware rollback target: disabling a flag blocks new insertion but cannot make a v2-only reader or
+editor safe. Never rewrite immutable published versions to downgrade them.
+
+Rehearse dirty-draft insertion, lost acknowledgement and exact-mutation retry, concurrent draft
+edits, deletion of local copies, source Pack deletion, disabled-feature reference reads, and media
+held only by a frozen delayed probe. Verify normal autosave, history, publication, account export,
+deletion, and pre-reveal role/media projections. This increment copies only the diagnostic/recheck
+as live blocks; frozen intervention cards and the optional delayed probe remain authoring references.
+Pause each flag/allowlist after an accepted insertion loses its acknowledgement: its exact mutation
+must still replay without a new revision, while a fresh insertion remains blocked.
+Also rehearse three-way update choices, context-only acceptance, deleted-checkpoint restoration,
+an exact reviewed version after another Pack publish, revision-fenced undo, an aged undo source,
+and media held only by an accepted delayed probe. Confirm unchanged block IDs/metadata and slide
+order, immutable published versions, and private live projections. Pausing either flag blocks new
+updates but preserves comparisons, already accepted receipt recovery, and fenced history restore.
+Live Presentation card playback remains a separate increment.
+
 ### Live Recovery Pack card compatibility
 
 Migration 052 adds nullable aggregate Pack/card attribution to existing session interventions;

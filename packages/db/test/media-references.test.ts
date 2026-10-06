@@ -2,6 +2,25 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { PresentationDraft, QuizDraft } from "@openround/contracts";
 import { createPresentationRepository, MemoryRepository } from "../src/index.js";
+import {
+  expectPresentationPackHistoryMediaConformance,
+  expectPresentationPackInvalidMediaConformance,
+  expectPresentationPackMediaConformance,
+} from "./support/presentation-pack-media-conformance.js";
+
+async function owner(repository: MemoryRepository) {
+  const tokenHash = randomUUID();
+  await repository.createMagicToken({
+    id: randomUUID(),
+    email: `presentation-pack-media-${randomUUID()}@example.com`,
+    segment: "education",
+    tokenHash,
+    policyVersion: "test-v1",
+    expiresAt: new Date(Date.now() + 60_000),
+    consumedAt: null,
+  });
+  return (await repository.consumeMagicToken(tokenHash, new Date()))!;
+}
 
 function media(workspaceId: string, id: string, createdAt: Date) {
   return {
@@ -76,6 +95,38 @@ function presentationDraft(mediaId: string | null): PresentationDraft {
 }
 
 describe("media references", () => {
+  it("retains Presentation Pack originals and accepted baselines after source deletion and local edits", async () => {
+    const repository = new MemoryRepository();
+    const creator = await owner(repository);
+    await expectPresentationPackMediaConformance({
+      repository,
+      workspaceId: creator.workspaceId,
+      editorId: creator.userId,
+    });
+  });
+
+  it("rejects invalid private media in both Presentation Pack snapshots atomically", async () => {
+    const repository = new MemoryRepository();
+    const creator = await owner(repository);
+    const other = await owner(repository);
+    await expectPresentationPackInvalidMediaConformance({
+      repository,
+      workspaceId: creator.workspaceId,
+      otherWorkspaceId: other.workspaceId,
+      editorId: creator.userId,
+    });
+  });
+
+  it("releases Presentation Pack media when the last retained history snapshot is pruned", async () => {
+    const repository = new MemoryRepository();
+    const creator = await owner(repository);
+    await expectPresentationPackHistoryMediaConformance({
+      repository,
+      workspaceId: creator.workspaceId,
+      editorId: creator.userId,
+    });
+  });
+
   it("protects draft, history, and immutable-version assets while finding old orphans", async () => {
     const repository = new MemoryRepository();
     const presentations = createPresentationRepository(repository);
