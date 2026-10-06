@@ -1,26 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
+import { betaEmail, signInBeta } from "./sign-in";
 
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
-const betaEmail = "ux-beta-e2e@example.com";
-
 async function signIn(page: Page) {
-  await page.goto("/signin");
-  const education = page.getByRole("button", { name: "Education" });
-  await expect(education).toBeEnabled();
-  await education.click();
-  await expect(education).toHaveAttribute("aria-pressed", "true");
-  await page.getByLabel("Email address").fill(betaEmail);
-  const policyConsent = page.getByLabel(/I accept the Terms/);
-  await policyConsent.check();
-  await expect(policyConsent).toBeChecked();
-  await page.getByRole("button", { name: "Send sign-in link" }).click();
-  await Promise.all([
-    page.waitForURL(
-      (url) => url.pathname === "/dashboard" && url.searchParams.get("welcome") === "1",
-      { waitUntil: "load" },
-    ),
-    page.getByRole("link", { name: "Continue to dashboard" }).click(),
-  ]);
+  await signInBeta(page);
   await expect(page.locator("main#main")).toBeVisible();
 }
 

@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import type { PresentationDraft } from "@openround/contracts";
+import { signInBeta } from "./sign-in";
 
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
 const workspaceDestinations = [
@@ -15,23 +18,7 @@ const workspaceDestinations = [
 ] as const;
 
 async function signIn(page: Page) {
-  await page.goto("/signin");
-  const education = page.getByRole("button", { name: "Education" });
-  await expect(education).toBeEnabled();
-  await education.click();
-  await expect(education).toHaveAttribute("aria-pressed", "true");
-  await page.getByLabel("Email address").fill("ux-beta-e2e@example.com");
-  const policyConsent = page.getByLabel(/I accept the Terms/);
-  await policyConsent.check();
-  await expect(policyConsent).toBeChecked();
-  await page.getByRole("button", { name: "Send sign-in link" }).click();
-  await Promise.all([
-    page.waitForURL(
-      (url) => url.pathname === "/dashboard" && url.searchParams.get("welcome") === "1",
-      { waitUntil: "load" },
-    ),
-    page.getByRole("link", { name: "Continue to dashboard" }).click(),
-  ]);
+  await signInBeta(page);
   await expect(page.getByRole("heading", { name: "Rounds", level: 1 })).toBeVisible();
 }
 
@@ -79,6 +66,65 @@ async function createPresentation(page: Page) {
   });
   expect(response.status()).toBe(201);
   return (await response.json()).presentation.id as string;
+}
+
+async function createPublishedPresentationSession(page: Page) {
+  const title = `Appearance session ${randomUUID().slice(0, 8)}`;
+  const created = await page.request.post(`${apiUrl}/v1/presentations`, {
+    data: { title, description: "A populated Presentation card for the dark workspace scan." },
+  });
+  expect(created.status()).toBe(201);
+  const { presentation } = (await created.json()) as {
+    presentation: { id: string; draftRevision: number; draft: PresentationDraft };
+  };
+  const saved = await page.request.put(`${apiUrl}/v1/presentations/${presentation.id}/draft`, {
+    data: {
+      expectedRevision: presentation.draftRevision,
+      mutationId: randomUUID(),
+      schemaVersion: 2,
+      draft: {
+        ...presentation.draft,
+        blocks: [
+          {
+            id: randomUUID(),
+            kind: "question",
+            question: {
+              id: randomUUID(),
+              type: "numeric",
+              prompt: "What is two plus two?",
+              purpose: "diagnostic",
+              confidence: "off",
+              delivery: "main",
+              conceptKeys: ["addition"],
+              linkedRecheckQuestionId: null,
+              timeLimitSeconds: 30,
+              basePoints: 1_000,
+              explanation: "Two pairs contain four items.",
+              mediaId: null,
+              mediaAlt: null,
+              correctValue: "4",
+              tolerance: "0",
+              unit: null,
+            },
+          },
+        ],
+      },
+    },
+  });
+  expect(saved.status()).toBe(200);
+  const updated = (await saved.json()).presentation as { draftRevision: number };
+  const published = await page.request.post(
+    `${apiUrl}/v1/presentations/${presentation.id}/publish`,
+    {
+      data: { expectedDraftRevision: updated.draftRevision },
+    },
+  );
+  expect(published.status()).toBe(200);
+  const session = await page.request.post(`${apiUrl}/v1/presentation-sessions`, {
+    data: { presentationId: presentation.id },
+  });
+  expect(session.status()).toBe(201);
+  return title;
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -174,6 +220,9 @@ test("workspace appearance follows, overrides, and persists the system color mod
   page,
 }) => {
   await signIn(page);
+  // Populate the card in this test itself; the first browser must cover the same
+  // Presentation surface as later profiles instead of depending on their fixtures.
+  const presentationTitle = await createPublishedPresentationSession(page);
   await page.goto("/home");
 
   // Firefox does not preserve a media override across the authentication
@@ -222,6 +271,14 @@ test("workspace appearance follows, overrides, and persists the system color mod
     await page.goto(path);
     await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+    if (path === "/sessions") {
+      const presentationCard = page.getByRole("article").filter({
+        has: page.getByRole("heading", { name: presentationTitle, exact: true }),
+      });
+      await expect(presentationCard).toBeVisible();
+      await expect(presentationCard.locator(".eyebrow")).toHaveText("Presentation");
+      await expect(presentationCard.locator(".eyebrow")).toBeVisible();
+    }
     if (path === "/account") {
       await expect(page.locator(".settings-grid > .panel").first()).toHaveCSS(
         "background-color",

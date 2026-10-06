@@ -1,27 +1,12 @@
 import { randomUUID } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import { signInBeta } from "./sign-in";
 
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
 
 async function fixture(page: Page, deleted: "diagnostic" | "recheck" | null = null) {
-  await page.goto("/signin");
-  const education = page.getByRole("button", { name: "Education" });
-  await expect(education).toBeEnabled();
-  await education.click();
-  await expect(education).toHaveAttribute("aria-pressed", "true");
-  await page.getByLabel("Email address").fill("ux-beta-e2e@example.com");
-  const policyConsent = page.getByLabel(/I accept the Terms/);
-  await policyConsent.check();
-  await expect(policyConsent).toBeChecked();
-  await page.getByRole("button", { name: "Send sign-in link" }).click();
-  await Promise.all([
-    page.waitForURL(
-      (url) => url.pathname === "/dashboard" && url.searchParams.get("welcome") === "1",
-      { waitUntil: "load" },
-    ),
-    page.getByRole("link", { name: "Continue to dashboard" }).click(),
-  ]);
+  await signInBeta(page);
   await expect(page.getByRole("heading", { name: "Rounds", exact: true })).toBeVisible();
   const title = `Pack update ${randomUUID().slice(0, 8)}`;
   const recheckId = randomUUID();

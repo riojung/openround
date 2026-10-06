@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { betaEmail, signInBeta } from "./sign-in";
 
 const webUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_WEB_PORT ?? 3200)}`;
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
-const betaEmail = "ux-beta-e2e@example.com";
 
 test.afterEach(async ({ page }) => {
   // Redirects can complete while a second mocked account/authoring request is
@@ -12,23 +12,7 @@ test.afterEach(async ({ page }) => {
 });
 
 async function signIn(page: Page, email: string) {
-  await page.goto("/signin");
-  const education = page.getByRole("button", { name: "Education" });
-  await expect(education).toBeEnabled();
-  await education.click();
-  await expect(education).toHaveAttribute("aria-pressed", "true");
-  await page.getByLabel("Email address").fill(email);
-  const policyConsent = page.getByLabel(/I accept the Terms/);
-  await policyConsent.check();
-  await expect(policyConsent).toBeChecked();
-  await page.getByRole("button", { name: "Send sign-in link" }).click();
-  await Promise.all([
-    page.waitForURL(
-      (url) => url.pathname === "/dashboard" && url.searchParams.get("welcome") === "1",
-      { waitUntil: "load" },
-    ),
-    page.getByRole("link", { name: "Continue to dashboard" }).click(),
-  ]);
+  await signInBeta(page, email);
   await expect(page.getByRole("button", { name: "Create", exact: true })).toBeVisible();
 }
 

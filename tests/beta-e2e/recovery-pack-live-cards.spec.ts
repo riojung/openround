@@ -1,35 +1,13 @@
 import { randomUUID } from "node:crypto";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
+import { signInBeta } from "./sign-in";
 
 const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)}`;
 const webUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_WEB_PORT ?? 3200)}`;
 
 async function createPackRound(page: Page) {
-  await page.goto("/signin");
-  const education = page.getByRole("button", { name: "Education" });
-  await expect(education).toBeEnabled();
-  await education.click();
-  await expect(education).toHaveAttribute("aria-pressed", "true");
-  await page.getByLabel("Email address").fill("ux-beta-e2e@example.com");
-  const policyConsent = page.getByLabel(/I accept the Terms/);
-  await policyConsent.check();
-  await expect(policyConsent).toBeChecked();
-  await Promise.all([
-    page.waitForResponse(
-      (response) =>
-        response.request().method() === "POST" &&
-        new URL(response.url()).pathname === "/v1/auth/magic-link",
-    ),
-    page.getByRole("button", { name: "Send sign-in link" }).click(),
-  ]);
-  await Promise.all([
-    page.waitForURL(
-      (url) => url.pathname === "/dashboard" && url.searchParams.get("welcome") === "1",
-      { waitUntil: "load" },
-    ),
-    page.getByRole("link", { name: "Continue to dashboard" }).click(),
-  ]);
+  await signInBeta(page);
   await expect(page.getByRole("heading", { name: "Rounds", exact: true })).toBeVisible();
 
   const diagnosticId = randomUUID();
