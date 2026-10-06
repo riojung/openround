@@ -25,6 +25,26 @@ const model: RecoveryStoryModel = {
 };
 
 describe("RecoveryStorySummary", () => {
+  it("shows retained Pack version/card references without depending on the mutable source Pack", () => {
+    const markup = renderToStaticMarkup(
+      withEnglishLocale(
+        <RecoveryStorySummary
+          model={{
+            ...model,
+            interventions: [
+              {
+                id: "pack",
+                label: "example",
+                sourceReference: "Recovery Pack v2 · card source-card",
+              },
+            ],
+          }}
+        />,
+      ),
+    );
+    expect(markup).toContain("Recovery Pack v2 · card source-card");
+    expect(markup).toContain('lang="en-CA"');
+  });
   it("preserves the declared language of generated narrative content", () => {
     const markup = renderToStaticMarkup(
       withEnglishLocale(<RecoveryStorySummary contentLanguage="fr-FR" model={model} />),

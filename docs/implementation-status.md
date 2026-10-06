@@ -181,10 +181,11 @@ only destination IDs on import. Older importers can reject the version rather th
 Pack references. Cross-workspace imports with private baseline media return an explicit validation
 failure instead of altering the baseline under an unchanged hash.
 
-Still pending for the Recovery Pack epic: live intervention-card playback; insertion into
+Still pending after the foundation slice: live intervention-card playback (implemented in the
+increment below); insertion into
 Presentation, practice, and Companion; source-authoring proposals and content-hash-bound citation
 approval; QTI/CSV Pack exports with loss reports; and real preparation-time/quality validation.
-The Round update workflow is described in the next checkpoint.
+The Round update and live-card workflows are described in the next checkpoints.
 
 Verification includes memory/PostgreSQL conformance, tenant isolation, media and account-deletion
 races, receipt recovery, native roundtrips, type/lint checks, and production builds. Browser workflows
@@ -245,6 +246,52 @@ and independent review evidence remain separate requirements.
 The session-ordering unit tests disable only background process-metric collectors, whose sampling
 intervals otherwise survive fake-clock transitions and block subsequent retries while catching up;
 service-metric assertions and production collectors are unchanged.
+
+## Recovery Pack live Round cards — 2026-10-05
+
+This increment makes the frozen intervention cards usable in live Rounds. After revealing a
+Pack-backed main diagnostic, the host explicitly previews one card and starts an explanation or
+worked-example intervention through the existing version-fenced, idempotent host command path.
+Generic interventions, finish, and linked-recheck controls remain available. Participants and
+presenters receive only the selected active card's plain text and citations, not the other cards,
+future questions, delayed probe, or full Pack snapshot. Pre-reveal Pack playback is intentionally
+unsupported because authored card text can disclose the answer.
+
+Playback uses the exact insertion's accepted update baseline, or its original immutable snapshot
+when no update has been accepted. It never fetches the latest source Pack, and source deletion does
+not change an existing room. New sessions freeze eligibility from `FEATURE_RECOVERY_PACKS` and the
+evidence workspace allowlist. Disabling the feature prevents eligibility in new rooms while active
+enabled rooms remain usable. Game state v6 explicitly upcasts v5 sessions with playback disabled.
+Once v6 state is written, rollback requires a v6-capable server/worker; flag disable alone cannot
+make an older binary compatible.
+
+Migration `052_recovery_pack_live_cards.sql` persists aggregate insertion/Pack/version/hash/card
+references on the existing forced-RLS intervention table. Reports and CSV retain this attribution
+even without Decision Replay; captured start/finish timeline events include the same reference
+when replay is enabled. No card body, raw learner response, or new learner identity is added to
+decision evidence. Session retention, deletion, and account export cover the copied references.
+
+The existing browser sign-in fixtures now wait for hydration, confirmed consent, and the completed
+dashboard redirect before navigating to the next workflow. This addresses the WebKit navigation
+race seen in CI without loosening feature assertions or raising timeouts.
+
+Verification passes 219 contract, 28 engine, 338 server, 87 memory database, and 364 web tests,
+163 support checks, and 45 isolated PostgreSQL tests. The PostgreSQL path includes durable card
+and decision-event references, source deletion, cold repository restart, tenant denial, account
+export, and retention cascade. The browser journey passes desktop Chromium, Android Chromium,
+and iPhone WebKit, including mobile participant contexts, host-only previews, socket-frame leakage
+checks, escaped card content, citations, participant/presenter reconnect, linked recovery evidence,
+and zero automated accessibility findings across all three live roles. The previously failing
+WebKit foundation sign-in workflow passes three consecutive repeats. Firefox remains unverified
+locally because its profile cannot launch; the environment-gated server multi-writer test remains
+skipped in the standard package run. Automated scans do not replace manual assistive-technology
+or independent review evidence. Lint, typecheck, formatting, Docker-context checks, and production
+builds also pass.
+
+Next Pack slices remain Presentation/practice/Companion insertion, source-authoring proposals with
+content-hash-bound citation approval, and QTI/CSV Pack portability with explicit loss reports.
+Delayed Recovery Trail and Concept Health remain later incremental capabilities. Partner-evidence
+and staging decisions remain deferred; this implementation does not mark their gates as passed.
 
 ## Access/resilience provisional slice
 

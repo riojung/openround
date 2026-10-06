@@ -16,12 +16,22 @@ const workspaceDestinations = [
 
 async function signIn(page: Page) {
   await page.goto("/signin");
-  await page.getByRole("button", { name: "Education" }).click();
+  const education = page.getByRole("button", { name: "Education" });
+  await expect(education).toBeEnabled();
+  await education.click();
+  await expect(education).toHaveAttribute("aria-pressed", "true");
   await page.getByLabel("Email address").fill("ux-beta-e2e@example.com");
-  await page.getByLabel(/I accept the Terms/).check();
+  const policyConsent = page.getByLabel(/I accept the Terms/);
+  await policyConsent.check();
+  await expect(policyConsent).toBeChecked();
   await page.getByRole("button", { name: "Send sign-in link" }).click();
-  await page.getByRole("link", { name: "Continue to dashboard" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  await Promise.all([
+    page.waitForURL(
+      (url) => url.pathname === "/dashboard" && url.searchParams.get("welcome") === "1",
+      { waitUntil: "load" },
+    ),
+    page.getByRole("link", { name: "Continue to dashboard" }).click(),
+  ]);
   await expect(page.getByRole("heading", { name: "Rounds", level: 1 })).toBeVisible();
 }
 

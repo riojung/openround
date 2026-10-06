@@ -21,6 +21,7 @@ import { Countdown } from "../../../components/countdown";
 import { useLocale } from "../../../components/locale-provider";
 import { ParticipantAvatar, ParticipantIdentity } from "../../../components/participant-avatar";
 import { QuestionMedia } from "../../../components/question-media";
+import { RecoveryPackLiveCardView } from "../../../components/recovery-pack-live-card";
 import { QnaPanel } from "../../../components/qna-panel";
 import { formatNumber } from "../../../lib/i18n/format";
 import {
@@ -651,6 +652,9 @@ export default function PlayerPage() {
                 The facilitator started{" "}
                 {snapshot.intervention?.type.replaceAll("_", " ") ?? "an intervention"}.
               </p>
+            ) : null}
+            {snapshot.phase === "intervention" && snapshot.recoveryPackCard ? (
+              <RecoveryPackLiveCardView card={snapshot.recoveryPackCard} />
             ) : null}
             {["single_select", "true_false", "multi_select", "poll"].includes(
               snapshot.question.type,

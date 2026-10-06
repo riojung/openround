@@ -6,11 +6,15 @@ const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)
 
 async function signIn(page: Page) {
   await page.goto("/signin");
-  await page.getByRole("button", { name: "Education" }).click();
+  const education = page.getByRole("button", { name: "Education" });
+  await expect(education).toBeEnabled();
+  await education.click();
+  await expect(education).toHaveAttribute("aria-pressed", "true");
   // The beta server seeds and allowlists the suite's first workspace only.
   await page.getByLabel("Email address").fill("ux-beta-e2e@example.com");
   const policyConsent = page.getByLabel(/I accept the Terms/);
-  await policyConsent.click();
+  await policyConsent.check();
+  await expect(policyConsent).toBeChecked();
   await page.getByRole("button", { name: "Send sign-in link" }).click();
   await Promise.all([
     page.waitForURL(

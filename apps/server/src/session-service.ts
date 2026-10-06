@@ -866,6 +866,13 @@ export class SessionService {
             brandTheme,
             experienceTheme,
             uxBeta: this.uxBetaEnabled(creator.workspaceId),
+            // Freeze live Pack use with the room. Disabling rollout must not strand an
+            // already-created room or require mutable source Pack access during playback.
+            recoveryPackCardsEnabled: evidenceWorkspaceFeatureEnabled(
+              this.config,
+              creator.workspaceId,
+              "recoveryPacks",
+            ),
           }),
           expiresAt: new Date(now.getTime() + ttlMs),
           retentionExpiresAt: retentionExpiry(now, entitlements),
@@ -1641,6 +1648,7 @@ export class SessionService {
                 action: input.action,
                 participantId: input.participantId,
                 interventionType: input.interventionType,
+                recoveryPackCard: input.recoveryPackCard,
                 recheckMode: input.recheckMode,
                 recheckQuestionId: input.recheckQuestionId,
                 nowMs: commandTime.getTime(),

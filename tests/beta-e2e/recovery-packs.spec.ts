@@ -7,12 +7,24 @@ const apiUrl = `http://127.0.0.1:${Number(process.env.BETA_E2E_API_PORT ?? 4200)
 async function recoveryPackWorkflow(page: Page) {
   test.setTimeout(120_000);
   await page.goto("/signin");
-  await page.getByRole("button", { name: "Education" }).click();
+  const education = page.getByRole("button", { name: "Education" });
+  await expect(education).toBeEnabled();
+  await education.click();
+  await expect(education).toHaveAttribute("aria-pressed", "true");
   await page.getByLabel("Email address").fill("ux-beta-e2e@example.com");
-  await page.getByLabel(/I accept the Terms/).check();
+  const policyConsent = page.getByLabel(/I accept the Terms/);
+  await policyConsent.check();
+  await expect(policyConsent).toBeChecked();
   await page.getByRole("button", { name: "Send sign-in link" }).click();
-  await page.getByRole("link", { name: "Continue to dashboard" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  // A matching URL can precede the completed auth redirect and interrupt the next navigation.
+  await Promise.all([
+    page.waitForURL(
+      (url) => url.pathname === "/dashboard" && url.searchParams.get("welcome") === "1",
+      { waitUntil: "load" },
+    ),
+    page.getByRole("link", { name: "Continue to dashboard" }).click(),
+  ]);
+  await expect(page.getByRole("heading", { name: "Rounds", exact: true })).toBeVisible();
 
   const sourceTitle = `Pack source ${randomUUID().slice(0, 8)}`;
   const diagnosticId = randomUUID();

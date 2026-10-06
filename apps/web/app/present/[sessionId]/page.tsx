@@ -15,6 +15,7 @@ import { JoinAccess } from "../../../components/join-access";
 import { useLocale } from "../../../components/locale-provider";
 import { ParticipantIdentity } from "../../../components/participant-avatar";
 import { QuestionMedia } from "../../../components/question-media";
+import { RecoveryPackLiveCardView } from "../../../components/recovery-pack-live-card";
 import { ResponseDistributionView } from "../../../components/response-distribution";
 import { formatNumber } from "../../../lib/i18n/format";
 import {
@@ -320,6 +321,9 @@ export default function PresenterPage() {
                       ? t("live.presenter.clarifying")
                       : t("live.presenter.shortBreak")}
               </p>
+            ) : null}
+            {snapshot.phase === "intervention" && snapshot.recoveryPackCard ? (
+              <RecoveryPackLiveCardView card={snapshot.recoveryPackCard} />
             ) : null}
             {snapshot.explanation ? (
               <p className="notice" lang="">

@@ -12,6 +12,7 @@ import {
   type QuizDraft,
   type Report,
   RecoveryPackContentSchema,
+  recoveryPackContentHash,
 } from "@openround/contracts";
 import {
   acceptAnswer,
@@ -750,6 +751,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 49, name: "recovery_packs" },
       { version: 50, name: "recovery_pack_update_media" },
       { version: 51, name: "recovery_pack_update_undo" },
+      { version: 52, name: "recovery_pack_live_cards" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -807,9 +809,10 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
   async function createPublishedRoundFixture(
     owner: Awaited<ReturnType<typeof creator>>,
     label: string,
+    copiedContent?: QuizDraft,
   ) {
     const now = new Date();
-    const content = publishableRound(label);
+    const content = copiedContent ?? publishableRound(label);
     const quiz = await repository.createQuiz({
       id: randomUUID(),
       workspaceId: owner.workspaceId,
@@ -1096,6 +1099,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     code: string,
     trustMode: "learning" | "verified" = "learning",
     decisionReplayEnabled = false,
+    recoveryPackCardsEnabled = false,
   ) {
     const now = new Date();
     const id = randomUUID();
@@ -1103,6 +1107,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       sessionId: id,
       code,
       quiz: fixture.content,
+      recoveryPackCardsEnabled,
       settings: {
         audienceLimit: 20,
         scoringMode: "accuracy",
@@ -1937,6 +1942,130 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     expect(
       (await repository.getSessionEvidence(owner.workspaceId, session.id)).decisionEvents,
     ).toEqual([insight]);
+  });
+
+  it("persists frozen Pack card evidence across restart/source deletion with RLS and retention cascades", async () => {
+    const owner = await creator("pack-card-evidence");
+    const other = await creator("pack-card-other");
+    const packs = createRecoveryPackRepository(repository);
+    const pack = await packs.createRecoveryPack(
+      recoveryPackRecord(owner.workspaceId, owner.userId),
+    );
+    const content = RecoveryPackContentSchema.parse(pack.draft);
+    const packVersion = await packs.publishRecoveryPack(
+      {
+        id: randomUUID(),
+        workspaceId: owner.workspaceId,
+        packId: pack.id,
+        version: 1,
+        content,
+        contentHash: recoveryPackContentHash(content),
+        sourceDraftRevision: 0,
+        publishedAt: new Date(),
+      },
+      0,
+    );
+    const insertion = {
+      id: randomUUID(),
+      packId: pack.id,
+      packVersionId: packVersion.id,
+      packVersion: 1,
+      contentHash: packVersion.contentHash,
+      diagnosticQuestionId: content.diagnostic.id,
+      recheckQuestionId: content.recheck.id,
+      originalContent: content,
+    };
+    const round = await createPublishedRoundFixture(owner, "Pack cards", {
+      title: "Pack cards",
+      description: "",
+      questions: [content.diagnostic, content.recheck],
+      recoveryPackInsertions: [insertion],
+    });
+    const created = await createRoundSessionFixture(
+      owner,
+      round,
+      String(randomInt(1_000_000, 10_000_000)),
+      "learning",
+      true,
+      true,
+    );
+    const stored = (await repository.getSessionById(created.id))!;
+    let state = created.state;
+    for (const action of ["start", "lock", "reveal", "intervention.start"] as const) {
+      state = applyHostCommand(state, {
+        commandId: randomUUID(),
+        expectedVersion: state.version,
+        action,
+        ...(action === "intervention.start"
+          ? {
+              interventionType: "explain" as const,
+              recoveryPackCard: { insertionId: insertion.id, cardId: content.interventions[0]!.id },
+            }
+          : {}),
+        nowMs: Date.now(),
+        newRoundId: randomUUID,
+      }).state;
+    }
+    const reference = state.intervention!.recoveryPackCard!;
+    const startedEvent = {
+      type: "intervention_started" as const,
+      seq: state.seq,
+      occurredAt: new Date().toISOString(),
+      roundId: state.roundId!,
+      interventionType: "explain" as const,
+      recoveryPackCard: reference,
+    };
+    await repository.saveSession({ ...stored, state }, stored.state.version, undefined, [
+      { event: startedEvent, commandId: "pack-card-start", eventOrdinal: 0 },
+    ]);
+    expect(await packs.deleteRecoveryPack(owner.workspaceId, pack.id)).toBe(true);
+    const restarted = new PostgresRepository(runtimeUrl!);
+    try {
+      expect(await restarted.getSessionById(created.id)).toMatchObject({
+        state: {
+          stateSchemaVersion: 6,
+          recoveryPackCardsEnabled: true,
+          intervention: { recoveryPackCard: reference },
+        },
+      });
+      expect(await restarted.getSessionEvidence(owner.workspaceId, created.id)).toMatchObject({
+        interventions: [{ recoveryPackCard: reference }],
+        decisionEvents: [startedEvent],
+      });
+      expect(
+        (await restarted.getSessionEvidence(other.workspaceId, created.id)).interventions,
+      ).toEqual([]);
+      const exported = await restarted.exportAccount(owner.userId);
+      expect(JSON.stringify(exported)).toContain(reference.cardId);
+      const client = await runtimePool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT set_config('app.workspace_id', $1, true)", [other.workspaceId]);
+        expect(
+          (
+            await client.query(
+              "SELECT recovery_pack_card FROM session_interventions WHERE session_id = $1",
+              [created.id],
+            )
+          ).rows,
+        ).toEqual([]);
+        await client.query("ROLLBACK");
+      } finally {
+        client.release();
+      }
+      // Retention and explicit deletion both use the parent session's existing cascade.
+      await restarted.saveSession(
+        { ...stored, state, retentionExpiresAt: new Date(0) },
+        state.version,
+      );
+      await restarted.purgeExpired(new Date());
+      expect(await restarted.getSessionById(created.id)).toBeNull();
+      expect(
+        (await restarted.getSessionEvidence(owner.workspaceId, created.id)).interventions,
+      ).toEqual([]);
+    } finally {
+      await restarted.close();
+    }
   });
 
   it("persists an idempotent locale preference for only the selected user", async () => {

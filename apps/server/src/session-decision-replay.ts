@@ -61,6 +61,9 @@ export function decisionEventsForTransition(input: {
         type: finished ? "intervention_finished" : "intervention_started",
         roundId: intervention.sourceRoundId,
         interventionType: intervention.type,
+        ...(intervention.recoveryPackCard
+          ? { recoveryPackCard: intervention.recoveryPackCard }
+          : {}),
       });
     }
   }
