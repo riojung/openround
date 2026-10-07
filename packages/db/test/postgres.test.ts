@@ -41,7 +41,13 @@ import {
 } from "../src/types.js";
 import { discoverMigrations, runMigrations } from "../src/migrations.js";
 import { createLibraryDeletionFixture } from "./support/library-deletion-fixtures.js";
-import { expectPresentationSessionRepositoryConformance } from "./support/presentation-session-conformance.js";
+import {
+  expectPresentationSessionRepositoryConformance,
+  expectPresentationRecoveryPackLiveCardsConformance,
+  presentationRecoveryPackIntervention,
+  presentationRecoveryPackUuidCases,
+  presentationSessionConformanceContent,
+} from "./support/presentation-session-conformance.js";
 import { expectRecoveryPackDraftUndoConformance } from "./support/recovery-pack-draft-undo-conformance.js";
 import {
   expectPresentationPackUndoConformance,
@@ -88,6 +94,143 @@ function publishableRound(title: string): QuizDraft {
 }
 
 describe.skipIf(!adminUrl)("PostgreSQL migration upgrades", () => {
+  it("upgrades pre-055 rooms and command receipts without retroactively enabling live cards", async () => {
+    const schema = `openround_live_cards_upgrade_${randomUUID().replaceAll("-", "")}`;
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const legacyDirectory = await mkdtemp(join(tmpdir(), "openround-pre-live-cards-"));
+    const adminPool = new Pool({ connectionString: adminUrl });
+    let isolatedPool: Pool | undefined;
+    try {
+      const migrations = await discoverMigrations(migrationsDirectory);
+      for (const migration of migrations.filter(({ version }) => version <= 54)) {
+        await writeFile(join(legacyDirectory, migration.fileName), migration.sql);
+      }
+      await adminPool.query(`CREATE SCHEMA "${schema}"`);
+      const isolatedUrl = new URL(adminUrl!);
+      isolatedUrl.searchParams.set("options", `-csearch_path=${schema},public`);
+      isolatedPool = new Pool({ connectionString: isolatedUrl.toString(), max: 1 });
+      await runMigrations(isolatedPool, legacyDirectory);
+      // Production security-definer helpers intentionally pin public. Point only these isolated
+      // fixture copies at the temporary schema before populating its pre-migration room.
+      await isolatedPool.query(
+        `ALTER FUNCTION "${schema}".register_presentation_room_code()
+         SET search_path = pg_catalog, "${schema}"`,
+      );
+      await isolatedPool.query(
+        `ALTER FUNCTION "${schema}".claim_live_room_code(character, uuid, text, uuid, timestamptz, timestamptz)
+         SET search_path = pg_catalog, "${schema}"`,
+      );
+      await isolatedPool.query("SELECT set_config('app.system_access', 'on', false)");
+      const userId = randomUUID();
+      const workspaceId = randomUUID();
+      const presentationId = randomUUID();
+      const versionId = randomUUID();
+      const sessionId = randomUUID();
+      const commandId = randomUUID();
+      const content = presentationSessionConformanceContent();
+      await isolatedPool.query("INSERT INTO users (id, email) VALUES ($1, $2)", [
+        userId,
+        `live-cards-upgrade-${userId}@example.com`,
+      ]);
+      await isolatedPool.query(
+        "INSERT INTO workspaces (id, name, segment, owner_id) VALUES ($1, 'Live cards upgrade', 'education', $2)",
+        [workspaceId, userId],
+      );
+      await isolatedPool.query(
+        `INSERT INTO presentations
+          (id, workspace_id, title, draft, draft_schema_version, last_edited_by)
+         VALUES ($1,$2,$3,$4::jsonb,2,$5)`,
+        [presentationId, workspaceId, content.title, JSON.stringify(content), userId],
+      );
+      await isolatedPool.query(
+        `INSERT INTO presentation_versions
+          (id, workspace_id, presentation_id, version, content, content_schema_version, content_hash, source_draft_revision)
+         VALUES ($1,$2,$3,1,$4::jsonb,2,'legacy-live-cards',0)`,
+        [versionId, workspaceId, presentationId, JSON.stringify(content)],
+      );
+      await isolatedPool.query(
+        `INSERT INTO presentation_live_sessions
+          (id, workspace_id, presentation_id, presentation_version_id, title, content_snapshot,
+           join_code, phase, current_block_index, revision, event_seq, created_by, live_expires_at, retention_expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,'question_reveal',0,1,1,$8,now() + interval '1 hour',now() + interval '30 days')`,
+        [
+          sessionId,
+          workspaceId,
+          presentationId,
+          versionId,
+          content.title,
+          JSON.stringify(content),
+          String(randomInt(1_000_000, 10_000_000)),
+          userId,
+        ],
+      );
+      await isolatedPool.query(
+        `INSERT INTO presentation_session_command_receipts
+          (id, workspace_id, session_id, command_id, expected_revision, resulting_revision, event_type)
+         VALUES ($1,$2,$3,$4,0,1,'question.revealed')`,
+        [randomUUID(), workspaceId, sessionId, commandId],
+      );
+      await isolatedPool.query(
+        `INSERT INTO presentation_session_timeline
+          (id, workspace_id, session_id, sequence, event_type, block_index, block_id)
+         VALUES ($1,$2,$3,1,'question.revealed',0,$4)`,
+        [randomUUID(), workspaceId, sessionId, content.blocks[0]!.id],
+      );
+      await runMigrations(isolatedPool, migrationsDirectory);
+      await runMigrations(isolatedPool, migrationsDirectory);
+      const room = await isolatedPool.query(
+        "SELECT recovery_pack_cards_enabled, recovery_pack_intervention, content_snapshot, revision FROM presentation_live_sessions WHERE id = $1",
+        [sessionId],
+      );
+      expect(room.rows[0]).toEqual({
+        recovery_pack_cards_enabled: false,
+        recovery_pack_intervention: null,
+        content_snapshot: content,
+        revision: "1",
+      });
+      const receipt = await isolatedPool.query(
+        "SELECT command_id, request_hash, expected_revision, resulting_revision FROM presentation_session_command_receipts WHERE session_id = $1",
+        [sessionId],
+      );
+      expect(receipt.rows).toEqual([
+        {
+          command_id: commandId,
+          request_hash: null,
+          expected_revision: "0",
+          resulting_revision: "1",
+        },
+      ]);
+      const timeline = await isolatedPool.query(
+        "SELECT event_type, recovery_pack_intervention FROM presentation_session_timeline WHERE session_id = $1",
+        [sessionId],
+      );
+      expect(timeline.rows).toEqual([
+        { event_type: "question.revealed", recovery_pack_intervention: null },
+      ]);
+      const isolation = await isolatedPool.query(
+        `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+         WHERE relnamespace = $1::regnamespace AND relname = ANY($2::text[]) ORDER BY relname`,
+        [
+          schema,
+          [
+            "presentation_live_sessions",
+            "presentation_session_timeline",
+            "presentation_session_command_receipts",
+          ],
+        ],
+      );
+      expect(isolation.rows).toHaveLength(3);
+      expect(isolation.rows.every((row) => row.relrowsecurity && row.relforcerowsecurity)).toBe(
+        true,
+      );
+    } finally {
+      await isolatedPool?.end();
+      await adminPool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      await adminPool.end();
+      await rm(legacyDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("backfills frozen Presentation Pack media on populated pre-053 documents without rewriting them", async () => {
     const schema = `openround_pack_media_upgrade_${randomUUID().replaceAll("-", "")}`;
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
@@ -896,6 +1039,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 52, name: "recovery_pack_live_cards" },
       { version: 53, name: "recovery_pack_presentation_media" },
       { version: 54, name: "recovery_pack_presentation_undo" },
+      { version: 55, name: "recovery_pack_presentation_live_cards" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -1703,6 +1847,187 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         await repository.claimWorkspaceMediaDeletion(owner.workspaceId);
       },
     });
+  });
+
+  it("keeps PostgreSQL on the shared live card and strict command receipt contract", async () => {
+    const owner = await creator("presentation-live-card-conformance");
+    const published = await createPublishedPresentationFixture(owner, "Presentation live cards");
+    await expectPresentationRecoveryPackLiveCardsConformance({
+      repository: new PostgresPresentationSessionRepository(repository),
+      workspaceId: owner.workspaceId,
+      presentationId: published.presentation.id,
+      presentationVersionId: published.version.id,
+      createdBy: owner.userId,
+      content: published.content,
+      beginWorkspaceDeletion: async () => {
+        await repository.claimWorkspaceMediaDeletion(owner.workspaceId);
+      },
+    });
+  });
+
+  it("persists card selections across repository restart and fences conflicting races and tenants", async () => {
+    const owner = await creator("presentation-live-card-restart");
+    const outsider = await creator("presentation-live-card-outsider");
+    const published = await createPublishedPresentationFixture(owner, "Durable live cards");
+    const sessions = new PostgresPresentationSessionRepository(repository);
+    const now = new Date();
+    const session = await sessions.createSession({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      presentationId: published.presentation.id,
+      presentationVersionId: published.version.id,
+      title: published.content.title,
+      content: published.content,
+      code: String(randomInt(1_000_000, 10_000_000)),
+      status: "active",
+      phase: "question_reveal",
+      currentBlockIndex: 0,
+      revision: 0,
+      recoveryPackCardsEnabled: true,
+      createdBy: owner.userId,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: null,
+      liveExpiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 86_400_000),
+    });
+    const intervention = presentationRecoveryPackIntervention();
+    const command = {
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      commandId: randomUUID(),
+      expectedRevision: 0,
+      requestHash: "a".repeat(64),
+      phase: "intervention" as const,
+      currentBlockIndex: 0,
+      status: "active" as const,
+      recoveryPackIntervention: intervention,
+      event: {
+        type: "intervention.presented" as const,
+        blockIndex: 0,
+        blockId: published.content.blocks[0]!.id,
+      },
+    };
+    const results = await Promise.all([
+      sessions.transitionSessionCommand(command),
+      sessions.transitionSessionCommand({
+        ...command,
+        requestHash: "b".repeat(64),
+        recoveryPackIntervention: { ...intervention, type: "example" },
+      }),
+    ]);
+    expect(results.map(({ status }) => status).sort()).toEqual([
+      "accepted",
+      "idempotency_conflict",
+    ]);
+    const winner = results.find((result) => result.status === "accepted");
+    if (winner?.status !== "accepted") throw new Error("Expected one accepted card command");
+    const selected = winner.session.recoveryPackIntervention;
+    if (!selected) throw new Error("Expected frozen card attribution on the winning command");
+    const restarted = new PostgresPresentationSessionRepository(repository);
+    await expect(
+      restarted.getSessionForWorkspace(owner.workspaceId, session.id),
+    ).resolves.toMatchObject({
+      recoveryPackCardsEnabled: true,
+      recoveryPackIntervention: selected,
+      revision: 1,
+    });
+    await expect(restarted.listTimeline(session.id)).resolves.toEqual([
+      expect.objectContaining({ recoveryPackIntervention: selected }),
+    ]);
+    await expect(
+      restarted.findCommandReceipt(outsider.workspaceId, session.id, command.commandId),
+    ).resolves.toBeNull();
+    const client = await runtimePool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [outsider.workspaceId]);
+      for (const table of [
+        "presentation_live_sessions",
+        "presentation_session_timeline",
+        "presentation_session_command_receipts",
+      ]) {
+        const visible = await client.query(`SELECT * FROM ${table} WHERE workspace_id = $1`, [
+          owner.workspaceId,
+        ]);
+        expect(visible.rows, table).toEqual([]);
+      }
+      await client.query("ROLLBACK");
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+      const malformedInterventions = [
+        JSON.stringify(selected).replace(
+          `"contentHash":"${selected.reference.contentHash}"`,
+          `"contentHash":${"7".repeat(64)}`,
+        ),
+        JSON.stringify({ ...selected, type: 1 }),
+        JSON.stringify({ ...selected, reference: { ...selected.reference, cardId: 1 } }),
+        JSON.stringify({ ...selected, reference: { ...selected.reference, packVersion: "1" } }),
+        JSON.stringify({
+          ...selected,
+          reference: { ...selected.reference, packVersion: 9007199254740992 },
+        }),
+        ...["insertionId", "packId", "packVersionId", "cardId"].flatMap((field) =>
+          presentationRecoveryPackUuidCases.rejected.map((value) =>
+            JSON.stringify({ ...selected, reference: { ...selected.reference, [field]: value } }),
+          ),
+        ),
+      ];
+      for (const malformed of malformedInterventions) {
+        await client.query("SAVEPOINT malformed_card_attribution");
+        await expect(
+          client.query(
+            "UPDATE presentation_live_sessions SET recovery_pack_intervention = $2::jsonb WHERE id = $1",
+            [session.id, malformed],
+          ),
+        ).rejects.toMatchObject({ code: "23514" });
+        await client.query("ROLLBACK TO SAVEPOINT malformed_card_attribution");
+      }
+      for (const field of ["insertionId", "packId", "packVersionId", "cardId"]) {
+        for (const value of presentationRecoveryPackUuidCases.accepted) {
+          await client.query("SAVEPOINT permitted_card_uuid");
+          await client.query(
+            "UPDATE presentation_live_sessions SET recovery_pack_intervention = $2::jsonb WHERE id = $1",
+            [
+              session.id,
+              JSON.stringify({
+                ...selected,
+                reference: { ...selected.reference, [field]: value },
+              }),
+            ],
+          );
+          await client.query("ROLLBACK TO SAVEPOINT permitted_card_uuid");
+        }
+      }
+      await expect(
+        client.query(
+          "UPDATE presentation_live_sessions SET recovery_pack_cards_enabled = false WHERE id = $1",
+          [session.id],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await client.query("ROLLBACK");
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+      // Exercise the overlap writer, which supplies no new card column.
+      await client.query(
+        "UPDATE presentation_live_sessions SET phase = 'question_open', revision = revision + 1 WHERE id = $1",
+        [session.id],
+      );
+      await client.query("COMMIT");
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      client.release();
+    }
+    await expect(
+      restarted.getSessionForWorkspace(owner.workspaceId, session.id),
+    ).resolves.toMatchObject({
+      recoveryPackCardsEnabled: true,
+      recoveryPackIntervention: null,
+      revision: 2,
+    });
+    await expect(restarted.listTimeline(session.id)).resolves.toEqual([
+      expect.objectContaining({ recoveryPackIntervention: selected }),
+    ]);
   });
 
   it("durably queues, leases, completes, fails, and exports Presentation reports", async () => {
@@ -3865,6 +4190,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       phase: "lobby",
       currentBlockIndex: -1,
       revision: 0,
+      recoveryPackCardsEnabled: true,
       createdBy: owner.userId,
       createdAt: now,
       updatedAt: now,
@@ -3937,6 +4263,21 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         event: { type: "question.launched", blockIndex: 1, blockId: draft.blocks[1]!.id },
       }),
     ).resolves.toMatchObject({ status: "idempotency_conflict", session: { revision: 1 } });
+
+    const recoveryPackIntervention = presentationRecoveryPackIntervention();
+    const cardCommandId = randomUUID();
+    await presentationSessions.transitionSessionCommand({
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      commandId: cardCommandId,
+      expectedRevision: 1,
+      requestHash: "a".repeat(64),
+      phase: "intervention",
+      currentBlockIndex: 1,
+      status: "active",
+      recoveryPackIntervention,
+      event: { type: "intervention.presented", blockIndex: 1, blockId: draft.blocks[1]!.id },
+    });
 
     const firstHostCredential = await presentationSessions.createCredential({
       id: randomUUID(),
@@ -4059,13 +4400,31 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       presentations: [{ id: presentation.id }],
       presentationVersions: [{ id: version.id }],
       presentationSessions: [
-        { id: session.id, event_seq_offset: String(exportedEventSequenceOffset) },
+        {
+          id: session.id,
+          event_seq_offset: String(exportedEventSequenceOffset),
+          recovery_pack_cards_enabled: true,
+          recovery_pack_intervention: recoveryPackIntervention,
+        },
       ],
       presentationSessionParticipants: [{ id: participant.id, nickname: "River" }],
       presentationSessionResponses: [expect.objectContaining({ score: 875, response_ms: 2_500 })],
       collaborationGroups: [{ id: group.id }],
       collaborationGroupMessages: [{ body: "Review before hosting." }],
     });
+    expect(exported.presentationSessionTimeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event_type: "intervention.presented",
+          recovery_pack_intervention: recoveryPackIntervention,
+        }),
+      ]),
+    );
+    expect(exported.presentationSessionCommandReceipts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ command_id: cardCommandId, request_hash: "a".repeat(64) }),
+      ]),
+    );
     expect(exported.presentationSessionParticipants).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ token_hash: expect.anything() })]),
     );
@@ -4081,6 +4440,10 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         "presentation_versions",
         "presentation_live_sessions",
         "presentation_live_participants",
+        "presentation_live_responses",
+        "presentation_session_timeline",
+        "presentation_session_command_receipts",
+        "presentation_session_credentials",
         "presentation_session_reports",
         "collaboration_groups",
         "collaboration_group_members",

@@ -16,6 +16,8 @@ import {
 import { buildApp } from "../src/app.js";
 import { MemorySessionCache } from "../src/cache.js";
 import { ConfigSchema } from "../src/config.js";
+import { PRESENTATION_PACK_INSERTION_DRAFT_LIMIT } from "../src/draft-limits.js";
+import { recoveryPackHash, recoveryPackQuestions } from "../src/recovery-pack-copies.js";
 
 const apps: FastifyInstance[] = [];
 afterEach(async () => {
@@ -694,7 +696,7 @@ describe("Recovery Pack Presentation insertion", () => {
   });
 
   it("bounds multibyte baselines below the normal draft-save body limit without writing a rejected insertion", async () => {
-    const { app, cookie } = await setup();
+    const { app, cookie, repository, workspaceId } = await setup();
     const content = packDraft();
     const citation = {
       sourceName: "漢".repeat(200),
@@ -715,32 +717,88 @@ describe("Recovery Pack Presentation insertion", () => {
       question.sourceCitations = citations;
     }
     const { version, presentation } = await material(app, cookie, content);
-    let current = presentation;
-    let rejected = false;
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      const inserted = await insert(app, cookie, presentation.id, {
-        packVersionId: version.id,
-        expectedRevision: current.draftRevision,
-        mutationId: randomUUID(),
-      });
-      if (inserted.statusCode === 422) {
-        expect(inserted.json().error.message).toContain("too large to safely edit");
-        rejected = true;
-        break;
+    const draftWithInsertions = (count: number): PresentationDraft => {
+      const draft: PresentationDraft = {
+        ...presentation.draft,
+        schemaVersion: 3,
+        blocks: [],
+        recoveryPackInsertions: [],
+      };
+      for (let index = 0; index < count; index += 1) {
+        const mutationId = randomUUID();
+        const questions = recoveryPackQuestions(version, mutationId);
+        draft.blocks.push(
+          ...questions.map((question) => ({
+            id: randomUUID(),
+            kind: "question" as const,
+            question,
+          })),
+        );
+        draft.recoveryPackInsertions!.push({
+          id: mutationId,
+          packId: version.packId,
+          packVersionId: version.id,
+          packVersion: version.version,
+          contentHash: version.contentHash,
+          diagnosticQuestionId: questions[0]!.id,
+          recheckQuestionId: questions[1]!.id,
+          originalContent: version.content,
+        });
       }
-      expect(inserted.statusCode, inserted.body).toBe(200);
-      current = inserted.json<{ presentation: PresentationRecord }>().presentation;
-      expect(Buffer.byteLength(JSON.stringify(current.draft), "utf8")).toBeLessThanOrEqual(
-        3_500_000,
-      );
-    }
-    expect(rejected).toBe(true);
+      return draft;
+    };
+    // Fixed-width UUIDs make every additional frozen insertion the same size.
+    // Seed the penultimate size once instead of repeatedly parsing growing RPC responses.
+    const single = JSON.stringify(draftWithInsertions(1));
+    const double = JSON.stringify(draftWithInsertions(2));
+    const singleBytes = Buffer.byteLength(single, "utf8");
+    const insertionBytes = Buffer.byteLength(double, "utf8") - singleBytes;
+    const insertionCharacters = double.length - single.length;
+    const lastAcceptedCount =
+      1 + Math.floor((PRESENTATION_PACK_INSERTION_DRAFT_LIMIT - singleBytes) / insertionBytes);
+    expect(lastAcceptedCount).toBeGreaterThan(1);
+    const seededDraft = draftWithInsertions(lastAcceptedCount - 1);
+    const seeded = await createPresentationRepository(repository).updatePresentationDraft({
+      workspaceId,
+      presentationId: presentation.id,
+      draft: seededDraft,
+      expectedRevision: presentation.draftRevision,
+      mutationId: randomUUID(),
+      editorId: presentation.lastEditedBy!,
+      draftHash: recoveryPackHash(seededDraft),
+    });
+    expect(seeded).not.toBeNull();
+    const accepted = await insert(app, cookie, presentation.id, {
+      packVersionId: version.id,
+      expectedRevision: seeded!.draftRevision,
+      mutationId: randomUUID(),
+    });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+    const current = accepted.json<{ presentation: PresentationRecord }>().presentation;
+    const acceptedJson = JSON.stringify(current.draft);
+    const acceptedBytes = Buffer.byteLength(acceptedJson, "utf8");
+    expect(current.draft.recoveryPackInsertions).toHaveLength(lastAcceptedCount);
+    expect(acceptedBytes).toBe(singleBytes + (lastAcceptedCount - 1) * insertionBytes);
+    expect(acceptedBytes).toBeLessThanOrEqual(PRESENTATION_PACK_INSERTION_DRAFT_LIMIT);
+    expect(acceptedBytes + insertionBytes).toBeGreaterThan(PRESENTATION_PACK_INSERTION_DRAFT_LIMIT);
+    // A character-count limit would incorrectly accept the next multibyte baseline.
+    expect(acceptedJson.length + insertionCharacters).toBeLessThanOrEqual(
+      PRESENTATION_PACK_INSERTION_DRAFT_LIMIT,
+    );
+    const rejected = await insert(app, cookie, presentation.id, {
+      packVersionId: version.id,
+      expectedRevision: current.draftRevision,
+      mutationId: randomUUID(),
+    });
+    expect(rejected.statusCode, rejected.body).toBe(422);
+    expect(rejected.json().error.message).toContain("too large to safely edit");
     const read = await app.inject({
       method: "GET",
       url: `/v1/presentations/${presentation.id}`,
       headers: { cookie },
     });
     expect(read.json().presentation.draftRevision).toBe(current.draftRevision);
+    expect(read.json().presentation.draft).toEqual(current.draft);
     const edited = await save(app, cookie, current, { ...current.draft, title: "Still editable" });
     expect(edited.statusCode, edited.body).toBe(200);
   });

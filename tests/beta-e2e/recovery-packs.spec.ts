@@ -136,7 +136,12 @@ async function recoveryPackWorkflow(page: Page) {
   await expect(references).toBeVisible();
   await references.locator("summary").click();
   await expect(references).toContainText(guidance);
-  await expect(references).toContainText("Live card playback is not available yet.");
+  await expect(references).toContainText(
+    "playback is available in eligible new Round sessions when enabled for the workspace.",
+  );
+  await expect(references).toContainText(
+    "The facilitator explicitly selects a card after revealing the Pack diagnostic.",
+  );
 
   // Simulate the UI flag being disabled while preserving real authenticated resource reads.
   await page.route("**/v1/auth/me", async (route) => {
@@ -322,7 +327,12 @@ async function presentationPackWorkflow(page: Page, browser: Browser, testInfo: 
   await references.locator("summary").click();
   await expect(references).toContainText(cardBody);
   await expect(references).toContainText(citationName);
-  await expect(references).toContainText("Presentation live card playback is not available yet.");
+  await expect(references).toContainText(
+    "playback is available in eligible new Presentation sessions when enabled for the workspace.",
+  );
+  await expect(references).toContainText(
+    "The facilitator explicitly selects a card after revealing the Pack diagnostic.",
+  );
   await page.getByRole("button", { name: "Open inspector", exact: true }).click();
   const editedPrompt = `Edited diagnostic ${randomUUID().slice(0, 8)}`;
   const savedResponse = page.waitForResponse(

@@ -1,5 +1,6 @@
 import type {
   PresentationContent,
+  PresentationRecoveryPackIntervention,
   PresentationSessionPhase,
   PresentationSessionResponse,
 } from "@openround/contracts";
@@ -18,6 +19,10 @@ export interface PresentationSessionRecord {
   revision: number;
   settings: PresentationSessionSettings;
   trustMode: PresentationSessionTrustMode;
+  /** Creation-time eligibility; absent only on legacy in-process records. */
+  recoveryPackCardsEnabled?: boolean;
+  /** Frozen aggregate attribution for the intervention currently being presented. */
+  recoveryPackIntervention?: PresentationRecoveryPackIntervention | null;
   eventSeq: number;
   questionOpenedAt: Date | null;
   questionClosesAt: Date | null;
@@ -134,6 +139,8 @@ export interface PresentationSessionCommandReceiptRecord {
   expectedRevision: number;
   resultingRevision: number;
   eventType: PresentationSessionTimelineRecord["type"];
+  /** Null only for receipts written before command request fingerprinting. */
+  requestHash?: string | null;
   receivedAt: Date;
 }
 
@@ -151,6 +158,7 @@ export interface PresentationSessionTimelineRecord {
     | "presentation.finished";
   blockIndex: number | null;
   blockId: string | null;
+  recoveryPackIntervention?: PresentationRecoveryPackIntervention | null;
   occurredAt: Date;
 }
 
@@ -231,6 +239,7 @@ export interface PresentationSessionTransitionInput {
   questionOpenedAt?: Date | null;
   questionClosesAt?: Date | null;
   retentionExpiresAt?: Date;
+  recoveryPackIntervention?: PresentationRecoveryPackIntervention | null;
   event: Omit<
     PresentationSessionTimelineRecord,
     "id" | "workspaceId" | "sessionId" | "sequence" | "occurredAt"
@@ -239,6 +248,7 @@ export interface PresentationSessionTransitionInput {
 
 export type PresentationSessionCommandInput = PresentationSessionTransitionInput & {
   commandId: string;
+  requestHash?: string | null;
 };
 
 export interface PresentationSessionRepository {
@@ -274,6 +284,12 @@ export interface PresentationSessionRepository {
   transitionSessionCommand(
     input: PresentationSessionCommandInput,
   ): Promise<PresentationTransitionAcceptance>;
+  /** Recover a scoped receipt before current phase, revision, or selector validation. */
+  findCommandReceipt(
+    workspaceId: string,
+    sessionId: string,
+    commandId: string,
+  ): Promise<PresentationSessionCommandReceiptRecord | null>;
   addParticipant(
     input: PresentationSessionParticipantRecord,
   ): Promise<PresentationSessionParticipantRecord>;

@@ -12,6 +12,7 @@ import type {
 } from "@openround/contracts";
 import type { Socket } from "socket.io-client";
 import { createRealtimeClient } from "./realtime";
+import { isPresentationHostPassRejection } from "./presentation-host-pass";
 
 export type PresentationRealtimeSnapshot =
   PresentationHostSnapshot | PresentationParticipantSnapshot;
@@ -112,6 +113,7 @@ export interface PresentationRealtimeControllerOptions<
   onSaveState?: (state: PresentationSaveState, blockId: string) => void;
   onRoomStatus?: (status: PresentationRoomStatus) => void;
   onError?: (error: Error) => void;
+  onCredentialRejected?: (controlToken: string) => void;
   socketFactory?: () => Socket;
   acknowledgementTimeoutMs?: number;
 }
@@ -149,6 +151,7 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
   let started = false;
   let reconciled = false;
   let connectionState: PresentationConnectionState = options.credential ? "connecting" : "fallback";
+  let hostCredentialRejected = false;
   let pendingSubmission: PendingSubmission | null = null;
   let reconciliation: Promise<Snapshot | null> | null = null;
   let deadlineTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -157,6 +160,14 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
     if (connectionState === next) return;
     connectionState = next;
     options.onConnectionState(next);
+  };
+
+  const rejectHostCredential = (error: unknown, controlToken: string) => {
+    if (!isPresentationHostPassRejection(error)) return;
+    hostCredentialRejected = true;
+    reconciled = false;
+    setConnectionState("fallback");
+    options.onCredentialRejected?.(controlToken);
   };
 
   const scheduleDeadlineExpiry = (current: Snapshot) => {
@@ -244,6 +255,25 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
   const latestAcceptedSnapshot = (incoming: Snapshot) => {
     applySnapshot(incoming);
     return snapshot;
+  };
+
+  const acceptCommandAcknowledgement = (
+    command: PresentationCommand,
+    incoming: Snapshot | null | undefined,
+  ) => {
+    if (
+      !incoming ||
+      incoming.sessionId !== options.sessionId ||
+      incoming.sessionId !== command.sessionId ||
+      incoming.projection !== "host"
+    ) {
+      throw errorFromAck({
+        code: "PRESENTATION_COMMAND_UNCONFIRMED",
+        message: "The server did not confirm that action.",
+      });
+    }
+    applySnapshot(incoming);
+    return incoming;
   };
 
   const settleSubmission = (ack: PresentationResponseAck) => {
@@ -382,7 +412,7 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
   };
 
   const performReconcile = async (): Promise<Snapshot | null> => {
-    if (socket?.connected && options.credential) {
+    if (socket?.connected && options.credential && !hostCredentialRejected) {
       setConnectionState("reconciling");
       const request: PresentationSyncRequest = {
         sessionId: options.sessionId,
@@ -419,6 +449,9 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
             if (settled) return;
             clearTimeout(timeout);
             if (response.error) {
+              if (options.credential?.projection === "host") {
+                rejectHostCredential(response.error, options.credential.controlToken);
+              }
               void useFallback(errorFromAck(response.error));
               return;
             }
@@ -450,7 +483,7 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
       const incoming = await options.fetchSnapshot();
       const authoritative = latestAcceptedSnapshot(incoming);
       if (authoritative) reconcileSubmission(authoritative);
-      if (!options.credential) setConnectionState("fallback");
+      if (!options.credential || hostCredentialRejected) setConnectionState("fallback");
       return authoritative;
     } catch (caught) {
       const error = caught instanceof Error ? caught : new Error("Unable to restore Presentation");
@@ -525,7 +558,7 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
       socket.on("disconnect", (reason) => {
         reconciled = false;
         const terminal = reason === "io server disconnect";
-        setConnectionState(terminal ? "fallback" : "reconciling");
+        setConnectionState(terminal || hostCredentialRejected ? "fallback" : "reconciling");
         if (pendingSubmission)
           options.onSaveState?.("reconnecting_not_saved", pendingSubmission.payload.blockId);
         if (terminal) void reconcile();
@@ -552,36 +585,51 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
     applySnapshot,
     command(command, restFallback) {
       if (!socket || connectionState === "fallback") {
-        return restFallback().then((incoming) => {
-          applySnapshot(incoming);
-          return incoming;
-        });
+        return restFallback()
+          .then((incoming) => acceptCommandAcknowledgement(command, incoming))
+          .catch((error) => {
+            rejectHostCredential(error, command.controlToken);
+            throw error;
+          });
       }
       if (!socket.connected || !reconciled) {
-        return Promise.reject(new Error("Reconnect before changing the Presentation."));
+        return Promise.reject(
+          errorFromAck({
+            code: "PRESENTATION_RECONNECT_REQUIRED",
+            message: "Reconnect before changing the Presentation.",
+          }),
+        );
       }
       return new Promise<Snapshot>((resolve, reject) => {
+        let settled = false;
         const timeout = setTimeout(() => {
+          settled = true;
           setConnectionState("reconciling");
           void reconcile();
-          reject(new Error("The server did not confirm that action. Review the room state."));
+          reject(
+            errorFromAck({
+              code: "PRESENTATION_COMMAND_UNCONFIRMED",
+              message: "The server did not confirm that action. Retry its acknowledgement.",
+            }),
+          );
         }, ackTimeoutMs);
         socket.emit(
           "presentation.command",
           command,
           (response: RealtimeAck<{ snapshot: PresentationHostSnapshot }>) => {
+            if (settled) return;
+            settled = true;
             clearTimeout(timeout);
             if (response.error) {
+              rejectHostCredential(response.error, command.controlToken);
               reject(errorFromAck(response.error));
               return;
             }
-            const incoming = response.data?.snapshot;
-            if (!incoming) {
-              reject(new Error("The server did not confirm that action."));
-              return;
+            try {
+              resolve(acceptCommandAcknowledgement(command, response.data?.snapshot as Snapshot));
+            } catch (error) {
+              reject(error);
             }
-            applySnapshot(incoming as Snapshot);
-            resolve(incoming as Snapshot);
           },
         );
       });

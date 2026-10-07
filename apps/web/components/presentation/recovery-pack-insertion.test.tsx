@@ -89,7 +89,15 @@ describe("Presentation Recovery Pack authoring", () => {
     expect(markup).not.toContain("<script>");
     expect(markup).toContain("Teacher &lt; notes, p. 2");
     expect(markup).toContain("Equal groups");
-    expect(markup).toContain("Presentation live card playback is not available yet");
+    expect(markup).toContain("Frozen facilitator references from the accepted source baseline");
+    expect(markup).toContain("do not update these cards until you accept an update");
+    expect(markup).toContain(
+      "Live explanation or worked-example playback is available in eligible new Presentation sessions when enabled for the workspace",
+    );
+    expect(markup).toContain(
+      "The facilitator explicitly selects a card after revealing the Pack diagnostic",
+    );
+    expect(markup).not.toContain("not available yet");
     expect(markup).not.toContain("What is half of 8?");
     expect(renderToStaticMarkup(<RecoveryPackPresentationReferences insertions={[]} />)).toBe("");
   });
@@ -141,6 +149,14 @@ describe("Presentation Recovery Pack authoring", () => {
     expect(markup).toContain('aria-modal="true"');
     expect(markup).toContain("Loading published Packs");
     expect(markup).toContain("after the selected block");
+    expect(markup).toContain("Cards are not audience slides.");
+    expect(markup).toContain(
+      "Live explanation or worked-example playback is available in eligible new Presentation sessions when enabled for the workspace",
+    );
+    expect(markup).toContain(
+      "The facilitator explicitly selects a card after revealing the Pack diagnostic",
+    );
+    expect(markup).not.toContain("or live playback");
     expect(markup).toContain('<button disabled="" type="button">Insert Pack checkpoints</button>');
   });
 

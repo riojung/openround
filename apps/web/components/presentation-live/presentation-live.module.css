@@ -259,6 +259,12 @@
   padding: 10px 0;
 }
 
+.timelineAttribution {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
 .setup {
   display: grid;
   width: min(760px, calc(100% - 32px));

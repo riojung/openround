@@ -3,11 +3,19 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PresentationHostSnapshot } from "@openround/contracts";
+import type {
+  PresentationCommand,
+  PresentationHostSnapshot,
+  RecoveryPackCardSelection,
+} from "@openround/contracts";
 import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import { PresentationMedia } from "../../../../components/presentation-live/presentation-media";
 import { ContentSlideView } from "../../../../components/presentation/content-slide-view";
+import {
+  RecoveryPackCardPicker,
+  RecoveryPackLiveCardView,
+} from "../../../../components/recovery-pack-live-card";
 import {
   useWorkspace,
   WorkspaceProvider,
@@ -23,6 +31,11 @@ import {
   type PresentationRealtimeController,
 } from "../../../../lib/presentation-realtime";
 import { clientUuid } from "../../../../lib/uuid";
+import {
+  createPresentationCommandRecovery,
+  type PresentationCommandRecoveryState,
+} from "../../../../lib/presentation-command-recovery";
+import { createPresentationHostPassManager } from "../../../../lib/presentation-host-pass";
 
 function advanceMessageKey(
   snapshot: PresentationHostSnapshot,
@@ -42,7 +55,11 @@ function advanceMessageKey(
   ) {
     return "live.presentationSession.advance.intervention";
   }
-  if (snapshot.phase === "intervention") {
+  if (
+    snapshot.phase === "intervention" &&
+    snapshot.currentBlock?.kind === "question" &&
+    snapshot.currentBlock.question.linkedRecheckAvailable
+  ) {
     return "live.presentationSession.advance.continueRecheck";
   }
   if (snapshot.currentBlockIndex >= snapshot.blockCount - 1) {
@@ -57,7 +74,19 @@ function PresentationHostContent() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [snapshot, setSnapshot] = useState<PresentationHostSnapshot | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [commandState, setCommandState] = useState<PresentationCommandRecoveryState>({
+    busy: false,
+    pendingCommand: null,
+  });
+  const [legacyAdvanceBusy, setLegacyAdvanceBusy] = useState(false);
+  const legacyAdvanceInFlight = useRef(false);
+  const [hasControlPass, setHasControlPass] = useState(false);
+  const [controlPassBusy, setControlPassBusy] = useState(false);
+  const controlPassInFlight = useRef(false);
+  const [controlPassAttempt, setControlPassAttempt] = useState(0);
+  const [controlPassError, setControlPassError] = useState("");
+  const passManagerRef = useRef<ReturnType<typeof createPresentationHostPassManager> | null>(null);
+  const passManagerSessionId = useRef<string | null>(null);
   const [error, setError] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const [connection, setConnection] = useState<PresentationConnectionState>("connecting");
@@ -66,6 +95,10 @@ function PresentationHostContent() {
   const controllerRef = useRef<PresentationRealtimeController<PresentationHostSnapshot> | null>(
     null,
   );
+  const commandsRef = useRef<ReturnType<
+    typeof createPresentationCommandRecovery<PresentationHostSnapshot>
+  > | null>(null);
+  const commandsSessionId = useRef<string | null>(null);
 
   const applySnapshot = useCallback((incoming: PresentationHostSnapshot) => {
     snapshotReceivedAt.current = Date.now();
@@ -100,32 +133,79 @@ function PresentationHostContent() {
     let controller: PresentationRealtimeController<PresentationHostSnapshot> | null = null;
     let timer: number | null = null;
     const start = async () => {
-      let controlToken = sessionStorage.getItem(`openround:presentation-host:${id}`);
-      if (!controlToken) {
-        try {
+      if (!passManagerRef.current || passManagerSessionId.current !== id) {
+        passManagerRef.current = createPresentationHostPassManager(sessionStorage, id);
+        passManagerSessionId.current = id;
+      }
+      const passManager = passManagerRef.current;
+      let controlToken: string | null = null;
+      try {
+        controlToken = await passManager.acquireAutomatic(async () => {
           const pass = await apiFetch<{ controlToken: string }>(
             `/v1/presentation-sessions/${id}/control-pass`,
             { method: "POST" },
           );
-          controlToken = pass.controlToken;
-          sessionStorage.setItem(`openround:presentation-host:${id}`, controlToken);
-        } catch {
-          // Authenticated REST remains available while realtime is disabled or rolling out.
-        }
+          return pass.controlToken;
+        });
+      } catch (caught) {
+        // Authenticated REST remains available while realtime is disabled or rolling out.
+        if (!disposed) setControlPassError(humanError(caught));
       }
       if (disposed) return;
+      setHasControlPass(!!controlToken);
+      if (controlToken) setControlPassError("");
       controller = createPresentationRealtimeController<PresentationHostSnapshot>({
         sessionId: id,
         credential: controlToken ? { projection: "host", controlToken } : null,
         fetchSnapshot,
-        onSnapshot: applySnapshot,
-        onConnectionState: setConnection,
+        onSnapshot: (incoming) => {
+          if (!disposed) applySnapshot(incoming);
+        },
+        onConnectionState: (next) => {
+          if (!disposed) setConnection(next);
+        },
         onRoomStatus: (roomStatus) => {
+          if (disposed) return;
           setSnapshot((current) => (current ? { ...current, roomStatus } : current));
         },
-        onError: (caught) => setError(humanError(caught)),
+        onError: (caught) => {
+          if (!disposed) setError(humanError(caught));
+        },
+        onCredentialRejected: (rejectedToken) => {
+          if (disposed || !passManager.reject(rejectedToken)) return;
+          setHasControlPass(false);
+          setControlPassError(
+            "This host control pass is no longer valid. Reacquire it to use live card controls.",
+          );
+          setControlPassAttempt((attempt) => attempt + 1);
+        },
       });
       controllerRef.current = controller;
+      if (!commandsRef.current || commandsSessionId.current !== id) {
+        commandsRef.current = createPresentationCommandRecovery<PresentationHostSnapshot>({
+          execute: (command) => {
+            const activeController = controllerRef.current;
+            if (!activeController)
+              return Promise.reject(
+                Object.assign(new Error("Reconnect before changing the Presentation."), {
+                  code: "PRESENTATION_RECONNECT_REQUIRED",
+                }),
+              );
+            return activeController.command(command, async () => {
+              const response = await apiFetch<{ snapshot: PresentationHostSnapshot }>(
+                `/v1/presentation-sessions/${command.sessionId}/command`,
+                { method: "POST", body: JSON.stringify(command) },
+              );
+              return response.snapshot;
+            });
+          },
+          onState: (next) => {
+            if (commandsSessionId.current === id) setCommandState(next);
+          },
+        });
+        commandsSessionId.current = id;
+        setCommandState(commandsRef.current.state());
+      }
       controller.start();
       timer = window.setInterval(() => {
         if (controller?.needsFallbackPolling()) void controller.reconcile();
@@ -136,47 +216,145 @@ function PresentationHostContent() {
       disposed = true;
       if (timer !== null) window.clearInterval(timer);
       controller?.stop();
-      if (controllerRef.current === controller) controllerRef.current = null;
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+      }
     };
-  }, [applySnapshot, fetchSnapshot, id]);
+  }, [applySnapshot, controlPassAttempt, fetchSnapshot, id]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timer);
   }, []);
 
-  async function advance() {
-    if (!snapshot || snapshot.phase === "finished") return;
+  async function runCommand(command: PresentationCommand) {
     const controller = controllerRef.current;
-    if (!controller?.canMutate()) return;
-    const controlToken = sessionStorage.getItem(`openround:presentation-host:${id}`) ?? "fallback";
-    setBusy(true);
+    const commands = commandsRef.current;
+    if (
+      !hasControlPass ||
+      !passManagerRef.current?.token() ||
+      !controller?.canMutate() ||
+      !commands ||
+      commands.state().busy ||
+      legacyAdvanceInFlight.current ||
+      controlPassInFlight.current
+    )
+      return;
     setError("");
     try {
-      await controller.command(
-        {
-          sessionId: id,
-          controlToken,
-          commandId: clientUuid(),
-          expectedRevision: snapshot.revision,
-          action: "advance",
-        },
-        async () => {
-          const response = await apiFetch<{ snapshot: PresentationHostSnapshot }>(
-            `/v1/presentation-sessions/${id}/advance`,
-            {
-              method: "POST",
-              body: JSON.stringify({ expectedRevision: snapshot.revision }),
-            },
-          );
-          return response.snapshot;
-        },
-      );
+      await commands.run(command);
     } catch (caught) {
       setError(humanError(caught));
       await controller.reconcile();
+    }
+  }
+
+  function commandCredentials(controlToken: string) {
+    return {
+      sessionId: id,
+      controlToken,
+      commandId: clientUuid(),
+      expectedRevision: snapshot!.revision,
+    };
+  }
+
+  async function advance() {
+    if (!snapshot || snapshot.phase === "finished") return;
+    const controlToken = sessionStorage.getItem(`openround:presentation-host:${id}`);
+    if (controlToken) {
+      await runCommand({ ...commandCredentials(controlToken), action: "advance" });
+      return;
+    }
+    const controller = controllerRef.current;
+    if (
+      !controller?.canMutate() ||
+      legacyAdvanceInFlight.current ||
+      controlPassInFlight.current ||
+      commandsRef.current?.state().pendingCommand
+    )
+      return;
+    legacyAdvanceInFlight.current = true;
+    setLegacyAdvanceBusy(true);
+    setError("");
+    try {
+      const response = await apiFetch<{ snapshot: PresentationHostSnapshot }>(
+        `/v1/presentation-sessions/${id}/advance`,
+        { method: "POST", body: JSON.stringify({ expectedRevision: snapshot.revision }) },
+      );
+      controller.applySnapshot(response.snapshot);
+    } catch (caught) {
+      // The compatibility endpoint has no command receipt: reconcile, never automatically replay.
+      await controller.reconcile();
+      setError(
+        `${humanError(caught)} Advance was not confirmed. Review the room state before advancing again.`,
+      );
     } finally {
-      setBusy(false);
+      legacyAdvanceInFlight.current = false;
+      setLegacyAdvanceBusy(false);
+    }
+  }
+
+  async function startRecoveryCard(
+    recoveryPackCard: RecoveryPackCardSelection,
+    interventionType: "explain" | "example",
+  ) {
+    if (!snapshot || snapshot.phase !== "question_reveal") return;
+    const controlToken = sessionStorage.getItem(`openround:presentation-host:${id}`);
+    if (!controlToken || !hasControlPass) return;
+    await runCommand({
+      ...commandCredentials(controlToken),
+      action: "start_recovery_card",
+      recoveryPackCard,
+      interventionType,
+    });
+  }
+
+  async function retryCommand() {
+    const controller = controllerRef.current;
+    const commands = commandsRef.current;
+    if (
+      !hasControlPass ||
+      !passManagerRef.current?.token() ||
+      !controller?.canMutate() ||
+      !commands ||
+      commands.state().busy ||
+      legacyAdvanceInFlight.current ||
+      controlPassInFlight.current
+    )
+      return;
+    setError("");
+    try {
+      await commands.retry();
+    } catch (caught) {
+      setError(humanError(caught));
+      await controller.reconcile();
+    }
+  }
+
+  async function retryControlPass() {
+    if (
+      controlPassInFlight.current ||
+      legacyAdvanceInFlight.current ||
+      commandsRef.current?.state().busy
+    )
+      return;
+    controlPassInFlight.current = true;
+    setControlPassBusy(true);
+    setControlPassError("");
+    try {
+      const pass = await apiFetch<{ controlToken: string }>(
+        `/v1/presentation-sessions/${id}/control-pass`,
+        { method: "POST" },
+      );
+      passManagerRef.current?.replace(pass.controlToken);
+      commandsRef.current?.rebindControlToken(pass.controlToken);
+      setHasControlPass(true);
+      setControlPassAttempt((attempt) => attempt + 1);
+    } catch (caught) {
+      setControlPassError(humanError(caught));
+    } finally {
+      controlPassInFlight.current = false;
+      setControlPassBusy(false);
     }
   }
 
@@ -185,6 +363,7 @@ function PresentationHostContent() {
     ? `${typeof window === "undefined" ? "" : window.location.origin}/join?code=${snapshot.code}`
     : "";
   const remainingSeconds = presentationRemainingSeconds(snapshot, snapshotReceivedAt.current, now);
+  const busy = commandState.busy || legacyAdvanceBusy || controlPassBusy;
 
   return (
     <main className={styles.page}>
@@ -311,6 +490,9 @@ function PresentationHostContent() {
                         {block.revealedAnswer.explanation}
                       </p>
                     ) : null}
+                    {snapshot.phase === "intervention" && snapshot.recoveryPackIntervention ? (
+                      <RecoveryPackLiveCardView card={snapshot.recoveryPackIntervention.card} />
+                    ) : null}
                   </>
                 ) : null}
                 {snapshot.phase === "finished" ? (
@@ -326,6 +508,9 @@ function PresentationHostContent() {
               </div>
             </section>
             <aside className={styles.sideCard}>
+              <h2 className="sr-only" lang="en-CA">
+                Facilitation controls
+              </h2>
               <div>
                 <span className={styles.statusPill}>{t("live.presentationSession.joinCode")}</span>
                 <p className={styles.joinCode}>{snapshot.code}</p>
@@ -357,12 +542,67 @@ function PresentationHostContent() {
               {snapshot.phase !== "finished" ? (
                 <button
                   className="button full-width"
-                  disabled={busy || !controllerRef.current?.canMutate()}
+                  disabled={
+                    busy || !!commandState.pendingCommand || !controllerRef.current?.canMutate()
+                  }
                   onClick={() => void advance()}
                   type="button"
                 >
                   {busy ? t("live.common.updating") : t(advanceMessageKey(snapshot))}
                 </button>
+              ) : null}
+              {!hasControlPass &&
+              (snapshot.phase !== "finished" || !!commandState.pendingCommand) ? (
+                <div lang="en-CA">
+                  <p className="muted" role="status">
+                    {commandState.pendingCommand
+                      ? "Reacquire a host control pass to confirm the pending action."
+                      : "Recovery Pack card actions require a host control pass. You can still advance using compatibility mode."}
+                    {controlPassError ? ` ${controlPassError}` : ""}
+                  </p>
+                  <button
+                    className="button-quiet full-width"
+                    disabled={busy}
+                    onClick={() => void retryControlPass()}
+                    type="button"
+                  >
+                    {controlPassBusy ? "Acquiring host control pass…" : "Retry host control pass"}
+                  </button>
+                </div>
+              ) : null}
+              {commandState.pendingCommand ? (
+                <div lang="en-CA">
+                  <p className="muted" role="status" aria-live="polite">
+                    {commandState.busy
+                      ? "Waiting for server confirmation…"
+                      : "Action not yet confirmed. Retry to confirm the original action."}
+                  </p>
+                  {!commandState.busy ? (
+                    <button
+                      className="button-quiet full-width"
+                      disabled={!hasControlPass || busy || !controllerRef.current?.canMutate()}
+                      onClick={() => void retryCommand()}
+                      type="button"
+                    >
+                      {commandState.pendingCommand.action === "start_recovery_card"
+                        ? "Retry card action acknowledgement"
+                        : "Retry advance acknowledgement"}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              {snapshot.phase === "question_reveal" && snapshot.recoveryPackCards?.length ? (
+                <RecoveryPackCardPicker
+                  key={snapshot.currentBlock?.id}
+                  cards={snapshot.recoveryPackCards}
+                  disabled={
+                    !hasControlPass ||
+                    busy ||
+                    !!commandState.pendingCommand ||
+                    !controllerRef.current?.canMutate()
+                  }
+                  onStart={(selection, type) => void startRecoveryCard(selection, type)}
+                />
               ) : null}
               <button
                 className="button-quiet full-width"

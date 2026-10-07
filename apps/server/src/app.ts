@@ -295,6 +295,9 @@ export async function buildApp(
     storage,
     productEvents,
     productEventsEnabled,
+    recoveryPackCardsEnabled: (workspaceId) =>
+      evidenceWorkspaceFeatureEnabled(config, workspaceId, "recoveryPacks") &&
+      evidenceWorkspaceFeatureEnabled(config, workspaceId, "recoveryPackLiveCards"),
   });
   const readiness =
     overrides.readiness ??

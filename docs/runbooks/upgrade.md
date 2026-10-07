@@ -19,7 +19,7 @@
 ## Recent content, report, and deletion upgrades
 
 The current feature code includes migrations through
-`052_recovery_pack_live_cards.sql`. Apply the complete ordered migration set with the restricted
+`055_recovery_pack_presentation_live_cards.sql`. Apply the complete ordered migration set with the restricted
 one-shot migration job before starting the new server; do not grant the runtime role ownership or
 direct mutation privileges on published Presentation versions.
 
@@ -83,7 +83,7 @@ an exact reviewed version after another Pack publish, revision-fenced undo, an a
 and media held only by an accepted delayed probe. Confirm unchanged block IDs/metadata and slide
 order, immutable published versions, and private live projections. Pausing either flag blocks new
 updates but preserves comparisons, already accepted receipt recovery, and fenced history restore.
-Live Presentation card playback remains a separate increment.
+Live Presentation card playback is described separately below.
 
 ### Live Recovery Pack card compatibility
 
@@ -110,6 +110,40 @@ Keep migration 052 during rollback. Rehearse authoring-only v5 creation, command
 before enablement, then duplicate/stale commands,
 participant/presenter projection safety, empty-cache restart during a selected card, finish and
 linked recheck, source Pack deletion, and both Report V3/V4 attribution with CSV export.
+
+### Live Presentation Recovery Pack cards
+
+Apply migration 055 before deploying the Presentation playback server. It expands existing
+session/timeline/receipt tables with immutable default-false eligibility, nullable aggregate card
+attribution, and nullable intent hashes for legacy receipts. Existing forced workspace RLS,
+retention, account export/deletion, and parent cascades still apply. The phase-exit trigger clears
+active playback even if an overlapping legacy advance omits the new column; this is a defensive
+compatibility measure, not permission to enable playback with old readers still serving.
+
+Leave `FEATURE_RECOVERY_PACK_LIVE_CARDS=false` through the mixed-version canary (including when
+that switch was previously used for Rounds). Drain old Presentation web/server/worker readers,
+verify the serving image set, then enable both Pack flags only for the evidence workspace allowlist.
+Existing Presentation rooms remain ineligible; enabled rooms retain playback when a flag is paused.
+The host receives card previews only after reveal, and participants/companions receive only the
+selected active text/citation card. Source publication or deletion cannot alter a running snapshot.
+
+The scoped-host REST command fallback and Socket.IO use the same durable command ID, revision,
+and intent hash and notify connected roles after acceptance. Without a control pass, the creator's
+legacy REST advance remains available but cannot safely retry a lost acknowledgement; card controls
+remain disabled until a scoped pass is restored. Revoked/stale stored passes are cleared on scoped
+credential rejection; reacquisition is explicit to prevent competing host rotation loops. It preserves
+the identity of an unresolved command while replacing only its credential, and never replays that
+intent through receipt-less legacy advance. Rehearse acknowledgement loss followed by reconnect, another host's advance,
+finish, and exact retry; a changed card/type/action/revision under the same command ID must fail.
+Check revoked/expired/participant/companion credentials, noncurrent insertion/card selectors,
+pre-reveal frames, selected-only projections, generic advancement, and clearing before recheck.
+
+Card-bearing reports write Presentation Report V2 with reference-only timeline attribution;
+ordinary/legacy reports remain V1. Before promotion, finish/reconcile/restart an enabled room,
+read both versions, export the owner account, verify tenant denial, and purge/delete the source
+session. Keep migration 055 during rollback. Once enabled rooms or V2 reports exist, roll back only
+to a Presentation live-card/V2-capable web/server/worker set: flag disable does not remove durable
+references or downgrade reports. Never reconstruct old attribution or rewrite ready report JSON.
 
 Before promotion, use synthetic records to verify legacy draft/history/published reads; move and
 resize slide text, save, undo/redo, publish, and compare preview with both live roles; verify narrow

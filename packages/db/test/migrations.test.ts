@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { RecoveryPackCardReferenceSchema } from "@openround/contracts";
 import { discoverMigrations } from "../src/migrations.js";
+import {
+  presentationRecoveryPackIntervention,
+  presentationRecoveryPackUuidCases,
+} from "./support/presentation-session-conformance.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -22,6 +27,53 @@ afterEach(async () => {
 });
 
 describe("database migration discovery", () => {
+  it("adds frozen Presentation live card attribution and nullable command hashes to existing scoped tables", async () => {
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migrations = await discoverMigrations(migrationsDirectory);
+    const migration = migrations.find(({ version }) => version === 55);
+    expect(migration?.name).toBe("recovery_pack_presentation_live_cards");
+    expect(migration?.sql).toContain("recovery_pack_cards_enabled boolean NOT NULL DEFAULT false");
+    expect(migration?.sql).toContain("ALTER TABLE presentation_session_timeline");
+    expect(migration?.sql).toContain("ADD COLUMN IF NOT EXISTS recovery_pack_intervention jsonb");
+    expect(migration?.sql).toContain("ADD COLUMN IF NOT EXISTS request_hash char(64)");
+    expect(migration?.sql).toContain("request_hash IS NULL OR request_hash ~ '^[0-9a-f]{64}$'");
+    expect(migration?.sql).toContain("event_type = 'intervention.presented'");
+    expect(migration?.sql).toContain(
+      "jsonb_typeof(value -> 'reference' -> 'contentHash') = 'string'",
+    );
+    expect(migration?.sql).toContain("::numeric <= 9007199254740991");
+    expect(migration?.sql).toContain(
+      "NEW.recovery_pack_cards_enabled IS DISTINCT FROM OLD.recovery_pack_cards_enabled",
+    );
+    expect(migration?.sql).toContain("BEFORE UPDATE OF phase, status");
+    expect(migration?.sql).not.toContain("CREATE TABLE");
+    expect(migration?.sql).not.toContain("DISABLE ROW LEVEL SECURITY");
+    expect(migration?.sql).not.toContain("REFERENCES recovery_pack");
+    const uuidChecks = [
+      ...(migration?.sql ?? "").matchAll(
+        /'reference' ->> '(insertionId|packId|packVersionId|cardId)' ~\s*'([^']+)'/g,
+      ),
+    ];
+    expect(uuidChecks).toHaveLength(4);
+    for (const [, field, expression] of uuidChecks) {
+      const pattern = new RegExp(expression!);
+      for (const [accepted, cases] of [
+        [true, presentationRecoveryPackUuidCases.accepted],
+        [false, presentationRecoveryPackUuidCases.rejected],
+      ] as const) {
+        for (const value of cases) {
+          expect(pattern.test(value), `${field}: ${value}`).toBe(accepted);
+          expect(
+            RecoveryPackCardReferenceSchema.safeParse({
+              ...presentationRecoveryPackIntervention().reference,
+              [field!]: value,
+            }).success,
+            `${field}: ${value}`,
+          ).toBe(accepted);
+        }
+      }
+    }
+  });
   it("stores Presentation Pack Undo metadata on existing tenant-scoped mutation receipts", async () => {
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const migrations = await discoverMigrations(migrationsDirectory);

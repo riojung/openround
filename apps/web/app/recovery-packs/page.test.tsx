@@ -1,0 +1,49 @@
+import type { ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+
+const fixtures = vi.hoisted(() => ({ enabled: true }));
+
+vi.mock("../../components/workspace/workspace-provider", () => ({
+  WorkspaceProvider: ({ children }: { children: ReactNode }) => children,
+  useWorkspace: () => ({
+    canEdit: true,
+    creator: { workspaceId: "workspace" },
+    productFeatures: { recoveryPacks: fixtures.enabled },
+  }),
+}));
+
+vi.mock("../../components/workspace/workspace-shell", () => ({
+  WorkspaceShell: ({ children }: { children: ReactNode }) => <main>{children}</main>,
+}));
+
+import RecoveryPacksPage from "./page";
+
+describe("Recovery Pack library capability notice", () => {
+  it.each([true, false])(
+    "keeps insertion, review, and live playback availability accurate with authoring enabled=%s",
+    (enabled) => {
+      fixtures.enabled = enabled;
+      const markup = renderToStaticMarkup(<RecoveryPacksPage />);
+
+      expect(markup).toContain(
+        "With Pack authoring enabled, insert published Packs into Round or Presentation drafts",
+      );
+      expect(markup).toContain(
+        "review updates against the accepted baseline, local checkpoints, and latest published Pack",
+      );
+      expect(markup).toContain(
+        "References stay frozen until you accept an update; existing published content and sessions are unchanged",
+      );
+      expect(markup).toContain(
+        "Live explanation or worked-example playback is available in eligible new Round or Presentation sessions when enabled for the workspace",
+      );
+      expect(markup).toContain(
+        "The facilitator explicitly selects a card after revealing the Pack diagnostic",
+      );
+      expect(markup).toContain("Practice and Companion insertion are not available");
+      expect(markup).not.toContain("not available yet");
+      if (!enabled) expect(markup).toContain("Pack authoring is not enabled for this workspace");
+    },
+  );
+});

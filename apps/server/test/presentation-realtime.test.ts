@@ -700,6 +700,207 @@ function mixedTransportContent(): PresentationContent {
 }
 
 describe("Presentation mixed-transport presence", () => {
+  it("broadcasts out-of-band host commands and legacy advances, then clears the update handler on close", async () => {
+    const mixedWorkspaceId = crypto.randomUUID();
+    const mixedSessionId = crypto.randomUUID();
+    const mixedParticipantId = crypto.randomUUID();
+    const mixedUserId = crypto.randomUUID();
+    const mixedParticipantToken = "out-of-band-participant-token-that-is-long-enough";
+    const mixedControlToken = "out-of-band-host-token-that-is-long-enough";
+    const repository = new MemoryRepository({ initialWorkspaceId: mixedWorkspaceId });
+    const presentationSessions = createPresentationSessionRepository(repository);
+    const now = new Date();
+    const liveExpiresAt = new Date(now.getTime() + 60 * 60_000);
+    await presentationSessions.createSession({
+      id: mixedSessionId,
+      workspaceId: mixedWorkspaceId,
+      presentationId: crypto.randomUUID(),
+      presentationVersionId: crypto.randomUUID(),
+      title: "Out-of-band host mutations",
+      content: mixedTransportContent(),
+      code: "7654323",
+      status: "active",
+      phase: "lobby",
+      currentBlockIndex: -1,
+      revision: 0,
+      createdBy: mixedUserId,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: null,
+      liveExpiresAt,
+      retentionExpiresAt: new Date(now.getTime() + 24 * 60 * 60_000),
+    });
+    await presentationSessions.addParticipant({
+      id: mixedParticipantId,
+      workspaceId: mixedWorkspaceId,
+      sessionId: mixedSessionId,
+      nickname: "Connected learner",
+      tokenHash: presentationParticipantTokenHash(mixedParticipantToken),
+      joinedAt: now,
+      lastSeenAt: now,
+    });
+    await presentationSessions.createCredential({
+      id: crypto.randomUUID(),
+      workspaceId: mixedWorkspaceId,
+      sessionId: mixedSessionId,
+      role: "host",
+      tokenHash: presentationParticipantTokenHash(mixedControlToken),
+      createdAt: now,
+      expiresAt: liveExpiresAt,
+      revokedAt: null,
+    });
+
+    const httpServer = createServer();
+    let realtime: Awaited<ReturnType<typeof attachRealtime>> | null = null;
+    let client: Socket | null = null;
+    try {
+      await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+      const address = httpServer.address();
+      if (!address || typeof address === "string") throw new Error("Test server did not bind");
+      const mixedOrigin = `http://127.0.0.1:${address.port}`;
+      const mixedConfig = ConfigSchema.parse({
+        NODE_ENV: "test",
+        ALLOW_IN_MEMORY: "true",
+        COMMUNITY_MODE: "false",
+        WEB_ORIGIN: mixedOrigin,
+        PUBLIC_API_URL: mixedOrigin,
+        LOG_LEVEL: "silent",
+      });
+      const service = new PresentationSessionService({
+        repository,
+        presentations: createPresentationRepository(repository),
+        sessions: presentationSessions,
+        config: mixedConfig,
+        storage: new StorageService(mixedConfig, null),
+      });
+      const notified = vi.fn();
+      const setUpdatedHandler = service.setSessionUpdatedHandler.bind(service);
+      const handlerSetter = vi
+        .spyOn(service, "setSessionUpdatedHandler")
+        .mockImplementation((handler) =>
+          setUpdatedHandler(
+            handler
+              ? (id) => {
+                  notified(id);
+                  handler(id);
+                }
+              : null,
+          ),
+        );
+      const roundSessions = {
+        subscribe: vi.fn(() => vi.fn()),
+        subscribeAuxiliary: vi.fn(() => vi.fn()),
+        disconnect: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SessionService;
+      realtime = await attachRealtime(
+        httpServer,
+        roundSessions,
+        mixedConfig,
+        new MetricsService(),
+        undefined,
+        { service },
+      );
+      expect(handlerSetter).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
+      client = createClient(mixedOrigin, {
+        transports: ["websocket"],
+        reconnection: false,
+        extraHeaders: { origin: mixedOrigin },
+      });
+      await new Promise<void>((resolve, reject) => {
+        client!.once("connect", resolve);
+        client!.once("connect_error", reject);
+      });
+      await emitAck(client, "presentation.sync.request", {
+        sessionId: mixedSessionId,
+        projection: "participant",
+        participantToken: mixedParticipantToken,
+      });
+      const waitForRevision = (revision: number) =>
+        new Promise<PresentationParticipantSnapshot>((resolve) => {
+          const listener = (
+            event: PresentationEventEnvelope<{ snapshot: PresentationParticipantSnapshot }>,
+            acknowledge?: () => void,
+          ) => {
+            acknowledge?.();
+            if (event.payload.snapshot.revision !== revision) return;
+            client!.off("presentation.session.updated", listener);
+            resolve(event.payload.snapshot);
+          };
+          client!.on("presentation.session.updated", listener);
+        });
+
+      const commandUpdate = waitForRevision(1);
+      await service.command({
+        sessionId: mixedSessionId,
+        controlToken: mixedControlToken,
+        commandId: crypto.randomUUID(),
+        expectedRevision: 0,
+        action: "advance",
+      });
+      await expect(commandUpdate).resolves.toMatchObject({
+        projection: "participant",
+        phase: "question_open",
+        revision: 1,
+      });
+      const advanceUpdate = waitForRevision(2);
+      await service.advance({
+        workspaceId: mixedWorkspaceId,
+        userId: mixedUserId,
+        sessionId: mixedSessionId,
+        expectedRevision: 1,
+        requestId: crypto.randomUUID(),
+      });
+      await expect(advanceUpdate).resolves.toMatchObject({
+        projection: "participant",
+        phase: "question_reveal",
+        revision: 2,
+      });
+      expect(notified.mock.calls).toEqual([[mixedSessionId], [mixedSessionId]]);
+
+      await expect(
+        service.command({
+          sessionId: mixedSessionId,
+          controlToken: mixedControlToken,
+          commandId: crypto.randomUUID(),
+          expectedRevision: 0,
+          action: "advance",
+        }),
+      ).rejects.toMatchObject({ code: "STALE_SESSION" });
+      await expect(
+        service.advance({
+          workspaceId: mixedWorkspaceId,
+          userId: mixedUserId,
+          sessionId: mixedSessionId,
+          expectedRevision: 0,
+          requestId: crypto.randomUUID(),
+        }),
+      ).rejects.toMatchObject({ code: "STALE_SESSION" });
+      expect(notified).toHaveBeenCalledTimes(2);
+
+      await realtime.close();
+      realtime = null;
+      expect(handlerSetter).toHaveBeenLastCalledWith(null);
+      await expect(
+        service.command({
+          sessionId: mixedSessionId,
+          controlToken: mixedControlToken,
+          commandId: crypto.randomUUID(),
+          expectedRevision: 2,
+          action: "advance",
+        }),
+      ).resolves.toMatchObject({ phase: "finished", revision: 3 });
+      expect(notified).toHaveBeenCalledTimes(2);
+    } finally {
+      client?.disconnect();
+      await realtime?.close();
+      if (httpServer.listening) {
+        await new Promise<void>((resolve, reject) =>
+          httpServer.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    }
+  });
+
   it("keeps an active socket participant connected in a REST host snapshot after heartbeat expiry", async () => {
     const mixedWorkspaceId = crypto.randomUUID();
     const mixedSessionId = crypto.randomUUID();

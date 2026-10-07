@@ -13,6 +13,7 @@ import { Brand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import { PresentationMedia } from "../../../../components/presentation-live/presentation-media";
 import { ContentSlideView } from "../../../../components/presentation/content-slide-view";
+import { RecoveryPackLiveCardView } from "../../../../components/recovery-pack-live-card";
 import styles from "../../../../components/presentation-live/presentation-live.module.css";
 import { apiFetch, humanError } from "../../../../lib/api";
 import { formatNumber } from "../../../../lib/i18n/format";
@@ -405,6 +406,9 @@ export default function PresentationParticipantPage() {
                     <p className="muted">{t("live.presentationPlay.closed")}</p>
                   )}
                 </div>
+                {snapshot?.phase === "intervention" && snapshot.recoveryPackIntervention ? (
+                  <RecoveryPackLiveCardView card={snapshot.recoveryPackIntervention.card} />
+                ) : null}
               </>
             ) : null}
             {snapshot?.phase === "finished" ? (

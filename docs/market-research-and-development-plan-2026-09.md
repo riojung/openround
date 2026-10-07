@@ -500,8 +500,13 @@ slides/block metadata and frozen original evidence while accepting reviewed cont
 Current-update history protection retains a fenced undo source; reads, exact receipt retries, and
 undo survive a rollout pause. This remains a draft-only capability, not live card playback.
 
-Presentation live card playback remains next, followed by practice and
-Companion insertion, source-authoring/citation approval, and explicit QTI/CSV Pack loss reporting.
+The next increment adds frozen live Presentation card playback: host-only post-reveal previews,
+explicit explanation/example commands, selected-only role projections, durable acknowledgement
+recovery, and aggregate Presentation Report V2 attribution with V1 compatibility. Creation
+eligibility stays behind both Pack flags and the evidence allowlist, and migration 055 preserves
+the existing RLS, export/delete, and retention boundaries. This is provisional source implementation,
+not a passed observation or release gate. Practice and Companion insertion,
+source-authoring/citation approval, and explicit QTI/CSV Pack loss reporting remain next.
 Delayed Recovery Trail and Concept Health remain later capabilities. This checkpoint does not
 change public participant caps, launch readiness, or the institution/video delivery deferrals.
 
@@ -743,13 +748,15 @@ MVP acceptance:
 
 **User job:** “Give me a tested sequence, not a pile of unrelated questions.”
 
-**Incremental implementation:** the first foundation now supplies Pack authoring from published
-Round pairs, immutable publishing, revision/history recovery, native JSON, and independent Round
-draft insertion with item provenance and a complete frozen source baseline. Round drafts now have
+**Incremental implementation:** Pack authoring from published Round pairs, immutable publishing,
+revision/history recovery, native JSON, and independent Round/Presentation draft insertion now
+preserve item provenance and a complete frozen source baseline. Both draft surfaces support
 three-way update review, explicit conflict choices, revision-fenced undo, and retry recovery.
-Cards are facilitator references in the Round builder, not live playback. Other insertion surfaces,
-source-authoring approval, and QTI/CSV loss reports remain pending. See the
-[update-review checkpoint](implementation-status.md#recovery-pack-round-update-review--2026-10-05).
+Cards remain frozen facilitator references in builders; live explanation or worked-example playback
+is available in eligible new Round/Presentation sessions when enabled for the workspace. The
+facilitator explicitly selects a card after revealing the Pack diagnostic. Practice/Companion
+insertion, source-authoring approval, and QTI/CSV loss reports remain pending. See the
+[live Presentation cards checkpoint](implementation-status.md#recovery-pack-live-presentation-cards--2026-10-06).
 
 MVP acceptance:
 

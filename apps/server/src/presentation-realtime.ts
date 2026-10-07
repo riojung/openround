@@ -76,6 +76,7 @@ export interface PresentationRealtimeService {
     provider: ((sessionId: string) => Promise<ReadonlySet<string>>) | null,
   ): void;
   setSessionDeletedHandler?(handler: ((sessionId: string) => void) | null): void;
+  setSessionUpdatedHandler?(handler: ((sessionId: string) => void) | null): void;
 }
 
 export interface PresentationRealtimeOptions {
@@ -616,6 +617,7 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
   };
 
   const scheduleBroadcast = (sessionId: string, immediate = false) => {
+    if (closed) return;
     const pending = pendingBroadcasts.get(sessionId);
     if (immediate && pending) {
       clearTimeout(pending);
@@ -636,6 +638,8 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
     timer.unref();
     pendingBroadcasts.set(sessionId, timer);
   };
+
+  options.service.setSessionUpdatedHandler?.((sessionId) => scheduleBroadcast(sessionId, true));
 
   options.service.setSessionDeletedHandler?.((sessionId) => {
     // The adapter disconnects this room across every node. Each node's disconnect callback
@@ -785,7 +789,8 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
           controlToken: input.controlToken,
         });
         acknowledge({ data: { snapshot } });
-        scheduleBroadcast(input.sessionId, true);
+        // Real services notify here for every transport; keep support for standalone adapters.
+        if (!options.service.setSessionUpdatedHandler) scheduleBroadcast(input.sessionId, true);
       } catch (error) {
         acknowledge(presentationSocketError(error));
       }
@@ -850,6 +855,7 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
       closed = true;
       options.service.setConnectedParticipantIdsProvider?.(null);
       options.service.setSessionDeletedHandler?.(null);
+      options.service.setSessionUpdatedHandler?.(null);
       for (const timer of pendingBroadcasts.values()) clearTimeout(timer);
       pendingBroadcasts.clear();
       lastBroadcastAt.clear();

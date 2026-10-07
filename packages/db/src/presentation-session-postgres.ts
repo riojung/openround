@@ -4,6 +4,7 @@ import type { PostgresRepository } from "./postgres.js";
 import { WorkspaceDeletionInProgressError } from "./types.js";
 import {
   PRESENTATION_EFFECTIVE_EVENT_SEQ_SQL,
+  mapCommandReceipt,
   mapCredential,
   mapParticipant,
   mapReport,
@@ -13,8 +14,11 @@ import {
 } from "./presentation-session-postgres-support.js";
 import {
   normalizeSession,
+  assertCommandRequestHash,
+  commandReceiptMatches,
   responseWindowOpen,
   transitionWindow,
+  transitionRecoveryPackIntervention,
 } from "./presentation-session-rules.js";
 import {
   PresentationSessionConflictError,
@@ -206,9 +210,10 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
         (id, workspace_id, presentation_id, presentation_version_id, title, content_snapshot,
          join_code, status, phase, current_block_index, revision, settings, trust_mode,
          event_seq, question_opened_at, question_closes_at, created_by,
-         created_at, updated_at, finished_at, live_expires_at, retention_expires_at)
+         created_at, updated_at, finished_at, live_expires_at, retention_expires_at,
+         recovery_pack_cards_enabled, recovery_pack_intervention)
        SELECT $1, eligible_workspace.id, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
-              $17,$18,$19,$20,$21,$22
+              $17,$18,$19,$20,$21,$22,$23,$24
        FROM eligible_workspace
        RETURNING *`,
       [
@@ -234,6 +239,10 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
         normalized.finishedAt,
         normalized.liveExpiresAt,
         normalized.retentionExpiresAt,
+        normalized.recoveryPackCardsEnabled,
+        normalized.recoveryPackIntervention
+          ? JSON.stringify(normalized.recoveryPackIntervention)
+          : null,
       ],
     );
     if (!result.rows[0]) {
@@ -367,16 +376,16 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
   private async applyTransition(
     client: PoolClient,
     input: PresentationSessionTransitionInput,
-    commandId?: string,
+    command?: PresentationSessionCommandInput,
   ): Promise<{
     status: "accepted" | "duplicate" | "idempotency_conflict";
     session: PresentationSessionRecord;
   } | null> {
-    if (commandId) {
+    if (command) {
       const prior = await client.query(
-        `SELECT expected_revision FROM presentation_session_command_receipts
-         WHERE session_id = $1 AND command_id = $2`,
-        [input.sessionId, commandId],
+        `SELECT * FROM presentation_session_command_receipts
+         WHERE workspace_id = $1 AND session_id = $2 AND command_id = $3`,
+        [input.workspaceId, input.sessionId, command.commandId],
       );
       if (prior.rows[0]) {
         const current = await client.query(
@@ -387,10 +396,9 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
         );
         if (!current.rows[0]) return null;
         return {
-          status:
-            Number(prior.rows[0].expected_revision) === input.expectedRevision
-              ? "duplicate"
-              : "idempotency_conflict",
+          status: commandReceiptMatches(mapCommandReceipt(prior.rows[0]), command)
+            ? "duplicate"
+            : "idempotency_conflict",
           session: mapSession(current.rows[0]),
         };
       }
@@ -401,11 +409,11 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
       [input.workspaceId, input.sessionId],
     );
     if (!locked.rows[0]) return null;
-    if (commandId) {
+    if (command) {
       const prior = await client.query(
-        `SELECT expected_revision FROM presentation_session_command_receipts
-         WHERE session_id = $1 AND command_id = $2`,
-        [input.sessionId, commandId],
+        `SELECT * FROM presentation_session_command_receipts
+         WHERE workspace_id = $1 AND session_id = $2 AND command_id = $3`,
+        [input.workspaceId, input.sessionId, command.commandId],
       );
       if (prior.rows[0]) {
         const current = await client.query(
@@ -416,10 +424,9 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
         );
         if (!current.rows[0]) return null;
         return {
-          status:
-            Number(prior.rows[0].expected_revision) === input.expectedRevision
-              ? "duplicate"
-              : "idempotency_conflict",
+          status: commandReceiptMatches(mapCommandReceipt(prior.rows[0]), command)
+            ? "duplicate"
+            : "idempotency_conflict",
           session: mapSession(current.rows[0]),
         };
       }
@@ -428,13 +435,19 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     if (session.revision !== input.expectedRevision) {
       throw new PresentationSessionConflictError(input.expectedRevision, session.revision);
     }
+    assertCommandRequestHash(command?.requestHash);
     const occurredAt = input.occurredAt ?? new Date();
+    const { intervention, timelineIntervention } = transitionRecoveryPackIntervention(input);
+    if (intervention !== null && !session.recoveryPackCardsEnabled) {
+      throw new Error("Recovery Pack cards were not enabled when this session was created");
+    }
     const window = transitionWindow(session, input, occurredAt);
     await client.query(
       `UPDATE presentation_live_sessions
        SET phase = $3, current_block_index = $4, status = $5, revision = revision + 1,
            event_seq = event_seq + 1, updated_at = $6,
            question_opened_at = $7, question_closes_at = $8,
+           recovery_pack_intervention = $10,
            finished_at = CASE
              WHEN status <> 'finished' AND $5 = 'finished' THEN $6
              ELSE finished_at
@@ -454,6 +467,7 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
         window.questionOpenedAt,
         window.questionClosesAt,
         input.retentionExpiresAt ?? null,
+        intervention ? JSON.stringify(intervention) : null,
       ],
     );
     const current = await client.query(
@@ -465,8 +479,9 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     const stored = mapSession(current.rows[0]!);
     await client.query(
       `INSERT INTO presentation_session_timeline
-        (id, workspace_id, session_id, sequence, event_type, block_index, block_id, occurred_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        (id, workspace_id, session_id, sequence, event_type, block_index, block_id, occurred_at,
+         recovery_pack_intervention)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [
         randomUUID(),
         input.workspaceId,
@@ -476,23 +491,25 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
         input.event.blockIndex,
         input.event.blockId,
         occurredAt,
+        timelineIntervention ? JSON.stringify(timelineIntervention) : null,
       ],
     );
-    if (commandId) {
+    if (command) {
       await client.query(
         `INSERT INTO presentation_session_command_receipts
           (id, workspace_id, session_id, command_id, expected_revision, resulting_revision,
-           event_type, received_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+           event_type, received_at, request_hash)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [
           randomUUID(),
           input.workspaceId,
           input.sessionId,
-          commandId,
+          command.commandId,
           input.expectedRevision,
           stored.revision,
           input.event.type,
           occurredAt,
+          command.requestHash ?? null,
         ],
       );
     }
@@ -510,8 +527,19 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     input: PresentationSessionCommandInput,
   ): Promise<PresentationTransitionAcceptance> {
     return this.transaction(input.workspaceId, async (client) => {
-      const result = await this.applyTransition(client, input, input.commandId);
+      const result = await this.applyTransition(client, input, input);
       return result ?? { status: "not_found" };
+    });
+  }
+
+  async findCommandReceipt(workspaceId: string, sessionId: string, commandId: string) {
+    return this.transaction(workspaceId, async (client) => {
+      const result = await client.query(
+        `SELECT * FROM presentation_session_command_receipts
+         WHERE workspace_id = $1 AND session_id = $2 AND command_id = $3`,
+        [workspaceId, sessionId, commandId],
+      );
+      return result.rows[0] ? mapCommandReceipt(result.rows[0]) : null;
     });
   }
 

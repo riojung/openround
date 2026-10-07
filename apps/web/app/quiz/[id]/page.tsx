@@ -1804,8 +1804,12 @@ export default function QuizEditorPage() {
                         recoveryPackInsertion.packVersion}
                     </summary>
                     <p>
-                      These cards are the frozen references copied with this Pack. Local checkpoint
-                      edits do not update them. Live card playback is not available yet.
+                      These cards are frozen references from the accepted source baseline, initially
+                      copied with this Pack. Local checkpoint edits and source Pack changes do not
+                      update them until you accept a Pack update. Live explanation or worked-example
+                      playback is available in eligible new Round sessions when enabled for the
+                      workspace. The facilitator explicitly selects a card after revealing the Pack
+                      diagnostic.
                     </p>
                     {recoveryPackReferenceContent.interventions.map((card) => (
                       <section key={card.id}>

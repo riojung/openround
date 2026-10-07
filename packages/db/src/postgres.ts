@@ -6985,7 +6985,8 @@ export class PostgresRepository implements Repository {
                   content_snapshot, join_code, status, phase, current_block_index, revision,
                   settings, trust_mode, event_seq, event_seq_offset, question_opened_at,
                   question_closes_at, created_by, created_at, updated_at, finished_at,
-                  live_expires_at, retention_expires_at
+                  live_expires_at, retention_expires_at, recovery_pack_cards_enabled,
+                  recovery_pack_intervention
            FROM presentation_live_sessions WHERE workspace_id = ANY($1::uuid[])
            ORDER BY created_at, id`,
         );
@@ -7006,13 +7007,13 @@ export class PostgresRepository implements Repository {
         );
         const presentationSessionTimeline = await queryWorkspaceData(
           `SELECT id, workspace_id, session_id, sequence, event_type, block_index, block_id,
-                  occurred_at
+                  occurred_at, recovery_pack_intervention
            FROM presentation_session_timeline WHERE workspace_id = ANY($1::uuid[])
            ORDER BY session_id, sequence`,
         );
         const presentationSessionCommandReceipts = await queryWorkspaceData(
           `SELECT id, workspace_id, session_id, command_id, expected_revision,
-                  resulting_revision, event_type, received_at
+                  resulting_revision, event_type, received_at, request_hash
            FROM presentation_session_command_receipts
            WHERE workspace_id = ANY($1::uuid[])
            ORDER BY session_id, received_at, id`,

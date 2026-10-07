@@ -958,6 +958,24 @@ export const RecoveryPackLiveCardSchema = RecoveryInterventionCardSchema.omit({ 
   .strict();
 export type RecoveryPackLiveCard = z.infer<typeof RecoveryPackLiveCardSchema>;
 
+/** Durable Presentation attribution contains no authored card body or learner responses. */
+export const PresentationRecoveryPackInterventionSchema = z
+  .object({
+    type: z.enum(["explain", "example"]),
+    reference: RecoveryPackCardReferenceSchema,
+  })
+  .strict();
+export type PresentationRecoveryPackIntervention = z.infer<
+  typeof PresentationRecoveryPackInterventionSchema
+>;
+
+export const PresentationRecoveryPackPlaybackSchema = z
+  .object({
+    type: z.enum(["explain", "example"]),
+    card: RecoveryPackLiveCardSchema,
+  })
+  .strict();
+
 export const RecoveryPackDraftSchema = z.object({
   schemaVersion: z.literal(1).default(1),
   title: z.string().trim().max(160),
@@ -3925,6 +3943,7 @@ export const PresentationSessionSettingsSchema = z
   .object({
     timeMode: PresentationTimeModeSchema.default("timed"),
     trustMode: TrustModeSchema.default("learning"),
+    recoveryPackCardsEnabled: z.boolean().optional(),
   })
   .strict();
 export type PresentationSessionSettings = z.input<typeof PresentationSessionSettingsSchema>;
@@ -4064,7 +4083,32 @@ const PresentationSnapshotBaseFields = {
   questionClosesAt: z.string().datetime().nullable(),
   acceptingResponses: z.boolean(),
   settings: PresentationSessionSettingsSchema,
+  recoveryPackIntervention: PresentationRecoveryPackPlaybackSchema.optional(),
 };
+
+function validatePresentationRecoveryPackPlayback(
+  snapshot: {
+    phase: PresentationSessionPhase;
+    recoveryPackIntervention?: z.infer<typeof PresentationRecoveryPackPlaybackSchema>;
+    recoveryPackCards?: RecoveryPackLiveCard[];
+  },
+  ctx: z.RefinementCtx,
+) {
+  if (snapshot.recoveryPackIntervention !== undefined && snapshot.phase !== "intervention") {
+    ctx.addIssue({
+      code: "custom",
+      message: "A Recovery Pack card can be delivered only during its active intervention",
+      path: ["recoveryPackIntervention"],
+    });
+  }
+  if (snapshot.recoveryPackCards !== undefined && snapshot.phase !== "question_reveal") {
+    ctx.addIssue({
+      code: "custom",
+      message: "Recovery Pack previews cannot be delivered before question reveal",
+      path: ["recoveryPackCards"],
+    });
+  }
+}
 
 export const PresentationHostParticipantSchema = z
   .object({
@@ -4081,6 +4125,7 @@ export const PresentationHostSnapshotSchema = z
   .object({
     ...PresentationSnapshotBaseFields,
     projection: z.literal("host"),
+    recoveryPackCards: z.array(RecoveryPackLiveCardSchema).min(1).max(5).optional(),
     currentBlock: PresentationHostCurrentBlockSchema.nullable(),
     participantCount: z.number().int().nonnegative(),
     responseCount: z.number().int().nonnegative(),
@@ -4090,6 +4135,7 @@ export const PresentationHostSnapshotSchema = z
   })
   .strict()
   .superRefine((snapshot, ctx) => {
+    validatePresentationRecoveryPackPlayback(snapshot, ctx);
     if (
       snapshot.currentBlock?.kind === "question" &&
       !["question_reveal", "intervention", "finished"].includes(snapshot.phase) &&
@@ -4139,7 +4185,8 @@ export const PresentationParticipantSnapshotSchema = z
       .nullable(),
     finishedAt: z.string().datetime().nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine(validatePresentationRecoveryPackPlayback);
 export type PresentationParticipantSnapshot = z.infer<typeof PresentationParticipantSnapshotSchema>;
 
 const PresentationRestSnapshotAliasFields = {
@@ -4278,6 +4325,7 @@ export const PresentationRestV1HostSnapshotSchema = z
   .strict()
   .superRefine((snapshot, ctx) => {
     validatePresentationRestV1SnapshotAliases(snapshot, ctx);
+    validatePresentationRecoveryPackPlayback(snapshot, ctx);
     if (
       snapshot.currentBlock?.kind === "question" &&
       !["question_reveal", "intervention", "finished"].includes(snapshot.phase) &&
@@ -4319,7 +4367,10 @@ export const PresentationRestV1ParticipantSnapshotSchema = z
     currentBlock: PresentationRestV1ParticipantCurrentBlockSchema.nullable(),
   })
   .strict()
-  .superRefine(validatePresentationRestV1SnapshotAliases);
+  .superRefine((snapshot, ctx) => {
+    validatePresentationRestV1SnapshotAliases(snapshot, ctx);
+    validatePresentationRecoveryPackPlayback(snapshot, ctx);
+  });
 export type PresentationRestV1ParticipantSnapshot = z.infer<
   typeof PresentationRestV1ParticipantSnapshotSchema
 >;
@@ -4407,7 +4458,8 @@ export const PresentationCompanionSnapshotSchema = z
     primaryAction: z.enum(["advance", "none"]),
     finishedAt: z.string().datetime().nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine(validatePresentationRecoveryPackPlayback);
 export type PresentationCompanionSnapshot = z.infer<typeof PresentationCompanionSnapshotSchema>;
 
 export const PresentationRoleSnapshotSchema = z.discriminatedUnion("projection", [
@@ -4504,15 +4556,23 @@ export const PresentationSyncResponseSchema = z
   .strict();
 export type PresentationSyncResponse = z.infer<typeof PresentationSyncResponseSchema>;
 
-export const PresentationCommandSchema = z
-  .object({
-    sessionId: z.string().uuid(),
-    controlToken: PresentationCredentialSchema,
-    commandId: z.string().uuid(),
-    expectedRevision: z.number().int().nonnegative(),
-    action: z.literal("advance"),
-  })
-  .strict();
+const PresentationCommandFields = {
+  sessionId: z.string().uuid(),
+  controlToken: PresentationCredentialSchema,
+  commandId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+};
+export const PresentationCommandSchema = z.discriminatedUnion("action", [
+  z.object({ ...PresentationCommandFields, action: z.literal("advance") }).strict(),
+  z
+    .object({
+      ...PresentationCommandFields,
+      action: z.literal("start_recovery_card"),
+      recoveryPackCard: RecoveryPackCardSelectionSchema,
+      interventionType: z.enum(["explain", "example"]),
+    })
+    .strict(),
+]);
 export type PresentationCommand = z.infer<typeof PresentationCommandSchema>;
 
 export const CreatePresentationSessionSchema = z.object({
@@ -4769,10 +4829,34 @@ export const PresentationReportV1Schema = z
   .strict();
 export type PresentationReportV1 = z.infer<typeof PresentationReportV1Schema>;
 
+/** New evidence preserves the exact selected immutable Pack/card reference, never its body. */
+export const PresentationReportV2Schema = PresentationReportV1Schema.extend({
+  schemaVersion: z.literal(2),
+  timeline: z.array(
+    PresentationReportV1Schema.shape.timeline.element
+      .extend({ recoveryPackIntervention: PresentationRecoveryPackInterventionSchema.optional() })
+      .superRefine((event, ctx) => {
+        if (event.recoveryPackIntervention && event.type !== "intervention.presented") {
+          ctx.addIssue({
+            code: "custom",
+            message: "Pack attribution is valid only for a presented intervention",
+            path: ["recoveryPackIntervention"],
+          });
+        }
+      }),
+  ),
+});
+export type PresentationReportV2 = z.infer<typeof PresentationReportV2Schema>;
+export const PresentationReportSchema = z.discriminatedUnion("schemaVersion", [
+  PresentationReportV1Schema,
+  PresentationReportV2Schema,
+]);
+export type PresentationReport = z.infer<typeof PresentationReportSchema>;
+
 export const PresentationReportEnvelopeSchema = z
   .object({
     reportStatus: PresentationReportStatusSchema,
-    report: PresentationReportV1Schema.nullable(),
+    report: PresentationReportSchema.nullable(),
   })
   .strict()
   .superRefine((value, context) => {

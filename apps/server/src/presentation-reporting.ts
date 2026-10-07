@@ -1,7 +1,7 @@
 import {
-  PresentationReportV1Schema,
+  PresentationReportSchema,
   questionTypeDefinition,
-  type PresentationReportV1,
+  type PresentationReport,
 } from "@openround/contracts";
 import {
   comparePresentationLeaderboardEntries,
@@ -41,7 +41,7 @@ export function generatePresentationReport(input: {
   participants: PresentationSessionParticipantRecord[];
   responses: PresentationSessionResponseRecord[];
   timeline: PresentationSessionTimelineRecord[];
-}): PresentationReportV1 {
+}): PresentationReport {
   const { session, participants, responses, timeline } = input;
   if (session.status !== "finished") {
     throw new Error("A Presentation report can only be generated for a finished session");
@@ -120,8 +120,9 @@ export function generatePresentationReport(input: {
     ];
   });
 
-  return PresentationReportV1Schema.parse({
-    schemaVersion: 1,
+  const includesPackEvidence = timeline.some((event) => event.recoveryPackIntervention);
+  return PresentationReportSchema.parse({
+    schemaVersion: includesPackEvidence ? 2 : 1,
     sessionId: session.id,
     artifactType: "presentation",
     presentationId: session.presentationId,
@@ -140,6 +141,9 @@ export function generatePresentationReport(input: {
       blockIndex: event.blockIndex,
       blockId: event.blockId,
       occurredAt: event.occurredAt.toISOString(),
+      ...(event.recoveryPackIntervention
+        ? { recoveryPackIntervention: event.recoveryPackIntervention }
+        : {}),
     })),
     evidenceNote: PRESENTATION_EVIDENCE_NOTE,
     createdAt: session.createdAt.toISOString(),

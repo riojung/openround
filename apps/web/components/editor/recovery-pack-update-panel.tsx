@@ -266,8 +266,10 @@ export function RecoveryPackUpdatePanel<TDraft = QuizDraft>({
         <details className={styles.references}>
           <summary>Accepted facilitator references</summary>
           <p className="muted">
-            These copied references change only when you accept a Pack update. Live card playback is
-            not available yet.
+            These copied references change only when you accept a Pack update. Live explanation or
+            worked-example playback is available in eligible new {artifactLabel} sessions when
+            enabled for the workspace. The facilitator explicitly selects a card after revealing the
+            Pack diagnostic.
           </p>
           {referenceContent.interventions.map((card) => (
             <section key={card.id}>
