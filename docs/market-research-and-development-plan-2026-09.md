@@ -748,13 +748,15 @@ MVP acceptance:
 
 **User job:** “Give me a tested sequence, not a pile of unrelated questions.”
 
-**Incremental implementation:** the first foundation now supplies Pack authoring from published
-Round pairs, immutable publishing, revision/history recovery, native JSON, and independent Round
-draft insertion with item provenance and a complete frozen source baseline. Round drafts now have
+**Incremental implementation:** Pack authoring from published Round pairs, immutable publishing,
+revision/history recovery, native JSON, and independent Round/Presentation draft insertion now
+preserve item provenance and a complete frozen source baseline. Both draft surfaces support
 three-way update review, explicit conflict choices, revision-fenced undo, and retry recovery.
-Cards are facilitator references in the Round builder, not live playback. Other insertion surfaces,
-source-authoring approval, and QTI/CSV loss reports remain pending. See the
-[update-review checkpoint](implementation-status.md#recovery-pack-round-update-review--2026-10-05).
+Cards remain frozen facilitator references in builders; live explanation or worked-example playback
+is available in eligible new Round/Presentation sessions when enabled for the workspace. The
+facilitator explicitly selects a card after revealing the Pack diagnostic. Practice/Companion
+insertion, source-authoring approval, and QTI/CSV loss reports remain pending. See the
+[live Presentation cards checkpoint](implementation-status.md#recovery-pack-live-presentation-cards--2026-10-06).
 
 MVP acceptance:
 
