@@ -25,6 +25,10 @@ import {
   presentationCurrentBlock,
 } from "./presentation-session-projections.js";
 import {
+  frozenPresentationRecoveryPackCards,
+  presentationCommandRequestHash,
+} from "./presentation-recovery-pack-cards.js";
+import {
   presentationResponseCorrect,
   presentationResponseRequestHash,
   presentationResponseScore,
@@ -69,6 +73,7 @@ type PresentationMutationSessionRepository = Pick<
   | "getSessionById"
   | "transitionSession"
   | "transitionSessionCommand"
+  | "findCommandReceipt"
   | "findParticipant"
   | "getResponseContext"
   | "acceptResponse"
@@ -155,6 +160,44 @@ function nextTransition(session: PresentationSessionRecord) {
         next.kind === "content" ? ("content.presented" as const) : ("question.launched" as const),
       blockIndex: nextIndex,
       blockId: next.id,
+    },
+  };
+}
+
+function recoveryCardTransition(
+  session: PresentationSessionRecord,
+  input: Extract<PresentationCommand, { action: "start_recovery_card" }>,
+) {
+  if (session.status !== "active" || session.phase !== "question_reveal") {
+    throw new PresentationSessionServiceError(
+      409,
+      "PHASE_CLOSED",
+      "Reveal this diagnostic before starting a Recovery Pack card",
+    );
+  }
+  const card = frozenPresentationRecoveryPackCards(session).find(
+    (candidate) =>
+      candidate.reference.insertionId === input.recoveryPackCard.insertionId &&
+      candidate.reference.cardId === input.recoveryPackCard.cardId,
+  );
+  if (!card) {
+    throw new PresentationSessionServiceError(
+      422,
+      "VALIDATION_ERROR",
+      "This card is not available for the current diagnostic in this session",
+    );
+  }
+  const recoveryPackIntervention = { type: input.interventionType, reference: card.reference };
+  return {
+    phase: "intervention" as const,
+    currentBlockIndex: session.currentBlockIndex,
+    status: "active" as const,
+    recoveryPackIntervention,
+    event: {
+      type: "intervention.presented" as const,
+      blockIndex: session.currentBlockIndex,
+      blockId: session.content.blocks[session.currentBlockIndex]!.id,
+      recoveryPackIntervention,
     },
   };
 }
@@ -253,7 +296,43 @@ export class PresentationLiveMutationService {
       input.sessionId,
       input.controlToken,
     );
-    const transition = nextTransition(session);
+    const requestHash = presentationCommandRequestHash(input);
+    // Recover an exact durable command before inspecting the current phase, revision or card.
+    // An acknowledgement can be lost and retried after another host has advanced or finished.
+    const receipt = await this.dependencies.sessions.findCommandReceipt(
+      session.workspaceId,
+      session.id,
+      input.commandId,
+    );
+    if (receipt) {
+      if (
+        receipt.expectedRevision !== input.expectedRevision ||
+        (receipt.requestHash ? receipt.requestHash !== requestHash : input.action !== "advance")
+      ) {
+        throw new PresentationSessionServiceError(
+          409,
+          "IDEMPOTENCY_CONFLICT",
+          "This command key was already used for a different request",
+        );
+      }
+      const current = await this.dependencies.sessions.getSessionForWorkspace(
+        session.workspaceId,
+        session.id,
+      );
+      if (!current) {
+        throw new PresentationSessionServiceError(
+          404,
+          "NOT_FOUND",
+          "Presentation session not found",
+        );
+      }
+      return this.dependencies.realtimeHostSnapshot(current);
+    }
+    if (input.expectedRevision !== session.revision) {
+      throw this.staleSession(input.expectedRevision, session.revision);
+    }
+    const transition =
+      input.action === "advance" ? nextTransition(session) : recoveryCardTransition(session, input);
     if (!transition) return this.dependencies.realtimeHostSnapshot(session);
     try {
       const transitionRetentionExpiresAt = await this.transitionRetentionExpiry(
@@ -264,6 +343,7 @@ export class PresentationLiveMutationService {
         workspaceId: session.workspaceId,
         sessionId: session.id,
         commandId: input.commandId,
+        requestHash,
         expectedRevision: input.expectedRevision,
         ...transition,
         ...(transitionRetentionExpiresAt
@@ -296,6 +376,19 @@ export class PresentationLiveMutationService {
       }
       if (accepted.status === "accepted") {
         this.recordAcceptedTransitionProductEvents(accepted.session, transition);
+        if (input.action === "start_recovery_card" && accepted.session.recoveryPackIntervention) {
+          await this.dependencies.repository
+            .recordAudit({
+              workspaceId: accepted.session.workspaceId,
+              actorId: null,
+              action: "presentation.session.recovery_pack_card.start",
+              targetType: "presentation_live_session",
+              targetId: accepted.session.id,
+              requestId: input.commandId,
+              metadata: { ...accepted.session.recoveryPackIntervention },
+            })
+            .catch(() => undefined);
+        }
       }
       return this.dependencies.realtimeHostSnapshot(accepted.session);
     } catch (error) {

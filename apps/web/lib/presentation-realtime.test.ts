@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type {
+  PresentationCommand,
   PresentationEventEnvelope,
   PresentationHostSnapshot,
   PresentationParticipantSnapshot,
@@ -15,6 +16,8 @@ import {
   presentationSaveStateForBlock,
   shouldApplyPresentationSnapshot,
 } from "./presentation-realtime";
+import { createPresentationCommandRecovery } from "./presentation-command-recovery";
+import { ApiClientError } from "./api";
 
 const NOW = "2026-09-23T12:00:00.000Z";
 
@@ -158,6 +161,250 @@ function sync(socket: FakeSocket, snapshot: PresentationRoleSnapshot) {
     data: { resetRequired: false, events: [], snapshot } satisfies PresentationSyncResponse,
   });
 }
+
+describe("Presentation card command acknowledgements", () => {
+  it("replays the exact card command after an intervention update and lost acknowledgement", async () => {
+    vi.useFakeTimers();
+    const socket = new FakeSocket();
+    const initial = hostSnapshot({ phase: "question_reveal", acceptingResponses: false });
+    const received: PresentationHostSnapshot[] = [];
+    const controller = createPresentationRealtimeController({
+      sessionId: initial.sessionId,
+      credential: { projection: "host", controlToken: "h".repeat(32) },
+      fetchSnapshot: async () => initial,
+      onSnapshot: (snapshot) => received.push(snapshot),
+      onConnectionState: () => undefined,
+      socketFactory: () => socket as unknown as Socket,
+      acknowledgementTimeoutMs: 20,
+    });
+    const recovery = createPresentationCommandRecovery({
+      execute: (command: PresentationCommand) => controller.command(command, async () => initial),
+      onState: () => undefined,
+    });
+    try {
+      controller.start();
+      sync(socket, initial);
+      await Promise.resolve();
+      const command: PresentationCommand = {
+        sessionId: initial.sessionId,
+        controlToken: "h".repeat(32),
+        commandId: randomUUID(),
+        expectedRevision: initial.revision,
+        action: "start_recovery_card",
+        recoveryPackCard: { insertionId: randomUUID(), cardId: randomUUID() },
+        interventionType: "explain",
+      };
+      const first = recovery.run(command);
+      const rejected = expect(first).rejects.toMatchObject({
+        code: "PRESENTATION_COMMAND_UNCONFIRMED",
+      });
+      const originalAttempt = socket.last("presentation.command")!;
+      const active = hostSnapshot({
+        phase: "intervention",
+        acceptingResponses: false,
+        seq: 6,
+        revision: 4,
+      });
+      socket.fire("presentation.session.updated", {
+        eventId: randomUUID(),
+        sessionId: initial.sessionId,
+        revision: active.revision,
+        seq: active.seq,
+        type: "presentation.session.updated",
+        serverTime: NOW,
+        payload: active,
+      } satisfies PresentationEventEnvelope);
+      expect(recovery.state().busy).toBe(true);
+      await vi.advanceTimersByTimeAsync(20);
+      await rejected;
+      sync(socket, active);
+      await Promise.resolve();
+      expect(recovery.state().pendingCommand).toEqual(command);
+      // A late acknowledgement for the timed-out attempt cannot masquerade as this retry.
+      originalAttempt.ack?.({ data: { snapshot: hostSnapshot({ seq: 99, revision: 99 }) } });
+      expect(controller.latest()?.seq).toBe(6);
+      const second = recovery.retry();
+      const repeated = socket.last("presentation.command")!;
+      expect(repeated.payload).toBe(originalAttempt.payload);
+      repeated.ack?.({ data: { snapshot: active } });
+      await expect(second).resolves.toEqual(active);
+      expect(recovery.state().pendingCommand).toBeNull();
+      expect(received.at(-1)?.phase).toBe("intervention");
+    } finally {
+      controller.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the supplied card REST fallback without rewriting the request", async () => {
+    const initial = hostSnapshot({ phase: "question_reveal" });
+    const controller = createPresentationRealtimeController({
+      sessionId: initial.sessionId,
+      credential: null,
+      fetchSnapshot: async () => initial,
+      onSnapshot: () => undefined,
+      onConnectionState: () => undefined,
+    });
+    const command: PresentationCommand = {
+      sessionId: initial.sessionId,
+      controlToken: "fallback",
+      commandId: randomUUID(),
+      expectedRevision: initial.revision,
+      action: "start_recovery_card",
+      recoveryPackCard: { insertionId: randomUUID(), cardId: randomUUID() },
+      interventionType: "example",
+    };
+    const active = hostSnapshot({ phase: "intervention", seq: 6, revision: 4 });
+    const rest = vi.fn(async () => active);
+    await expect(controller.command(command, rest)).resolves.toEqual(active);
+    expect(rest).toHaveBeenCalledOnce();
+    expect(controller.latest()?.phase).toBe("intervention");
+  });
+
+  it.each([
+    ["missing snapshot", undefined],
+    ["different session", hostSnapshot({ sessionId: randomUUID() })],
+    ["participant projection", participantSnapshot()],
+  ])(
+    "keeps the original command unresolved after a REST acknowledgement with %s",
+    async (_name, mismatch) => {
+      const initial = hostSnapshot({ phase: "question_reveal" });
+      const onSnapshot = vi.fn();
+      const controller = createPresentationRealtimeController({
+        sessionId: initial.sessionId,
+        credential: null,
+        fetchSnapshot: async () => initial,
+        onSnapshot,
+        onConnectionState: () => undefined,
+      });
+      const command: PresentationCommand = {
+        sessionId: initial.sessionId,
+        controlToken: "h".repeat(32),
+        commandId: randomUUID(),
+        expectedRevision: initial.revision,
+        action: "start_recovery_card",
+        recoveryPackCard: { insertionId: randomUUID(), cardId: randomUUID() },
+        interventionType: "example",
+      };
+      const active = hostSnapshot({ phase: "intervention", seq: 6, revision: 4 });
+      const rest = vi.fn().mockResolvedValueOnce(mismatch).mockResolvedValueOnce(active);
+      const recovery = createPresentationCommandRecovery({
+        execute: (request: PresentationCommand) => controller.command(request, rest),
+        onState: () => undefined,
+      });
+      await expect(recovery.run(command)).rejects.toMatchObject({
+        code: "PRESENTATION_COMMAND_UNCONFIRMED",
+      });
+      expect(onSnapshot).not.toHaveBeenCalled();
+      expect(controller.latest()).toBeNull();
+      expect(recovery.state().pendingCommand).toEqual(command);
+      await expect(recovery.retry()).resolves.toEqual(active);
+      expect(onSnapshot).toHaveBeenCalledWith(active);
+      expect(recovery.state().pendingCommand).toBeNull();
+    },
+  );
+});
+
+describe("Presentation scoped host pass rejection", () => {
+  it("reports a stale pass rejected by initial socket sync and stays in authenticated REST fallback", async () => {
+    const socket = new FakeSocket();
+    const rejected = vi.fn();
+    const initial = hostSnapshot();
+    const controller = createPresentationRealtimeController({
+      sessionId: initial.sessionId,
+      credential: { projection: "host", controlToken: "revoked-pass" },
+      fetchSnapshot: async () => initial,
+      onSnapshot: () => undefined,
+      onConnectionState: () => undefined,
+      onCredentialRejected: rejected,
+      socketFactory: () => socket as unknown as Socket,
+    });
+    controller.start();
+    socket
+      .last("presentation.sync.request")!
+      .ack?.({ error: { code: "UNAUTHORIZED", message: "Revoked host pass" } });
+    await controller.reconcile();
+    expect(rejected).toHaveBeenCalledExactlyOnceWith("revoked-pass");
+    expect(controller.latest()).toEqual(initial);
+    expect(controller.canMutate()).toBe(true);
+    expect(controller.needsFallbackPolling()).toBe(true);
+    socket.disconnect();
+    socket.connect();
+    await controller.reconcile();
+    expect(
+      socket.emitted.filter(({ event }) => event === "presentation.sync.request"),
+    ).toHaveLength(1);
+    expect(controller.canMutate()).toBe(true);
+    controller.stop();
+  });
+
+  it("reports the exact pass rejected by a socket command", async () => {
+    const socket = new FakeSocket();
+    const rejected = vi.fn();
+    const initial = hostSnapshot();
+    const controller = createPresentationRealtimeController({
+      sessionId: initial.sessionId,
+      credential: { projection: "host", controlToken: "revoked-pass" },
+      fetchSnapshot: async () => initial,
+      onSnapshot: () => undefined,
+      onConnectionState: () => undefined,
+      onCredentialRejected: rejected,
+      socketFactory: () => socket as unknown as Socket,
+    });
+    controller.start();
+    sync(socket, initial);
+    const attempt = controller.command(
+      {
+        sessionId: initial.sessionId,
+        controlToken: "revoked-pass",
+        commandId: randomUUID(),
+        expectedRevision: initial.revision,
+        action: "advance",
+      },
+      async () => initial,
+    );
+    socket
+      .last("presentation.command")!
+      .ack?.({ error: { code: "UNAUTHORIZED", message: "Revoked host pass" } });
+    await expect(attempt).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(rejected).toHaveBeenCalledExactlyOnceWith("revoked-pass");
+    expect(controller.needsFallbackPolling()).toBe(true);
+    controller.stop();
+  });
+
+  it("reports scoped REST command401 but never treats creator-auth snapshot401 as pass rejection", async () => {
+    const initial = hostSnapshot();
+    const rejected = vi.fn();
+    const controller = createPresentationRealtimeController({
+      sessionId: initial.sessionId,
+      credential: null,
+      fetchSnapshot: async () => {
+        throw new ApiClientError("Creator login expired", "UNAUTHORIZED", 401);
+      },
+      onSnapshot: () => undefined,
+      onConnectionState: () => undefined,
+      onCredentialRejected: rejected,
+    });
+    await expect(controller.reconcile()).resolves.toBeNull();
+    expect(rejected).not.toHaveBeenCalled();
+    await expect(
+      controller.command(
+        {
+          sessionId: initial.sessionId,
+          controlToken: "revoked-pass",
+          commandId: randomUUID(),
+          expectedRevision: initial.revision,
+          action: "advance",
+        },
+        async () => {
+          throw new ApiClientError("Revoked host pass", "UNAUTHORIZED", 401);
+        },
+      ),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(rejected).toHaveBeenCalledExactlyOnceWith("revoked-pass");
+    controller.stop();
+  });
+});
 
 describe("Presentation deadline timing", () => {
   it("derives the countdown from server time instead of the participant device clock", () => {

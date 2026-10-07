@@ -5,6 +5,8 @@ import {
   AdvancePresentationSessionSchema,
   CreatePresentationSessionSchema,
   JoinPresentationSessionSchema,
+  PresentationCommandSchema,
+  PresentationHostSnapshotSchema,
   PresentationRestV1CreateSessionResponseSchema,
   PresentationRestV1HostSnapshotResponseSchema,
   PresentationRestV1HostSnapshotSchema,
@@ -223,6 +225,9 @@ export async function registerPresentationSessionRoutes(
       sessions: dependencies.presentationSessions,
       config: dependencies.config,
       storage: dependencies.storage,
+      recoveryPackCardsEnabled: (workspaceId) =>
+        evidenceWorkspaceFeatureEnabled(dependencies.config, workspaceId, "recoveryPacks") &&
+        evidenceWorkspaceFeatureEnabled(dependencies.config, workspaceId, "recoveryPackLiveCards"),
     });
   const enforceSharedAdmission = async (
     request: FastifyRequest,
@@ -352,6 +357,51 @@ export async function registerPresentationSessionRoutes(
       return sendServiceError(error, reply, request.id);
     }
   });
+
+  app.post(
+    "/v1/presentation-sessions/:id/command",
+    {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+          keyGenerator: (request: FastifyRequest) => {
+            const body = request.body as { controlToken?: unknown } | null;
+            const token = typeof body?.controlToken === "string" ? body.controlToken : "invalid";
+            return `presentation-command:${createHash("sha256").update(token).digest("hex")}`;
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      noStore(reply);
+      const { id } = IdParamsSchema.parse(request.params);
+      const input = PresentationCommandSchema.parse(request.body);
+      if (input.sessionId !== id) {
+        return apiError(
+          reply,
+          422,
+          "VALIDATION_ERROR",
+          "Command session must match its route",
+          request.id,
+        );
+      }
+      if (
+        !(await enforceSharedAdmission(
+          request,
+          reply,
+          `presentation:command:${id}:${createHash("sha256").update(input.controlToken).digest("hex")}`,
+          30,
+        ))
+      )
+        return;
+      try {
+        return { snapshot: PresentationHostSnapshotSchema.parse(await service.command(input)) };
+      } catch (error) {
+        return sendServiceError(error, reply, request.id);
+      }
+    },
+  );
 
   app.post("/v1/presentation-sessions/:id/control-pass", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);

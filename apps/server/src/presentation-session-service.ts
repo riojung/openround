@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import {
   PresentationReportEnvelopeSchema,
-  PresentationReportV1Schema,
+  PresentationReportSchema,
   PresentationReportWithSessionContextEnvelopeSchema,
   type PresentationCommand,
   type PresentationHostSnapshot,
@@ -100,6 +100,7 @@ export class PresentationSessionService {
   private connectedParticipantIdsProvider: PresentationConnectedParticipantIdsProvider | null =
     null;
   private sessionDeletedHandler: ((sessionId: string) => void) | null = null;
+  private sessionUpdatedHandler: ((sessionId: string) => void) | null = null;
   private readonly liveMutations: PresentationLiveMutationService;
 
   constructor(
@@ -117,6 +118,7 @@ export class PresentationSessionService {
       storage: StorageService;
       productEvents?: ProductEventDispatcher;
       productEventsEnabled?: (workspaceId: string) => boolean;
+      recoveryPackCardsEnabled?: (workspaceId: string) => boolean;
     },
   ) {
     this.liveMutations = new PresentationLiveMutationService({
@@ -158,6 +160,11 @@ export class PresentationSessionService {
 
   setSessionDeletedHandler(handler: ((sessionId: string) => void) | null) {
     this.sessionDeletedHandler = handler;
+  }
+
+  /** Notify the live transport after accepted host mutations, including REST fallback commands. */
+  setSessionUpdatedHandler(handler: ((sessionId: string) => void) | null) {
+    this.sessionUpdatedHandler = handler;
   }
 
   private async uniqueJoinCode() {
@@ -267,6 +274,8 @@ export class PresentationSessionService {
             currentBlockIndex: -1,
             revision: 0,
             settings: { timeMode: input.timeMode ?? "timed" },
+            recoveryPackCardsEnabled:
+              this.dependencies.recoveryPackCardsEnabled?.(input.workspaceId) ?? false,
             trustMode: "learning",
             eventSeq: 0,
             questionOpenedAt: null,
@@ -435,7 +444,9 @@ export class PresentationSessionService {
     expectedRevision: number;
     requestId: string;
   }) {
-    return this.liveMutations.advance(input);
+    const snapshot = await this.liveMutations.advance(input);
+    this.sessionUpdatedHandler?.(input.sessionId);
+    return snapshot;
   }
 
   async join(code: string, nickname: string) {
@@ -669,7 +680,9 @@ export class PresentationSessionService {
   }
 
   async command(input: PresentationCommand): Promise<PresentationHostSnapshot> {
-    return this.liveMutations.command(input);
+    const snapshot = await this.liveMutations.command(input);
+    this.sessionUpdatedHandler?.(input.sessionId);
+    return snapshot;
   }
 
   async submitResponse(
@@ -709,7 +722,7 @@ export class PresentationSessionService {
     }
     let report = null;
     if (stored.status === "ready") {
-      report = PresentationReportV1Schema.parse(stored.payload);
+      report = PresentationReportSchema.parse(stored.payload);
     } else if (stored.status === "pending") {
       // Keep the original `/v1` response useful immediately after finish while the durable worker
       // reconciles the same immutable inputs in the background. Existing clients can continue to

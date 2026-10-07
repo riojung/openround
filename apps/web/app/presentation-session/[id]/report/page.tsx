@@ -1,7 +1,7 @@
 "use client";
 
 import type {
-  PresentationReportV1,
+  PresentationReport,
   PresentationReportWithSessionContextEnvelope,
   PresentationTimeMode,
 } from "@openround/contracts";
@@ -22,7 +22,7 @@ function PresentationReportContent() {
   const router = useRouter();
   const { locale, t } = useLocale();
   const { productFeatures } = useWorkspace();
-  const [report, setReport] = useState<PresentationReportV1 | null>(null);
+  const [report, setReport] = useState<PresentationReport | null>(null);
   const [timeMode, setTimeMode] = useState<PresentationTimeMode | null>(null);
   const [reportFailed, setReportFailed] = useState(false);
   const [error, setError] = useState("");
@@ -227,11 +227,24 @@ function PresentationReportContent() {
             ) : null}
             <section className={styles.reportCard}>
               <h2>{t("live.presentationReport.facilitationTimeline")}</h2>
-              <ol className={styles.timeline}>
+              <ol className={styles.timeline} aria-label="Facilitation timeline">
                 {report.timeline.map((event) => (
                   <li key={event.sequence}>
                     <strong>{event.sequence.toLocaleString(locale)}</strong>
-                    <span lang="en-CA">{event.type.replaceAll(".", " ")}</span>
+                    <span lang="en-CA">
+                      {event.type.replaceAll(".", " ")}
+                      {"recoveryPackIntervention" in event && event.recoveryPackIntervention ? (
+                        <small className={styles.timelineAttribution}>
+                          {event.recoveryPackIntervention.type === "example"
+                            ? "Worked example"
+                            : "Explanation"}
+                          {" · Recovery Pack v"}
+                          {event.recoveryPackIntervention.reference.packVersion}
+                          {" · card "}
+                          {event.recoveryPackIntervention.reference.cardId}
+                        </small>
+                      ) : null}
+                    </span>
                     <time dateTime={event.occurredAt}>
                       {new Date(event.occurredAt).toLocaleTimeString(locale)}
                     </time>

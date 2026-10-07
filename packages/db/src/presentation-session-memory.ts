@@ -6,9 +6,12 @@ import type {
 import type { Repository } from "./types.js";
 import {
   clone,
+  assertCommandRequestHash,
+  commandReceiptMatches,
   normalizeSession,
   responseWindowOpen,
   transitionWindow,
+  transitionRecoveryPackIntervention,
 } from "./presentation-session-rules.js";
 import {
   comparePresentationLeaderboardEntries,
@@ -322,14 +325,22 @@ export class MemoryPresentationSessionRepository
     return session ? clone(session) : null;
   }
 
-  private async applyTransition(input: PresentationSessionTransitionInput, commandId?: string) {
+  private async applyTransition(
+    input: PresentationSessionTransitionInput,
+    command?: PresentationSessionCommandInput,
+  ) {
     const session = this.sessions.get(input.sessionId);
     if (!session || session.workspaceId !== input.workspaceId) return null;
     this.assertWorkspaceMutationAllowed(input.workspaceId);
     if (session.revision !== input.expectedRevision) {
       throw new PresentationSessionConflictError(input.expectedRevision, session.revision);
     }
+    assertCommandRequestHash(command?.requestHash);
     const now = input.occurredAt ?? new Date();
+    const { intervention, timelineIntervention } = transitionRecoveryPackIntervention(input);
+    if (intervention !== null && !session.recoveryPackCardsEnabled) {
+      throw new Error("Recovery Pack cards were not enabled when this session was created");
+    }
     const window = transitionWindow(session, input, now);
     const becomingFinished = session.status !== "finished" && input.status === "finished";
     const updated: PresentationSessionRecord = {
@@ -337,6 +348,7 @@ export class MemoryPresentationSessionRepository
       phase: input.phase,
       currentBlockIndex: input.currentBlockIndex,
       status: input.status,
+      recoveryPackIntervention: intervention,
       revision: session.revision + 1,
       eventSeq: session.eventSeq + 1,
       ...window,
@@ -355,20 +367,22 @@ export class MemoryPresentationSessionRepository
       sessionId: session.id,
       sequence: updated.eventSeq,
       occurredAt: now,
+      recoveryPackIntervention: timelineIntervention,
     };
     this.timeline.set(event.id, event);
-    if (commandId) {
+    if (command) {
       const receipt: PresentationSessionCommandReceiptRecord = {
         id: randomUUID(),
         workspaceId: session.workspaceId,
         sessionId: session.id,
-        commandId,
+        commandId: command.commandId,
+        requestHash: command.requestHash ?? null,
         expectedRevision: input.expectedRevision,
         resultingRevision: updated.revision,
         eventType: input.event.type,
         receivedAt: now,
       };
-      this.commandReceipts.set(`${session.id}:${commandId}`, receipt);
+      this.commandReceipts.set(`${session.id}:${command.commandId}`, receipt);
     }
     // Publish the report job only after every report input for this transition is visible. The
     // memory worker can run concurrently while this async method is suspended, so enqueueing
@@ -391,12 +405,17 @@ export class MemoryPresentationSessionRepository
     if (receipt?.workspaceId === input.workspaceId) {
       const session = this.sessions.get(input.sessionId);
       if (!session) return { status: "not_found" };
-      return receipt.expectedRevision === input.expectedRevision
+      return commandReceiptMatches(receipt, input)
         ? { status: "duplicate", session: clone(session) }
         : { status: "idempotency_conflict", session: clone(session) };
     }
-    const session = await this.applyTransition(input, input.commandId);
+    const session = await this.applyTransition(input, input);
     return session ? { status: "accepted", session } : { status: "not_found" };
+  }
+
+  async findCommandReceipt(workspaceId: string, sessionId: string, commandId: string) {
+    const receipt = this.commandReceipts.get(`${sessionId}:${commandId}`);
+    return receipt?.workspaceId === workspaceId ? clone(receipt) : null;
   }
 
   async addParticipant(input: PresentationSessionParticipantRecord) {

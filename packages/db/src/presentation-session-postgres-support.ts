@@ -1,5 +1,7 @@
 import type { QueryResultRow } from "pg";
+import { PresentationRecoveryPackInterventionSchema } from "@openround/contracts";
 import type {
+  PresentationSessionCommandReceiptRecord,
   PresentationSessionCredentialRecord,
   PresentationSessionParticipantRecord,
   PresentationSessionReportRecord,
@@ -44,6 +46,10 @@ export function mapSession(row: QueryResultRow): PresentationSessionRecord {
     revision: Number(row.revision),
     settings: row.settings ?? { timeMode: "timed" },
     trustMode: row.trust_mode ?? "learning",
+    recoveryPackCardsEnabled: row.recovery_pack_cards_enabled ?? false,
+    recoveryPackIntervention: row.recovery_pack_intervention
+      ? PresentationRecoveryPackInterventionSchema.parse(row.recovery_pack_intervention)
+      : null,
     eventSeq: Number(row.event_seq ?? 0),
     questionOpenedAt:
       row.question_opened_at == null
@@ -136,8 +142,26 @@ export function mapTimeline(row: QueryResultRow): PresentationSessionTimelineRec
     type: row.event_type,
     blockIndex: row.block_index == null ? null : Number(row.block_index),
     blockId: row.block_id == null ? null : String(row.block_id),
+    recoveryPackIntervention: row.recovery_pack_intervention
+      ? PresentationRecoveryPackInterventionSchema.parse(row.recovery_pack_intervention)
+      : null,
     occurredAt:
       row.occurred_at instanceof Date ? row.occurred_at : new Date(String(row.occurred_at)),
+  };
+}
+
+export function mapCommandReceipt(row: QueryResultRow): PresentationSessionCommandReceiptRecord {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    sessionId: String(row.session_id),
+    commandId: String(row.command_id),
+    expectedRevision: Number(row.expected_revision),
+    resultingRevision: Number(row.resulting_revision),
+    eventType: row.event_type,
+    requestHash: row.request_hash == null ? null : String(row.request_hash),
+    receivedAt:
+      row.received_at instanceof Date ? row.received_at : new Date(String(row.received_at)),
   };
 }
 

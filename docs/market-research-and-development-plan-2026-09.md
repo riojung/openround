@@ -500,8 +500,13 @@ slides/block metadata and frozen original evidence while accepting reviewed cont
 Current-update history protection retains a fenced undo source; reads, exact receipt retries, and
 undo survive a rollout pause. This remains a draft-only capability, not live card playback.
 
-Presentation live card playback remains next, followed by practice and
-Companion insertion, source-authoring/citation approval, and explicit QTI/CSV Pack loss reporting.
+The next increment adds frozen live Presentation card playback: host-only post-reveal previews,
+explicit explanation/example commands, selected-only role projections, durable acknowledgement
+recovery, and aggregate Presentation Report V2 attribution with V1 compatibility. Creation
+eligibility stays behind both Pack flags and the evidence allowlist, and migration 055 preserves
+the existing RLS, export/delete, and retention boundaries. This is provisional source implementation,
+not a passed observation or release gate. Practice and Companion insertion,
+source-authoring/citation approval, and explicit QTI/CSV Pack loss reporting remain next.
 Delayed Recovery Trail and Concept Health remain later capabilities. This checkpoint does not
 change public participant caps, launch readiness, or the institution/video delivery deferrals.
 

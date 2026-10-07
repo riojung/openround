@@ -16,6 +16,11 @@ import {
   type PresentationSessionRecord,
   type PresentationSessionResponseRecord,
 } from "@openround/db";
+import {
+  frozenPresentationRecoveryPackCards,
+  presentationRecoveryPackPlayback,
+  presentationSnapshotSettings,
+} from "./presentation-recovery-pack-cards.js";
 
 const PRESENTATION_PARTICIPANT_PRESENCE_WINDOW_MS = 15_000;
 
@@ -256,6 +261,9 @@ export function buildPresentationHostSnapshot(
       ? responses.filter((response) => response.blockId === block.id).length
       : 0;
   const sampledAt = new Date();
+  const recoveryPackCards =
+    session.phase === "question_reveal" ? frozenPresentationRecoveryPackCards(session) : [];
+  const recoveryPackIntervention = presentationRecoveryPackPlayback(session);
   const connectedCount = participants.filter(
     (participant) =>
       connectedParticipantIds.has(participant.id) ||
@@ -279,7 +287,9 @@ export function buildPresentationHostSnapshot(
     questionOpenedAt: session.questionOpenedAt?.toISOString() ?? null,
     questionClosesAt: presentationQuestionDeadline(session)?.toISOString() ?? null,
     acceptingResponses: presentationAcceptingResponses(session),
-    settings: { ...session.settings, trustMode: session.trustMode },
+    settings: presentationSnapshotSettings(session),
+    ...(recoveryPackCards.length ? { recoveryPackCards } : {}),
+    ...(recoveryPackIntervention ? { recoveryPackIntervention } : {}),
     projection: "host",
     currentBlock: presentationRealtimeBlock(
       block,
@@ -324,6 +334,7 @@ export function buildPresentationParticipantSnapshot(
     session.phase === "question_reveal" ||
     session.phase === "intervention" ||
     session.phase === "finished";
+  const recoveryPackIntervention = presentationRecoveryPackPlayback(session);
   return PresentationParticipantSnapshotSchema.parse({
     sessionId: session.id,
     artifactType: "presentation",
@@ -341,7 +352,8 @@ export function buildPresentationParticipantSnapshot(
     questionOpenedAt: session.questionOpenedAt?.toISOString() ?? null,
     questionClosesAt: presentationQuestionDeadline(session)?.toISOString() ?? null,
     acceptingResponses: presentationAcceptingResponses(session),
-    settings: { ...session.settings, trustMode: session.trustMode },
+    settings: presentationSnapshotSettings(session),
+    ...(recoveryPackIntervention ? { recoveryPackIntervention } : {}),
     projection: "participant",
     participantId,
     currentBlock: presentationRealtimeBlock(block, false),
@@ -380,6 +392,7 @@ export function buildTargetedPresentationParticipantSnapshot(
     session.phase === "question_reveal" ||
     session.phase === "intervention" ||
     session.phase === "finished";
+  const recoveryPackIntervention = presentationRecoveryPackPlayback(session);
   return PresentationParticipantSnapshotSchema.parse({
     sessionId: session.id,
     artifactType: "presentation",
@@ -397,7 +410,8 @@ export function buildTargetedPresentationParticipantSnapshot(
     questionOpenedAt: session.questionOpenedAt?.toISOString() ?? null,
     questionClosesAt: presentationQuestionDeadline(session)?.toISOString() ?? null,
     acceptingResponses: presentationAcceptingResponses(session),
-    settings: { ...session.settings, trustMode: session.trustMode },
+    settings: presentationSnapshotSettings(session),
+    ...(recoveryPackIntervention ? { recoveryPackIntervention } : {}),
     projection: "participant",
     participantId,
     currentBlock: presentationRealtimeBlock(block, false),
@@ -436,6 +450,9 @@ export function buildPresentationCompanionSnapshot(
     questionClosesAt: host.questionClosesAt,
     acceptingResponses: host.acceptingResponses,
     settings: host.settings,
+    ...(host.recoveryPackIntervention
+      ? { recoveryPackIntervention: host.recoveryPackIntervention }
+      : {}),
     projection: "companion",
     currentBlock: presentationRealtimeBlock(presentationCurrentBlock(session), false),
     roomStatus: host.roomStatus,

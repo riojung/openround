@@ -380,6 +380,62 @@ the standard package run. Manual assistive-technology and independent reviews re
 Live Presentation card playback is not part of this slice. No new CI jobs, participant caps, release
 promises, or partner-evidence claims are introduced.
 
+## Recovery Pack live Presentation cards — 2026-10-06
+
+New eligible Presentation sessions freeze card playback from `FEATURE_RECOVERY_PACKS`,
+`FEATURE_RECOVERY_PACK_LIVE_CARDS`, and the evidence workspace allowlist. Existing rooms default to
+ineligible. After revealing a uniquely Pack-backed main diagnostic, the host previews the frozen
+original or accepted baseline and explicitly starts an explanation or worked example. No current
+source Pack is fetched. Participants and companion projections receive only the selected active
+card's plain text and citations; future cards, probes, notes, and hidden diagnostics remain private.
+Generic intervention/advance controls remain available, and advancing clears the active card.
+A deliberately unlinked diagnostic can still use a card and then continue or finish normally.
+
+Socket commands and the new scoped-host `POST /v1/presentation-sessions/:id/command` fallback share
+the same revision fence and durable intent fingerprint. Exact acknowledgement-loss retries resolve
+before phase/card validation, including after a later advance or finish; reuse for a different
+card, intervention type, action, or revision conflicts. Host previews are not participant broadcasts,
+and a failed acknowledgement remains explicitly retryable rather than being reported as saved.
+Accepted host mutations notify connected roles even when submitted through REST. Temporary retry
+admission denials preserve the original unresolved intent. If acquiring a control pass fails, legacy
+creator-authenticated advance remains available without unsafe automatic retries; card actions stay
+disabled until the host restores the pass. Scoped sync/command rejection clears only that rejected
+stored pass and exposes explicit reacquisition, without automatically rotating other hosts' passes.
+An unresolved command survives controller replacement and pass reacquisition with only its credential
+rebound; its ID, revision, action, and card selection remain fixed. Shared startup acquisition also
+survives development-mode effect restarts without duplicate pass creation or stale-result overwrites.
+
+Migration `055_recovery_pack_presentation_live_cards.sql` expands the existing forced-RLS session,
+timeline, and command-receipt tables. Eligibility is immutable; selected aggregate references and
+receipts follow existing account export/deletion, session deletion, and retention cascades. New
+card-bearing evidence writes Presentation Report V2 with the exact Pack/version/hash/card reference
+and explanation/example type, not card bodies or learner answers in timeline metadata. Legacy and
+generic-only reports remain V1, and both versions are readable without rebuilding old evidence.
+The audit action is `presentation.session.recovery_pack_card.start` with aggregate attribution only.
+
+Disabling either Pack flag blocks eligibility in new rooms but does not interrupt enabled rooms or
+hide retained reports. Keep the live-card flag off while older Presentation servers/readers/workers
+can receive traffic; once eligible rooms or V2 reports exist, use a live-card/V2-capable rollback
+target. See the [upgrade runbook](runbooks/upgrade.md). No rollout, capacity, partner-evidence,
+independent-review, or production-readiness gate is marked complete by this source increment.
+
+Verification: `pnpm check` passes (format, Docker-context coverage, lint, typecheck, 1,421 unit/support
+tests, and every package build). All 54 PostgreSQL 17 integration tests pass separately against an
+isolated disposable database. The combined production-browser Pack suite passes 31 scenarios on
+desktop Chromium, mobile Chromium, and mobile WebKit, including ten new Presentation card runs
+with selected-only frames, reconnect, lost acknowledgements, REST broadcasts, recheck/finish,
+report attribution, revoked-pass recovery, and automated accessibility checks. All ten Presentation
+scenarios also pass in development mode; join setup waits for client preflight before entering an
+alias to avoid a pre-hydration fill race. Regression coverage also reproduces and
+fixes the mixed-writer legacy-receipt race and rejects UUID references that the shared contract
+cannot read. The consent-helper check now discovers all browser specs without a fixed suite-size
+cap. The environment-gated multi-writer test and local Firefox/manual assistive-device checks were
+not run in this increment; these results do not replace external rollout or independent reviews.
+
+Remaining Pack priorities are practice and Companion insertion, source-authoring proposals with
+content-hash-bound citation approval, and QTI/CSV exports with explicit loss reports. Delayed
+Recovery Trail and Concept Health remain subsequent incremental capabilities.
+
 ## Access/resilience provisional slice
 
 An Access/resilience implementation slice is complete in the repository provisionally, without

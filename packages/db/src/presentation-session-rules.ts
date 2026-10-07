@@ -1,4 +1,7 @@
+import { PresentationRecoveryPackInterventionSchema } from "@openround/contracts";
 import type {
+  PresentationSessionCommandInput,
+  PresentationSessionCommandReceiptRecord,
   PresentationSessionCreateInput,
   PresentationSessionRecord,
   PresentationSessionResponseRecord,
@@ -16,6 +19,16 @@ export function normalizeSession(input: PresentationSessionCreateInput): Present
     input.content.schemaVersion,
   ) as PresentationSessionRecord["content"];
   const settings = input.settings ?? { timeMode: "timed" as const };
+  const recoveryPackCardsEnabled = input.recoveryPackCardsEnabled ?? false;
+  const recoveryPackIntervention = input.recoveryPackIntervention
+    ? PresentationRecoveryPackInterventionSchema.parse(input.recoveryPackIntervention)
+    : null;
+  if (
+    recoveryPackIntervention !== null &&
+    (!recoveryPackCardsEnabled || input.phase !== "intervention" || input.status !== "active")
+  ) {
+    throw new Error("Recovery Pack attribution requires an eligible active intervention");
+  }
   let questionOpenedAt = input.questionOpenedAt ?? null;
   let questionClosesAt = input.questionClosesAt ?? null;
   if (input.phase === "question_open" && questionOpenedAt === null) {
@@ -36,10 +49,58 @@ export function normalizeSession(input: PresentationSessionCreateInput): Present
     content,
     settings,
     trustMode: input.trustMode ?? "learning",
+    recoveryPackCardsEnabled,
+    recoveryPackIntervention,
     eventSeq: input.eventSeq ?? 0,
     questionOpenedAt,
     questionClosesAt,
   };
+}
+
+export function commandReceiptMatches(
+  receipt: Pick<PresentationSessionCommandReceiptRecord, "expectedRevision" | "requestHash">,
+  input: Pick<
+    PresentationSessionCommandInput,
+    "expectedRevision" | "requestHash" | "recoveryPackIntervention"
+  >,
+) {
+  return (
+    receipt.expectedRevision === input.expectedRevision &&
+    (receipt.requestHash == null
+      ? input.recoveryPackIntervention == null
+      : receipt.requestHash === input.requestHash)
+  );
+}
+
+export function assertCommandRequestHash(
+  requestHash: PresentationSessionCommandInput["requestHash"],
+) {
+  if (requestHash != null && !/^[0-9a-f]{64}$/.test(requestHash)) {
+    throw new Error("Presentation command request hash must be a canonical SHA-256 fingerprint");
+  }
+}
+
+export function transitionRecoveryPackIntervention(input: PresentationSessionTransitionInput) {
+  const intervention = input.recoveryPackIntervention
+    ? PresentationRecoveryPackInterventionSchema.parse(input.recoveryPackIntervention)
+    : null;
+  const suppliedTimelineIntervention = input.event.recoveryPackIntervention
+    ? PresentationRecoveryPackInterventionSchema.parse(input.event.recoveryPackIntervention)
+    : null;
+  if (
+    (intervention !== null && (input.phase !== "intervention" || input.status !== "active")) ||
+    (suppliedTimelineIntervention !== null && input.event.type !== "intervention.presented")
+  ) {
+    throw new Error("Recovery Pack attribution requires an intervention transition");
+  }
+  if (
+    suppliedTimelineIntervention !== null &&
+    JSON.stringify(suppliedTimelineIntervention) !== JSON.stringify(intervention)
+  ) {
+    throw new Error("Recovery Pack timeline attribution must match the active intervention");
+  }
+  const timelineIntervention = input.event.type === "intervention.presented" ? intervention : null;
+  return { intervention, timelineIntervention };
 }
 
 export function transitionWindow(

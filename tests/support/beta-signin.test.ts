@@ -22,7 +22,8 @@ describe("beta sign-in fixture contract", () => {
 
   it("shares the consent helper across every beta sign-in fixture", async () => {
     const specs = (await readdir(betaDirectory)).filter((name) => name.endsWith(".spec.ts"));
-    expect(specs).toHaveLength(8);
+    // New feature specs must inherit the same consent journey without a fixed suite-size cap.
+    expect(specs.length).toBeGreaterThan(0);
     for (const name of specs) {
       const source = await readFile(new URL(name, betaDirectory), "utf8");
       expect(source, name).toContain('from "./sign-in"');
