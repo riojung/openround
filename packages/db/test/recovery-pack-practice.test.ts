@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   MemoryRepository,
   WorkspaceDeletionInProgressError,
+  type FollowupAttemptRecord,
   type ProductEventRecord,
 } from "../src/index.js";
 import {
@@ -10,6 +11,10 @@ import {
   expectRecoveryPackPracticeMediaLifecycle,
   packPracticeFixture,
 } from "./support/recovery-pack-practice-conformance.js";
+import {
+  expectRecoveryPackSequencePracticeConformance,
+  expectSequencePracticeExpiry,
+} from "./support/recovery-pack-sequence-practice-conformance.js";
 
 async function creator(repository: MemoryRepository) {
   const tokenHash = randomUUID();
@@ -74,6 +79,105 @@ async function expectNoCreation(
 }
 
 describe("Recovery Pack practice persistence", () => {
+  it("bounds UUID advance receipts at 256 without limiting unfenced legacy advances", async () => {
+    const repository = new MemoryRepository();
+    const owner = await creator(repository);
+    const f = await packPracticeFixture(
+      repository,
+      owner.workspaceId,
+      owner.userId,
+      undefined,
+      "full_sequence",
+    );
+    await repository.createRecoveryPackPracticeAssignment(f.pack.id, f.input, f.access, f.context);
+    const seed: FollowupAttemptRecord = {
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      followupId: f.input.id,
+      accessTokenId: null,
+      sourceParticipantId: null,
+      attemptTokenHash: randomUUID(),
+      status: "in_progress",
+      phase: "question_open",
+      currentIndex: 0,
+      version: 0,
+      timeMultiplier: 1,
+      questionOpenedAt: f.input.createdAt,
+      deadlineAt: null,
+      completedAt: null,
+      createdAt: f.input.createdAt,
+      updatedAt: f.input.createdAt,
+    };
+    for (const advanceReceipts of [
+      { "not-a-uuid": 0 },
+      { [randomUUID()]: -1 },
+      { [randomUUID()]: 0.5 },
+      Object.fromEntries(Array.from({ length: 257 }, () => [randomUUID(), 0])),
+    ]) {
+      await expect(
+        repository.createOrGetFollowupAttempt({ ...seed, advanceReceipts }),
+      ).rejects.toThrow();
+    }
+    const receipts = Object.fromEntries(Array.from({ length: 256 }, () => [randomUUID(), 0]));
+    const attempt = await repository.createOrGetFollowupAttempt({
+      ...seed,
+      advanceReceipts: receipts,
+    });
+    await expect(
+      repository.advanceFollowupAttempt({ ...attempt, version: 1 }, 0, "not-a-uuid"),
+    ).rejects.toThrow();
+    expect(
+      await repository.advanceFollowupAttempt({ ...attempt, version: 1 }, 0, randomUUID()),
+    ).toBe(false);
+    expect(
+      await repository.advanceFollowupAttempt({ ...attempt, version: 1, advanceReceipts: {} }, 0),
+    ).toBe(true);
+    expect(
+      (await repository.getFollowupAttemptByToken(
+        f.input.id,
+        seed.attemptTokenHash,
+        f.input.createdAt,
+      ))!.advanceReceipts,
+    ).toEqual(receipts);
+  });
+
+  it("freezes a full sequence, rejects source spoofing, preserves fenced receipts and cascades expiry", async () => {
+    const repository = new MemoryRepository();
+    const owner = await creator(repository);
+    const other = await creator(repository);
+    const f = await expectRecoveryPackSequencePracticeConformance(
+      repository,
+      owner.workspaceId,
+      other.workspaceId,
+      owner.userId,
+    );
+    await expectSequencePracticeExpiry(repository, f);
+  });
+
+  it("cascades frozen full-sequence receipts and answers on account deletion", async () => {
+    const repository = new MemoryRepository();
+    const owner = await creator(repository);
+    const other = await creator(repository);
+    const f = await expectRecoveryPackSequencePracticeConformance(
+      repository,
+      owner.workspaceId,
+      other.workspaceId,
+      owner.userId,
+    );
+    await repository.deleteAccount(owner.userId);
+    expect(await repository.getFollowup(owner.workspaceId, f.frozen.id)).toBeNull();
+    expect(
+      await repository.getFollowupAttemptByToken(
+        f.frozen.id,
+        f.attempt.attemptTokenHash,
+        f.input.createdAt,
+      ),
+    ).toBeNull();
+    expect(
+      await repository.getFollowupAnswerByIdempotencyKey(f.attempt.id, "diagnostic-answer"),
+    ).toBeNull();
+    expect(await repository.listMediaReferences(owner.workspaceId, f.mediaId)).toEqual([]);
+  });
   it("freezes direct Pack practice, fences current-version creation and replays concurrent/mismatched intents", async () => {
     const repository = new MemoryRepository();
     const owner = await creator(repository);

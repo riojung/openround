@@ -121,7 +121,7 @@ describe("standalone practice helpers", () => {
     };
     expect(practiceSourceDetails(pack, false)).toEqual({
       title: "Frozen Pack title",
-      label: "Recovery Pack delayed probe",
+      label: "Recovery Pack practice",
       href: "/recovery-packs",
       linkLabel: "Open Recovery Pack library",
     });

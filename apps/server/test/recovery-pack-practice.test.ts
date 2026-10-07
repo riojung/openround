@@ -12,6 +12,8 @@ import { MemorySessionCache } from "../src/cache.js";
 import { ConfigSchema } from "../src/config.js";
 import { AuthService } from "../src/auth.js";
 import { hashToken } from "../src/security.js";
+import { FollowupService } from "../src/followup-service.js";
+import { recoveryPackHash } from "../src/recovery-pack-copies.js";
 
 const apps: FastifyInstance[] = [];
 afterEach(async () => {
@@ -94,9 +96,21 @@ async function application(
   return app;
 }
 
-async function fixture(content = draft()) {
+async function fixture(content = draft(), mediaIds: string[] = []) {
   const workspaceId = randomUUID();
   const repository = new MemoryRepository({ initialWorkspaceId: workspaceId, initialPlan: "pro" });
+  for (const id of mediaIds) {
+    await repository.createMediaAsset({
+      id,
+      workspaceId,
+      objectKey: `media/${workspaceId}/${id}.png`,
+      mimeType: "image/png",
+      sizeBytes: 256,
+      scanStatus: "clean",
+      altText: "Current checkpoint illustration",
+      createdAt: new Date(),
+    });
+  }
   const app = await application(repository, workspaceId);
   const cookie = await signIn(app);
   const created = await app.inject({
@@ -606,5 +620,543 @@ describe("Recovery Pack delayed-probe practice", () => {
       (await app.inject({ method: "POST", url, headers: { cookie }, payload: input })).statusCode,
     ).toBe(402);
     expect(repository.followups.size).toBe(0);
+  });
+});
+
+describe("Recovery Pack full-sequence practice", () => {
+  async function sequenceFixture(timeMode: "flex" | "timed" = "flex", media = false) {
+    const content = draft();
+    content.diagnostic.confidence = "optional";
+    const diagnosticMedia = randomUUID();
+    const recheckMedia = randomUUID();
+    if (media) {
+      content.diagnostic.mediaId = diagnosticMedia;
+      content.diagnostic.mediaAlt = "Diagnostic illustration";
+      content.recheck.mediaId = recheckMedia;
+      content.recheck.mediaAlt = "Recheck illustration";
+    }
+    content.interventions = [
+      {
+        id: randomUUID(),
+        title: "First card",
+        body: "First frozen explanation.",
+        citations: [
+          {
+            sourceName: "Card evidence",
+            sourceDigest: "a".repeat(64),
+            locator: "p1",
+            excerpt: "First citation",
+          },
+        ],
+      },
+      { id: randomUUID(), title: "Second card", body: "Second frozen explanation.", citations: [] },
+    ];
+    content.citations = [
+      {
+        sourceName: "Global private evidence",
+        sourceDigest: "b".repeat(64),
+        locator: "p2",
+        excerpt: "Global citation",
+      },
+    ];
+    const setup = await fixture(content, media ? [diagnosticMedia, recheckMedia] : []);
+    const input = { ...setup.input, mode: "full_sequence" as const, timeMode };
+    const response = await setup.app.inject({
+      method: "POST",
+      url: setup.url,
+      headers: { cookie: setup.cookie },
+      payload: input,
+    });
+    expect(response.statusCode).toBe(201);
+    const receipt = response.json();
+    const token = new URLSearchParams(new URL(receipt.personalAccess[0].url).hash.slice(1)).get(
+      "token",
+    )!;
+    const record = setup.repository.followups.get(receipt.followup.id)!;
+    const service = new FollowupService(setup.repository);
+    const now = new Date();
+    const started = await service.start(record.id, token, undefined, now);
+    const diagnostic = record.content.questions[0]!;
+    const recheck = record.content.questions[1]!;
+    if (diagnostic.type !== "single_select" || recheck.type !== "single_select") {
+      throw new Error("Expected choice checkpoints");
+    }
+    const answer = {
+      idempotencyKey: randomUUID(),
+      questionId: diagnostic.id,
+      expectedVersion: started.snapshot.version,
+      response: {
+        kind: "choice" as const,
+        choiceIds: [diagnostic.choices.find((choice) => choice.isCorrect)!.id],
+      },
+      confidence: 2 as const,
+    };
+    return {
+      ...setup,
+      input,
+      receipt,
+      token,
+      record,
+      service,
+      now,
+      started,
+      diagnostic,
+      recheck,
+      answer,
+      diagnosticMedia,
+      recheckMedia,
+    };
+  }
+
+  it("freezes the pair and cards, delivers one stage at a time, and survives source deletion and feature pause", async () => {
+    const {
+      app,
+      repository,
+      workspaceId,
+      cookie,
+      pack,
+      version,
+      input,
+      url,
+      receipt,
+      token,
+      record,
+      service,
+      now,
+      started,
+      diagnostic,
+      recheck,
+      answer,
+      diagnosticMedia,
+      recheckMedia,
+    } = await sequenceFixture("flex", true);
+    expect(receipt.followup).toMatchObject({
+      checkpointCount: 2,
+      recoveryPackSource: { role: "full_sequence", sourceItemId: version.content.diagnostic.id },
+    });
+    expect(record.content.questions.map((question) => question.delivery)).toEqual([
+      "main",
+      "recheck",
+    ]);
+    expect(diagnostic.linkedRecheckQuestionId).toBe(recheck.id);
+    for (const [copied, role] of [
+      [diagnostic, "diagnostic"],
+      [recheck, "recheck"],
+    ] as const) {
+      const source = version.content[role];
+      expect(copied.id).not.toBe(source.id);
+      expect(copied.recoveryPackSource).toMatchObject({
+        role,
+        sourceItemId: source.id,
+        contentHash: recoveryPackHash(source),
+      });
+      if (source.type !== "single_select") throw new Error("Expected source choices");
+      expect(
+        copied.choices
+          .map((choice) => choice.id)
+          .some((id) => source.choices.some((choice) => choice.id === id)),
+      ).toBe(false);
+    }
+    expect(record.recoveryPackSequence).toEqual({
+      schemaVersion: 1,
+      interventions: version.content.interventions,
+      citations: version.content.citations,
+    });
+    expect(JSON.stringify(record.content)).not.toContain(version.content.delayedProbe!.prompt);
+    expect(started.snapshot).toMatchObject({
+      practiceMode: "full_sequence",
+      phase: "question_open",
+      questionCount: 2,
+      questionIndex: 0,
+      intervention: null,
+    });
+    for (const hidden of [
+      recheck.prompt,
+      "First frozen explanation",
+      "Second frozen explanation",
+      "Global citation",
+      "isCorrect",
+      "recoveryPackSource",
+      "packVersionId",
+      "Private probe rationale",
+    ]) {
+      expect(JSON.stringify(started.snapshot)).not.toContain(hidden);
+    }
+    await expect(service.authorizeMedia(record.id, token, diagnosticMedia, now)).resolves.toBe(
+      workspaceId,
+    );
+    await expect(service.authorizeMedia(record.id, token, recheckMedia, now)).rejects.toMatchObject(
+      { code: "NOT_FOUND" },
+    );
+    const revealed = await service.answer(record.id, token, answer, now);
+    expect(revealed).toMatchObject({ phase: "answer_reveal", correct: true, intervention: null });
+    const card0Input = { expectedVersion: revealed.version, idempotencyKey: randomUUID() };
+    const card0 = await service.advance(record.id, token, now, card0Input);
+    expect(card0).toMatchObject({
+      phase: "intervention",
+      intervention: { index: 0, count: 2, card: version.content.interventions[0] },
+    });
+    for (const field of [
+      "question",
+      "response",
+      "confidence",
+      "correct",
+      "correctResponse",
+      "explanation",
+      "feedback",
+      "deadline",
+      "questionIndex",
+    ] as const)
+      expect(card0[field]).toBeNull();
+    for (const hidden of [
+      diagnostic.prompt,
+      recheck.prompt,
+      "Second frozen explanation",
+      "Global citation",
+      "recoveryPackSource",
+      "packVersionId",
+      version.content.delayedProbe!.prompt,
+    ])
+      expect(JSON.stringify(card0)).not.toContain(hidden);
+    await expect(
+      service.authorizeMedia(record.id, token, diagnosticMedia, now),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.authorizeMedia(record.id, token, recheckMedia, now)).rejects.toMatchObject(
+      { code: "NOT_FOUND" },
+    );
+    expect(
+      (
+        await app.inject({
+          method: "DELETE",
+          url: `/v1/recovery-packs/${pack.id}`,
+          headers: { cookie },
+        })
+      ).statusCode,
+    ).toBe(204);
+    const paused = await application(repository, workspaceId, false, false);
+    const replay = await paused.inject({
+      method: "POST",
+      url,
+      headers: { cookie },
+      payload: input,
+    });
+    expect(replay.statusCode).toBe(201);
+    expect(replay.json()).toEqual(receipt);
+    const headers = { authorization: `Bearer ${token}` };
+    const current = await paused.inject({
+      method: "GET",
+      url: `/v1/followups/${record.id}/snapshot`,
+      headers,
+    });
+    expect(current.json().snapshot).toEqual(card0);
+    const second = await paused.inject({
+      method: "POST",
+      url: `/v1/followups/${record.id}/advance`,
+      headers,
+      payload: { expectedVersion: card0.version, idempotencyKey: randomUUID() },
+    });
+    expect(second.statusCode).toBe(200);
+    const card1 = second.json().snapshot;
+    expect(card1.intervention).toMatchObject({
+      index: 1,
+      card: { body: "Second frozen explanation." },
+    });
+    expect(second.body).not.toContain("First frozen explanation");
+    const opening = await paused.inject({
+      method: "POST",
+      url: `/v1/followups/${record.id}/advance`,
+      headers,
+      payload: { expectedVersion: card1.version, idempotencyKey: randomUUID() },
+    });
+    expect(opening.statusCode).toBe(200);
+    const opened = opening.json().snapshot;
+    expect(opened).toMatchObject({
+      phase: "question_open",
+      questionIndex: 1,
+      question: { id: recheck.id },
+      intervention: null,
+      correctResponse: null,
+    });
+    await expect(
+      service.authorizeMedia(record.id, token, diagnosticMedia, now),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.authorizeMedia(record.id, token, recheckMedia, now)).resolves.toBe(
+      workspaceId,
+    );
+    const recheckAnswer = await paused.inject({
+      method: "POST",
+      url: `/v1/followups/${record.id}/answers`,
+      headers,
+      payload: {
+        idempotencyKey: randomUUID(),
+        questionId: recheck.id,
+        expectedVersion: opened.version,
+        response: {
+          kind: "choice",
+          choiceIds: [recheck.choices.find((choice) => choice.isCorrect)!.id],
+        },
+      },
+    });
+    expect(recheckAnswer.statusCode).toBe(200);
+    expect(recheckAnswer.json().snapshot).toMatchObject({ phase: "answer_reveal", correct: true });
+    const completed = await paused.inject({
+      method: "POST",
+      url: `/v1/followups/${record.id}/advance`,
+      headers,
+      payload: {
+        expectedVersion: recheckAnswer.json().snapshot.version,
+        idempotencyKey: randomUUID(),
+      },
+    });
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json().snapshot).toMatchObject({
+      phase: "completed",
+      question: null,
+      intervention: null,
+      questionCount: 2,
+    });
+    const detail = await paused.inject({
+      method: "GET",
+      url: `/v1/followups/${record.id}`,
+      headers: { cookie },
+    });
+    expect(detail.json()).toMatchObject({
+      followup: { checkpointCount: 2 },
+      attemptCount: 1,
+      completedAttemptCount: 1,
+    });
+    expect(repository.followupAnswers.size).toBe(2);
+  });
+
+  it("fences sequence commands and recovers exact receipts across retries, concurrency and restarts", async () => {
+    const { app, repository, record, token, service, now, started, answer, diagnostic, recheck } =
+      await sequenceFixture();
+    await expect(
+      service.answer(
+        record.id,
+        token,
+        { idempotencyKey: randomUUID(), response: answer.response },
+        now,
+      ),
+    ).rejects.toMatchObject({ code: "ANSWER_INVALID" });
+    await expect(
+      service.answer(record.id, token, { ...answer, questionId: recheck.id }, now),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    const accepted = await Promise.all([
+      service.answer(record.id, token, answer, now),
+      service.answer(record.id, token, answer, now),
+    ]);
+    expect(accepted[0]).toEqual(accepted[1]);
+    expect(accepted[0]!.version).toBe(started.snapshot.version + 1);
+    expect(repository.followupAnswers.size).toBe(1);
+    await expect(service.advance(record.id, token, now)).rejects.toMatchObject({
+      code: "ANSWER_INVALID",
+    });
+    const advance = { expectedVersion: accepted[0]!.version, idempotencyKey: randomUUID() };
+    const advanced = await Promise.all([
+      service.advance(record.id, token, now, advance),
+      service.advance(record.id, token, now, advance),
+    ]);
+    expect(advanced[0]).toEqual(advanced[1]);
+    expect(advanced[0]!.intervention?.index).toBe(0);
+    const restarted = new FollowupService(repository);
+    const next = await restarted.advance(record.id, token, now, {
+      expectedVersion: advanced[0]!.version,
+      idempotencyKey: randomUUID(),
+    });
+    expect(next.intervention?.index).toBe(1);
+    await expect(restarted.advance(record.id, token, now, advance)).resolves.toEqual(next);
+    await expect(restarted.answer(record.id, token, answer, now)).resolves.toEqual(next);
+    await expect(
+      restarted.advance(record.id, token, now, { ...advance, expectedVersion: next.version }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      restarted.advance(record.id, token, now, {
+        expectedVersion: advance.expectedVersion,
+        idempotencyKey: randomUUID(),
+      }),
+    ).rejects.toMatchObject({ code: "STALE_VERSION" });
+    for (const changed of [
+      { ...answer, expectedVersion: next.version },
+      { ...answer, questionId: recheck.id },
+      { ...answer, confidence: 3 as const },
+      {
+        ...answer,
+        response: {
+          kind: "choice" as const,
+          choiceIds: [diagnostic.choices.find((choice) => !choice.isCorrect)!.id],
+        },
+      },
+    ])
+      await expect(restarted.answer(record.id, token, changed, now)).rejects.toMatchObject({
+        code: "CONFLICT",
+      });
+    const differentCommands = await Promise.allSettled([
+      restarted.advance(record.id, token, now, {
+        expectedVersion: next.version,
+        idempotencyKey: randomUUID(),
+      }),
+      restarted.advance(record.id, token, now, {
+        expectedVersion: next.version,
+        idempotencyKey: randomUUID(),
+      }),
+    ]);
+    expect(differentCommands.filter((item) => item.status === "fulfilled")).toHaveLength(1);
+    expect(differentCommands.filter((item) => item.status === "rejected")).toHaveLength(1);
+    const opened = await restarted.resume(record.id, token, now);
+    await expect(
+      restarted.answer(record.id, token, { ...answer, idempotencyKey: randomUUID() }, now),
+    ).rejects.toMatchObject({ code: "STALE_VERSION" });
+    expect((await restarted.resume(record.id, token, now)).version).toBe(opened.version);
+    await expect(restarted.answer(record.id, token, answer, now)).resolves.toEqual(opened);
+    const invalidAdvance = await app.inject({
+      method: "POST",
+      url: `/v1/followups/${record.id}/advance`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { expectedVersion: opened.version },
+    });
+    expect(invalidAdvance.statusCode).toBe(400);
+  });
+
+  it("keeps cards untimed and starts the accommodated recheck clock only when it opens", async () => {
+    const { repository, record, token, service, now, started, answer, recheck } =
+      await sequenceFixture("timed");
+    expect(new Date(started.snapshot.deadline!).getTime() - now.getTime()).toBe(30_000);
+    const stored = [...repository.followupAttempts.values()][0]!;
+    stored.timeMultiplier = 2;
+    const revealed = await service.answer(record.id, token, answer, now);
+    const card0 = await service.advance(record.id, token, now, {
+      expectedVersion: revealed.version,
+      idempotencyKey: randomUUID(),
+    });
+    const later = new Date(now.getTime() + 3_600_000);
+    const card1 = await service.advance(record.id, token, later, {
+      expectedVersion: card0.version,
+      idempotencyKey: randomUUID(),
+    });
+    expect(card1.deadline).toBeNull();
+    const command = { expectedVersion: card1.version, idempotencyKey: randomUUID() };
+    const opened = await service.advance(record.id, token, later, command);
+    expect(new Date(opened.deadline!).getTime() - later.getTime()).toBe(60_000);
+    const elapsed = new Date(later.getTime() + 60_001);
+    // Receipt recovery must not restart the timer or apply an incidental timeout transition.
+    await expect(service.advance(record.id, token, elapsed, command)).resolves.toEqual(opened);
+    await expect(service.answer(record.id, token, answer, elapsed)).resolves.toEqual(opened);
+    const timedOut = await service.answer(
+      record.id,
+      token,
+      {
+        idempotencyKey: randomUUID(),
+        questionId: recheck.id,
+        expectedVersion: opened.version,
+        response: { kind: "choice", choiceIds: [recheck.choices[0]!.id] },
+      },
+      elapsed,
+    );
+    expect(timedOut).toMatchObject({
+      phase: "answer_reveal",
+      response: null,
+      correct: null,
+      version: opened.version + 1,
+    });
+    expect(repository.followupAnswers.size).toBe(1);
+    const done = await service.advance(record.id, token, elapsed, {
+      expectedVersion: timedOut.version,
+      idempotencyKey: randomUUID(),
+    });
+    expect(done.phase).toBe("completed");
+  });
+
+  it("re-reads the authoritative stage when another command advances during answer receipt lookup", async () => {
+    const { repository, record, token, service, now, answer } = await sequenceFixture();
+    const revealed = await service.answer(record.id, token, answer, now);
+    const lookup = repository.getFollowupAnswerByIdempotencyKey.bind(repository);
+    vi.spyOn(repository, "getFollowupAnswerByIdempotencyKey").mockImplementationOnce(
+      async (attemptId, key) => {
+        await service.advance(record.id, token, now, {
+          expectedVersion: revealed.version,
+          idempotencyKey: randomUUID(),
+        });
+        return lookup(attemptId, key);
+      },
+    );
+    const retry = await service.answer(record.id, token, answer, now);
+    expect(retry).toMatchObject({
+      phase: "intervention",
+      version: revealed.version + 1,
+      intervention: { index: 0 },
+      question: null,
+    });
+  });
+
+  it("permits a full sequence without a delayed probe and preserves default delayed-probe receipts", async () => {
+    const content = draft();
+    content.delayedProbe = null;
+    const { app, repository, cookie, input, url } = await fixture(content);
+    const full = await app.inject({
+      method: "POST",
+      url,
+      headers: { cookie },
+      payload: { ...input, mode: "full_sequence" },
+    });
+    expect(full.statusCode).toBe(201);
+    expect(full.json().followup.checkpointCount).toBe(2);
+    const changedMode = await app.inject({
+      method: "POST",
+      url,
+      headers: { cookie },
+      payload: { ...input, mode: "delayed_probe" },
+    });
+    expect(changedMode.statusCode).toBe(409);
+    expect(repository.followups.size).toBe(1);
+    const delayed = await fixture();
+    const original = await delayed.app.inject({
+      method: "POST",
+      url: delayed.url,
+      headers: { cookie: delayed.cookie },
+      payload: delayed.input,
+    });
+    const replay = await delayed.app.inject({
+      method: "POST",
+      url: delayed.url,
+      headers: { cookie: delayed.cookie },
+      payload: { ...delayed.input, mode: "delayed_probe" },
+    });
+    expect(replay.statusCode).toBe(201);
+    expect(replay.json()).toEqual(original.json());
+    const record = delayed.repository.followups.get(original.json().followup.id)!;
+    expect(record.recoveryPackSequence).toBeNull();
+    expect(record.creationMutation!.requestHash).toBe(
+      recoveryPackHash({
+        actorId: record.createdBy,
+        packId: delayed.pack.id,
+        input: delayed.input,
+      }),
+    );
+  });
+
+  it("keeps receipt retries behind revocation, close and retention checks", async () => {
+    const { repository, record, token, service, now, answer, workspaceId } =
+      await sequenceFixture();
+    const revealed = await service.answer(record.id, token, answer, now);
+    const command = { expectedVersion: revealed.version, idempotencyKey: randomUUID() };
+    await service.advance(record.id, token, now, command);
+    await service.close(workspaceId, record.id, now);
+    await expect(service.answer(record.id, token, answer, now)).rejects.toMatchObject({
+      code: "FOLLOWUP_CLOSED",
+    });
+    await expect(service.advance(record.id, token, now, command)).rejects.toMatchObject({
+      code: "FOLLOWUP_CLOSED",
+    });
+    const access = [...repository.followupAccess.values()].find(
+      (item) => item.followupId === record.id,
+    )!;
+    await service.revokeAccess(workspaceId, record.id, access.id, now);
+    await expect(service.resume(record.id, token, now)).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    await expect(
+      service.advance(record.id, token, new Date(record.expiresAt.getTime() + 1), command),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 });

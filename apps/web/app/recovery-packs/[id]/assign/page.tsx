@@ -9,6 +9,7 @@ import {
 } from "../../../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../../../components/workspace/workspace-shell";
 import { PracticeLinkReceipt } from "../../../../components/practice/practice-link-receipt";
+import { PackPracticePreview } from "../../../../components/practice/pack-practice-preview";
 import styles from "../../../../components/practice/practice.module.css";
 import { apiFetch, humanError } from "../../../../lib/api";
 import { clientUuid } from "../../../../lib/uuid";
@@ -28,11 +29,17 @@ import {
   packPracticeUnavailableReason,
   type PackPracticeCreationState,
   type PublishedPracticePack,
+  type PackPracticeMode,
 } from "../../../../lib/recovery-pack-practice";
 
 function AssignPackPracticeContent({ packId }: { packId: string }) {
   const searchParams = useSearchParams();
   const expectedVersionId = searchParams.get("version");
+  const [mode, setMode] = useState<PackPracticeMode>(
+    searchParams.get("mode") === "full_sequence" ? "full_sequence" : "delayed_probe",
+  );
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   const { productFeatures, entitlements, canEdit } = useWorkspace();
   const [version, setVersion] = useState<PublishedPracticePack | null>(null);
   const [loading, setLoading] = useState(true);
@@ -89,7 +96,7 @@ function AssignPackPracticeContent({ packId }: { packId: string }) {
         if (!pack.currentVersionId) return null;
         if (!refresh && expectedVersionId && pack.currentVersionId !== expectedVersionId) {
           throw new Error(
-            "The published Pack changed. Refresh the published source and review its delayed probe before creating practice.",
+            "The published Pack changed. Refresh the published source and review the selected practice content before creating practice.",
           );
         }
         const response = await apiFetch<{ version: PublishedPracticePack }>(
@@ -106,7 +113,14 @@ function AssignPackPracticeContent({ packId }: { packId: string }) {
         if (abort.signal.aborted) return;
         setVersion(published);
         setSourceConflict(false);
-        setTitle(published ? `Delayed probe: ${published.content.title}`.slice(0, 160) : "");
+        setTitle(
+          published
+            ? `${modeRef.current === "full_sequence" ? "Pack sequence" : "Delayed probe"}: ${published.content.title}`.slice(
+                0,
+                160,
+              )
+            : "",
+        );
       })
       .catch((caught) => {
         if (abort.signal.aborted) return;
@@ -136,6 +150,7 @@ function AssignPackPracticeContent({ packId }: { packId: string }) {
     practiceAssignmentsEnabled: productFeatures?.practiceAssignments === true,
     canEdit,
     followups: entitlements?.followups === true,
+    mode,
   });
   const personalLabels = parsePersonalLabels(labelsText);
   const labelLimit = practicePersonalLinkLimit(entitlements);
@@ -149,6 +164,7 @@ function AssignPackPracticeContent({ packId }: { packId: string }) {
     try {
       const dates = packPracticeDates({ opensLater, opensAt, closesAt, maxClosesAt });
       await recovery.current!.run(() => ({
+        mode,
         sourcePackVersionId: version.id,
         mutationId: clientUuid(),
         accessSeed: packPracticeAccessSeed(),
@@ -180,10 +196,16 @@ function AssignPackPracticeContent({ packId }: { packId: string }) {
 
   return (
     <WorkspaceShell
-      title="Assign delayed-probe practice"
+      title={
+        mode === "full_sequence" ? "Assign full-sequence practice" : "Assign delayed-probe practice"
+      }
       eyebrow="Recovery Packs"
       requireBeta={false}
-      description="One standalone delayed probe from a frozen published Recovery Pack version."
+      description={
+        mode === "full_sequence"
+          ? "A frozen diagnostic, intervention cards, and linked recheck."
+          : "One standalone delayed probe from a frozen published Recovery Pack version."
+      }
       actions={
         <Link className="button-quiet" href="/recovery-packs">
           Back to Recovery Packs
@@ -196,10 +218,45 @@ function AssignPackPracticeContent({ packId }: { packId: string }) {
         ) : (
           <>
             <p className="notice">
-              This assignment contains only the Pack’s delayed probe. It is not full Pack recovery
-              or a delayed recovery trail, and does not include the diagnostic, intervention cards,
-              or recheck.
+              {mode === "full_sequence" ? (
+                "This assignment contains the Pack’s diagnostic, all intervention cards in order, and linked recheck. It does not include the optional delayed probe or a delayed recovery trail. Later source changes do not update this frozen sequence."
+              ) : (
+                <>
+                  This assignment contains only the Pack’s delayed probe. It is not full Pack
+                  recovery or a delayed recovery trail, and does not include the diagnostic,
+                  intervention cards, or recheck.
+                </>
+              )}
             </p>
+            <fieldset disabled={locked} className={styles.formCard}>
+              <legend>Practice mode</legend>
+              <label className="field" htmlFor="pack-practice-mode">
+                <span>Recovery Pack practice mode</span>
+                <select
+                  className="select"
+                  id="pack-practice-mode"
+                  value={mode}
+                  onChange={(event) => {
+                    const nextMode = event.target.value as PackPracticeMode;
+                    if (
+                      version &&
+                      (title === `Delayed probe: ${version.content.title}`.slice(0, 160) ||
+                        title === `Pack sequence: ${version.content.title}`.slice(0, 160))
+                    )
+                      setTitle(
+                        `${nextMode === "full_sequence" ? "Pack sequence" : "Delayed probe"}: ${version.content.title}`.slice(
+                          0,
+                          160,
+                        ),
+                      );
+                    setMode(nextMode);
+                  }}
+                >
+                  <option value="delayed_probe">Standalone delayed probe</option>
+                  <option value="full_sequence">Full sequence: diagnostic, cards, recheck</option>
+                </select>
+              </label>
+            </fieldset>
             {error ? (
               <p className="error" role="alert" ref={errorRef} tabIndex={-1}>
                 {error}
@@ -222,7 +279,13 @@ function AssignPackPracticeContent({ packId }: { packId: string }) {
                 Retry assignment acknowledgement
               </button>
             ) : null}
-            {loading ? <p role="status">Loading the published delayed probe…</p> : null}
+            {loading ? (
+              <p role="status">
+                {mode === "full_sequence"
+                  ? "Loading the frozen published sequence…"
+                  : "Loading the published delayed probe…"}
+              </p>
+            ) : null}
             {!loading && unavailable ? <p className="notice">{unavailable}</p> : null}
             {sourceConflict && !locked ? (
               <button
@@ -244,13 +307,7 @@ function AssignPackPracticeContent({ packId }: { packId: string }) {
                   </p>
                   <h2 id="pack-practice-source-heading">{version.content.title}</h2>
                   <p>Published {new Date(version.publishedAt).toLocaleString("en-CA")}.</p>
-                  {version.content.delayedProbe ? (
-                    <p>{version.content.delayedProbe.prompt}</p>
-                  ) : null}
-                  <p>
-                    Only this published delayed probe is copied. Draft edits and future Pack changes
-                    do not update the assignment.
-                  </p>
+                  <PackPracticePreview version={version} mode={mode} />
                 </section>
                 {!unavailable && !sourceConflict ? (
                   <form className={styles.formCard} onSubmit={create}>
@@ -298,8 +355,10 @@ function AssignPackPracticeContent({ packId }: { packId: string }) {
                                 type="radio"
                               />
                               <span>
-                                <strong>Use the published timer</strong>The server enforces the
-                                delayed probe’s published time limit.
+                                <strong>Use the published timer</strong>
+                                {mode === "full_sequence"
+                                  ? "The server enforces each checkpoint’s published time limit when it opens. Intervention cards have no countdown."
+                                  : "The server enforces the delayed probe’s published time limit."}
                               </span>
                             </label>
                           </div>
@@ -394,7 +453,11 @@ function AssignPackPracticeContent({ packId }: { packId: string }) {
                           disabled={Boolean(labelError) || !maxClosesAt}
                           type="submit"
                         >
-                          {creation.busy ? "Creating…" : "Create delayed-probe practice"}
+                          {creation.busy
+                            ? "Creating…"
+                            : mode === "full_sequence"
+                              ? "Create full-sequence practice"
+                              : "Create delayed-probe practice"}
                         </button>
                       </div>
                     </fieldset>

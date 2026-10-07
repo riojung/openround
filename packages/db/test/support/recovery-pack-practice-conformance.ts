@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import {
   RecoveryPackContentSchema,
+  RecoveryPackPracticeSequenceSchema,
   recoveryPackContentHash,
   type RecoveryPackContent,
 } from "@openround/contracts";
@@ -91,22 +92,85 @@ export function packPracticeInput(
   return { input, access };
 }
 
+export function packSequencePracticeInput(
+  workspaceId: string,
+  editorId: string,
+  version: RecoveryPackVersionRecord,
+) {
+  const { input, access } = packPracticeInput(workspaceId, editorId, version);
+  const ids = [randomUUID(), randomUUID()];
+  input.content.questions = (["diagnostic", "recheck"] as const).map((role, index) => {
+    const source = version.content[role];
+    const copied = structuredClone(source);
+    copied.id = ids[index]!;
+    copied.delivery = index === 0 ? "main" : "recheck";
+    copied.linkedRecheckQuestionId = index === 0 ? ids[1]! : null;
+    if ("choices" in copied)
+      copied.choices = copied.choices.map((choice) => ({ ...choice, id: randomUUID() }));
+    copied.recoveryPackSource = {
+      artifactType: "recovery_pack",
+      packId: version.packId,
+      packVersionId: version.id,
+      packVersion: version.version,
+      sourceItemId: source.id,
+      role,
+      contentHash: hash(source),
+    };
+    return copied;
+  });
+  input.recoveryPackSource = {
+    ...input.recoveryPackSource!,
+    sourceItemId: version.content.diagnostic.id,
+    role: "full_sequence",
+  };
+  input.recoveryPackSequence = RecoveryPackPracticeSequenceSchema.parse({
+    schemaVersion: 1,
+    interventions: version.content.interventions,
+    citations: version.content.citations,
+  });
+  return { input, access };
+}
+
 export async function packPracticeFixture(
   repository: Repository,
   workspaceId: string,
   editorId: string,
   mediaId?: string,
+  mode: "delayed_probe" | "full_sequence" = "delayed_probe",
 ) {
   const packs = createRecoveryPackRepository(repository);
   const draft = recoveryPackDraft();
-  draft.delayedProbe = {
-    ...draft.diagnostic,
-    id: randomUUID(),
-    prompt: "Compare a different fraction pair after practice",
-    linkedRecheckQuestionId: null,
-    mediaId: mediaId ?? null,
-    mediaAlt: mediaId ? "Delayed fraction diagram" : null,
-  };
+  if (mode === "full_sequence") {
+    draft.diagnostic.mediaId = mediaId ?? null;
+    draft.diagnostic.mediaAlt = mediaId ? "Diagnostic fraction diagram" : null;
+    draft.recheck.mediaId = mediaId ?? null;
+    draft.recheck.mediaAlt = mediaId ? "Recheck fraction diagram" : null;
+    const citation = {
+      sourceName: "Fraction source",
+      sourceDigest: "c".repeat(64),
+      locator: "page 1",
+      excerpt: "Compare the same unit.",
+    };
+    draft.citations = [citation];
+    draft.interventions[0]!.citations = [citation];
+    draft.interventions.push({
+      id: randomUUID(),
+      title: "Try another example",
+      body: "Use the same denominator again.",
+      citations: [],
+    });
+  }
+  draft.delayedProbe =
+    mode === "full_sequence"
+      ? null
+      : {
+          ...draft.diagnostic,
+          id: randomUUID(),
+          prompt: "Compare a different fraction pair after practice",
+          linkedRecheckQuestionId: null,
+          mediaId: mediaId ?? null,
+          mediaAlt: mediaId ? "Delayed fraction diagram" : null,
+        };
   const content = RecoveryPackContentSchema.parse(draft);
   const pack = await packs.createRecoveryPack(recoveryPackRecord(workspaceId, editorId, content));
   const publish = async (next: RecoveryPackContent, revision: number) =>
@@ -131,7 +195,11 @@ export async function packPracticeFixture(
     content,
     publish,
     context: { requestId: randomUUID(), segment: "education" as const },
-    ...packPracticeInput(workspaceId, editorId, version),
+    ...(mode === "full_sequence" ? packSequencePracticeInput : packPracticeInput)(
+      workspaceId,
+      editorId,
+      version,
+    ),
   };
 }
 

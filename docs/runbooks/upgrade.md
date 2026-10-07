@@ -19,7 +19,7 @@
 ## Recent content, report, and deletion upgrades
 
 The current feature code includes migrations through
-`055_recovery_pack_presentation_live_cards.sql`. Apply the complete ordered migration set with the restricted
+`057_recovery_pack_sequence_practice.sql`. Apply the complete ordered migration set with the restricted
 one-shot migration job before starting the new server; do not grant the runtime role ownership or
 direct mutation privileges on published Presentation versions.
 
@@ -187,6 +187,41 @@ passes must not be included in the original private receipt. Check frozen histor
 access after source deletion, account export/delete, assignment expiry, and reference cleanup.
 Generic and personal practice evidence must not be presented as paired source recovery. These checks
 do not replace external rollout, accessibility, or security review.
+
+### Full-sequence Recovery Pack practice compatibility
+
+Apply migration 057 before starting sequence-capable writers. It expands the existing forced-RLS
+follow-up tables with nullable immutable card/citation context, an intervention stage/index,
+bounded Continue receipts, and optional submitted-answer version fences. Existing assignments
+keep their content and delayed-probe behavior; omitted creation mode still means `delayed_probe`.
+The new `full_sequence` mode copies only the diagnostic and linked recheck, with fresh checkpoint
+and choice IDs, plus frozen intervention cards. It does not append the optional delayed probe.
+
+Keep at least one Pack/practice creation gate off while any older web/server/worker reader can
+receive traffic. Deploy the complete sequence-aware image set before creating full-sequence
+assignments in allowlisted workspaces. Once such assignments exist, use only a sequence-capable
+rollback target; disabling a gate preserves existing delivery and cannot make an older reader
+understand the new stage. Keep migration 057 and never rewrite frozen content to downgrade it.
+
+Full-sequence answers require the current question ID and expected attempt version; Continue
+requires the expected version and a stable UUID command key. Exact accepted retries resolve before
+stale-state/phase rejection and return the current authoritative snapshot without another transition.
+Changed intent conflicts. Legacy clients may still omit these fences for older assignment modes;
+new clients send them for all modes. Delayed-probe creation receipts continue to use the original
+mode-free intent hash, so deployment does not invalidate a previously accepted private link receipt.
+A stale-state denial triggers an authoritative snapshot refresh. If refresh fails, participant
+controls stay disabled with an explicit **Retry practice sync** action; retrying sync sends no new
+answer or Continue command. An ambiguous transport failure instead retries the exact original intent.
+
+Rehearse reload/restart during diagnostic, reveal, every card, recheck, and completion; lost answer
+and Continue acknowledgements; duplicate/concurrent commands; same-key changed intent; and stale
+question/version submission. Confirm that a participant receives only the active card and its
+citations, without a countdown, other cards, recheck keys, or source metadata. The timed recheck's
+deadline starts when it opens, not while cards are being read. Check current-question-only media,
+Pack publication/deletion, flag pauses, personal-pass revocation, account export/delete, assignment
+purge, and copied-media retention. Also run a legacy assignment with more than sixteen checkpoints
+to verify bounded receipts do not truncate ordinary practice. These checks make no paired-source,
+causal-learning, demand, or production-readiness claim.
 
 ## Presentation concurrent-response rollout
 

@@ -27,6 +27,26 @@ afterEach(async () => {
 });
 
 describe("database migration discovery", () => {
+  it("adds bounded sequence state and durable fences to the existing forced-RLS followup parents", async () => {
+    const directory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migration = (await discoverMigrations(directory)).find(({ version }) => version === 57)!;
+    expect(migration.name).toBe("recovery_pack_sequence_practice");
+    expect(migration.sql).toContain("recovery_pack_sequence jsonb");
+    expect(migration.sql).toContain("intervention_index integer");
+    expect(migration.sql).toContain("advance_receipts jsonb NOT NULL DEFAULT '{}'::jsonb");
+    expect(migration.sql).toContain("submitted_version integer");
+    expect(migration.sql).toContain("entry_count > 256");
+    expect(migration.sql).toContain(
+      "NEW.recovery_pack_sequence IS DISTINCT FROM OLD.recovery_pack_sequence",
+    );
+    expect(migration.sql).toContain(
+      "openround_recovery_pack_question_body(copied) = openround_recovery_pack_question_body(original)",
+    );
+    expect(migration.sql).toContain("version.id = pack.current_version_id");
+    expect(migration.sql).not.toContain("CREATE TABLE");
+    expect(migration.sql).not.toContain("DISABLE ROW LEVEL SECURITY");
+    expect(migration.sql).not.toContain("REFERENCES recovery_pack");
+  });
   it("expands frozen Pack practice on existing forced-RLS followup and media tables", async () => {
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const migration = (await discoverMigrations(migrationsDirectory)).find(

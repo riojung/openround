@@ -296,9 +296,10 @@ function PracticeManagementContent() {
             <p>Source version published {formatDate(detail.context.publishedAt)}.</p>
             {isPackPractice ? (
               <p>
-                Frozen Recovery Pack delayed probe. This is one standalone checkpoint, not full Pack
-                recovery or a delayed recovery trail. Source edits or deletion do not change this
-                practice.
+                {detail.followup.recoveryPackSource?.role === "full_sequence"
+                  ? "Frozen Recovery Pack full sequence: diagnostic, intervention cards, and linked recheck. It does not include the optional delayed probe or a delayed recovery trail."
+                  : "Frozen Recovery Pack delayed probe. This is one standalone checkpoint, not full Pack recovery or a delayed recovery trail."}{" "}
+                Source edits or deletion do not change this practice.
               </p>
             ) : null}
             {detail.followup.purpose === "assignment" && !assignmentAccessEnabled ? (

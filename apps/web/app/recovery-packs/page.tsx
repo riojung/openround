@@ -353,8 +353,10 @@ function PackLibrary() {
           eligible new Round or Presentation sessions when enabled for the workspace. The
           facilitator explicitly selects a card after revealing the Pack diagnostic. Standalone
           delayed-probe practice is available from a published Pack with a delayed probe when Pack
-          authoring and practice assignments are enabled and the workspace has Pro follow-ups. Full
-          Pack practice, delayed recovery trails, and Companion insertion are not available.
+          authoring and practice assignments are enabled and the workspace has Pro follow-ups.
+          Full-sequence practice uses the frozen diagnostic, intervention cards, and linked recheck
+          under the same gates, without requiring a delayed probe. Delayed recovery trails and
+          Companion insertion are not available.
         </p>
         {!enabled ? (
           <p className="notice">
@@ -816,6 +818,21 @@ function PackLibrary() {
                   practiceAssignmentsEnabled={productFeatures?.practiceAssignments === true}
                   followups={entitlements?.followups === true}
                   canEdit={canEdit}
+                />
+                <PackPracticeAction
+                  packId={selected.id}
+                  version={
+                    publishedPracticePack?.id === selected.currentVersionId
+                      ? publishedPracticePack
+                      : null
+                  }
+                  loading={practiceSourceLoading}
+                  loadError={practiceSourceError}
+                  recoveryPacksEnabled={enabled}
+                  practiceAssignmentsEnabled={productFeatures?.practiceAssignments === true}
+                  followups={entitlements?.followups === true}
+                  canEdit={canEdit}
+                  mode="full_sequence"
                 />
                 <section className={styles.subsection} aria-label="Draft history">
                   <h3>Draft history</h3>

@@ -8,6 +8,7 @@ import {
 import { PackPracticeAction } from "./pack-practice-action";
 import { PackPracticeAttribution } from "./pack-practice-attribution";
 import { PracticeLinkReceipt } from "./practice-link-receipt";
+import { PackPracticePreview } from "./pack-practice-preview";
 
 describe("Recovery Pack practice presentation", () => {
   const gates = {
@@ -56,6 +57,43 @@ describe("Recovery Pack practice presentation", () => {
     expect(markup).not.toContain("accessSeed");
     expect(markup).not.toContain("Diagnostic only");
     expect(markup).not.toContain("Facilitator guidance");
+  });
+  it("offers full sequence without a probe and shows frozen readonly diagnostic/cards/recheck only", () => {
+    const version = publishedPracticePack(false);
+    const action = renderToStaticMarkup(
+      <PackPracticeAction
+        packId={packPracticeIds.pack}
+        version={version}
+        mode="full_sequence"
+        {...gates}
+      />,
+    );
+    expect(action).toContain("Assign full-sequence practice");
+    expect(action).toContain("mode=full_sequence");
+    expect(action).not.toContain('disabled=""');
+    const preview = renderToStaticMarkup(
+      <PackPracticePreview version={version} mode="full_sequence" />,
+    );
+    expect(preview).toContain("Diagnostic only");
+    expect(preview).toContain("Facilitator guidance");
+    expect(preview).toContain("Recheck only");
+    expect(preview).toContain("min-width:0;overflow-wrap:anywhere");
+    expect(preview).not.toContain("Delayed transfer probe");
+    expect(preview).not.toContain("correctValue");
+    expect(preview).not.toContain("<input");
+    expect(preview).not.toContain("<textarea");
+  });
+  it("distinguishes full-sequence receipts and attribution from delayed-probe practice", () => {
+    const created = createdPackPractice();
+    created.followup.recoveryPackSource!.role = "full_sequence";
+    const markup = renderToStaticMarkup(<PracticeLinkReceipt created={created} />);
+    expect(markup).toContain("frozen diagnostic, intervention cards, and linked recheck");
+    expect(markup).not.toContain("one frozen delayed probe");
+    expect(
+      renderToStaticMarkup(
+        <PackPracticeAttribution source={created.followup.recoveryPackSource} />,
+      ),
+    ).toContain("Recovery Pack full sequence");
   });
 
   it("renders frozen Pack history context and a library link without source bodies or answers", () => {

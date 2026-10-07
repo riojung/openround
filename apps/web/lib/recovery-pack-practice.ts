@@ -10,6 +10,7 @@ export interface PublishedPracticePack {
 }
 
 export interface PackPracticeAssignmentInput {
+  mode?: PackPracticeMode;
   sourcePackVersionId: string;
   mutationId: string;
   accessSeed: string;
@@ -20,8 +21,14 @@ export interface PackPracticeAssignmentInput {
   personalLabels: string[];
 }
 
-export function packPracticeAssignmentHref(packId: string, versionId: string) {
-  return `/recovery-packs/${encodeURIComponent(packId)}/assign?version=${encodeURIComponent(versionId)}`;
+export type PackPracticeMode = "delayed_probe" | "full_sequence";
+
+export function packPracticeAssignmentHref(
+  packId: string,
+  versionId: string,
+  mode: PackPracticeMode = "delayed_probe",
+) {
+  return `/recovery-packs/${encodeURIComponent(packId)}/assign?version=${encodeURIComponent(versionId)}${mode === "full_sequence" ? "&mode=full_sequence" : ""}`;
 }
 
 export function packPracticeUnavailableReason({
@@ -30,20 +37,25 @@ export function packPracticeUnavailableReason({
   practiceAssignmentsEnabled,
   canEdit,
   followups,
+  mode = "delayed_probe",
 }: {
   version: PublishedPracticePack | null;
   recoveryPacksEnabled: boolean;
   practiceAssignmentsEnabled: boolean;
   canEdit: boolean;
   followups: boolean;
+  mode?: PackPracticeMode;
 }) {
-  if (!version) return "Publish a Recovery Pack version before assigning its delayed probe.";
-  if (!version.content.delayedProbe)
+  if (!version)
+    return mode === "full_sequence"
+      ? "Publish a Recovery Pack version before assigning its sequence."
+      : "Publish a Recovery Pack version before assigning its delayed probe.";
+  if (mode === "delayed_probe" && !version.content.delayedProbe)
     return "This published Pack has no delayed probe. Its diagnostic and recheck are not substitutes.";
   if (!recoveryPacksEnabled || !practiceAssignmentsEnabled)
-    return "New Pack delayed-probe assignments are paused for this workspace. Existing practice remains readable.";
+    return "New Pack practice assignments are paused for this workspace. Existing practice remains readable.";
   if (!canEdit) return "An owner or editor must create the practice assignment.";
-  if (!followups) return "Creating delayed-probe practice assignments requires Pro.";
+  if (!followups) return "Creating Recovery Pack practice assignments requires Pro.";
   return null;
 }
 

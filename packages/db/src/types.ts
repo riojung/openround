@@ -16,6 +16,7 @@ import type {
   QuestionHealthRevisionChange,
   QuizDraft,
   RecoveryPackPracticeSource,
+  RecoveryPackPracticeSequence,
   Report,
   ResponsePayload,
   SessionDecisionEvent,
@@ -430,6 +431,7 @@ interface FollowupRecordBase {
   trustMode?: TrustMode;
   sourceQuizVersionId: string | null;
   recoveryPackSource?: RecoveryPackPracticeSource | null;
+  recoveryPackSequence?: RecoveryPackPracticeSequence | null;
   /** Internal creation receipt; never contains access seeds or plaintext credentials. */
   creationMutation?: { mutationId: string; requestHash: string } | null;
   title: string;
@@ -484,7 +486,9 @@ export interface FollowupAttemptRecord {
   sourceParticipantId: string | null;
   attemptTokenHash: string;
   status: "in_progress" | "completed";
-  phase: "question_open" | "answer_reveal" | "completed";
+  phase: "question_open" | "answer_reveal" | "intervention" | "completed";
+  interventionIndex?: number | null;
+  advanceReceipts?: Record<string, number>;
   currentIndex: number;
   version: number;
   timeMultiplier: TimeMultiplier;
@@ -505,6 +509,7 @@ export interface FollowupAnswerRecord {
   confidence: ConfidenceValue | null;
   correct: boolean | null;
   idempotencyKey: string;
+  submittedVersion?: number | null;
   acceptedAt: Date;
 }
 
@@ -1574,12 +1579,20 @@ export interface Repository {
     now: Date,
   ): Promise<FollowupAttemptRecord | null>;
   getFollowupAnswer(attemptId: string, checkpointId: string): Promise<FollowupAnswerRecord | null>;
+  getFollowupAnswerByIdempotencyKey(
+    attemptId: string,
+    key: string,
+  ): Promise<FollowupAnswerRecord | null>;
   commitFollowupAnswer(
     attempt: FollowupAttemptRecord,
     answer: FollowupAnswerRecord,
     expectedVersion: number,
   ): Promise<FollowupAnswerRecord>;
-  advanceFollowupAttempt(attempt: FollowupAttemptRecord, expectedVersion: number): Promise<boolean>;
+  advanceFollowupAttempt(
+    attempt: FollowupAttemptRecord,
+    expectedVersion: number,
+    idempotencyKey?: string,
+  ): Promise<boolean>;
   createAuthoringJob(input: AuthoringJobRecord): Promise<AuthoringJobRecord>;
   createAuthoringJobWithinLimit(
     input: AuthoringJobRecord,

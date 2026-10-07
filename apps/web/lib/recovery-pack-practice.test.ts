@@ -37,6 +37,13 @@ describe("Pack delayed-probe assignment foundations", () => {
     };
     expect(packPracticeUnavailableReason(options)).toBeNull();
     expect(
+      packPracticeUnavailableReason({
+        ...options,
+        version: publishedPracticePack(false),
+        mode: "full_sequence",
+      }),
+    ).toBeNull();
+    expect(
       packPracticeUnavailableReason({ ...options, version: publishedPracticePack(false) }),
     ).toContain("diagnostic and recheck are not substitutes");
     expect(packPracticeUnavailableReason({ ...options, version: null })).toContain("Publish");

@@ -12,6 +12,7 @@ import {
   type QuizDraft,
   type Report,
   RecoveryPackContentSchema,
+  QuestionSchema,
   recoveryPackContentHash,
 } from "@openround/contracts";
 import {
@@ -71,6 +72,10 @@ import {
   expectRecoveryPackPracticeMediaLifecycle,
   packPracticeFixture,
 } from "./support/recovery-pack-practice-conformance.js";
+import {
+  expectRecoveryPackSequencePracticeConformance,
+  expectSequencePracticeExpiry,
+} from "./support/recovery-pack-sequence-practice-conformance.js";
 
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
 const runtimeUrl = process.env.TEST_DATABASE_URL;
@@ -1046,6 +1051,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 54, name: "recovery_pack_presentation_undo" },
       { version: 55, name: "recovery_pack_presentation_live_cards" },
       { version: 56, name: "recovery_pack_practice" },
+      { version: 57, name: "recovery_pack_sequence_practice" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -1437,6 +1443,182 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     }
     // Do not leave a short-lived fixture for later global retention-count assertions.
     await repository.deleteAccount(owner.userId);
+  });
+
+  it("persists a frozen full sequence and authoritative advance receipts across restart and expiry", async () => {
+    const owner = await creator("pack-sequence");
+    const other = await creator("pack-sequence-other");
+    const f = await expectRecoveryPackSequencePracticeConformance(
+      repository,
+      owner.workspaceId,
+      other.workspaceId,
+      owner.userId,
+    );
+    const restarted = new PostgresRepository(runtimeUrl!);
+    try {
+      expect(
+        (await restarted.getFollowup(owner.workspaceId, f.frozen.id))!.recoveryPackSequence,
+      ).toEqual(f.input.recoveryPackSequence);
+      expect(
+        await restarted.getFollowupAttemptByToken(
+          f.frozen.id,
+          f.attempt.attemptTokenHash,
+          f.input.createdAt,
+        ),
+      ).toMatchObject({
+        phase: "completed",
+        interventionIndex: null,
+        advanceReceipts: f.receipts,
+      });
+      expect(
+        await restarted.getFollowupAnswerByIdempotencyKey(f.attempt.id, "diagnostic-answer"),
+      ).toMatchObject({
+        id: f.diagnosticAnswer.id,
+        submittedVersion: 0,
+      });
+      expect(
+        (
+          await packPracticeScoped(other.workspaceId, (client) =>
+            client.query(
+              "SELECT id FROM followups WHERE id = $1 UNION ALL SELECT id FROM followup_attempts WHERE id = $2 UNION ALL SELECT id FROM followup_answers WHERE id = $3",
+              [f.frozen.id, f.attempt.id, f.diagnosticAnswer.id],
+            ),
+          )
+        ).rows,
+      ).toEqual([]);
+      await expect(
+        packPracticeScoped(owner.workspaceId, (client) =>
+          client.query(
+            "UPDATE followups SET recovery_pack_sequence = jsonb_set(recovery_pack_sequence, '{interventions,0,body}', '\"Changed after delivery\"'::jsonb) WHERE id = $1",
+            [f.frozen.id],
+          ),
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        packPracticeScoped(owner.workspaceId, (client) =>
+          client.query(
+            "UPDATE followup_attempts SET advance_receipts = '{}'::jsonb WHERE id = $1",
+            [f.attempt.id],
+          ),
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await expectSequencePracticeExpiry(restarted, f);
+    } finally {
+      await restarted.close();
+      await repository.deleteAccount(owner.userId);
+    }
+  });
+
+  it("rejects SQL-level Pack sequence source spoofing and serializes canonical source hashes", async () => {
+    const owner = await creator("pack-sequence-sql");
+    const f = await packPracticeFixture(
+      repository,
+      owner.workspaceId,
+      owner.userId,
+      undefined,
+      "full_sequence",
+    );
+    try {
+      const canonical = QuestionSchema.parse({
+        ...f.version.content.diagnostic,
+        recoveryPackSource: {
+          artifactType: "recovery_pack",
+          packId: randomUUID(),
+          packVersionId: randomUUID(),
+          packVersion: 1,
+          sourceItemId: randomUUID(),
+          role: "diagnostic",
+          contentHash: "a".repeat(64),
+        },
+      });
+      const choiceQuestion = QuestionSchema.parse({
+        ...f.version.content.diagnostic,
+        type: "single_select",
+        prompt: 'Compare "½" and ¼ — which is larger?\nUse the same unit.',
+        sourceCitations: [
+          {
+            sourceName: "Fraction reference",
+            sourceDigest: "a".repeat(64),
+            locator: "page 2",
+            excerpt: "½ is larger than ¼.",
+          },
+        ],
+        choices: [
+          {
+            id: randomUUID(),
+            label: "½",
+            isCorrect: true,
+            feedback: "A half is larger.",
+            misconceptionKey: null,
+          },
+          {
+            id: randomUUID(),
+            label: "¼",
+            isCorrect: false,
+            feedback: "Compare equal units.",
+            misconceptionKey: "fractions.denominator-size",
+          },
+        ],
+      });
+      for (const question of [canonical, choiceQuestion]) {
+        const serialized = await packPracticeScoped(owner.workspaceId, (client) =>
+          client.query<{ serialized: string }>(
+            "SELECT openround_recovery_pack_question_json($1::jsonb) AS serialized",
+            [JSON.stringify(question)],
+          ),
+        );
+        expect(serialized.rows[0]!.serialized).toBe(JSON.stringify(question));
+      }
+      for (const change of [
+        "prompt",
+        "sourceHash",
+        "cards",
+        "citations",
+        "unknownCardField",
+        "unknownCitationField",
+      ] as const) {
+        const spoofed = structuredClone(f.input);
+        if (change === "prompt")
+          spoofed.content.questions[0]!.prompt = "Unrelated question under a valid source";
+        if (change === "sourceHash")
+          spoofed.content.questions[0]!.recoveryPackSource!.contentHash = "b".repeat(64);
+        if (change === "cards")
+          spoofed.recoveryPackSequence!.interventions[0]!.body = "Not the published card";
+        if (change === "citations")
+          spoofed.recoveryPackSequence!.citations[0]!.excerpt = "Not the published citation";
+        if (change === "unknownCardField")
+          Object.assign(spoofed.recoveryPackSequence!.interventions[0]!, { privateField: "extra" });
+        if (change === "unknownCitationField")
+          Object.assign(spoofed.recoveryPackSequence!.citations[0]!, { privateField: "extra" });
+        await expect(
+          packPracticeScoped(owner.workspaceId, (client) =>
+            client.query(
+              `INSERT INTO followups (id,workspace_id,purpose,source_quiz_version_id,title,content,concept_keys,time_mode,
+            generic_token_hash,opens_at,closes_at,expires_at,created_by,created_at,recovery_pack_source,
+            creation_mutation_id,creation_request_hash,recovery_pack_sequence)
+           VALUES ($1,$2,'assignment',NULL,$3,$4::jsonb,'{}','flex',$5,$6,$7,$8,$9,$6,$10::jsonb,$11,$12,$13::jsonb)`,
+              [
+                randomUUID(),
+                owner.workspaceId,
+                spoofed.title,
+                JSON.stringify(spoofed.content),
+                randomUUID(),
+                spoofed.opensAt,
+                spoofed.closesAt,
+                spoofed.expiresAt,
+                owner.userId,
+                JSON.stringify(spoofed.recoveryPackSource),
+                randomUUID(),
+                spoofed.creationMutation!.requestHash,
+                JSON.stringify(spoofed.recoveryPackSequence),
+              ],
+            ),
+          ),
+        ).rejects.toMatchObject({ code: "23514" });
+      }
+    } finally {
+      await repository.deleteAccount(owner.userId);
+    }
   });
 
   it.each(["audit_events", "product_events"] as const)(

@@ -92,6 +92,7 @@ import {
 } from "./recovery-packs.js";
 import {
   assertRecoveryPackPracticeInput,
+  assertFollowupAdvanceReceipts,
   matchRecoveryPackPracticeReceipt,
   recoveryPackPracticeSourceMatches,
   recoveryPackPracticeCreationEvidence,
@@ -3857,6 +3858,8 @@ export class MemoryRepository implements Repository {
   }
 
   private storeFollowup(input: FollowupRecord, access: FollowupAccessRecord[]) {
+    if (!input.recoveryPackSource && input.recoveryPackSequence != null)
+      throw new TypeError("Only full-sequence Pack practice can contain interventions");
     if (this.followups.has(input.id)) throw new Error("Follow-up already exists");
     if (
       [...this.followups.values()].some((item) => item.genericTokenHash === input.genericTokenHash)
@@ -4274,8 +4277,60 @@ export class MemoryRepository implements Repository {
       );
       if (byAccess) return structuredClone(byAccess);
     }
-    this.followupAttempts.set(input.attemptTokenHash, structuredClone(input));
-    return structuredClone(input);
+    this.assertFollowupAttemptSequence(input);
+    const stored = {
+      ...structuredClone(input),
+      interventionIndex: input.interventionIndex ?? null,
+      advanceReceipts: structuredClone(assertFollowupAdvanceReceipts(input.advanceReceipts)),
+    };
+    this.followupAttempts.set(input.attemptTokenHash, stored);
+    return structuredClone(stored);
+  }
+
+  private assertFollowupAttemptSequence(attempt: FollowupAttemptRecord) {
+    assertFollowupAdvanceReceipts(attempt.advanceReceipts);
+    if (attempt.phase !== "intervention") {
+      if (attempt.interventionIndex != null)
+        throw new TypeError("Only an intervention phase can have an intervention index");
+      return;
+    }
+    const followup = this.followups.get(attempt.followupId);
+    const index = attempt.interventionIndex;
+    if (
+      followup?.workspaceId !== attempt.workspaceId ||
+      followup.recoveryPackSource?.role !== "full_sequence" ||
+      !followup.recoveryPackSequence ||
+      index == null ||
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= followup.recoveryPackSequence.interventions.length ||
+      attempt.currentIndex !== 0 ||
+      attempt.status !== "in_progress"
+    )
+      throw new TypeError("Intervention phase requires a frozen sequence and valid card index");
+  }
+
+  private followupAttemptTransition(
+    current: FollowupAttemptRecord,
+    next: FollowupAttemptRecord,
+    advanceReceipts: Record<string, number>,
+  ): FollowupAttemptRecord {
+    const stored = {
+      ...structuredClone(current),
+      status: next.status,
+      phase: next.phase,
+      currentIndex: next.currentIndex,
+      version: next.version,
+      timeMultiplier: next.timeMultiplier,
+      questionOpenedAt: new Date(next.questionOpenedAt),
+      deadlineAt: next.deadlineAt ? new Date(next.deadlineAt) : null,
+      completedAt: next.completedAt ? new Date(next.completedAt) : null,
+      updatedAt: new Date(next.updatedAt),
+      interventionIndex: next.interventionIndex ?? null,
+      advanceReceipts: structuredClone(advanceReceipts),
+    };
+    this.assertFollowupAttemptSequence(stored);
+    return stored;
   }
 
   async getFollowupAttemptByToken(followupId: string, tokenHash: string, now: Date) {
@@ -4295,6 +4350,13 @@ export class MemoryRepository implements Repository {
     return answer ? structuredClone(answer) : null;
   }
 
+  async getFollowupAnswerByIdempotencyKey(attemptId: string, key: string) {
+    const answer = [...this.followupAnswers.values()].find(
+      (candidate) => candidate.attemptId === attemptId && candidate.idempotencyKey === key,
+    );
+    return answer ? structuredClone(answer) : null;
+  }
+
   async commitFollowupAnswer(
     attempt: FollowupAttemptRecord,
     answer: FollowupAnswerRecord,
@@ -4307,20 +4369,47 @@ export class MemoryRepository implements Repository {
     );
     if (duplicate) return structuredClone(duplicate);
     const current = this.followupAttempts.get(attempt.attemptTokenHash);
-    if (!current || current.version !== expectedVersion) {
+    if (!current || current.id !== attempt.id || current.version !== expectedVersion) {
       throw new FollowupVersionConflictError(attempt.id, expectedVersion);
     }
     const key = `${answer.attemptId}:${answer.checkpointId}`;
     if (this.followupAnswers.has(key)) throw new Error("This checkpoint was already answered");
-    this.followupAnswers.set(key, structuredClone(answer));
-    this.followupAttempts.set(attempt.attemptTokenHash, structuredClone(attempt));
-    return structuredClone(answer);
+    const next = this.followupAttemptTransition(current, attempt, current.advanceReceipts ?? {});
+    if (
+      answer.submittedVersion != null &&
+      (!Number.isInteger(answer.submittedVersion) ||
+        answer.submittedVersion < 0 ||
+        answer.submittedVersion > 2_147_483_647)
+    )
+      throw new TypeError("Submitted answer version must be a non-negative integer");
+    const storedAnswer = {
+      ...structuredClone(answer),
+      submittedVersion: answer.submittedVersion ?? null,
+    };
+    this.followupAnswers.set(key, storedAnswer);
+    this.followupAttempts.set(current.attemptTokenHash, next);
+    return structuredClone(storedAnswer);
   }
 
-  async advanceFollowupAttempt(attempt: FollowupAttemptRecord, expectedVersion: number) {
+  async advanceFollowupAttempt(
+    attempt: FollowupAttemptRecord,
+    expectedVersion: number,
+    idempotencyKey?: string,
+  ) {
+    if (idempotencyKey !== undefined)
+      assertFollowupAdvanceReceipts({ [idempotencyKey]: expectedVersion });
     const current = this.followupAttempts.get(attempt.attemptTokenHash);
-    if (!current || current.version !== expectedVersion) return false;
-    this.followupAttempts.set(attempt.attemptTokenHash, structuredClone(attempt));
+    if (!current || current.id !== attempt.id || current.version !== expectedVersion) return false;
+    const receipts = structuredClone(current.advanceReceipts ?? {});
+    if (idempotencyKey !== undefined) {
+      if (Object.hasOwn(receipts, idempotencyKey) || Object.keys(receipts).length >= 256)
+        return false;
+      receipts[idempotencyKey] = expectedVersion;
+    }
+    this.followupAttempts.set(
+      current.attemptTokenHash,
+      this.followupAttemptTransition(current, attempt, receipts),
+    );
     return true;
   }
 

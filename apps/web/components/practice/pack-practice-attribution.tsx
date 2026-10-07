@@ -9,8 +9,11 @@ export function PackPracticeAttribution({
 }) {
   return source ? (
     <p lang="en-CA">
-      Recovery Pack delayed probe: <span lang="">{source.packTitle}</span> · published version{" "}
-      {source.packVersion}. <Link href="/recovery-packs">Open Recovery Pack library</Link>
+      {source.role === "full_sequence"
+        ? "Recovery Pack full sequence"
+        : "Recovery Pack delayed probe"}
+      : <span lang="">{source.packTitle}</span> · published version {source.packVersion}.{" "}
+      <Link href="/recovery-packs">Open Recovery Pack library</Link>
     </p>
   ) : null;
 }

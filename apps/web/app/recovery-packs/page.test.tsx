@@ -48,8 +48,10 @@ describe("Recovery Pack library capability notice", () => {
         "when Pack authoring and practice assignments are enabled and the workspace has Pro follow-ups",
       );
       expect(markup).toContain(
-        "Full Pack practice, delayed recovery trails, and Companion insertion are not available",
+        "Full-sequence practice uses the frozen diagnostic, intervention cards, and linked recheck",
       );
+      expect(markup).toContain("without requiring a delayed probe");
+      expect(markup).toContain("Delayed recovery trails and Companion insertion are not available");
       expect(markup).not.toContain("not available yet");
       if (!enabled) expect(markup).toContain("Pack authoring is not enabled for this workspace");
     },

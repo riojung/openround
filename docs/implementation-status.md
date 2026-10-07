@@ -506,6 +506,56 @@ with exact-content citation approval, and explicit QTI/CSV loss reports. Delayed
 Concept Health remain later increments; partner-evidence decisions stay deferred and public
 participant caps are unchanged.
 
+## Recovery Pack full-sequence practice — 2026-10-07
+
+This increment adds an explicit `full_sequence` assignment mode alongside the existing
+`delayed_probe` default. Authors review and assign one immutable published diagnostic, 1–5 ordered
+intervention cards, and its linked recheck through the existing accountless practice surface. A
+Pack without an optional probe can still supply this sequence; no delayed probe is silently
+substituted or appended. Creation keeps the existing Pack/practice flags, workspace eligibility,
+roles, entitlement, schedule, private links, and atomic evidence/receipt semantics.
+
+The assignment freezes independently copied checkpoint/choice IDs, question provenance, Pack
+version/content hash, and card/citation context. Source publication/deletion cannot alter delivered
+practice. The existing runner now moves from diagnostic reveal through each card to the recheck,
+then completion. Participant projections contain only the current question or card; card stages
+have no deadline, hidden answer data, future cards, or source metadata. A timed recheck starts its
+clock only when opened. Reload/resume returns the durable current stage instead of starting over.
+
+Full-sequence responses require checkpoint identity and expected attempt version. Continue uses a
+stable UUID and expected version; accepted command receipts commit with the transition. Exact
+retries return the current authoritative snapshot without another answer or advance, even after
+later progression. Changed intent conflicts. New browser clients use these fences for every
+practice mode and retain an unresolved request in memory until acknowledgement or explicit
+reconciliation. Legacy unfenced clients remain supported for older assignment modes, and the
+original delayed-probe creation hash remains compatible with already accepted private receipts.
+
+Migration `057_recovery_pack_sequence_practice.sql` expands existing forced-RLS follow-up storage
+with frozen sequence context, card index/stage, bounded advance receipts, and submitted-answer
+versions. Source guards validate the published version, copied question semantics, and frozen
+cards; immutable content, assignment media, export/delete, and parent retention remain in force.
+Pausing creation leaves existing participant completion and management available. Once sequences
+exist, older readers are not a safe rollback target; see the
+[upgrade runbook](runbooks/upgrade.md#full-sequence-recovery-pack-practice-compatibility).
+
+Verification passes the complete `CI=true pnpm check` pipeline, including 290 contracts, 122
+DB-local, 396 server, 438 web, and 178 smoke-support tests plus the shared engine packages.
+A fresh PostgreSQL 17 database passes all 62 isolation/migration tests, including replay-safe
+migration bootstrap, exact source/hash guards, concurrent receipts, restart, and retention.
+The production-browser Pack/practice suite passes all 44 scenarios without automatic retries on
+desktop Chromium, mobile Chromium, and mobile WebKit. Coverage includes legacy Round/probe
+practice, lost answer/card acknowledgements, stale rejection followed by failed sync and explicit
+recovery, frozen source deletion, current-card privacy, recheck timer opening, card reload/resume,
+keyboard activation/focus, plaintext content, mobile overflow, and automated accessibility.
+Independent read-only code review found no remaining actionable issues. Local Firefox and manual
+assistive-device, independent specialist, and external rollout/readiness gates are not claimed.
+
+This is immediate, accountless practice, not a multi-stage Recovery Trail or paired evidence from a
+previous live session. Management retains aggregate checkpoint/attempt counts without a causal or
+durable-learning claim. Companion insertion, source-authoring with exact-content citation approval,
+and explicit QTI/CSV loss reports remain the next Pack items. Partner-evidence, manual independent
+reviews, staging, and production-readiness decisions remain deferred; participant caps are unchanged.
+
 ## Access/resilience provisional slice
 
 An Access/resilience implementation slice is complete in the repository provisionally, without

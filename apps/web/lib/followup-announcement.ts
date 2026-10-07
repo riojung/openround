@@ -5,6 +5,9 @@ export function followupStatusAnnouncement(snapshot: FollowupSnapshot | null) {
   if (snapshot.status === "completed" || snapshot.phase === "completed") {
     return snapshot.purpose === "assignment" ? "Practice complete." : "Follow-up complete.";
   }
+  if (snapshot.phase === "intervention" && snapshot.intervention) {
+    return `Recovery guidance card ${snapshot.intervention.index + 1} of ${snapshot.intervention.count}: ${snapshot.intervention.card.title}. No countdown.`;
+  }
 
   const position = (snapshot.questionIndex ?? 0) + 1;
   return snapshot.phase === "answer_reveal"

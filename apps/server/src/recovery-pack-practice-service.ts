@@ -11,7 +11,11 @@ import {
   type Repository,
 } from "@openround/db";
 import { FollowupError, followupView } from "./followup-service.js";
-import { recoveryPackCopyId, recoveryPackHash } from "./recovery-pack-copies.js";
+import {
+  recoveryPackCopyId,
+  recoveryPackHash,
+  recoveryPackQuestions,
+} from "./recovery-pack-copies.js";
 import { hashToken } from "./security.js";
 
 type PackPracticeInput = CreateRecoveryPackPracticeAssignment;
@@ -24,7 +28,14 @@ function credential(seed: string, workspaceId: string, followupId: string, role:
 }
 
 function requestHash(creator: CreatorContext, packId: string, input: PackPracticeInput) {
-  return recoveryPackHash({ actorId: creator.userId, packId, input });
+  // Delayed-probe receipts predate the mode field. An explicit/default delayed mode
+  // must still recover the original request and its credentials.
+  const { mode, ...legacyInput } = input;
+  return recoveryPackHash({
+    actorId: creator.userId,
+    packId,
+    input: mode === "full_sequence" ? input : legacyInput,
+  });
 }
 
 export class RecoveryPackPracticeService {
@@ -101,7 +112,8 @@ export class RecoveryPackPracticeService {
     if (!version || version.packId !== packId) {
       throw new FollowupError("CONFLICT", "The published Pack version is unavailable");
     }
-    const source = version.content.delayedProbe;
+    const fullSequence = input.mode === "full_sequence";
+    const source = fullSequence ? version.content.diagnostic : version.content.delayedProbe;
     if (!source) {
       throw new FollowupError(
         "CONFLICT",
@@ -128,25 +140,30 @@ export class RecoveryPackPracticeService {
     }
     const id = recoveryPackCopyId(`${creator.workspaceId}:${packId}:${input.mutationId}:practice`);
     const title = (input.title ?? `Practice: ${version.content.title}`).slice(0, 160);
-    const question = structuredClone(source);
-    question.id = recoveryPackCopyId(`${id}:delayed-probe`);
-    question.delivery = "main";
-    question.linkedRecheckQuestionId = null;
-    question.recoveryPackSource = {
-      artifactType: "recovery_pack",
-      packId,
-      packVersionId: version.id,
-      packVersion: version.version,
-      sourceItemId: source.id,
-      role: "delayed_probe",
-      contentHash: recoveryPackHash(source),
-    };
-    if ("choices" in question) {
-      question.choices = question.choices.map((choice) => ({
-        ...choice,
-        id: recoveryPackCopyId(`${id}:choice:${choice.id}`),
-      }));
-    }
+    const questions = fullSequence
+      ? recoveryPackQuestions(version, id)
+      : (() => {
+          const question = structuredClone(source);
+          question.id = recoveryPackCopyId(`${id}:delayed-probe`);
+          question.delivery = "main";
+          question.linkedRecheckQuestionId = null;
+          question.recoveryPackSource = {
+            artifactType: "recovery_pack",
+            packId,
+            packVersionId: version.id,
+            packVersion: version.version,
+            sourceItemId: source.id,
+            role: "delayed_probe",
+            contentHash: recoveryPackHash(source),
+          };
+          if ("choices" in question) {
+            question.choices = question.choices.map((choice) => ({
+              ...choice,
+              id: recoveryPackCopyId(`${id}:choice:${choice.id}`),
+            }));
+          }
+          return [question];
+        })();
     const genericToken = credential(input.accessSeed, creator.workspaceId, id, "generic");
     const followup: Extract<FollowupRecord, { purpose: "assignment" }> = {
       id,
@@ -162,8 +179,15 @@ export class RecoveryPackPracticeService {
         packTitle: version.content.title,
         publishedAt: version.publishedAt.toISOString(),
         sourceItemId: source.id,
-        role: "delayed_probe",
+        role: fullSequence ? "full_sequence" : "delayed_probe",
       },
+      recoveryPackSequence: fullSequence
+        ? {
+            schemaVersion: 1,
+            interventions: structuredClone(version.content.interventions),
+            citations: structuredClone(version.content.citations),
+          }
+        : null,
       creationMutation: {
         mutationId: input.mutationId,
         requestHash: requestHash(creator, packId, input),
@@ -174,8 +198,10 @@ export class RecoveryPackPracticeService {
       title,
       content: QuizContentSchema.parse({
         title,
-        description: "Standalone Recovery Pack delayed probe",
-        questions: [question],
+        description: fullSequence
+          ? "Standalone Recovery Pack diagnostic, intervention and immediate recheck"
+          : "Standalone Recovery Pack delayed probe",
+        questions,
       }),
       conceptKeys: [],
       timeMode: input.timeMode,

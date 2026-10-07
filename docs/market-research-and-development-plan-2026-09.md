@@ -513,9 +513,13 @@ accountless runner, with immutable source context, scheduling, generic/personal 
 creation retry, and retained media/content after source deletion. Both Pack and practice creation
 gates and workspace eligibility apply; flag pauses preserve existing assignments and receipt
 recovery. There is no fallback to an immediate checkpoint, no paired-source learning claim, and no
-dummy Round. Full diagnostic/card/recheck practice, Companion insertion, source-authoring/citation
-approval, and explicit QTI/CSV Pack loss reporting remain next. See the
-[practice checkpoint](implementation-status.md#recovery-pack-delayed-probe-practice--2026-10-07).
+dummy Round. An explicit full-sequence mode now adds the frozen diagnostic, ordered intervention
+cards, and linked recheck to that same runner, with durable current-stage resume and fenced answer/
+Continue recovery. It does not include the optional probe or claim paired-source/delayed evidence.
+Companion insertion, source-authoring/citation approval, and explicit QTI/CSV Pack loss reporting
+remain next. See the
+[delayed-probe checkpoint](implementation-status.md#recovery-pack-delayed-probe-practice--2026-10-07)
+and [full-sequence checkpoint](implementation-status.md#recovery-pack-full-sequence-practice--2026-10-07).
 Delayed Recovery Trail and Concept Health remain later capabilities. This checkpoint does not
 change public participant caps, launch readiness, or the institution/video delivery deferrals.
 
@@ -765,9 +769,12 @@ Cards remain frozen facilitator references in builders; live explanation or work
 is available in eligible new Round/Presentation sessions when enabled for the workspace. The
 facilitator explicitly selects a card after revealing the Pack diagnostic. Standalone delayed-probe
 practice now reuses the accountless assignment runner with frozen source/version/hash attribution,
-private link recovery, and source-independent retention. Full-sequence practice, Companion
-insertion, source-authoring approval, and QTI/CSV loss reports remain pending. See the
-[practice checkpoint](implementation-status.md#recovery-pack-delayed-probe-practice--2026-10-07).
+private link recovery, and source-independent retention. Full-sequence practice now adds a frozen
+diagnostic → ordered cards → linked recheck journey with current-stage projections, reload/resume,
+and version-fenced acknowledgement recovery. Companion insertion, source-authoring approval, and
+QTI/CSV loss reports remain pending. See the
+[delayed-probe checkpoint](implementation-status.md#recovery-pack-delayed-probe-practice--2026-10-07)
+and [full-sequence checkpoint](implementation-status.md#recovery-pack-full-sequence-practice--2026-10-07).
 
 MVP acceptance:
 

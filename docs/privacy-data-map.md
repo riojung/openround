@@ -2,6 +2,21 @@
 
 This engineering inventory is not a legal opinion. Confirm purposes, legal basis, processor location, notices, and contracts before production.
 
+Recovery Pack practice is session-scoped/accountless. A full-sequence assignment freezes the
+published diagnostic, intervention cards/citations, and linked recheck; a delayed-probe assignment
+continues to freeze only its optional probe. These copies and question media follow the assignment's
+plan-stamped retention and survive source Pack deletion. Only the current question or active card
+is delivered to a participant. Cards have no response deadline and do not expose the unrevealed
+recheck, other cards, source metadata, or answer keys. No participant responses are sent to an AI
+provider by this workflow.
+
+Accepted version fences and bounded Continue receipts support safe retry/resume. They contain
+request identifiers and accepted versions, not authorization credentials or copies of learner
+responses, and expire/delete with their parent attempt and assignment. Private access and attempt
+credentials remain hash-only in storage. Labelled personal links still do not establish a persistent
+learner identity or pair an assignment to a participant from an earlier live session. The two
+checkpoint aggregates describe this practice attempt cohort, not delayed retention or causal learning.
+
 | Data                                                | Purpose                                                                           |                                                                              Default retention | Location rule                                                               | Deletion                                                                                            |
 | --------------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------: | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Creator email and session                           | Account access and support                                                        |                                                                  Account life; session 30 days | Workspace home region                                                       | Account deletion anonymizes email and revokes sessions                                              |

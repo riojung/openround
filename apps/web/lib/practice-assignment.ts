@@ -59,7 +59,7 @@ export function practiceSourceDetails(context: PracticeContext, canEdit: boolean
   return context.sourceType === "recovery_pack"
     ? {
         title: context.packTitle,
-        label: "Recovery Pack delayed probe",
+        label: "Recovery Pack practice",
         href: "/recovery-packs",
         linkLabel: "Open Recovery Pack library",
       }

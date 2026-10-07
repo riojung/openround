@@ -26,6 +26,7 @@ import {
   EmbedPolicySchema,
   HostCommandSchema,
   FollowupAnswerSubmitSchema,
+  FollowupAdvanceSchema,
   FollowupPurposeSchema,
   FederatedIdentitySchema,
   OidcStartSchema,
@@ -2946,7 +2947,8 @@ export async function registerRoutes(
       const token = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
       if (!token) return apiError(reply, 401, "UNAUTHORIZED", "Attempt token required", request.id);
       const { id } = FollowupParamsSchema.parse(request.params);
-      return { snapshot: await followups.advance(id, token) };
+      const input = FollowupAdvanceSchema.parse(request.body ?? {});
+      return { snapshot: await followups.advance(id, token, new Date(), input) };
     },
   );
 

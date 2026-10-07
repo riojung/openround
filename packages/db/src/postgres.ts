@@ -8,6 +8,7 @@ import {
   QUESTION_HEALTH_POST_USE_MAX_REPORTS,
   RecoveryPackCardReferenceSchema,
   RecoveryPackPracticeSourceSchema,
+  RecoveryPackPracticeSequenceSchema,
   ReportSchema,
   ResponsePayloadSchema,
   SessionDecisionEventSchema,
@@ -774,6 +775,9 @@ function mapFollowup(row: QueryResultRow): FollowupRecord {
           requestHash: String(row.creation_request_hash),
         }
       : null,
+    recoveryPackSequence: row.recovery_pack_sequence
+      ? RecoveryPackPracticeSequenceSchema.parse(row.recovery_pack_sequence)
+      : null,
     ...source,
     title: String(row.title),
     content: row.content as QuizDraft,
@@ -815,6 +819,11 @@ function mapFollowupAttempt(row: QueryResultRow): FollowupAttemptRecord {
     attemptTokenHash: String(row.attempt_token_hash),
     status: row.status,
     phase: row.phase,
+    interventionIndex:
+      row.intervention_index === null || row.intervention_index === undefined
+        ? null
+        : Number(row.intervention_index),
+    advanceReceipts: row.advance_receipts ?? {},
     currentIndex: Number(row.current_index),
     version: Number(row.version),
     timeMultiplier: Number(row.time_multiplier) as FollowupAttemptRecord["timeMultiplier"],
@@ -837,6 +846,10 @@ function mapFollowupAnswer(row: QueryResultRow): FollowupAnswerRecord {
     confidence: row.confidence === null ? null : (Number(row.confidence) as 1 | 2 | 3),
     correct: row.correct === null ? null : Boolean(row.correct),
     idempotencyKey: String(row.idempotency_key),
+    submittedVersion:
+      row.submitted_version === null || row.submitted_version === undefined
+        ? null
+        : Number(row.submitted_version),
     acceptedAt: date(row.accepted_at),
   };
 }
@@ -5865,8 +5878,8 @@ export class PostgresRepository implements Repository {
          (id, workspace_id, purpose, source_quiz_version_id, source_session_id,
           source_report_id, trust_mode, title, content, concept_keys, time_mode, generic_token_hash,
           opens_at, closes_at, expires_at, closed_at, created_by, created_at,
-          recovery_pack_source, creation_mutation_id, creation_request_hash)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21)`,
+          recovery_pack_source, creation_mutation_id, creation_request_hash, recovery_pack_sequence)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21,$22::jsonb)`,
       [
         input.id,
         input.workspaceId,
@@ -5889,6 +5902,7 @@ export class PostgresRepository implements Repository {
         input.recoveryPackSource ? JSON.stringify(input.recoveryPackSource) : null,
         input.creationMutation?.mutationId ?? null,
         input.creationMutation?.requestHash ?? null,
+        input.recoveryPackSequence ? JSON.stringify(input.recoveryPackSequence) : null,
       ],
     );
     for (const item of access) {
@@ -6324,8 +6338,9 @@ export class PostgresRepository implements Repository {
           `INSERT INTO followup_attempts
              (id, workspace_id, followup_id, access_token_id, source_participant_id,
               attempt_token_hash, status, phase, current_index, version, time_multiplier,
-              question_opened_at, deadline_at, completed_at, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+              question_opened_at, deadline_at, completed_at, created_at, updated_at,
+              intervention_index, advance_receipts)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
            ON CONFLICT DO NOTHING RETURNING *`,
           [
             input.id,
@@ -6344,6 +6359,8 @@ export class PostgresRepository implements Repository {
             input.completedAt,
             input.createdAt,
             input.updatedAt,
+            input.interventionIndex ?? null,
+            JSON.stringify(input.advanceReceipts ?? {}),
           ],
         );
         if (inserted.rows[0]) return mapFollowupAttempt(inserted.rows[0]);
@@ -6387,6 +6404,14 @@ export class PostgresRepository implements Repository {
     return result.rows[0] ? mapFollowupAnswer(result.rows[0]) : null;
   }
 
+  async getFollowupAnswerByIdempotencyKey(attemptId: string, key: string) {
+    const result = await this.systemQuery(
+      "SELECT * FROM followup_answers WHERE attempt_id = $1 AND idempotency_key = $2",
+      [attemptId, key],
+    );
+    return result.rows[0] ? mapFollowupAnswer(result.rows[0]) : null;
+  }
+
   async commitFollowupAnswer(
     attempt: FollowupAttemptRecord,
     answer: FollowupAnswerRecord,
@@ -6403,7 +6428,7 @@ export class PostgresRepository implements Repository {
         const updated = await client.query(
           `UPDATE followup_attempts SET status = $2, phase = $3, current_index = $4,
              version = $5, time_multiplier = $6, question_opened_at = $7,
-             deadline_at = $8, completed_at = $9, updated_at = $10
+             deadline_at = $8, completed_at = $9, updated_at = $10, intervention_index = $12
            WHERE id = $1 AND version = $11`,
           [
             attempt.id,
@@ -6417,6 +6442,7 @@ export class PostgresRepository implements Repository {
             attempt.completedAt,
             attempt.updatedAt,
             expectedVersion,
+            attempt.interventionIndex ?? null,
           ],
         );
         if (updated.rowCount !== 1) {
@@ -6425,8 +6451,8 @@ export class PostgresRepository implements Repository {
         const inserted = await client.query(
           `INSERT INTO followup_answers
              (id, workspace_id, followup_id, attempt_id, checkpoint_id, response_payload,
-              response_schema_version, confidence, correct, idempotency_key, accepted_at)
-           VALUES ($1,$2,$3,$4,$5,$6,2,$7,$8,$9,$10) RETURNING *`,
+              response_schema_version, confidence, correct, idempotency_key, accepted_at, submitted_version)
+           VALUES ($1,$2,$3,$4,$5,$6,2,$7,$8,$9,$10,$11) RETURNING *`,
           [
             answer.id,
             answer.workspaceId,
@@ -6438,6 +6464,7 @@ export class PostgresRepository implements Repository {
             answer.correct,
             answer.idempotencyKey,
             answer.acceptedAt,
+            answer.submittedVersion ?? null,
           ],
         );
         return mapFollowupAnswer(inserted.rows[0]!);
@@ -6446,12 +6473,24 @@ export class PostgresRepository implements Repository {
     );
   }
 
-  async advanceFollowupAttempt(attempt: FollowupAttemptRecord, expectedVersion: number) {
+  async advanceFollowupAttempt(
+    attempt: FollowupAttemptRecord,
+    expectedVersion: number,
+    idempotencyKey?: string,
+  ) {
+    if (idempotencyKey !== undefined)
+      RecoveryPackPracticeSourceSchema.shape.packId.parse(idempotencyKey);
     const result = await this.systemQuery(
       `UPDATE followup_attempts SET status = $2, phase = $3, current_index = $4,
          version = $5, time_multiplier = $6, question_opened_at = $7,
-         deadline_at = $8, completed_at = $9, updated_at = $10
-       WHERE id = $1 AND version = $11 RETURNING id`,
+         deadline_at = $8, completed_at = $9, updated_at = $10, intervention_index = $12,
+         advance_receipts = CASE WHEN $13::text IS NULL THEN advance_receipts
+           ELSE advance_receipts || jsonb_build_object($13::text, $11::integer) END
+       WHERE id = $1 AND version = $11
+         AND ($13::text IS NULL OR (
+           NOT (advance_receipts ? $13::text)
+           AND (SELECT count(*) FROM jsonb_object_keys(advance_receipts)) < 256
+         )) RETURNING id`,
       [
         attempt.id,
         attempt.status,
@@ -6464,6 +6503,8 @@ export class PostgresRepository implements Repository {
         attempt.completedAt,
         attempt.updatedAt,
         expectedVersion,
+        attempt.interventionIndex ?? null,
+        idempotencyKey ?? null,
       ],
     );
     return result.rowCount === 1;
@@ -7249,7 +7290,7 @@ export class PostgresRepository implements Repository {
         );
         const followups = await queryWorkspaceData(
           `SELECT id, workspace_id, purpose, source_quiz_version_id, source_session_id,
-                  source_report_id, recovery_pack_source, trust_mode, title, content, concept_keys, time_mode,
+                  source_report_id, recovery_pack_source, recovery_pack_sequence, trust_mode, title, content, concept_keys, time_mode,
                   opens_at, closes_at,
                   expires_at, closed_at, created_by, created_at
            FROM followups WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
@@ -7262,14 +7303,14 @@ export class PostgresRepository implements Repository {
         );
         const followupAttempts = await queryWorkspaceData(
           `SELECT id, workspace_id, followup_id, access_token_id, source_participant_id,
-                  status, phase, current_index, version, time_multiplier, question_opened_at,
+                  status, phase, current_index, version, intervention_index, advance_receipts, time_multiplier, question_opened_at,
                   deadline_at, completed_at, created_at, updated_at
            FROM followup_attempts WHERE workspace_id = ANY($1::uuid[])
            ORDER BY created_at, id`,
         );
         const followupAnswers = await queryWorkspaceData(
           `SELECT id, workspace_id, followup_id, attempt_id, checkpoint_id, response_payload,
-                  response_schema_version, confidence, correct, idempotency_key, accepted_at
+                  response_schema_version, confidence, correct, idempotency_key, submitted_version, accepted_at
            FROM followup_answers WHERE workspace_id = ANY($1::uuid[])
            ORDER BY accepted_at, id`,
         );
