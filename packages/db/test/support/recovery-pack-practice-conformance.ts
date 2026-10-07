@@ -158,18 +158,15 @@ export async function expectRecoveryPackPracticeConformance(
       f.context,
     ),
   ).toBeNull();
-  const [created, duplicate] = await Promise.all([
+  // The lock winner is nondeterministic; both requests carry the same frozen creation intent.
+  const contenders = await Promise.all([
     repository.createRecoveryPackPracticeAssignment(f.pack.id, f.input, f.access, f.context),
-    repository.createRecoveryPackPracticeAssignment(
-      f.pack.id,
-      { ...f.input, id: randomUUID(), genericTokenHash: hash(randomUUID()) },
-      [],
-      { ...f.context, requestId: randomUUID() },
-    ),
+    repository.createRecoveryPackPracticeAssignment(f.pack.id, f.input, f.access, f.context),
   ]);
-  expect(created).not.toBeNull();
-  expect(created!.created).toBe(true);
-  expect(duplicate!.created).toBe(false);
+  expect(contenders).not.toContain(null);
+  expect(contenders.map((result) => result!.created).sort()).toEqual([false, true]);
+  const created = contenders.find((result) => result!.created)!;
+  const duplicate = contenders.find((result) => !result!.created)!;
   expect(created!.productEvent).toMatchObject({
     workspaceId,
     name: "practice_assignment_created",
@@ -180,8 +177,19 @@ export async function expectRecoveryPackPracticeConformance(
   });
   expect(duplicate!.productEvent).toBeNull();
   const first = created!.followup;
+  expect(first).toMatchObject(f.input);
+  expect(first.content).toEqual(f.input.content);
+  expect(duplicate!.followup).toEqual(first);
   expect(duplicate!.followup.id).toBe(first.id);
-  expect(await repository.listFollowupAccess(workspaceId, first!.id)).toHaveLength(1);
+  expect(await repository.listFollowupAccess(workspaceId, first!.id)).toEqual(f.access);
+  const regeneratedReplay = await repository.createRecoveryPackPracticeAssignment(
+    f.pack.id,
+    { ...f.input, id: randomUUID(), genericTokenHash: hash(randomUUID()) },
+    [],
+    { ...f.context, requestId: randomUUID() },
+  );
+  expect(regeneratedReplay).toEqual({ followup: first, created: false, productEvent: null });
+  expect(await repository.listFollowupAccess(workspaceId, first.id)).toEqual(f.access);
   expect(await repository.getFollowup(otherWorkspaceId, first!.id)).toBeNull();
   expect(
     await repository.getRecoveryPackPracticeAssignment(

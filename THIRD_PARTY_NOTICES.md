@@ -17,80 +17,80 @@ This file is not legal advice.
 
 ### Apache-2.0
 
-| Package                                    | Version          | Project                                                                                                                                      |
-| ------------------------------------------ | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| @aws-sdk/checksums                         | 3.1001.1         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/checksums)                                                   |
-| @aws-sdk/client-s3                         | 3.1141.0         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/clients/client-s3)                                                             |
-| @aws-sdk/core                              | 3.978.1          | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/core)                                                        |
-| @aws-sdk/credential-provider-env           | 3.972.72         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-env)                                     |
-| @aws-sdk/credential-provider-http          | 3.972.74         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-http)                                    |
-| @aws-sdk/credential-provider-ini           | 3.973.17         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-ini)                                     |
-| @aws-sdk/credential-provider-login         | 3.972.79         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-login)                                   |
-| @aws-sdk/credential-provider-node          | 3.972.84         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-node)                                    |
-| @aws-sdk/credential-provider-process       | 3.972.72         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-process)                                 |
-| @aws-sdk/credential-provider-sso           | 3.973.16         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-sso)                                     |
-| @aws-sdk/credential-provider-web-identity  | 3.972.78         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-web-identity)                            |
-| @aws-sdk/middleware-sdk-s3                 | 3.972.77         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/middleware-sdk-s3)                                           |
-| @aws-sdk/nested-clients                    | 3.997.46         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/nested-clients)                                                       |
-| @aws-sdk/s3-request-presigner              | 3.1141.0         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/s3-request-presigner)                                                 |
-| @aws-sdk/signature-v4-multi-region         | 3.996.47         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/signature-v4-multi-region)                                            |
-| @aws-sdk/token-providers                   | 3.1138.0         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/token-providers)                                                      |
-| @aws-sdk/types                             | 3.974.6          | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/types)                                                       |
-| @aws-sdk/xml-builder                       | 3.972.41         | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/xml-builder)                                                 |
-| @aws/lambda-invoke-store                   | 0.3.0            | [Project page](https://github.com/awslabs/aws-lambda-invoke-store)                                                                           |
-| @grpc/grpc-js                              | 1.14.5           | [Project page](https://grpc.io/)                                                                                                             |
-| @grpc/proto-loader                         | 0.8.1            | [Project page](https://grpc.io/)                                                                                                             |
-| @img/sharp-platform-binary                 | 0.35.5           | [Project page](https://sharp.pixelplumbing.com)                                                                                              |
-| @opentelemetry/api                         | 1.9.1            | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/api)                                                             |
-| @opentelemetry/api-logs                    | 0.221.0, 0.222.0 | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/api-logs)                                  |
-| @opentelemetry/configuration               | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/configuration)                             |
-| @opentelemetry/context-async-hooks         | 2.11.0           | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-context-async-hooks)                      |
-| @opentelemetry/core                        | 2.11.0           | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-core)                                     |
-| @opentelemetry/exporter-logs-otlp-grpc     | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-logs-otlp-grpc)                   |
-| @opentelemetry/exporter-logs-otlp-http     | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-logs-otlp-http)                   |
-| @opentelemetry/exporter-logs-otlp-proto    | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-logs-otlp-proto)                  |
-| @opentelemetry/exporter-metrics-otlp-grpc  | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-exporter-metrics-otlp-grpc)  |
-| @opentelemetry/exporter-metrics-otlp-http  | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-exporter-metrics-otlp-http)  |
-| @opentelemetry/exporter-metrics-otlp-proto | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-exporter-metrics-otlp-proto) |
-| @opentelemetry/exporter-prometheus         | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-exporter-prometheus)         |
-| @opentelemetry/exporter-trace-otlp-grpc    | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-trace-otlp-grpc)                  |
-| @opentelemetry/exporter-trace-otlp-http    | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-trace-otlp-http)                  |
-| @opentelemetry/exporter-trace-otlp-proto   | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-trace-otlp-proto)                 |
-| @opentelemetry/exporter-zipkin             | 2.11.0           | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-exporter-zipkin)                          |
-| @opentelemetry/instrumentation             | 0.221.0, 0.222.0 | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-instrumentation)             |
-| @opentelemetry/instrumentation-http        | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-instrumentation-http)        |
-| @opentelemetry/otlp-exporter-base          | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/otlp-exporter-base)                        |
-| @opentelemetry/otlp-grpc-exporter-base     | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/otlp-grpc-exporter-base)                   |
-| @opentelemetry/otlp-transformer            | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/otlp-transformer)                          |
-| @opentelemetry/propagator-b3               | 2.11.0           | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-propagator-b3)                            |
-| @opentelemetry/propagator-jaeger           | 2.11.0           | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-propagator-jaeger)                        |
-| @opentelemetry/resources                   | 2.11.0           | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-resources)                                |
-| @opentelemetry/sdk-logs                    | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/sdk-logs)                                  |
-| @opentelemetry/sdk-metrics                 | 2.11.0           | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/sdk-metrics)                                            |
-| @opentelemetry/sdk-node                    | 0.222.0          | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-sdk-node)                    |
-| @opentelemetry/sdk-trace                   | 2.11.0           | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/sdk-trace)                                              |
-| @opentelemetry/sdk-trace-base              | 2.11.0           | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-sdk-trace-base)                           |
-| @opentelemetry/sdk-trace-node              | 2.11.0           | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-sdk-trace-node)                           |
-| @opentelemetry/semantic-conventions        | 1.43.0           | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/semantic-conventions)                                            |
-| @playwright/test                           | 1.63.0           | [Project page](https://playwright.dev)                                                                                                       |
-| @prometheus-io/client                      | 0.16.1           | [Project page](https://github.com/prometheus/client_js)                                                                                      |
-| @smithy/core                               | 3.35.1           | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/core)                                                     |
-| @smithy/credential-provider-imds           | 4.5.2            | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/credential-provider-imds)                                 |
-| @smithy/fetch-http-handler                 | 5.8.0            | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/fetch-http-handler)                                       |
-| @smithy/node-http-handler                  | 4.12.1           | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/node-http-handler)                                        |
-| @smithy/signature-v4                       | 5.7.4            | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/signature-v4)                                             |
-| @smithy/types                              | 4.19.0           | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/types)                                                    |
-| @swc/helpers                               | 0.5.23           | [Project page](https://swc.rs)                                                                                                               |
-| baseline-browser-mapping                   | 2.11.23          | [Project page](https://github.com/web-platform-dx/baseline-browser-mapping#readme)                                                           |
-| cluster-key-slot                           | 1.1.1            | [Project page](https://github.com/Salakar/cluster-key-slot#readme)                                                                           |
-| denque                                     | 2.1.0            | [Project page](https://docs.page/invertase/denque)                                                                                           |
-| detect-libc                                | 2.1.2            | [Project page](https://github.com/lovell/detect-libc#readme)                                                                                 |
-| import-in-the-middle                       | 3.5.1            | [Project page](https://github.com/nodejs/import-in-the-middle#readme)                                                                        |
-| long                                       | 5.3.2            | [Project page](https://github.com/dcodeIO/long.js#readme)                                                                                    |
-| pdfjs-dist                                 | 6.3.289          | [Project page](https://mozilla.github.io/pdf.js/)                                                                                            |
-| playwright                                 | 1.63.0           | [Project page](https://playwright.dev)                                                                                                       |
-| playwright-core                            | 1.63.0           | [Project page](https://playwright.dev)                                                                                                       |
-| sharp                                      | 0.35.5           | [Project page](https://sharp.pixelplumbing.com)                                                                                              |
+| Package                                    | Version  | Project                                                                                                                                      |
+| ------------------------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| @aws-sdk/checksums                         | 3.1001.1 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/checksums)                                                   |
+| @aws-sdk/client-s3                         | 3.1146.0 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/clients/client-s3)                                                             |
+| @aws-sdk/core                              | 3.978.1  | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/core)                                                        |
+| @aws-sdk/credential-provider-env           | 3.972.72 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-env)                                     |
+| @aws-sdk/credential-provider-http          | 3.972.74 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-http)                                    |
+| @aws-sdk/credential-provider-ini           | 3.973.17 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-ini)                                     |
+| @aws-sdk/credential-provider-login         | 3.972.79 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-login)                                   |
+| @aws-sdk/credential-provider-node          | 3.972.84 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-node)                                    |
+| @aws-sdk/credential-provider-process       | 3.972.72 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-process)                                 |
+| @aws-sdk/credential-provider-sso           | 3.973.16 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-sso)                                     |
+| @aws-sdk/credential-provider-web-identity  | 3.972.78 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-web-identity)                            |
+| @aws-sdk/middleware-sdk-s3                 | 3.972.77 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/middleware-sdk-s3)                                           |
+| @aws-sdk/nested-clients                    | 3.997.46 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/nested-clients)                                                       |
+| @aws-sdk/s3-request-presigner              | 3.1146.0 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/s3-request-presigner)                                                 |
+| @aws-sdk/signature-v4-multi-region         | 3.996.47 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/signature-v4-multi-region)                                            |
+| @aws-sdk/token-providers                   | 3.1138.0 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages/token-providers)                                                      |
+| @aws-sdk/types                             | 3.974.6  | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/types)                                                       |
+| @aws-sdk/xml-builder                       | 3.972.41 | [Project page](https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/xml-builder)                                                 |
+| @aws/lambda-invoke-store                   | 0.3.0    | [Project page](https://github.com/awslabs/aws-lambda-invoke-store)                                                                           |
+| @grpc/grpc-js                              | 1.14.5   | [Project page](https://grpc.io/)                                                                                                             |
+| @grpc/proto-loader                         | 0.8.1    | [Project page](https://grpc.io/)                                                                                                             |
+| @img/sharp-platform-binary                 | 0.35.5   | [Project page](https://sharp.pixelplumbing.com)                                                                                              |
+| @opentelemetry/api                         | 1.9.1    | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/api)                                                             |
+| @opentelemetry/api-logs                    | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/api-logs)                                  |
+| @opentelemetry/configuration               | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/configuration)                             |
+| @opentelemetry/context-async-hooks         | 2.11.0   | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-context-async-hooks)                      |
+| @opentelemetry/core                        | 2.11.0   | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-core)                                     |
+| @opentelemetry/exporter-logs-otlp-grpc     | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-logs-otlp-grpc)                   |
+| @opentelemetry/exporter-logs-otlp-http     | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-logs-otlp-http)                   |
+| @opentelemetry/exporter-logs-otlp-proto    | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-logs-otlp-proto)                  |
+| @opentelemetry/exporter-metrics-otlp-grpc  | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-exporter-metrics-otlp-grpc)  |
+| @opentelemetry/exporter-metrics-otlp-http  | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-exporter-metrics-otlp-http)  |
+| @opentelemetry/exporter-metrics-otlp-proto | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-exporter-metrics-otlp-proto) |
+| @opentelemetry/exporter-prometheus         | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-exporter-prometheus)         |
+| @opentelemetry/exporter-trace-otlp-grpc    | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-trace-otlp-grpc)                  |
+| @opentelemetry/exporter-trace-otlp-http    | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-trace-otlp-http)                  |
+| @opentelemetry/exporter-trace-otlp-proto   | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-trace-otlp-proto)                 |
+| @opentelemetry/exporter-zipkin             | 2.11.0   | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-exporter-zipkin)                          |
+| @opentelemetry/instrumentation             | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-instrumentation)             |
+| @opentelemetry/instrumentation-http        | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-instrumentation-http)        |
+| @opentelemetry/otlp-exporter-base          | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/otlp-exporter-base)                        |
+| @opentelemetry/otlp-grpc-exporter-base     | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/otlp-grpc-exporter-base)                   |
+| @opentelemetry/otlp-transformer            | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/otlp-transformer)                          |
+| @opentelemetry/propagator-b3               | 2.11.0   | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-propagator-b3)                            |
+| @opentelemetry/propagator-jaeger           | 2.11.0   | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-propagator-jaeger)                        |
+| @opentelemetry/resources                   | 2.11.0   | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-resources)                                |
+| @opentelemetry/sdk-logs                    | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/sdk-logs)                                  |
+| @opentelemetry/sdk-metrics                 | 2.11.0   | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/sdk-metrics)                                            |
+| @opentelemetry/sdk-node                    | 0.222.0  | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-sdk-node)                    |
+| @opentelemetry/sdk-trace                   | 2.11.0   | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/sdk-trace)                                              |
+| @opentelemetry/sdk-trace-base              | 2.11.0   | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-sdk-trace-base)                           |
+| @opentelemetry/sdk-trace-node              | 2.11.0   | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-sdk-trace-node)                           |
+| @opentelemetry/semantic-conventions        | 1.43.0   | [Project page](https://github.com/open-telemetry/opentelemetry-js/tree/main/semantic-conventions)                                            |
+| @playwright/test                           | 1.63.0   | [Project page](https://playwright.dev)                                                                                                       |
+| @prometheus-io/client                      | 0.16.1   | [Project page](https://github.com/prometheus/client_js)                                                                                      |
+| @smithy/core                               | 3.35.1   | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/core)                                                     |
+| @smithy/credential-provider-imds           | 4.5.2    | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/credential-provider-imds)                                 |
+| @smithy/fetch-http-handler                 | 5.8.0    | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/fetch-http-handler)                                       |
+| @smithy/node-http-handler                  | 4.12.1   | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/node-http-handler)                                        |
+| @smithy/signature-v4                       | 5.7.4    | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/signature-v4)                                             |
+| @smithy/types                              | 4.19.0   | [Project page](https://github.com/smithy-lang/smithy-typescript/tree/main/packages/types)                                                    |
+| @swc/helpers                               | 0.5.23   | [Project page](https://swc.rs)                                                                                                               |
+| baseline-browser-mapping                   | 2.11.23  | [Project page](https://github.com/web-platform-dx/baseline-browser-mapping#readme)                                                           |
+| cluster-key-slot                           | 1.1.1    | [Project page](https://github.com/Salakar/cluster-key-slot#readme)                                                                           |
+| denque                                     | 2.1.0    | [Project page](https://docs.page/invertase/denque)                                                                                           |
+| detect-libc                                | 2.1.2    | [Project page](https://github.com/lovell/detect-libc#readme)                                                                                 |
+| import-in-the-middle                       | 3.5.1    | [Project page](https://github.com/nodejs/import-in-the-middle#readme)                                                                        |
+| long                                       | 5.3.2    | [Project page](https://github.com/dcodeIO/long.js#readme)                                                                                    |
+| pdfjs-dist                                 | 6.4.299  | [Project page](https://mozilla.github.io/pdf.js/)                                                                                            |
+| playwright                                 | 1.63.0   | [Project page](https://playwright.dev)                                                                                                       |
+| playwright-core                            | 1.63.0   | [Project page](https://playwright.dev)                                                                                                       |
+| sharp                                      | 0.35.5   | [Project page](https://sharp.pixelplumbing.com)                                                                                              |
 
 ### BlueOak-1.0.0
 
@@ -170,19 +170,19 @@ This file is not legal advice.
 | @fastify/forwarded                    | 3.0.2               | [Project page](https://github.com/fastify/forwarded#readme)                                         |
 | @fastify/helmet                       | 13.1.1              | [Project page](https://github.com/fastify/fastify-helmet#readme)                                    |
 | @fastify/merge-json-schemas           | 0.2.1               | [Project page](https://github.com/fastify/merge-json-schemas#readme)                                |
-| @fastify/otel                         | 0.21.0              | [Project page](https://github.com/fastify/otel#readme)                                              |
+| @fastify/otel                         | 0.21.1              | [Project page](https://github.com/fastify/otel#readme)                                              |
 | @fastify/proxy-addr                   | 5.1.0               | [Project page](https://github.com/fastify/proxy-addr#readme)                                        |
 | @fastify/rate-limit                   | 11.2.0              | [Project page](https://github.com/fastify/fastify-rate-limit#readme)                                |
 | @img/colour                           | 1.1.0               | [Project page](https://github.com/lovell/colour#readme)                                             |
 | @ioredis/commands                     | 2.0.0               | [Project page](https://github.com/ioredis/commands)                                                 |
 | @js-sdsl/ordered-map                  | 4.4.2               | [Project page](https://js-sdsl.org)                                                                 |
 | @lukeed/ms                            | 2.0.2               | [Project page](https://github.com/lukeed/ms#readme)                                                 |
-| @napi-rs/canvas                       | 1.0.9               | [Project page](https://github.com/Brooooooklyn/canvas#readme)                                       |
-| @napi-rs/canvas-platform-binary       | 1.0.9               | [Project page](https://github.com/Brooooooklyn/canvas#readme)                                       |
-| @next/env                             | 16.3.6              | [Project page](https://github.com/vercel/next.js#readme)                                            |
-| @next/swc-platform-binary             | 16.3.6              | [Project page](https://github.com/vercel/next.js#readme)                                            |
+| @napi-rs/canvas                       | 1.0.10              | [Project page](https://github.com/Brooooooklyn/canvas#readme)                                       |
+| @napi-rs/canvas-platform-binary       | 1.0.10              | [Project page](https://github.com/Brooooooklyn/canvas#readme)                                       |
+| @next/env                             | 16.3.8              | [Project page](https://github.com/vercel/next.js#readme)                                            |
+| @next/swc-platform-binary             | 16.3.8              | [Project page](https://github.com/vercel/next.js#readme)                                            |
 | @noble/hashes                         | 2.4.0               | [Project page](https://paulmillr.com/noble/)                                                        |
-| @nodable/entities                     | 3.0.0               | [Project page](https://github.com/nodable/val-parsers#readme)                                       |
+| @nodable/entities                     | 3.1.0               | [Project page](https://github.com/nodable/val-parsers#readme)                                       |
 | @pinojs/redact                        | 0.4.0               | [Project page](https://github.com/pinojs/redact#readme)                                             |
 | @socket.io/component-emitter          | 3.1.2               | [Project page](https://github.com/socketio/emitter#readme)                                          |
 | @socket.io/redis-streams-adapter      | 0.3.1               | [Project page](https://github.com/socketio/socket.io-redis-streams-adapter#readme)                  |
@@ -228,7 +228,7 @@ This file is not legal advice.
 | fast-json-stringify                   | 7.0.1               | [Project page](https://github.com/fastify/fast-json-stringify#readme)                               |
 | fast-querystring                      | 1.1.2               | [Project page](https://github.com/anonrig/fast-querystring#readme)                                  |
 | fast-xml-builder                      | 1.3.1               | [Project page](https://github.com/NaturalIntelligence/fast-xml-builder#readme)                      |
-| fast-xml-parser                       | 5.11.1              | [Project page](https://github.com/NaturalIntelligence/fast-xml-parser#readme)                       |
+| fast-xml-parser                       | 5.11.2              | [Project page](https://github.com/NaturalIntelligence/fast-xml-parser#readme)                       |
 | fastify                               | 5.12.5              | [Project page](https://fastify.dev/)                                                                |
 | fastify-plugin                        | 6.0.0               | [Project page](https://github.com/fastify/fastify-plugin#readme)                                    |
 | fastify-raw-body                      | 6.0.1               | [Project page](https://github.com/Eomm/fastify-raw-body#readme)                                     |
@@ -247,7 +247,7 @@ This file is not legal advice.
 | jose                                  | 6.2.12              | [Project page](https://github.com/panva/jose)                                                       |
 | json-schema-ref-resolver              | 3.0.0               | [Project page](https://github.com/fastify/json-schema-ref-resolver#readme)                          |
 | json-schema-traverse                  | 1.0.0               | [Project page](https://github.com/epoberezkin/json-schema-traverse#readme)                          |
-| launder                               | 1.7.1               | [Project page](https://github.com/apostrophecms/apostrophe/tree/main/packages/launder#readme)       |
+| launder                               | 1.7.2               | [Project page](https://github.com/apostrophecms/apostrophe/tree/main/packages/launder#readme)       |
 | lodash.camelcase                      | 4.3.0               | [Project page](https://lodash.com/)                                                                 |
 | mime-db                               | 1.52.0              | [Project page](https://github.com/jshttp/mime-db#readme)                                            |
 | mime-types                            | 2.1.35              | [Project page](https://github.com/jshttp/mime-types#readme)                                         |
@@ -255,7 +255,7 @@ This file is not legal advice.
 | ms                                    | 2.1.3               | [Project page](https://github.com/vercel/ms#readme)                                                 |
 | nanoid                                | 3.3.19              | [Project page](https://github.com/ai/nanoid#readme)                                                 |
 | negotiator                            | 0.6.3               | [Project page](https://github.com/jshttp/negotiator#readme)                                         |
-| next                                  | 16.3.6              | [Project page](https://nextjs.org)                                                                  |
+| next                                  | 16.3.8              | [Project page](https://nextjs.org)                                                                  |
 | oauth4webapi                          | 3.8.8               | [Project page](https://github.com/panva/oauth4webapi)                                               |
 | object-assign                         | 4.1.1               | [Project page](https://github.com/sindresorhus/object-assign#readme)                                |
 | on-exit-leak-free                     | 2.1.2               | [Project page](https://github.com/mcollina/on-exit-or-gc#readme)                                    |
@@ -263,14 +263,14 @@ This file is not legal advice.
 | parse-srcset                          | 1.0.2               | [Project page](https://github.com/albell/parse-srcset#readme)                                       |
 | path-expression-matcher               | 1.6.2               | [Project page](https://github.com/NaturalIntelligence/path-expression-matcher#readme)               |
 | pend                                  | 1.2.0               | [Project page](https://github.com/andrewrk/node-pend#readme)                                        |
-| pg                                    | 8.23.0              | [Project page](https://github.com/brianc/node-postgres)                                             |
-| pg-cloudflare                         | 1.4.0               | [Project page](https://github.com/brianc/node-postgres#readme)                                      |
-| pg-connection-string                  | 2.14.0              | [Project page](https://github.com/brianc/node-postgres/tree/master/packages/pg-connection-string)   |
+| pg                                    | 8.23.1              | [Project page](https://github.com/brianc/node-postgres)                                             |
+| pg-cloudflare                         | 1.4.1               | [Project page](https://github.com/brianc/node-postgres#readme)                                      |
+| pg-connection-string                  | 2.14.1              | [Project page](https://github.com/brianc/node-postgres/tree/master/packages/pg-connection-string)   |
 | pg-pool                               | 3.14.0              | [Project page](https://github.com/brianc/node-postgres/tree/master/packages/pg-pool#readme)         |
-| pg-protocol                           | 1.16.0              | [Project page](https://github.com/brianc/node-postgres#readme)                                      |
+| pg-protocol                           | 1.16.1              | [Project page](https://github.com/brianc/node-postgres#readme)                                      |
 | pg-types                              | 2.2.0               | [Project page](https://github.com/brianc/node-pg-types)                                             |
 | pgpass                                | 1.0.5               | [Project page](https://github.com/hoegaarden/pgpass#readme)                                         |
-| pino                                  | 10.3.1              | [Project page](https://getpino.io)                                                                  |
+| pino                                  | 10.4.0              | [Project page](https://getpino.io)                                                                  |
 | pino-abstract-transport               | 3.0.0               | [Project page](https://github.com/pinojs/pino-abstract-transport#readme)                            |
 | pino-std-serializers                  | 7.1.0               | [Project page](https://github.com/pinojs/pino-std-serializers#readme)                               |
 | postcss                               | 8.5.23, 8.5.28      | [Project page](https://postcss.org/)                                                                |
@@ -283,7 +283,7 @@ This file is not legal advice.
 | raw-body                              | 3.0.2               | [Project page](https://github.com/stream-utils/raw-body#readme)                                     |
 | react                                 | 19.3.0              | [Project page](https://react.dev/)                                                                  |
 | react-dom                             | 19.3.0              | [Project page](https://react.dev/)                                                                  |
-| real-require                          | 0.2.0, 1.0.0        | [Project page](https://github.com/pinojs/real-require)                                              |
+| real-require                          | 1.0.0               | [Project page](https://github.com/pinojs/real-require)                                              |
 | redis-errors                          | 1.2.0               | [Project page](https://github.com/NodeRedis/redis-errors#readme)                                    |
 | require-directory                     | 2.1.1               | [Project page](https://github.com/troygoode/node-require-directory/)                                |
 | require-from-string                   | 2.0.2               | [Project page](https://github.com/floatdrop/require-from-string#readme)                             |
@@ -294,7 +294,7 @@ This file is not legal advice.
 | safe-regex2                           | 5.1.1               | [Project page](https://github.com/fastify/safe-regex2)                                              |
 | safe-stable-stringify                 | 2.5.0               | [Project page](https://github.com/BridgeAR/safe-stable-stringify#readme)                            |
 | safer-buffer                          | 2.1.2               | [Project page](https://github.com/ChALkeR/safer-buffer#readme)                                      |
-| sanitize-html                         | 2.17.7              | [Project page](https://github.com/apostrophecms/apostrophe/tree/main/packages/sanitize-html#readme) |
+| sanitize-html                         | 2.18.0              | [Project page](https://github.com/apostrophecms/apostrophe/tree/main/packages/sanitize-html#readme) |
 | scheduler                             | 0.28.0              | [Project page](https://react.dev/)                                                                  |
 | set-cookie-parser                     | 2.7.2               | [Project page](https://github.com/nfriedly/set-cookie-parser)                                       |
 | socket.io                             | 4.8.4               | [Project page](https://github.com/socketio/socket.io/tree/main/packages/socket.io#readme)           |
@@ -330,7 +330,7 @@ This file is not legal advice.
 
 | Package    | Version | Project                                 |
 | ---------- | ------- | --------------------------------------- |
-| nodemailer | 10.0.11 | [Project page](https://nodemailer.com/) |
+| nodemailer | 10.0.14 | [Project page](https://nodemailer.com/) |
 
 ## Services in the community Compose profile
 
