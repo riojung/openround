@@ -40,7 +40,9 @@ export function RecoveryPackPresentationReferences({
             <p>
               Frozen facilitator references from the accepted source baseline, initially copied at
               insertion. Checkpoint edits and source Pack changes do not update these cards until
-              you accept an update. Presentation live card playback is not available yet.
+              you accept an update. Live explanation or worked-example playback is available in
+              eligible new Presentation sessions when enabled for the workspace. The facilitator
+              explicitly selects a card after revealing the Pack diagnostic.
             </p>
             {content.interventions.map((card) => (
               <section key={card.id}>
@@ -186,8 +188,10 @@ export function RecoveryPackPresentationPicker({
         <p>
           Copy its diagnostic and linked recheck{" "}
           {afterSelectedBlock ? "after the selected block" : "at the end"}, with frozen facilitator
-          cards and citations. The checkpoints remain editable copies. Cards are not audience slides
-          or live playback.
+          cards and citations. The checkpoints remain editable copies. Cards are not audience
+          slides. Live explanation or worked-example playback is available in eligible new
+          Presentation sessions when enabled for the workspace. The facilitator explicitly selects a
+          card after revealing the Pack diagnostic.
         </p>
         {loading ? <p role="status">Loading published Packs…</p> : null}
         {!loading && !packs.length && !loadError ? (

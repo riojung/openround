@@ -307,8 +307,13 @@ function PackLibrary() {
     >
       <div lang="en-CA" className={styles.page}>
         <p className="notice">
-          This first slice supports Round draft insertion and facilitator reference cards. Live card
-          playback, Presentation insertion, and three-way update review are not available yet.
+          With Pack authoring enabled, insert published Packs into Round or Presentation drafts and
+          review updates against the accepted baseline, local checkpoints, and latest published
+          Pack. References stay frozen until you accept an update; existing published content and
+          sessions are unchanged. Live explanation or worked-example playback is available in
+          eligible new Round or Presentation sessions when enabled for the workspace. The
+          facilitator explicitly selects a card after revealing the Pack diagnostic. Practice and
+          Companion insertion are not available.
         </p>
         {!enabled ? (
           <p className="notice">

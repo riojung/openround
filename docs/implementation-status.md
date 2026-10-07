@@ -419,7 +419,11 @@ can receive traffic; once eligible rooms or V2 reports exist, use a live-card/V2
 target. See the [upgrade runbook](runbooks/upgrade.md). No rollout, capacity, partner-evidence,
 independent-review, or production-readiness gate is marked complete by this source increment.
 
-Verification: `pnpm check` passes (format, Docker-context coverage, lint, typecheck, 1,421 unit/support
+Authoring references, the insertion picker, update review, and the Pack library now describe live
+playback as conditional on workspace enablement and eligible new sessions, rather than unavailable.
+Practice and Companion insertion remain pending.
+
+Verification: `pnpm check` passes (format, Docker-context coverage, lint, typecheck, 1,425 unit/support
 tests, and every package build). All 54 PostgreSQL 17 integration tests pass separately against an
 isolated disposable database. The combined production-browser Pack suite passes 31 scenarios on
 desktop Chromium, mobile Chromium, and mobile WebKit, including ten new Presentation card runs
@@ -429,7 +433,10 @@ scenarios also pass in development mode; join setup waits for client preflight b
 alias to avoid a pre-hydration fill race. Regression coverage also reproduces and
 fixes the mixed-writer legacy-receipt race and rejects UUID references that the shared contract
 cannot read. The consent-helper check now discovers all browser specs without a fixed suite-size
-cap. The environment-gated multi-writer test and local Firefox/manual assistive-device checks were
+cap. The multibyte draft-limit regression seeds a near-limit frozen snapshot once, then verifies the
+last accepted and first rejected insertions through the API, unchanged state after rejection, and a
+subsequent normal save; it retains the default test timeout and explicitly distinguishes UTF-8 bytes
+from character counts. The environment-gated multi-writer test and local Firefox/manual assistive-device checks were
 not run in this increment; these results do not replace external rollout or independent reviews.
 
 Remaining Pack priorities are practice and Companion insertion, source-authoring proposals with
