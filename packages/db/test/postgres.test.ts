@@ -6704,7 +6704,14 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         createdAt: now,
       },
     ]);
-    expect(await repository.purgeProductEvents(new Date(productEventExpiry.getTime() - 1))).toBe(0);
+    await repository.purgeProductEvents(new Date(productEventExpiry.getTime() - 1));
+    expect(
+      (
+        await packPracticeScoped(first.workspaceId, (client) =>
+          client.query("SELECT id FROM product_events WHERE id = $1", [productEventId]),
+        )
+      ).rows,
+    ).toEqual([{ id: productEventId }]);
 
     const client = await runtimePool.connect();
     try {
@@ -6783,7 +6790,14 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     } finally {
       client.release();
     }
-    expect(await repository.purgeProductEvents(productEventExpiry)).toBe(1);
+    await repository.purgeProductEvents(productEventExpiry);
+    expect(
+      (
+        await packPracticeScoped(first.workspaceId, (client) =>
+          client.query("SELECT id FROM product_events WHERE id = $1", [productEventId]),
+        )
+      ).rows,
+    ).toEqual([]);
 
     const finishedState = applyHostCommand(persistedSession.state, {
       commandId: randomUUID(),
