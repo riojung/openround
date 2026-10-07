@@ -1,7 +1,7 @@
-# OpenRound architecture and protocol
+# Polling Pops architecture and protocol
 
 This document describes the implemented differentiated-product architecture, its correctness
-boundaries, and the gates for production scale. OpenRound is a TypeScript modular monolith with
+boundaries, and the gates for production scale. Polling Pops is a TypeScript modular monolith with
 separately deployable web and API/realtime processes. PostgreSQL is the durable source of truth;
 Redis-compatible storage accelerates active sessions and coordinates writers. The core domain is
 the accountless Recovery Loop: ask, diagnose, intervene, recheck, and prove.
@@ -164,7 +164,7 @@ Question media is uploaded directly to a private quarantine prefix with a constr
 - Optional generic OIDC supports explicitly linked creator identities. It is disabled by default;
   a workspace policy and deployment provider configuration are both required.
 - Optional LTI 1.3 supports registered-platform instructor launch and Deep Linking. Its private
-  signing key remains in the secret manager; OpenRound publishes only a public JWKS.
+  signing key remains in the secret manager; Polling Pops publishes only a public JWKS.
 - Prometheus metrics remain on the internal server route; optional OpenTelemetry exports spans over OTLP/HTTP.
 - Checked-in collector and Alertmanager templates define the production signal and severity-route
   contract, but receiver credentials and proof of human delivery remain environment-owned.
@@ -204,7 +204,7 @@ links an account.
 ```mermaid
 sequenceDiagram
   participant C as Existing creator
-  participant S as OpenRound
+  participant S as Polling Pops
   participant D as PostgreSQL
   participant I as Institution IdP
 
@@ -373,7 +373,8 @@ revocable, role-scoped records; the presenter never reuses the host token.
 
 ### Round Experiences and Audience Pulse
 
-`packages/experience` is the only registry for the six versioned presets. Drafts and immutable
+`packages/experience` is the only registry for the seven versioned presets. Candy Pop is the
+new public identity preset; all six legacy preset definitions remain immutable. Drafts and immutable
 exports carry category plus preset reference. Session creation resolves published preset, optional
 host override, eligible workspace branding, and sound preference into a validated theme snapshot
 stored in current game state v5 together with the frozen trust mode. Legacy upcasting resolves a
@@ -795,7 +796,7 @@ a future topology passes all of these gates:
 | Authoring provider interruption      | The job retries with bounded backoff, fails after three attempts, and never creates or publishes content automatically.                                        |
 | Duplicate authoring apply            | A row lock and stored applied artifact ID return the first unpublished review draft instead of creating another.                                               |
 | Replayed OIDC or LTI state           | Atomic one-time consumption rejects the callback/launch; no creator session or identity link is issued.                                                        |
-| Unknown federated identity           | OpenRound rejects login and requires email authentication plus an explicit link in the same workspace.                                                         |
+| Unknown federated identity           | Polling Pops rejects login and requires email authentication plus an explicit link in the same workspace.                                                      |
 | Changed or disabled LMS registration | New launches fail; an already verified launch remains short-lived and workspace scoped.                                                                        |
 
 ## Operations boundary

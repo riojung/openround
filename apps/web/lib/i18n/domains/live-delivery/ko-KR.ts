@@ -121,6 +121,9 @@ const messages = {
     "노트북 같은 리듬과 명확한 구조를 갖춘 친근한 학습 화면입니다.",
   "live.experience.preset.campus.name": "Campus",
   "live.experience.preset.focus.description": "체크포인트에 주의를 기울이는 따뜻한 캔버스.",
+  "live.experience.preset.pops.name": "Candy Pop",
+  "live.experience.preset.pops.description":
+    "베리, 크림, 민트의 밝은 색상과 차분하고 읽기 쉬운 화면.",
   "live.experience.preset.focus.name": "Focus",
   "live.experience.preset.signal.description":
     "안전 및 규정 준수 상황에 적합한 고대비 저동작 화면입니다.",
@@ -451,7 +454,7 @@ const messages = {
   "live.roundPlay.progressAria": "Round 진행 상황",
   "live.roundPlay.responseRejected": "그 대답은 허용되지 않았습니다.",
   "live.roundPlay.responseUnconfirmed":
-    "OpenRound는 닫히는 질문의 앞에 그 응답을 확인할 수 없었습니다.",
+    "Polling Pops는 닫히는 질문의 앞에 그 응답을 확인할 수 없었습니다.",
   "live.roundPlay.retry": "응답 저장 다시 시도",
   "live.roundPlay.reviewItem": "이 {item} 검토",
   "live.roundPlay.saveStatusAria": "응답 저장 상태",

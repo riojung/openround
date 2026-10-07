@@ -1,4 +1,8 @@
 export const deliveryAuthoringEnglishMessages = {
+  "delivery.landing.polls": "Live polls",
+  "delivery.landing.presentations": "Interactive presentations",
+  "delivery.landing.learning": "Learning rounds",
+  "delivery.landing.featuresLabel": "Ways to use Polling Pops",
   "delivery.common.home": "Home",
   "delivery.common.loading": "Loading…",
   "delivery.common.retry": "Try again",
@@ -15,10 +19,10 @@ export const deliveryAuthoringEnglishMessages = {
   "delivery.common.preview": "Preview",
   "delivery.common.publish": "Publish",
   "delivery.common.exit": "Exit",
-  "delivery.landing.eyebrow": "Live comprehension without the noise",
-  "delivery.landing.title": "See what landed while it still matters.",
+  "delivery.landing.eyebrow": "Big ideas. Bright conversations.",
+  "delivery.landing.title": "Make every voice pop.",
   "delivery.landing.description":
-    "Ask everyone, diagnose what did not land, intervene, and recheck whether understanding recovered—without participant accounts.",
+    "Bring your room to life with live polls, interactive presentations, and learning rounds. Hear every voice, clear up confusion, and see what clicks—without participant accounts.",
   "delivery.landing.participantEntry": "Participant entry",
   "delivery.landing.joinTitle": "Join a live Round",
   "delivery.landing.joinDescription":
@@ -242,11 +246,11 @@ export const deliveryAuthoringEnglishMessages = {
   "delivery.assistant.draftQuestions": "Draft questions from a trusted source",
   "delivery.assistant.draftCheckpoints": "Draft checkpoints from a trusted source",
   "delivery.assistant.presentationDescription":
-    "OpenRound can propose cited content slides plus a linked Recovery question pair.",
+    "Polling Pops can propose cited content slides plus a linked Recovery question pair.",
   "delivery.assistant.roundDescription":
-    "OpenRound can propose a main question and linked recheck.",
+    "Polling Pops can propose a main question and linked recheck.",
   "delivery.assistant.checkpointDescription":
-    "OpenRound can propose a main checkpoint and linked recheck.",
+    "Polling Pops can propose a main checkpoint and linked recheck.",
   "delivery.assistant.securityDescription":
     "Sources may be pasted text or a private PDF, Word, or PowerPoint file. Files are security scanned before retention. Every proposal includes citations and remains an unpublished draft until you review it.",
   "delivery.assistant.allowanceUnlimited.one":

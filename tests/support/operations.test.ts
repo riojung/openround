@@ -216,7 +216,7 @@ function singleVmRuntimeEnvironment(environment: "staging" | "production" = "sta
     "MINIO_APP_ACCESS_KEY=openround-app",
     "MINIO_APP_SECRET_KEY=minio-app-secret",
     "SMTP_URL=smtps://mailer:mail-secret@smtp.example.com:465",
-    "EMAIL_FROM=OpenRound <noreply@example.com>",
+    "EMAIL_FROM=Polling Pops <noreply@example.com>",
     "METRICS_ENABLED=true",
     "METRICS_TOKEN=metrics-token-with-at-least-24-characters",
     "OPENROUND_LOG_SHIPPING_MODE=external-host-agent",
@@ -376,7 +376,7 @@ async function withReviewedDeploymentGitState<T>(
   const previousGitWorkTree = process.env.GIT_WORK_TREE;
   try {
     await run("git", ["init", "--quiet"], { cwd: fixtureRoot, capture: true });
-    await run("git", ["config", "user.name", "OpenRound Test"], {
+    await run("git", ["config", "user.name", "Polling Pops Test"], {
       cwd: fixtureRoot,
       capture: true,
     });
@@ -450,7 +450,7 @@ async function withOperationalStagingGitState<T>(
   try {
     await mkdir(checkoutRoot, { recursive: true });
     await run("git", ["init", "--quiet"], { cwd: checkoutRoot, capture: true });
-    await run("git", ["config", "user.name", "OpenRound Test"], {
+    await run("git", ["config", "user.name", "Polling Pops Test"], {
       cwd: checkoutRoot,
       capture: true,
     });
@@ -551,7 +551,7 @@ async function withSignedReleaseAcceptance<T>(
   const root = await mkdtemp(join(artifactsRoot, "signed release acceptance "));
   try {
     await run("git", ["init", "--quiet"], { cwd: root, capture: true });
-    await run("git", ["config", "user.name", "OpenRound Test"], { cwd: root, capture: true });
+    await run("git", ["config", "user.name", "Polling Pops Test"], { cwd: root, capture: true });
     await run("git", ["config", "user.email", "test@example.invalid"], {
       cwd: root,
       capture: true,
@@ -621,7 +621,7 @@ async function withSignedReleaseAcceptance<T>(
       cwd: root,
       capture: true,
     }).then(({ stdout }) => stdout.trim());
-    await run("git", ["tag", "--annotate", "v0.9.0", "--message", "OpenRound v0.9.0"], {
+    await run("git", ["tag", "--annotate", "v0.9.0", "--message", "Polling Pops v0.9.0"], {
       cwd: root,
       capture: true,
     });
@@ -825,7 +825,7 @@ async function withSignedReleaseAcceptance<T>(
             : "https://github.com/riojung/openround/releases/tag/untagged-draft-fixture",
           tag_name: "v0.9.0",
           target_commitish: candidateBuildId,
-          name: "OpenRound v0.9.0",
+          name: "Polling Pops v0.9.0",
           body: releaseAssetContent.get("release-notes.md")!.toString("utf8"),
           draft: options.releasePublished ? false : true,
           prerelease: false,
@@ -882,7 +882,7 @@ describe("operations environment contract", () => {
     const fixtureRoot = await mkdtemp(join(artifactsRoot, "reviewed automation inputs "));
     try {
       await run("git", ["init", "--quiet"], { cwd: fixtureRoot, capture: true });
-      await run("git", ["config", "user.name", "OpenRound Test"], {
+      await run("git", ["config", "user.name", "Polling Pops Test"], {
         cwd: fixtureRoot,
         capture: true,
       });
@@ -1534,6 +1534,19 @@ describe("deployment configuration and manifest validation", () => {
 
     expect(validateFlyRuntimeEnvironment(serverEnvironment, checkedConfig)).toBe(serverEnvironment);
     expect(validateFlyWebEnvironment(webEnvironment, checkedConfig)).toBe(webEnvironment);
+    const brandedWebEnvironment = {
+      ...webEnvironment,
+      OPENROUND_PUBLIC_URL: checkedConfig.publicWebUrl,
+    };
+    expect(validateFlyWebEnvironment(brandedWebEnvironment, checkedConfig)).toBe(
+      brandedWebEnvironment,
+    );
+    expect(() =>
+      validateFlyWebEnvironment(
+        { ...webEnvironment, OPENROUND_PUBLIC_URL: "https://wrong.example.test" },
+        checkedConfig,
+      ),
+    ).toThrow("OPENROUND_PUBLIC_URL");
     expect(serverEnvironment.FEATURE_RECOVERY_PACK_LIVE_CARDS).toBe("false");
     expect(() =>
       validateFlyRuntimeEnvironment(
@@ -2792,7 +2805,7 @@ describe("operations CLI dry runs", () => {
   });
 
   it("preserves spaces and apostrophes as single argv values", async () => {
-    const unusualPath = "/tmp/OpenRound team's reviewed manifest.json";
+    const unusualPath = "/tmp/Polling Pops team's reviewed manifest.json";
     const parsed = parseCliArguments(["--manifest", unusualPath], {
       valueOptions: ["manifest"],
     });
@@ -2802,7 +2815,7 @@ describe("operations CLI dry runs", () => {
       run("example-command", ["--manifest", unusualPath], { dryRun: true }).then(() => undefined),
     );
     expect(output).toContain("example-command --manifest");
-    expect(output).toContain("OpenRound team");
+    expect(output).toContain("Polling Pops team");
 
     const executed = await run(
       process.execPath,

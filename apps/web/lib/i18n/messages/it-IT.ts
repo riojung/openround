@@ -22,7 +22,7 @@ const messages = {
   "delivery.site.signedInAs": "Accesso come",
   "delivery.site.plans": "Piani",
   "delivery.site.signInToCreate": "Accedi per creare e gestire Round",
-  "delivery.site.project": "© {year} Progetto della comunità OpenRound",
+  "delivery.site.project": "© {year} Progetto della comunità Polling Pops",
   "delivery.site.legalLinks": "Link legali",
   "delivery.site.terms": "Termini",
   "delivery.site.status": "Stato",
@@ -97,7 +97,7 @@ const messages = {
     "Trasforma testo attendibile, PDF, Word o PowerPoint in una bozza da revisionare.",
   "create.round.method.import.title": "Importa un lavoro esistente",
   "create.round.method.import.description":
-    "Convalida JSON OpenRound, CSV, testo in blocco o un pacchetto QTI 3.",
+    "Convalida JSON Polling Pops, CSV, testo in blocco o un pacchetto QTI 3.",
   "create.round.method.import.badge": "Portabile",
   "create.round.method.blank.title": "Inizia da zero",
   "create.round.method.blank.description":
@@ -148,7 +148,7 @@ const messages = {
   "create.presentation.source.eyebrow": "Conversione basata su fonti",
   "create.presentation.source.title": "Crea da materiale attendibile",
   "create.presentation.source.description":
-    "PDF, DOCX, PPTX e testo incollato diventano blocchi OpenRound strutturati. Il risultato è revisionabile e reattivo, senza promettere una riproduzione perfetta delle diapositive.",
+    "PDF, DOCX, PPTX e testo incollato diventano blocchi Polling Pops strutturati. Il risultato è revisionabile e reattivo, senza promettere una riproduzione perfetta delle diapositive.",
   "create.presentation.templates.eyebrow": "Modelli strutturati",
   "create.presentation.templates.title": "Scegli uno schema di facilitazione",
   "create.presentation.templates.use": "Usa il modello →",
@@ -223,9 +223,10 @@ const messages = {
   "page.results.title": "Risultati",
   "page.results.description":
     "Esamina le evidenze di recupero e monitora le esercitazioni assegnate o basate sui report.",
-  "page.discover.eyebrow": "Selezionato da OpenRound",
+  "page.discover.eyebrow": "Selezionato da Polling Pops",
   "page.discover.title": "Scopri",
-  "page.discover.description": "Parti da modelli OpenRound affidabili e adattali al tuo pubblico.",
+  "page.discover.description":
+    "Parti da modelli Polling Pops affidabili e adattali al tuo pubblico.",
   "page.groups.eyebrow": "Collaborazione tra facilitatori",
   "page.groups.title": "Gruppi",
   "page.groups.description":

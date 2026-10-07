@@ -44,7 +44,7 @@ const messages = {
   "reportRound.assign.ready": "Übung bereit",
   "reportRound.assign.saveLinks": "Speichern und teilen Sie diese Links jetzt",
   "reportRound.assign.hashNotice":
-    "OpenRound speichert nur Token-Hashes. Diese genauen Links können nach Verlassen dieser Seite nicht mehr angezeigt werden.",
+    "Polling Pops speichert nur Token-Hashes. Diese genauen Links können nach Verlassen dieser Seite nicht mehr angezeigt werden.",
   "reportRound.assign.genericLink": "Allgemeiner anonymer Link",
   "reportRound.assign.genericPracticeLink": "Allgemeiner Link zur Praxis",
   "reportRound.assign.copy": "Kopie",
@@ -87,7 +87,7 @@ const messages = {
   "reportRound.assign.oneLabelPerLine": "Ein Etikett pro Zeile",
   "reportRound.assign.labelsPlaceholder": "Lernender 1\nLernender 2",
   "reportRound.assign.labelsHelp":
-    "Etiketten kennzeichnen Links nur für den Moderator. OpenRound sendet keine E-Mails an Dritte und erstellt keine Lernerkonten. In diesem Plan sind bis zu {maximum} Etiketten verfügbar. Persönliche {count}-Link(s) werden erstellt.",
+    "Etiketten kennzeichnen Links nur für den Moderator. Polling Pops sendet keine E-Mails an Dritte und erstellt keine Lernerkonten. In diesem Plan sind bis zu {maximum} Etiketten verfügbar. Persönliche {count}-Link(s) werden erstellt.",
   "reportRound.assign.creating": "Praxis schaffen…",
   "reportRound.assign.create": "Aufgabe erstellen",
   "reportRound.import.eyebrow": "Portabilität",
@@ -114,11 +114,11 @@ const messages = {
     "Was ist die sicherste Maßnahme?\n* Befolgen Sie die vollständige Prozedur\n- Nehmen Sie eine Abkürzung",
   "reportRound.import.pasteContent": "Fügen Sie hier den {format}-Inhalt ein",
   "reportRound.import.jsonHelpRound":
-    "Fügen Sie einen OpenRound-JSON-Export ein oder wählen Sie dessen JSON-Datei aus.",
+    "Fügen Sie einen Polling Pops-JSON-Export ein oder wählen Sie dessen JSON-Datei aus.",
   "reportRound.import.jsonHelpLegacy":
-    "Fügen Sie einen OpenRound-Checkpoint-Set-Export ein oder wählen Sie dessen JSON-Datei aus.",
+    "Fügen Sie einen Polling Pops-Checkpoint-Set-Export ein oder wählen Sie dessen JSON-Datei aus.",
   "reportRound.import.csvHelp":
-    "Fügen Sie einen OpenRound-CSV-Export ein oder wählen Sie dessen CSV-Datei aus.",
+    "Fügen Sie einen Polling Pops-CSV-Export ein oder wählen Sie dessen CSV-Datei aus.",
   "reportRound.import.bulkHelpRound":
     "Trennen Sie Fragen durch eine Leerzeile. Beginnen Sie Ihre Auswahl mit „*“ für richtig oder „-“ für falsch.",
   "reportRound.import.bulkHelpLegacy":
@@ -280,7 +280,7 @@ const messages = {
   "reportRound.rehearsal.scenario.split_room.title": "Geteiltes Antwortmuster",
   "reportRound.rehearsal.scenario.split_room.short": "5 richtig · 5 wähle eine falsche Option",
   "reportRound.rehearsal.scenario.split_room.description":
-    "Üben Sie das Lesen einer gleichmäßigen Aufteilung, ohne die Produktionseinblickspriorität von OpenRound zu ersetzen.",
+    "Üben Sie das Lesen einer gleichmäßigen Aufteilung, ohne die Produktionseinblickspriorität von Polling Pops zu ersetzen.",
   "reportRound.rehearsal.scenario.confident_misconception.title": "Selbstbewusstes Missverständnis",
   "reportRound.rehearsal.scenario.confident_misconception.short":
     "4 ganz sicher falsch · 6 richtig",
@@ -437,7 +437,7 @@ const messages = {
   "reportRound.rehearsal.everyRoleDescription":
     "Besitzer, Redakteure und Betrachter können proben, da dieser Flow keine Teilnehmerdatensätze veröffentlichen, hosten, bearbeiten oder erstellen kann.",
   "reportRound.rehearsal.telemetry":
-    "OpenRound zeichnet nur das ausgewählte Szenario, Start/Abschluss und einen groben Dauerzeitraum für das Produktlernen auf – niemals Round-Text, Antworten oder Lernenden-IDs.",
+    "Polling Pops zeichnet nur das ausgewählte Szenario, Start/Abschluss und einen groben Dauerzeitraum für das Produktlernen auf – niemals Round-Text, Antworten oder Lernenden-IDs.",
   "reportRound.editor.reuseLimit":
     "Wählen Sie weniger Fragen aus, damit diese Runde die Grenze von 200 Fragen einhält.",
   "reportRound.editor.history.questionAdded": "Frage hinzugefügt.",

@@ -236,7 +236,7 @@ checkpoints, optional-data loss findings, source deletion, feature-disabled read
 downloads. A blocked format returns validation failure with the report, never a partial attachment.
 CSV downloads expose a separate report route; QTI archives also embed `openround-export-report.json`.
 Keep the report with the artifact when assessing interoperability. Pack cards, container topology,
-citations, and private media are not exported in these converted files. OpenRound-specific QTI
+citations, and private media are not exported in these converted files. Polling Pops-specific QTI
 metadata is not guaranteed to survive another LMS, and numeric grading depends on that LMS's float
 handling. Native JSON is the complete content path but contains media references, not image bytes.
 Conversion warnings are not evidence of external LMS interoperability or release readiness.

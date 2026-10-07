@@ -3,10 +3,30 @@
 This repository implements the technical P0 baseline and the differentiated Recovery Loop through
 the source-grounded authoring, self-paced follow-up, and institution-integration foundation. It
 does not turn calendar, demand, legal, research, provider, certification, or production-observation
-gates into software claims. `OpenRound` is a working identity pending independent name and
+gates into software claims. `Polling Pops` is a working identity pending independent name and
 trademark review.
 
 ## Staged implementation plan checkpoint
+
+### Polling Pops identity — October 7, 2026
+
+The public UI, translated catalogs, sign-in/invitation email copy, documentation, metadata,
+and downloadable filenames use Polling Pops. Original lollipop SVG/PNG assets, browser and
+home-screen icons, and a social card are bundled. The shared light/dark tokens and live
+Presentation surfaces use the new berry, cream, mint, yellow, and plum identity. Candy Pop
+is available in every edition and is selected for new blank Rounds and Presentations.
+Existing presets, frozen themes, authentication/resume keys, native formats, migrations,
+API paths, and operator configuration remain compatible. Existing help recordings are
+clearly labeled as recordings from before the rebrand. See [Brand and interface](brand.md).
+
+Verification: formatting, lint, strict type checks, all package unit tests, 179 operations/support
+tests, and the production Next.js build passed. Thirteen workspace/Recovery Loop browser checks
+passed on desktop/mobile Chromium. The new identity, public light/dark surfaces, and Candy Pop
+host/guest accessibility checks passed on desktop Chromium, mobile Chromium, and mobile WebKit
+(12 checks). Local Firefox could not launch its temporary profile, so Firefox remains unverified.
+The final local Compose web refresh is blocked by Docker storage exhaustion; the existing
+running services and data volumes were preserved. Refreshing the earlier help recordings is
+also deferred; their original captions and transcripts remain audio-matched.
 
 At the 2026-09-25 transition checkpoint, Phase 0 repository implementation was merged through
 `3aee4d9`. CI, Security, and Production-path smoke pass on `main` after
@@ -566,7 +586,7 @@ content hash bind each report to its immutable content. QTI archives embed that 
 `openround-export-report.json`; either format also has a separately downloadable report.
 
 The loss report distinguishes omitted Pack identity/roles/container context, intervention cards,
-citations and private media; OpenRound-specific QTI extension metadata; and format transformations.
+citations and private media; Polling Pops-specific QTI extension metadata; and format transformations.
 It does not incorrectly label linked-recheck relationships or authored numeric tolerance as absent:
 CSV retains links, QTI preserves links in its extension, and QTI encodes tolerance bounds and unit
 text. External QTI engines may ignore extensions or round float grading values. Formula-like CSV
@@ -882,7 +902,7 @@ access-scoped attempt token now makes replayed starts converge on one durable at
 - `pnpm smoke:tracing`: the production server build exported OTLP protobuf to a temporary
   collector and shut down cleanly.
 - `pnpm smoke:observability`: Prometheus scraped the private server endpoint, loaded all 14 alert
-  rules, and successfully parsed every query from the provisioned OpenRound Operations dashboard;
+  rules, and successfully parsed every query from the provisioned Polling Pops Operations dashboard;
   Grafana provisioned its read-only datasource and dashboard without manual setup.
 - `promtool test rules`: synthetic failure series caused every alert to fire with its intended
   severity, summary, runbook annotation, and hold period.

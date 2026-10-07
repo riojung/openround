@@ -1,6 +1,6 @@
 {
   "annotations": { "list": [] },
-  "description": "Operational health, realtime correctness, latency, and dependency signals for OpenRound.",
+  "description": "Operational health, realtime correctness, latency, and dependency signals for Polling Pops.",
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -912,7 +912,7 @@
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "OpenRound Operations",
+  "title": "Polling Pops Operations",
   "uid": "openround-operations",
   "version": 3,
   "weekStart": ""

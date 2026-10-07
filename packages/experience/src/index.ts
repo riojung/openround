@@ -10,6 +10,28 @@ import {
 
 const presetDefinitions = [
   {
+    preset: { id: "pops", version: 1 },
+    name: "Candy Pop",
+    description:
+      "The Polling Pops signature: berry, cream, and mint with clear, calm interactions.",
+    category: "general",
+    motion: "calm",
+    soundCue: "none",
+    tokens: {
+      canvas: "#FFF8EF",
+      surface: "#FFFFFF",
+      surfaceStrong: "#FCE0E8",
+      text: "#39243C",
+      mutedText: "#71596E",
+      primary: "#39243C",
+      accent: "#AC2855",
+      choiceColors: ["#AC2855", "#146552", "#695018", "#395A96", "#73448D", "#914329"],
+      pattern: "dots",
+      typography: "playful",
+      corners: "round",
+    },
+  },
+  {
     preset: { id: "focus", version: 1 },
     name: "Focus",
     description: "A warm, calm canvas that keeps attention on the checkpoint.",
@@ -138,7 +160,7 @@ const presetDefinitions = [
 ] as const satisfies readonly ExperiencePresetSummary[];
 
 const categoryDefaults: Record<RoundCategory, ExperiencePresetId> = {
-  general: "focus",
+  general: "pops",
   education: "campus",
   business: "studio",
   technical: "blueprint",

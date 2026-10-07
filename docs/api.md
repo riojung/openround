@@ -174,7 +174,7 @@ the normal draft `PATCH`; it appends fresh-ID independent copies in the browser,
 main-to-recheck link to the copied recheck, and does not mutate or synchronize with the source
 Round. There is no separate question-bank API or shared question identity.
 
-Imports always return a validation report. OpenRound JSON is lossless and versioned. The QTI 3
+Imports always return a validation report. Polling Pops JSON is lossless and versioned. The QTI 3
 profile supports single select, true/false, multiple select, and numeric response; unsupported
 types and omitted media are explicit warnings/errors. CSV output escapes spreadsheet formula
 prefixes.
@@ -433,7 +433,7 @@ and the workspace's allowlist of at most ten HTTPS origins.
 Interaction synchronization includes `capabilities.audiencePulse` and `capabilities.roomChat` so
 clients can disable unavailable controls instead of treating a rollout gate as a session setting.
 
-Round drafts and OpenRound JSON v2 carry `category` and `{ id, version }` experience preset
+Round drafts and Polling Pops JSON v2 carry `category` and `{ id, version }` experience preset
 metadata. JSON v1 remains importable and defaults to General/Focus with a visible validation
 warning. `POST /v1/sessions` may carry a one-session preset override and presenter-sound choice;
 its returned snapshot contains the frozen validated theme.

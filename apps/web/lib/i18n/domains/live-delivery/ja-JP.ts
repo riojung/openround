@@ -122,6 +122,9 @@ const messages = {
   "live.experience.preset.campus.name": "Campus",
   "live.experience.preset.focus.description":
     "チェックポイントに注意を払って、暖かみのあるキャンバス。",
+  "live.experience.preset.pops.name": "Candy Pop",
+  "live.experience.preset.pops.description":
+    "ベリー、クリーム、ミント。明るい配色と落ち着いた読みやすい操作。",
   "live.experience.preset.focus.name": "Focus",
   "live.experience.preset.signal.description":
     "安全性とコンプライアンスのコンテクストのための高コントラスト、低モーション処理。",
@@ -455,7 +458,7 @@ const messages = {
   "live.roundPlay.progressAria": "ラウンド進捗",
   "live.roundPlay.responseRejected": "回答は受け付けていません。",
   "live.roundPlay.responseUnconfirmed":
-    "OpenRoundは、質問が閉じる前にその応答を確認できませんでした。",
+    "Polling Popsは、質問が閉じる前にその応答を確認できませんでした。",
   "live.roundPlay.retry": "回答の保存を再試行",
   "live.roundPlay.reviewItem": "この{item}を確認",
   "live.roundPlay.saveStatusAria": "応答保存状態",

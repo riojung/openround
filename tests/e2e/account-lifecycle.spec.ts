@@ -20,7 +20,7 @@ test("creator can return to the signed-in dashboard and sign out on a narrow scr
   await page.goto("/");
   const publicHeaderBrand = page
     .locator("header.site-header")
-    .getByRole("link", { name: "OpenRound", exact: true });
+    .getByRole("link", { name: "Polling Pops", exact: true });
   await expect(publicHeaderBrand).toHaveAttribute("href", "/dashboard");
   await publicHeaderBrand.click();
   await expect(page).toHaveURL(/\/dashboard/);
@@ -28,7 +28,7 @@ test("creator can return to the signed-in dashboard and sign out on a narrow scr
   await page.getByLabel("Checkpoint set title").fill("Navigation quiz");
   await page.getByRole("button", { name: "Create checkpoint set" }).click();
   await expect(page).toHaveURL(/\/quiz\//);
-  const creatorBrand = page.getByRole("link", { name: "OpenRound" });
+  const creatorBrand = page.getByRole("link", { name: "Polling Pops" });
   await expect(creatorBrand).toHaveAttribute("href", "/dashboard");
   await creatorBrand.click();
   await expect(page).toHaveURL(/\/dashboard/);
@@ -76,7 +76,7 @@ test("creator can archive, restore, export, and delete their account", async ({
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download account export" }).click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe("openround-account-export.json");
+  expect(download.suggestedFilename()).toBe("polling-pops-account-export.json");
   await expect(page.getByRole("status")).toContainText("account export was downloaded");
 
   await page.getByLabel(/Type DELETE/).fill("DELETE");

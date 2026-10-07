@@ -1,6 +1,6 @@
-# OpenRound user guide
+# Polling Pops user guide
 
-OpenRound helps a facilitator run a complete comprehension-recovery loop:
+Polling Pops helps a facilitator run a complete comprehension-recovery loop:
 **ask → diagnose → intervene → recheck → prove**. Participants join as session-scoped guests and
 do not need accounts.
 
@@ -203,12 +203,12 @@ styling, and a full freeform design canvas remain deferred.
 ### Import, export, folders, and tags
 
 Use folders, tags, and search to organize the library. Imports support bulk paste, CSV, versioned
-OpenRound JSON, and the supported QTI 3 profile. Every import displays validation errors and
-warnings; unsupported content is never silently discarded. OpenRound JSON is the lossless native
+Polling Pops JSON, and the supported QTI 3 profile. Every import displays validation errors and
+warnings; unsupported content is never silently discarded. Polling Pops JSON is the lossless native
 format. QTI supports selected-response, multiple-select, and numeric checkpoints; unsupported
 types and omitted media are reported.
 
-Export a checkpoint set as OpenRound JSON, formula-safe UTF-8 CSV, or QTI ZIP. Hosted portability
+Export a checkpoint set as Polling Pops JSON, formula-safe UTF-8 CSV, or QTI ZIP. Hosted portability
 exports require Pro; community deployments do not impose an application paywall.
 
 ### Delete archived content and session history
@@ -242,7 +242,7 @@ a visual treatment; choosing a category never silently changes a preset you sele
 
 | Category          | Recommended preset | Intended character                      |
 | ----------------- | ------------------ | --------------------------------------- |
-| General           | Focus              | Warm, calm, and neutral                 |
+| General           | Candy Pop          | Berry, cream, and mint; calm, rounded   |
 | Education         | Campus             | Friendly academic pattern               |
 | Business          | Studio             | Professional slate and teal             |
 | Technical         | Blueprint          | Structured grid and cyan accents        |
@@ -266,7 +266,7 @@ late joining, nickname policy, Round Experience, presenter sound, and Q&A settin
 the room. Timed is the default. An allowlisted workspace with live flex mode enabled can choose
 **Flex** for a whole room: no response countdown or deadline, no speed scoring, and the host
 decides when to close each question. The choice is frozen when the session is created.
-OpenRound then issues a seven-digit code, direct link, downloadable QR, and one-time host
+Polling Pops then issues a seven-digit code, direct link, downloadable QR, and one-time host
 credential.
 
 Keep the host tab open. Host, cohost, and presenter credentials are separate and stored only in
@@ -421,7 +421,7 @@ follow-up deletion/retention cascades with its source session.
 ## Assign practice from a published Round
 
 When standalone practice is enabled for your workspace, open a published Round and choose
-**Assign practice**. OpenRound freezes the current published version, so publishing later edits does
+**Assign practice**. Polling Pops freezes the current published version, so publishing later edits does
 not change an assignment that learners have already opened.
 
 - Choose an optional title, a timed or no-countdown mode, and a close date within your plan's
@@ -429,7 +429,7 @@ not change an assignment that learners have already opened.
 - Use the generic link for anonymous, unpaired practice or add recipient labels to create
   revocable one-attempt links. Labels help you distribute links; learners still do not need
   accounts.
-- Copy or download every new bearer link when it is shown. OpenRound stores only its hash and does
+- Copy or download every new bearer link when it is shown. Polling Pops stores only its hash and does
   not reveal the same URL again.
 - Open **Practice** to see aggregate started/completed counts, add another labelled personal link,
   revoke a link, create an accommodation pass, or close the assignment early.
@@ -454,11 +454,11 @@ policy, linked identities, LMS registrations, and—when approved—an owner-onl
 Workspace owners cannot self-enable contract-gated capabilities.
 
 For creator OIDC, first sign in by email and explicitly link the institution identity from
-**Account**. OpenRound keys the link by workspace, issuer, and subject; it never links by matching
+**Account**. Polling Pops keys the link by workspace, issuer, and subject; it never links by matching
 email. The Account screen then provides the workspace-specific institution sign-in URL and lets
 you revoke the link.
 
-For LTI 1.3, an LMS administrator and the OpenRound operator must register matching issuer,
+For LTI 1.3, an LMS administrator and the Polling Pops operator must register matching issuer,
 client, deployment, authorization, JWKS, and return-origin values. The first verified instructor
 launch requires explicit linking to an existing creator. A Deep Linking launch opens a selection
 screen containing published checkpoint sets and returns one signed resource link to the LMS.

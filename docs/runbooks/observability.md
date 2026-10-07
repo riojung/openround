@@ -19,7 +19,7 @@ Other hosted targets reject reserved, placeholder, loopback, and unspecified des
 Configure authentication at a private collector or proxy boundary rather than embedding
 credentials, query parameters, or fragments in the application URL. Health and metrics scrapes
 are omitted from traces. Hosted spans identify the reviewed deployment environment and use the
-immutable OpenRound build ID as their service version, regardless of an operator-supplied generic
+immutable Polling Pops build ID as their service version, regardless of an operator-supplied generic
 OTel service-version value.
 Validate export during deployment; `pnpm smoke:tracing` verifies the application path against a
 local temporary collector but does not test a production backend.
@@ -72,7 +72,7 @@ or retains telemetry.
 
 ## Prometheus signals
 
-The server exports Node.js runtime metrics plus these OpenRound families:
+The server exports Node.js runtime metrics plus these Polling Pops families:
 
 - `openround_http_request_duration_seconds`
 - `openround_session_events_total`
@@ -137,7 +137,7 @@ completed a valid recovery loop or that a partner returned. Use the reviewed, ps
 
 The optional observability profile starts pinned Prometheus and Grafana images, keeps both ports on
 loopback, scrapes the server over the private Compose network, loads the alert rules in
-`infra/observability/alerts.yml`, and provisions the **OpenRound Operations** dashboard:
+`infra/observability/alerts.yml`, and provisions the **Polling Pops Operations** dashboard:
 
 ```bash
 docker compose -f compose.yaml -f compose.media.yaml -f compose.observability.yaml \

@@ -419,7 +419,7 @@ export async function registerPresentationRoutes(
     const draft: PresentationDraft = {
       title: input.title,
       description: input.description,
-      experiencePreset: { id: "focus", version: 1 },
+      experiencePreset: { id: "pops", version: 1 },
       schemaVersion: 2,
       blocks: [
         {

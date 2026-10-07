@@ -1,8 +1,8 @@
 {
-  "name": "openround-platform",
+  "name": "polling-pops-platform",
   "version": "0.1.0",
   "private": true,
-  "description": "OpenRound live quiz platform",
+  "description": "Polling Pops interactive learning and audience participation workspace",
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.15.1",
   "engines": {
@@ -20,6 +20,7 @@
     }
   },
   "scripts": {
+    "brand:assets": "node scripts/generate-brand-assets.mjs",
     "build": "turbo run build",
     "alerts:rehearse": "node scripts/rehearse-alerts.mjs",
     "check:docker-context": "node scripts/check-docker-workspace-deps.mjs",

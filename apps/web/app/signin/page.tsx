@@ -139,7 +139,7 @@ export default function SignInPage() {
                   : `Continue with ${oidcStatus.providerName}`}
               </button>
               <p className="muted">
-                This works after you explicitly link your institution identity in OpenRound. An
+                This works after you explicitly link your institution identity in Polling Pops. An
                 email match alone will never link accounts.
               </p>
               <div className="auth-divider" aria-hidden="true">

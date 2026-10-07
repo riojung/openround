@@ -1,6 +1,6 @@
 # Contributing
 
-OpenRound accepts contributions that preserve its clean-room product boundary, accessibility target, and server-authoritative correctness guarantees.
+Polling Pops accepts contributions that preserve its clean-room product boundary, accessibility target, and server-authoritative correctness guarantees.
 
 1. Create a focused branch and add tests for behavioural changes.
 2. Run `pnpm check` before opening a pull request.

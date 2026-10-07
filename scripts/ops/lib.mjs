@@ -804,9 +804,15 @@ export function validateFlyWebEnvironment(environment, config) {
     NEXT_PUBLIC_API_URL: config.publicApiUrl,
   };
   for (const key of Object.keys(environment)) {
-    if (!Object.hasOwn(expected, key)) {
+    if (!Object.hasOwn(expected, key) && key !== "OPENROUND_PUBLIC_URL") {
       throw new Error(`Fly web [env] contains unsupported key ${key}`);
     }
+  }
+  if (
+    environment.OPENROUND_PUBLIC_URL !== undefined &&
+    environment.OPENROUND_PUBLIC_URL !== config.publicWebUrl
+  ) {
+    throw new Error(`Fly web [env] OPENROUND_PUBLIC_URL must be ${config.publicWebUrl}`);
   }
   for (const [key, value] of Object.entries(expected)) {
     if (environment[key] !== value) throw new Error(`Fly web [env] ${key} must be ${value}`);

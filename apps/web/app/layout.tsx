@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { cookies, headers } from "next/headers";
 import { connection } from "next/server";
 import type { ReactNode } from "react";
+import { PRODUCT_BRAND } from "@openround/contracts";
 import { ColorModeSync } from "../components/color-mode-sync";
 import { LocaleProvider } from "../components/locale-provider";
 import { COLOR_MODE_BOOTSTRAP_SCRIPT } from "../lib/color-mode";
@@ -10,9 +11,29 @@ import { LOCALE_COOKIE_NAME, localeDirection, resolveLocale } from "../lib/i18n/
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: { default: "OpenRound", template: "%s · OpenRound" },
-  description:
-    "Privacy-preserving comprehension recovery: ask, diagnose, intervene, recheck, and prove.",
+  metadataBase: new URL(
+    process.env.OPENROUND_PUBLIC_URL || `http://localhost:${process.env.PORT || "3000"}`,
+  ),
+  title: { default: PRODUCT_BRAND.name, template: `%s · ${PRODUCT_BRAND.name}` },
+  applicationName: PRODUCT_BRAND.name,
+  description: PRODUCT_BRAND.description,
+  icons: {
+    icon: { url: PRODUCT_BRAND.iconPath, type: "image/svg+xml" },
+    apple: "/brand/polling-pops-apple.png",
+  },
+  openGraph: {
+    title: `${PRODUCT_BRAND.name} · ${PRODUCT_BRAND.tagline}`,
+    description: PRODUCT_BRAND.description,
+    siteName: PRODUCT_BRAND.name,
+    images: [{ url: "/brand/polling-pops-social.png", width: 1200, height: 630 }],
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: `${PRODUCT_BRAND.name} · ${PRODUCT_BRAND.tagline}`,
+    description: PRODUCT_BRAND.description,
+    images: ["/brand/polling-pops-social.png"],
+  },
 };
 
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

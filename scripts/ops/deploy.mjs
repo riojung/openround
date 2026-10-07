@@ -465,7 +465,7 @@ export async function fetchPublishedReleaseTagObject(tagObject) {
     response = await fetch(`${TRUSTED_PRODUCTION_RELEASE_TAG_API}${tagObject}`, {
       headers: {
         Accept: "application/vnd.github+json",
-        "User-Agent": "OpenRound-production-deploy",
+        "User-Agent": "PollingPops-production-deploy",
         "X-GitHub-Api-Version": "2022-11-28",
       },
       redirect: "error",
@@ -487,7 +487,7 @@ export async function fetchPublishedReleaseTagObject(tagObject) {
 function githubApiHeaders(accept = "application/vnd.github+json") {
   const headers = {
     Accept: accept,
-    "User-Agent": "OpenRound-production-deploy",
+    "User-Agent": "PollingPops-production-deploy",
     "X-GitHub-Api-Version": "2022-11-28",
   };
   if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
@@ -641,7 +641,9 @@ export async function assertProductionReleaseRevision({
   const tagReference = `refs/tags/${binding.tag}`;
   const originUrl = await gitOutput(["remote", "get-url", "origin"], root);
   if (!trustedRemoteUrls.includes(originUrl)) {
-    throw new Error("Production release acceptance requires the trusted OpenRound origin remote");
+    throw new Error(
+      "Production release acceptance requires the trusted Polling Pops origin remote",
+    );
   }
   await run(
     "git",

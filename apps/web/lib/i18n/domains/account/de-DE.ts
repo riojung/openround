@@ -8,7 +8,7 @@ const messages = {
   "account.feedback.invitationSent": "Einladung an {email} gesendet.",
   "account.feedback.themeSaved": "Ihr Markendesign wurde für neue Live-Sitzungen gespeichert.",
   "account.feedback.themeRemoved":
-    "Das Arbeitsbereichsdesign wurde entfernt. Neue Sitzungen verwenden das OpenRound-Design.",
+    "Das Arbeitsbereichsdesign wurde entfernt. Neue Sitzungen verwenden das Polling Pops-Design.",
   "account.feedback.embedSaved": "Sichere Einbettungsursprünge wurden gespeichert.",
   "account.feedback.identityRemoved":
     "Die institutionelle Anmeldung wurde entfernt. Die E-Mail-Anmeldung bleibt verfügbar.",
@@ -46,7 +46,7 @@ const messages = {
   "account.institution.k12Mode": "Institutioneller K–12-Modus",
   "account.institution.loading": "Institutionsrichtlinie wird geladen…",
   "account.institution.linkGuidance":
-    "Verknüpfen Sie nur eine Identität, die Sie kontrollieren. OpenRound verwendet Aussteller und Subjekt der Institution und verknüpft Konten niemals über übereinstimmende E-Mail-Adressen.",
+    "Verknüpfen Sie nur eine Identität, die Sie kontrollieren. Polling Pops verwendet Aussteller und Subjekt der Institution und verknüpft Konten niemals über übereinstimmende E-Mail-Adressen.",
   "account.institution.linked": "Verknüpft am {date}",
   "account.institution.unlink": "Verknüpfung aufheben",
   "account.institution.openingSignIn": "Institutionelle Anmeldung wird geöffnet…",
@@ -56,7 +56,7 @@ const messages = {
     "Die institutionelle Anmeldung ist für diesen Arbeitsbereich nicht aktiviert. Eigentümer können vertragsgebundene Identitätskontrollen nicht selbst aktivieren.",
   "account.institution.ltiTitle": "LTI-1.3-Registrierungen",
   "account.institution.ltiEmpty":
-    "LTI ist genehmigt, aber keine Plattform registriert. Ihr OpenRound-Betreiber muss LMS-Aussteller, Client, Bereitstellung, JWKS und Rückkehrursprünge hinzufügen.",
+    "LTI ist genehmigt, aber keine Plattform registriert. Ihr Polling Pops-Betreiber muss LMS-Aussteller, Client, Bereitstellung, JWKS und Rückkehrursprünge hinzufügen.",
   "account.institution.auditTitle": "Institutioneller Prüfexport",
   "account.institution.auditDescription":
     "Laden Sie bis zu 10.000 geordnete Verwaltungs- und Moderationsereignisse mit Akteur, Anfrage, Ziel, Zeitstempel und Region herunter. Große Exporte werden ausdrücklich als gekürzt gekennzeichnet.",
@@ -115,7 +115,7 @@ const messages = {
   "account.theme.contrastHelp":
     "Beide Farben müssen zu weißem Text mindestens 4,5:1 Kontrast haben. Änderungen gelten für nach dem Speichern erstellte Sitzungen, nicht für bereits aktive Räume.",
   "account.theme.save": "Design speichern",
-  "account.theme.useOpenRound": "OpenRound-Design verwenden",
+  "account.theme.useOpenRound": "Polling Pops-Design verwenden",
   "account.export.eyebrow": "Übertragbare Daten",
   "account.export.title": "Konto exportieren",
   "account.export.description":

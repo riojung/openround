@@ -22,7 +22,7 @@ const messages = {
   "delivery.site.signedInAs": "登录身份",
   "delivery.site.plans": "方案",
   "delivery.site.signInToCreate": "登录以创建和管理 Round",
-  "delivery.site.project": "© {year} OpenRound 社区项目",
+  "delivery.site.project": "© {year} Polling Pops 社区项目",
   "delivery.site.legalLinks": "法律链接",
   "delivery.site.terms": "条款",
   "delivery.site.status": "状态",
@@ -93,7 +93,7 @@ const messages = {
   "create.round.method.source.description":
     "将可信文本、PDF、Word或PowerPoint资料转换为待审核草稿。",
   "create.round.method.import.title": "导入现有内容",
-  "create.round.method.import.description": "验证OpenRound JSON、CSV、批量文本或QTI 3软件包。",
+  "create.round.method.import.description": "验证Polling Pops JSON、CSV、批量文本或QTI 3软件包。",
   "create.round.method.import.badge": "便于迁移",
   "create.round.method.blank.title": "从空白开始",
   "create.round.method.blank.description":
@@ -136,7 +136,7 @@ const messages = {
   "create.presentation.source.eyebrow": "基于资料转换",
   "create.presentation.source.title": "根据可信资料创建",
   "create.presentation.source.description":
-    "PDF、DOCX、PPTX和粘贴的文本会转换为结构化OpenRound内容块。结果可审核并能适应不同屏幕，但并不保证逐像素还原原始幻灯片。",
+    "PDF、DOCX、PPTX和粘贴的文本会转换为结构化Polling Pops内容块。结果可审核并能适应不同屏幕，但并不保证逐像素还原原始幻灯片。",
   "create.presentation.templates.eyebrow": "结构化模板",
   "create.presentation.templates.title": "选择引导模式",
   "create.presentation.templates.use": "使用模板 →",
@@ -202,9 +202,9 @@ const messages = {
   "page.results.eyebrow": "学习证据",
   "page.results.title": "结果",
   "page.results.description": "查看补救学习证据，并跟踪已布置或基于报告的练习。",
-  "page.discover.eyebrow": "OpenRound 精选",
+  "page.discover.eyebrow": "Polling Pops 精选",
   "page.discover.title": "发现",
-  "page.discover.description": "从可信的 OpenRound 模板入手，并根据参与者进行调整。",
+  "page.discover.description": "从可信的 Polling Pops 模板入手，并根据参与者进行调整。",
   "page.groups.eyebrow": "引导者协作",
   "page.groups.title": "小组",
   "page.groups.description": "整理活动、协调引导者并规划实施，无需学习者账号。",

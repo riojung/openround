@@ -37,7 +37,13 @@ export function cleanPlainText(value: string, maxLength: number): string {
     .slice(0, maxLength);
 }
 
-const blockedNicknameWords = new Set(["admin", "administrator", "moderator", "openround support"]);
+const blockedNicknameWords = new Set([
+  "admin",
+  "administrator",
+  "moderator",
+  "openround support",
+  "polling pops support",
+]);
 
 const friendlyAdjectives = ["Bright", "Calm", "Curious", "Kind", "Quick", "Sunny"];
 const friendlyNouns = ["Badger", "Falcon", "Fox", "Otter", "Panda", "Raven"];

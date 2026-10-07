@@ -226,7 +226,7 @@ const messages = {
   "pages.help.duration": "Duración {duration}",
   "pages.help.enabledBuilder": "Utilice el generador de rondas habilitado",
   "pages.help.guides.currentDescription":
-    "OpenRound muestra solo orientación para las capacidades que están habilitadas en este espacio de trabajo.",
+    "Polling Pops muestra solo orientación para las capacidades que están habilitadas en este espacio de trabajo.",
   "pages.help.guides.currentTitle": "Orientación para su espacio de trabajo actual",
   "pages.help.guides.description":
     "Comience con el recorrido de un minuto y luego profundice en la creación y la entrega.",
@@ -246,14 +246,16 @@ const messages = {
   "pages.help.support.openSettings": "Abrir configuración",
   "pages.help.support.operations": "Operaciones",
   "pages.help.support.privacyDescription":
-    "Revise cómo OpenRound maneja los datos de aprendizaje del ámbito de la sesión.",
+    "Revise cómo Polling Pops maneja los datos de aprendizaje del ámbito de la sesión.",
   "pages.help.support.privacyTitle": "Privacidad",
   "pages.help.support.readPrivacy": "Leer información de privacidad",
   "pages.help.support.settingsDescription":
     "Administre roles, integraciones, retención, facturación y datos de cuentas.",
   "pages.help.support.settingsTitle": "Configuración del espacio de trabajo",
+  "pages.help.guides.brandNote":
+    "Estas guías se grabaron antes del cambio de marca a Polling Pops. Los pasos siguen vigentes; los colores y la marca han cambiado.",
   "pages.help.support.statusDescription":
-    "Verifique la disponibilidad actual de los servicios OpenRound.",
+    "Verifique la disponibilidad actual de los servicios Polling Pops.",
   "pages.help.support.statusTitle": "Estado del servicio",
   "pages.help.support.title": "Soporte de espacio de trabajo",
   "pages.help.support.trust": "confianza",

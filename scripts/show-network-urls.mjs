@@ -15,7 +15,7 @@ if (addresses.size === 0) {
   );
   process.exitCode = 1;
 } else {
-  process.stdout.write("OpenRound addresses visible from this computer:\n\n");
+  process.stdout.write("Polling Pops addresses visible from this computer:\n\n");
   for (const address of addresses) process.stdout.write(`  http://${address}:${port}\n`);
   process.stdout.write(
     "\nUse an address reachable by the participant devices. Local firewalls, VPNs, and Wi-Fi client isolation can still block access.\n",

@@ -22,7 +22,7 @@ const messages = {
   "delivery.site.signedInAs": "Sesión iniciada como",
   "delivery.site.plans": "Planes",
   "delivery.site.signInToCreate": "Inicia sesión para crear y gestionar Rounds",
-  "delivery.site.project": "© {year} Proyecto comunitario OpenRound",
+  "delivery.site.project": "© {year} Proyecto comunitario Polling Pops",
   "delivery.site.legalLinks": "Enlaces legales",
   "delivery.site.terms": "Términos",
   "delivery.site.status": "Estado",
@@ -97,7 +97,7 @@ const messages = {
     "Convierte texto fiable, PDF, Word o PowerPoint en un borrador para revisar.",
   "create.round.method.import.title": "Importar trabajo existente",
   "create.round.method.import.description":
-    "Valida JSON de OpenRound, CSV, texto masivo o un paquete QTI 3.",
+    "Valida JSON de Polling Pops, CSV, texto masivo o un paquete QTI 3.",
   "create.round.method.import.badge": "Portátil",
   "create.round.method.blank.title": "Empezar desde cero",
   "create.round.method.blank.description":
@@ -148,7 +148,7 @@ const messages = {
   "create.presentation.source.eyebrow": "Conversión basada en fuentes",
   "create.presentation.source.title": "Crear desde material fiable",
   "create.presentation.source.description":
-    "Los archivos PDF, DOCX y PPTX, así como el texto pegado, se convierten en bloques estructurados de OpenRound. El resultado se puede revisar y se adapta a la pantalla; no promete reproducir cada píxel de las diapositivas.",
+    "Los archivos PDF, DOCX y PPTX, así como el texto pegado, se convierten en bloques estructurados de Polling Pops. El resultado se puede revisar y se adapta a la pantalla; no promete reproducir cada píxel de las diapositivas.",
   "create.presentation.templates.eyebrow": "Plantillas estructuradas",
   "create.presentation.templates.title": "Elige un patrón de facilitación",
   "create.presentation.templates.use": "Usar plantilla →",
@@ -225,10 +225,10 @@ const messages = {
   "page.results.title": "Resultados",
   "page.results.description":
     "Revisa las evidencias de recuperación y sigue las prácticas asignadas o basadas en informes.",
-  "page.discover.eyebrow": "Selección de OpenRound",
+  "page.discover.eyebrow": "Selección de Polling Pops",
   "page.discover.title": "Descubrir",
   "page.discover.description":
-    "Empieza con patrones fiables de OpenRound y adáptalos a tu audiencia.",
+    "Empieza con patrones fiables de Polling Pops y adáptalos a tu audiencia.",
   "page.groups.eyebrow": "Colaboración entre facilitadores",
   "page.groups.title": "Grupos",
   "page.groups.description":

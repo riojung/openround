@@ -44,7 +44,7 @@ const messages = {
   "reportRound.assign.ready": "Pratique pronto",
   "reportRound.assign.saveLinks": "Guarde e partilhe esses links agora",
   "reportRound.assign.hashNotice":
-    "O OpenRound armazena apenas hashes de tokens. Estes links exatos não poderão ser apresentados novamente depois de sair desta página.",
+    "O Polling Pops armazena apenas hashes de tokens. Estes links exatos não poderão ser apresentados novamente depois de sair desta página.",
   "reportRound.assign.genericLink": "Link anónimo genérico",
   "reportRound.assign.genericPracticeLink": "Ligação de prática genérica",
   "reportRound.assign.copy": "Cópia",
@@ -86,7 +86,7 @@ const messages = {
   "reportRound.assign.oneLabelPerLine": "Um rótulo por linha",
   "reportRound.assign.labelsPlaceholder": "Aluno 1\nAluno 2",
   "reportRound.assign.labelsHelp":
-    "Os rótulos identificam ligações apenas para o facilitador. O OpenRound não envia e-mails a ninguém nem cria contas de aluno. Até etiquetas {maximum} estão disponíveis neste plano. Serão criados links pessoais {count}.",
+    "Os rótulos identificam ligações apenas para o facilitador. O Polling Pops não envia e-mails a ninguém nem cria contas de aluno. Até etiquetas {maximum} estão disponíveis neste plano. Serão criados links pessoais {count}.",
   "reportRound.assign.creating": "Criando prática…",
   "reportRound.assign.create": "Criar tarefa",
   "reportRound.import.eyebrow": "Portabilidade",
@@ -114,10 +114,11 @@ const messages = {
     "Qual é a ação mais segura?\n* Siga o procedimento completo\n- Apanhe um atalho",
   "reportRound.import.pasteContent": "Cole aqui o conteúdo {format}",
   "reportRound.import.jsonHelpRound":
-    "Cole uma exportação JSON do OpenRound ou escolha o seu ficheiro . json.",
+    "Cole uma exportação JSON do Polling Pops ou escolha o seu ficheiro . json.",
   "reportRound.import.jsonHelpLegacy":
-    "Cole uma exportação de conjunto de pontos de verificação do OpenRound ou escolha o seu ficheiro . json.",
-  "reportRound.import.csvHelp": "Cole uma exportação OpenRound CSV ou escolha o seu ficheiro .csv.",
+    "Cole uma exportação de conjunto de pontos de verificação do Polling Pops ou escolha o seu ficheiro . json.",
+  "reportRound.import.csvHelp":
+    "Cole uma exportação Polling Pops CSV ou escolha o seu ficheiro .csv.",
   "reportRound.import.bulkHelpRound":
     "Separe as perguntas com uma linha em branco. Comece as escolhas com '*' para correto ou '-' para incorreto.",
   "reportRound.import.bulkHelpLegacy":
@@ -277,7 +278,7 @@ const messages = {
   "reportRound.rehearsal.scenario.split_room.title": "Padrão de resposta dividida",
   "reportRound.rehearsal.scenario.split_room.short": "5 corretos · 5 escolha uma opção errada",
   "reportRound.rehearsal.scenario.split_room.description":
-    "Pratique a leitura de uma divisão uniforme sem substituir a prioridade do insight de produção do OpenRound.",
+    "Pratique a leitura de uma divisão uniforme sem substituir a prioridade do insight de produção do Polling Pops.",
   "reportRound.rehearsal.scenario.confident_misconception.title": "Equívoco confiante",
   "reportRound.rehearsal.scenario.confident_misconception.short":
     "4 muito certo errado · 6 correto",
@@ -426,7 +427,7 @@ const messages = {
   "reportRound.rehearsal.everyRoleDescription":
     "Os proprietários, editores e visualizadores podem ensaiar porque este fluxo não pode publicar, alojar, editar ou criar registos de alunos.",
   "reportRound.rehearsal.telemetry":
-    "O OpenRound regista apenas o cenário selecionado, o início/conclusão e um intervalo de duração aproximada para a aprendizagem do produto – nunca texto da ronda, respostas ou identificadores do aluno.",
+    "O Polling Pops regista apenas o cenário selecionado, o início/conclusão e um intervalo de duração aproximada para a aprendizagem do produto – nunca texto da ronda, respostas ou identificadores do aluno.",
   "reportRound.editor.reuseLimit":
     "Selecione menos perguntas para que esta ronda respeite o limite de 200 perguntas.",
   "reportRound.editor.history.questionAdded": "Pergunta adicionada.",

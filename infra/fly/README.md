@@ -1,7 +1,7 @@
 # Legacy Fly deployment reference
 
 The Fly TOML files are retained only as historical architecture and migration reference. Fly.io is
-not an active OpenRound deployment target, and these files are not maintained as a runnable
+not an active Polling Pops deployment target, and these files are not maintained as a runnable
 staging or production profile. They do not prove that any Fly application, managed data service,
 domain, or regional environment exists.
 

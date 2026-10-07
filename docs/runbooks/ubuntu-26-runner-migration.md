@@ -1,7 +1,7 @@
 # Ubuntu 26 GitHub-hosted runner migration
 
 [GitHub plans](https://github.blog/changelog/2026-09-17-ubuntu-26-generally-available-and-latest-migration/)
-to move the `ubuntu-latest` label from Ubuntu 24 to Ubuntu 26 between October 19 and November 19, 2026. OpenRound uses native Node dependencies, Playwright browser packages, service containers,
+to move the `ubuntu-latest` label from Ubuntu 24 to Ubuntu 26 between October 19 and November 19, 2026. Polling Pops uses native Node dependencies, Playwright browser packages, service containers,
 Docker Compose, Buildx, Trivy, and Cosign, so a normal unit-test pass is not sufficient compatibility
 evidence. Compare the published [Ubuntu 26 runner
 inventory](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md)

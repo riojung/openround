@@ -89,7 +89,7 @@ async function main() {
   );
   assert.equal((grafanaHealth as { database: string }).database, "ok");
   const dashboards = await waitForJson<Array<{ uid: string }>>(
-    `${grafanaUrl}/api/search?query=OpenRound`,
+    `${grafanaUrl}/api/search?query=Polling Pops`,
     (results) => results.some(({ uid }) => uid === "openround-operations"),
     { headers: { authorization } },
   );

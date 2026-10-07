@@ -315,7 +315,7 @@ describe("Phase 0 research prototype lab", () => {
     });
     const serialized = serializePrototypeEvidence(evidence);
 
-    expect(PROTOTYPE_EVIDENCE_DOWNLOAD_NAME).toBe("openround-phase0-prototype-evidence.json");
+    expect(PROTOTYPE_EVIDENCE_DOWNLOAD_NAME).toBe("polling-pops-phase0-prototype-evidence.json");
     expect(serialized.endsWith("\n")).toBe(true);
     expect(JSON.parse(serialized)).toEqual(evidence);
     expect(serialized).not.toContain(draft.title);

@@ -384,7 +384,7 @@ function PackLibrary() {
             {!loading && !packs.length ? (
               <p className="muted">
                 No Packs yet. Start from a published diagnostic and linked recheck, or import an
-                OpenRound Pack.
+                Polling Pops Pack.
               </p>
             ) : null}
             <ul className={styles.list}>
@@ -481,7 +481,7 @@ function PackLibrary() {
                   Create Pack draft
                 </button>
                 <details className={styles.import}>
-                  <summary>Import OpenRound Pack JSON</summary>
+                  <summary>Import Polling Pops Pack JSON</summary>
                   <label className="field">
                     <span>Pack JSON</span>
                     <textarea
@@ -758,7 +758,7 @@ function PackLibrary() {
                         })
                       }
                     >
-                      Export OpenRound JSON
+                      Export Polling Pops JSON
                     </button>
                     {practiceSourceLoading ? (
                       <p role="status">Loading the frozen published export source…</p>

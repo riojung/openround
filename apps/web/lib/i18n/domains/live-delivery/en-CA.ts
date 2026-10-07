@@ -122,6 +122,9 @@ const liveDeliveryEnglishMessages = {
   "live.experience.preset.campus.name": "Campus",
   "live.experience.preset.focus.description":
     "A warm, calm canvas that keeps attention on the checkpoint.",
+  "live.experience.preset.pops.name": "Candy Pop",
+  "live.experience.preset.pops.description":
+    "Berry, cream, and mint. A bright signature look with calm, readable interactions.",
   "live.experience.preset.focus.name": "Focus",
   "live.experience.preset.signal.description":
     "A high-contrast, low-motion treatment for safety and compliance contexts.",
@@ -454,7 +457,7 @@ const liveDeliveryEnglishMessages = {
   "live.roundPlay.progressAria": "Round progress",
   "live.roundPlay.responseRejected": "That answer was not accepted.",
   "live.roundPlay.responseUnconfirmed":
-    "OpenRound could not confirm that response before the question closed.",
+    "Polling Pops could not confirm that response before the question closed.",
   "live.roundPlay.retry": "Retry saving response",
   "live.roundPlay.reviewItem": "Review this {item}",
   "live.roundPlay.saveStatusAria": "Response save status",

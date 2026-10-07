@@ -247,7 +247,7 @@ function importJson(data: string, title?: string): CheckpointSetImportResult {
     return {
       draft: null,
       validation: validation("openround_json", 0, [
-        issue("error", "INVALID_JSON", "The OpenRound JSON file is not valid JSON."),
+        issue("error", "INVALID_JSON", "The Polling Pops JSON file is not valid JSON."),
       ]),
     };
   }

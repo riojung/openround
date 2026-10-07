@@ -41,7 +41,7 @@ const messages = {
   "reportRound.assign.ready": "練習就緒",
   "reportRound.assign.saveLinks": "立即儲存並分享這些連結",
   "reportRound.assign.hashNotice":
-    "OpenRound 只儲存令牌哈希。離開此頁面後，將無法再次顯示這些完整連結。",
+    "Polling Pops 只儲存令牌哈希。離開此頁面後，將無法再次顯示這些完整連結。",
   "reportRound.assign.genericLink": "通用匿名連結",
   "reportRound.assign.genericPracticeLink": "一般練習連結",
   "reportRound.assign.copy": "複製",
@@ -80,7 +80,7 @@ const messages = {
   "reportRound.assign.oneLabelPerLine": "每行一個標籤",
   "reportRound.assign.labelsPlaceholder": "學習者 1\n學習者 2",
   "reportRound.assign.labelsHelp":
-    "標籤僅供引導者識別連結。OpenRound 不會寄送電子郵件，也不會建立學習者帳號。此方案最多可使用 {maximum} 個標籤，並將建立 {count} 個個人連結。",
+    "標籤僅供引導者識別連結。Polling Pops 不會寄送電子郵件，也不會建立學習者帳號。此方案最多可使用 {maximum} 個標籤，並將建立 {count} 個個人連結。",
   "reportRound.assign.creating": "正在建立練習…",
   "reportRound.assign.create": "建立指派",
   "reportRound.import.eyebrow": "可攜性",
@@ -104,9 +104,9 @@ const messages = {
   "reportRound.import.content": "匯入內容",
   "reportRound.import.bulkExample": "哪個行動最安全？\n* 遵循完整程序\n- 採取捷徑",
   "reportRound.import.pasteContent": "在此處貼上 {format} 內容",
-  "reportRound.import.jsonHelpRound": "貼上 OpenRound JSON 匯出或選擇其 .json 檔案。",
-  "reportRound.import.jsonHelpLegacy": "貼上 OpenRound Checkpoint-Set 匯出或選擇其 .json 檔案。",
-  "reportRound.import.csvHelp": "貼上 OpenRound CSV 匯出或選擇其 .csv 檔案。",
+  "reportRound.import.jsonHelpRound": "貼上 Polling Pops JSON 匯出或選擇其 .json 檔案。",
+  "reportRound.import.jsonHelpLegacy": "貼上 Polling Pops Checkpoint-Set 匯出或選擇其 .json 檔案。",
+  "reportRound.import.csvHelp": "貼上 Polling Pops CSV 匯出或選擇其 .csv 檔案。",
   "reportRound.import.bulkHelpRound":
     "用空白行分隔問題。 以 '* ' 開始選擇以表示正確或 '-' 表示不正確。",
   "reportRound.import.bulkHelpLegacy":
@@ -250,7 +250,7 @@ const messages = {
   "reportRound.rehearsal.scenario.split_room.title": "分裂響應模式",
   "reportRound.rehearsal.scenario.split_room.short": "5 人正確 · 5 人選擇同一錯誤選項",
   "reportRound.rehearsal.scenario.split_room.description":
-    "練習解讀五五分歧的回應，同時保留 OpenRound 正式洞見的判斷優先順序。",
+    "練習解讀五五分歧的回應，同時保留 Polling Pops 正式洞見的判斷優先順序。",
   "reportRound.rehearsal.scenario.confident_misconception.title": "高確信度的誤解",
   "reportRound.rehearsal.scenario.confident_misconception.short": "4 人高確信度但錯誤 · 6 人正確",
   "reportRound.rehearsal.scenario.confident_misconception.description":
@@ -381,7 +381,7 @@ const messages = {
   "reportRound.rehearsal.everyRoleDescription":
     "所有者、編輯者與檢視者都可排練，因為此流程無法發布、主持、編輯或建立學習者記錄。",
   "reportRound.rehearsal.telemetry":
-    "OpenRound 只會記錄所選情境、開始與完成狀態，以及用於改善產品的粗略時長區間；不會記錄互動測驗文字、回應或學習者識別碼。",
+    "Polling Pops 只會記錄所選情境、開始與完成狀態，以及用於改善產品的粗略時長區間；不會記錄互動測驗文字、回應或學習者識別碼。",
   "reportRound.editor.reuseLimit": "請減少選取的問題，使這份互動測驗不超過 200 題。",
   "reportRound.editor.history.questionAdded": "已新增問題。",
   "reportRound.editor.history.questionsReused.one": "已重複使用 {count} 道問題。",

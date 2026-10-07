@@ -442,7 +442,7 @@ jobs:
           server_ref="$(jq -r '.images.server.ref' "$manifest")"
           web_ref="$(jq -r '.images.web.ref' "$manifest")"
           cat > "$output/release-notes.md" <<EOF
-          OpenRound $GITHUB_REF_NAME artifacts were assembled for independent review.
+          Polling Pops $GITHUB_REF_NAME artifacts were assembled for independent review.
 
           Tagged commit: $CANDIDATE_COMMIT
           Exercised candidate: ${{ needs.preflight.outputs.evidence_candidate_commit }}
@@ -519,7 +519,7 @@ jobs:
             --draft \
             --verify-tag \
             --target "$CANDIDATE_COMMIT" \
-            --title "OpenRound $GITHUB_REF_NAME" \
+            --title "Polling Pops $GITHUB_REF_NAME" \
             --notes-file "$output/release-notes.md" \
             "${assets[@]}"
 

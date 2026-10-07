@@ -125,7 +125,7 @@ async function recoveryPackWorkflow(page: Page) {
     page.getByRole("status").filter({ hasText: "Published Pack inserted" }),
   ).toBeVisible();
   const exported = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export OpenRound JSON" }).click();
+  await page.getByRole("button", { name: "Export Polling Pops JSON" }).click();
   expect((await exported).suggestedFilename()).toContain("Ratios-recovery");
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
@@ -168,9 +168,9 @@ async function recoveryPackWorkflow(page: Page) {
   await expect(page.getByLabel("Card 1 facilitator guidance")).toHaveValue(guidance);
   await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Create Pack draft" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Export OpenRound JSON" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Export Polling Pops JSON" })).toBeEnabled();
   const disabledExport = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export OpenRound JSON" }).click();
+  await page.getByRole("button", { name: "Export Polling Pops JSON" }).click();
   await disabledExport;
   await expect(page.getByRole("button", { name: "Reload saved draft" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Delete Pack permanently" })).toBeEnabled();

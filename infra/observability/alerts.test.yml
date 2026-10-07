@@ -147,7 +147,7 @@ tests:
               severity: page
             exp_annotations:
               runbook: docs/runbooks/observability.md
-              summary: OpenRound metrics target is unavailable
+              summary: Polling Pops metrics target is unavailable
       - eval_time: 130m
         alertname: OpenRoundHttpServerErrors
         exp_alerts:
@@ -155,7 +155,7 @@ tests:
               severity: page
             exp_annotations:
               runbook: docs/runbooks/observability.md
-              summary: OpenRound HTTP 5xx ratio is above 2%
+              summary: Polling Pops HTTP 5xx ratio is above 2%
       - eval_time: 130m
         alertname: OpenRoundBroadcastFailures
         exp_alerts:

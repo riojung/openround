@@ -1,6 +1,10 @@
 import type { DeliveryAuthoringMessages } from "./en-CA";
 
 export default {
+  "delivery.landing.polls": "ライブ投票",
+  "delivery.landing.presentations": "インタラクティブなプレゼン",
+  "delivery.landing.learning": "学習ラウンド",
+  "delivery.landing.featuresLabel": "Polling Pops の活用方法",
   "delivery.common.home": "ホーム",
   "delivery.common.loading": "読み込み中…",
   "delivery.common.retry": "再試行",
@@ -17,10 +21,10 @@ export default {
   "delivery.common.preview": "プレビュー",
   "delivery.common.publish": "公開",
   "delivery.common.exit": "終了",
-  "delivery.landing.eyebrow": "雑音のないライブ理解確認",
-  "delivery.landing.title": "今、大切なうちに理解を見える化。",
+  "delivery.landing.eyebrow": "大きなアイデア。弾む会話。",
+  "delivery.landing.title": "一人ひとりの声が、はじける。",
   "delivery.landing.description":
-    "全員に問い、診断し、介入して、理解が回復したか再確認します。参加者アカウントは不要です。",
+    "ライブ投票、インタラクティブなプレゼンテーション、学習ラウンドで場を活性化。全員の声を聞き、疑問を解消し、理解を確かめましょう。参加者のアカウントは不要です。",
   "delivery.landing.participantEntry": "参加者入口",
   "delivery.landing.joinTitle": "ライブRoundに参加",
   "delivery.landing.joinDescription": "アカウント不要。進行役が表示するコードを入力してください。",
@@ -239,11 +243,11 @@ export default {
   "delivery.assistant.draftQuestions": "信頼できるソースから質問を作成",
   "delivery.assistant.draftCheckpoints": "信頼できるソースからチェックポイントを作成",
   "delivery.assistant.presentationDescription":
-    "OpenRoundは、出典付きのコンテンツスライドと、リンクされたリカバリー質問のペアを提案できます。",
+    "Polling Popsは、出典付きのコンテンツスライドと、リンクされたリカバリー質問のペアを提案できます。",
   "delivery.assistant.roundDescription":
-    "OpenRoundは、メイン質問とリンクされた再確認質問を提案できます。",
+    "Polling Popsは、メイン質問とリンクされた再確認質問を提案できます。",
   "delivery.assistant.checkpointDescription":
-    "OpenRoundは、メインチェックポイントとリンクされた再確認を提案できます。",
+    "Polling Popsは、メインチェックポイントとリンクされた再確認を提案できます。",
   "delivery.assistant.securityDescription":
     "ソースには貼り付けたテキスト、または非公開のPDF、Word、PowerPointファイルを使用できます。ファイルは保存前にセキュリティスキャンされます。各提案には出典が含まれ、確認するまでは未公開の下書きとして保持されます。",
   "delivery.assistant.allowanceUnlimited.one": "今月{used}件のジョブを作成済み・運用者設定の上限",

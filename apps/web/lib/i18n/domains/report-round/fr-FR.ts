@@ -45,7 +45,7 @@ const messages = {
   "reportRound.assign.ready": "Prêt à s'entraîner",
   "reportRound.assign.saveLinks": "Enregistrez et partagez ces liens maintenant",
   "reportRound.assign.hashNotice":
-    "OpenRound stocke uniquement les hachages de jetons. Ces liens exacts ne peuvent plus être affichés après avoir quitté cette page.",
+    "Polling Pops stocke uniquement les hachages de jetons. Ces liens exacts ne peuvent plus être affichés après avoir quitté cette page.",
   "reportRound.assign.genericLink": "Lien anonyme générique",
   "reportRound.assign.genericPracticeLink": "Lien vers la pratique générique",
   "reportRound.assign.copy": "Copie",
@@ -88,7 +88,7 @@ const messages = {
   "reportRound.assign.oneLabelPerLine": "Une étiquette par ligne",
   "reportRound.assign.labelsPlaceholder": "Apprenant 1\nApprenant 2",
   "reportRound.assign.labelsHelp":
-    "Les étiquettes identifient les liens uniquement pour l'animateur. OpenRound n'envoie d'e-mails à personne et ne crée pas de comptes d'apprenants. Jusqu'à {maximum} étiquettes sont disponibles sur ce plan. Un ou plusieurs liens personnels {count} seront créés.",
+    "Les étiquettes identifient les liens uniquement pour l'animateur. Polling Pops n'envoie d'e-mails à personne et ne crée pas de comptes d'apprenants. Jusqu'à {maximum} étiquettes sont disponibles sur ce plan. Un ou plusieurs liens personnels {count} seront créés.",
   "reportRound.assign.creating": "Créer de la pratique…",
   "reportRound.assign.create": "Créer un devoir",
   "reportRound.import.eyebrow": "Portabilité",
@@ -116,11 +116,11 @@ const messages = {
     "Quelle est l’action la plus sûre ?\n* Suivez la procédure complète\n- Prendre un raccourci",
   "reportRound.import.pasteContent": "Collez le contenu {format} ici",
   "reportRound.import.jsonHelpRound":
-    "Collez une exportation OpenRound JSON ou choisissez son fichier .json.",
+    "Collez une exportation Polling Pops JSON ou choisissez son fichier .json.",
   "reportRound.import.jsonHelpLegacy":
-    "Collez une exportation d'ensemble de points de contrôle OpenRound ou choisissez son fichier .json.",
+    "Collez une exportation d'ensemble de points de contrôle Polling Pops ou choisissez son fichier .json.",
   "reportRound.import.csvHelp":
-    "Collez une exportation CSV OpenRound ou choisissez son fichier .csv.",
+    "Collez une exportation CSV Polling Pops ou choisissez son fichier .csv.",
   "reportRound.import.bulkHelpRound":
     "Séparez les questions par une ligne vierge. Commencez les choix par '*' pour correct ou '-' pour incorrect.",
   "reportRound.import.bulkHelpLegacy":
@@ -280,7 +280,7 @@ const messages = {
   "reportRound.rehearsal.scenario.split_room.title": "Modèle de réponse divisé",
   "reportRound.rehearsal.scenario.split_room.short": "5 correct · 5 choisis une mauvaise option",
   "reportRound.rehearsal.scenario.split_room.description":
-    "Entraînez-vous à lire une répartition égale sans remplacer la priorité d'analyse de la production d'OpenRound.",
+    "Entraînez-vous à lire une répartition égale sans remplacer la priorité d'analyse de la production d'Polling Pops.",
   "reportRound.rehearsal.scenario.confident_misconception.title": "Idée fausse confiante",
   "reportRound.rehearsal.scenario.confident_misconception.short":
     "4 très certainement faux · 6 correct",
@@ -430,7 +430,7 @@ const messages = {
   "reportRound.rehearsal.everyRoleDescription":
     "Les propriétaires, les éditeurs et les spectateurs peuvent répéter car ce flux ne peut pas publier, héberger, modifier ou créer des enregistrements d'apprenant.",
   "reportRound.rehearsal.telemetry":
-    "OpenRound enregistre uniquement le scénario sélectionné, le début/la fin et une durée approximative pour l'apprentissage du produit – jamais de texte Round, de réponses ou d'identifiants de l'apprenant.",
+    "Polling Pops enregistre uniquement le scénario sélectionné, le début/la fin et une durée approximative pour l'apprentissage du produit – jamais de texte Round, de réponses ou d'identifiants de l'apprenant.",
   "reportRound.editor.reuseLimit":
     "Sélectionnez moins de questions afin que ce Round respecte la limite de 200 questions.",
   "reportRound.editor.history.questionAdded": "Question ajoutée.",

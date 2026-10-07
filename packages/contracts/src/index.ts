@@ -2,6 +2,8 @@ import { z } from "zod";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
+export { PRODUCT_BRAND } from "./product-brand";
+
 export {
   clampContentSlideFrame,
   contentSlideMediaFrame,
@@ -269,6 +271,7 @@ export const RoundCategorySchema = z.enum([
 export type RoundCategory = z.infer<typeof RoundCategorySchema>;
 
 export const ExperiencePresetIdSchema = z.enum([
+  "pops",
   "focus",
   "campus",
   "studio",

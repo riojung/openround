@@ -558,7 +558,7 @@ describe("Recovery Pack portability API", () => {
       expect(download.headers["content-type"]).toContain(mime);
       expect(download.headers["cache-control"]).toBe("private, no-store");
       expect(download.headers["content-disposition"]).toBe(
-        `attachment; filename="openround-recovery-pack-${frozen.id}.${extension}"`,
+        `attachment; filename="polling-pops-recovery-pack-${frozen.id}.${extension}"`,
       );
       expect(download.headers["x-openround-export-report"]).toBe(
         `${base}/export-report?format=${format}`,

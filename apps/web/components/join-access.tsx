@@ -84,7 +84,7 @@ export function JoinAccess({
   function triggerDownload(url: string, extension: "svg" | "png") {
     const link = document.createElement("a");
     link.href = url;
-    link.download = `openround-${code}-qr.${extension}`;
+    link.download = `polling-pops-${code}-qr.${extension}`;
     document.body.append(link);
     link.click();
     link.remove();

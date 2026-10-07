@@ -154,7 +154,7 @@ async function packPracticeWorkflow(page: Page, browser: Browser, testInfo: Test
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download links CSV", exact: true }).click();
   expect((await download).suggestedFilename()).toBe(
-    `openround-practice-${acknowledged.followup.id}-links.csv`,
+    `polling-pops-practice-${acknowledged.followup.id}-links.csv`,
   );
 
   const deleted = await page.request.delete(`${apiUrl}/v1/recovery-packs/${pack.id}`);

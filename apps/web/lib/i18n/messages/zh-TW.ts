@@ -22,7 +22,7 @@ const messages = {
   "delivery.site.signedInAs": "登入身分",
   "delivery.site.plans": "方案",
   "delivery.site.signInToCreate": "登入以建立和管理 Round",
-  "delivery.site.project": "© {year} OpenRound 社群專案",
+  "delivery.site.project": "© {year} Polling Pops 社群專案",
   "delivery.site.legalLinks": "法律連結",
   "delivery.site.terms": "條款",
   "delivery.site.status": "狀態",
@@ -93,7 +93,7 @@ const messages = {
   "create.round.method.source.description":
     "將可信賴的文字、PDF、Word或PowerPoint資料轉換成待審核草稿。",
   "create.round.method.import.title": "匯入現有內容",
-  "create.round.method.import.description": "驗證OpenRound JSON、CSV、批次文字或QTI 3套件。",
+  "create.round.method.import.description": "驗證Polling Pops JSON、CSV、批次文字或QTI 3套件。",
   "create.round.method.import.badge": "方便移轉",
   "create.round.method.blank.title": "從空白開始",
   "create.round.method.blank.description":
@@ -136,7 +136,7 @@ const messages = {
   "create.presentation.source.eyebrow": "依據資料轉換",
   "create.presentation.source.title": "依據可信賴資料建立",
   "create.presentation.source.description":
-    "PDF、DOCX、PPTX和貼上的文字會轉換成結構化OpenRound內容區塊。結果可供審核並能適應不同螢幕，但不保證逐像素重現原始投影片。",
+    "PDF、DOCX、PPTX和貼上的文字會轉換成結構化Polling Pops內容區塊。結果可供審核並能適應不同螢幕，但不保證逐像素重現原始投影片。",
   "create.presentation.templates.eyebrow": "結構化範本",
   "create.presentation.templates.title": "選擇引導模式",
   "create.presentation.templates.use": "使用範本 →",
@@ -202,9 +202,9 @@ const messages = {
   "page.results.eyebrow": "學習證據",
   "page.results.title": "結果",
   "page.results.description": "檢視補救學習證據，並追蹤已指派或依據報告建立的練習。",
-  "page.discover.eyebrow": "OpenRound 精選",
+  "page.discover.eyebrow": "Polling Pops 精選",
   "page.discover.title": "探索",
-  "page.discover.description": "從可信賴的 OpenRound 範本開始，並依參與者需求調整。",
+  "page.discover.description": "從可信賴的 Polling Pops 範本開始，並依參與者需求調整。",
   "page.groups.eyebrow": "引導者協作",
   "page.groups.title": "群組",
   "page.groups.description": "整理活動、協調引導者並規劃進行方式，無需學習者帳戶。",

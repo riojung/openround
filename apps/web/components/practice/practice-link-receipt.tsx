@@ -30,7 +30,7 @@ export function PracticeLinkReceipt({ created }: { created: CreatedPractice }) {
     );
     const link = document.createElement("a");
     link.href = url;
-    link.download = `openround-practice-${created.followup.id}-links.csv`;
+    link.download = `polling-pops-practice-${created.followup.id}-links.csv`;
     document.body.append(link);
     link.click();
     link.remove();
@@ -52,8 +52,8 @@ export function PracticeLinkReceipt({ created }: { created: CreatedPractice }) {
         Existing assignments do not change when the source Pack changes or is deleted.
       </p>
       <p>
-        Save or download these links now. OpenRound stores only token hashes; these exact links are
-        not displayed again in practice management. Keep them private.
+        Save or download these links now. Polling Pops stores only token hashes; these exact links
+        are not displayed again in practice management. Keep them private.
       </p>
       <div className={styles.linkBox}>
         <div className={styles.linkRow}>

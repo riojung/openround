@@ -128,7 +128,7 @@ export const RECOVERY_REHEARSAL_SCENARIOS = [
     title: "Split response pattern",
     shortLabel: "5 correct · 5 choose one wrong option",
     description:
-      "Practise reading an even split without replacing OpenRound’s production insight priority.",
+      "Practise reading an even split without replacing Polling Pops’ production insight priority.",
     audienceSize: 10,
     responseCount: 10,
     correctCount: 5,

@@ -31,6 +31,7 @@ test("creator and participant complete a live round", async ({ browser }, testIn
   await creator.getByLabel("Checkpoint set title").fill("A one-question check");
   await creator.getByRole("button", { name: "Create checkpoint set" }).click();
   await expect(creator).toHaveURL(/\/quiz\//);
+  await expect(creator.getByLabel("Experience preset")).toHaveValue("pops");
   await creator.getByRole("button", { name: "True or false" }).click();
   await creator
     .getByRole("textbox", { name: "Checkpoint prompt", exact: true })

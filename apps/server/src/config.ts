@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { z } from "zod";
-import { LOCALE_COOKIE_NAME } from "@openround/contracts";
+import { LOCALE_COOKIE_NAME, PRODUCT_BRAND } from "@openround/contracts";
 
 const booleanString = z
   .enum(["true", "false"])
@@ -247,7 +247,7 @@ export const ConfigSchema = z
     OTEL_SERVICE_VERSION: z.string().trim().min(1).max(80).default("0.1.0"),
     OPENROUND_BUILD_ID: z.string().trim().min(1).max(200).default("unversioned"),
     SMTP_URL: z.string().min(1).optional(),
-    EMAIL_FROM: z.string().default("OpenRound <noreply@localhost>"),
+    EMAIL_FROM: z.string().default(`${PRODUCT_BRAND.name} <noreply@localhost>`),
     DEVELOPMENT_EMAIL_INBOX_URL: optionalHttpUrl,
     AUTH_DEBUG_MAGIC_LINKS: booleanString,
     POLICY_VERSION: z.string().trim().min(1).max(80).default("2026-09-14-draft"),

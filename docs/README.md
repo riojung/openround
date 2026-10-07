@@ -1,14 +1,17 @@
-# OpenRound documentation
+# Polling Pops documentation
 
-OpenRound is a pre-release, independently branded comprehension recovery system for higher
+Polling Pops is a pre-release, independently branded comprehension recovery system for higher
 education and workplace learning. Use this index to choose the shortest path for your role.
 
 ## Start here
 
+The public name is now Polling Pops. The [brand and interface guide](brand.md) includes
+the new logo assets, palette, Candy Pop preset, and the technical names kept for compatibility.
+
 | I want to…                                                   | Read                                                                                         |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
 | Get guidance that matches my enabled workspace               | Sign in and open the in-product `/help` page                                                 |
-| Run OpenRound locally and complete a first round             | [Quick start](quick-start.md)                                                                |
+| Run Polling Pops locally and complete a first round          | [Quick start](quick-start.md)                                                                |
 | Create, host, join, recover, and review understanding        | [User guide](user-guide.md)                                                                  |
 | Position and resize Presentation text, or use layout guides  | [Slide arrangement guide](user-guide.md#arrange-text-on-a-presentation-slide)                |
 | Permanently remove archived work or retained session history | [Deletion guide](user-guide.md#delete-archived-content-and-session-history)                  |

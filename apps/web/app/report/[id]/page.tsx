@@ -594,7 +594,7 @@ function FollowupBuilder({
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `openround-followup-${created.followup.id}-links.csv`;
+    link.download = `polling-pops-followup-${created.followup.id}-links.csv`;
     document.body.append(link);
     link.click();
     recordFollowupShared();
@@ -642,8 +642,8 @@ function FollowupBuilder({
           </p>
           {created ? (
             <div className="notice">
-              <strong>Save these links now.</strong> OpenRound stores only token hashes and cannot
-              show the same links again.
+              <strong>Save these links now.</strong> Polling Pops stores only token hashes and
+              cannot show the same links again.
               <div className="field" style={{ marginTop: 12 }}>
                 <span>Generic anonymous link</span>
                 <div className="toolbar">
@@ -985,7 +985,7 @@ export default function ReportPage() {
             <p className="eyebrow">Building evidence</p>
             <h2>Your report is being generated</h2>
             <p className="muted">
-              OpenRound is reconciling durable responses, interventions, and rechecks. This page
+              Polling Pops is reconciling durable responses, interventions, and rechecks. This page
               refreshes automatically and is normally ready within a minute.
             </p>
           </section>

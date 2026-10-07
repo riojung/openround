@@ -1,6 +1,10 @@
 import type { DeliveryAuthoringMessages } from "./en-CA";
 
 export default {
+  "delivery.landing.polls": "Sondages en direct",
+  "delivery.landing.presentations": "Présentations interactives",
+  "delivery.landing.learning": "Activités d’apprentissage",
+  "delivery.landing.featuresLabel": "Utiliser Polling Pops",
   "delivery.common.home": "Accueil",
   "delivery.common.loading": "Chargement…",
   "delivery.common.retry": "Réessayer",
@@ -17,10 +21,10 @@ export default {
   "delivery.common.preview": "Aperçu",
   "delivery.common.publish": "Publier",
   "delivery.common.exit": "Quitter",
-  "delivery.landing.eyebrow": "Compréhension en direct, sans distractions",
-  "delivery.landing.title": "Voyez ce qui a été compris tant qu’il est encore temps.",
+  "delivery.landing.eyebrow": "De grandes idées. Des échanges vivants.",
+  "delivery.landing.title": "Faites pétiller chaque voix.",
   "delivery.landing.description":
-    "Interrogez, diagnostiquez, intervenez et vérifiez la compréhension, sans compte participant.",
+    "Animez votre groupe avec des sondages en direct, des présentations interactives et des activités d’apprentissage. Écoutez chacun, clarifiez les doutes et vérifiez ce qui est compris, sans compte participant.",
   "delivery.landing.participantEntry": "Accès participant",
   "delivery.landing.joinTitle": "Rejoindre un Round en direct",
   "delivery.landing.joinDescription":
@@ -246,11 +250,11 @@ export default {
   "delivery.assistant.draftQuestions": "Créer des questions depuis une source fiable",
   "delivery.assistant.draftCheckpoints": "Créer des points de contrôle depuis une source fiable",
   "delivery.assistant.presentationDescription":
-    "OpenRound peut proposer des diapositives citées et une paire de questions de récupération liées.",
+    "Polling Pops peut proposer des diapositives citées et une paire de questions de récupération liées.",
   "delivery.assistant.roundDescription":
-    "OpenRound peut proposer une question principale et une revérification liée.",
+    "Polling Pops peut proposer une question principale et une revérification liée.",
   "delivery.assistant.checkpointDescription":
-    "OpenRound peut proposer un point de contrôle principal et une revérification liée.",
+    "Polling Pops peut proposer un point de contrôle principal et une revérification liée.",
   "delivery.assistant.securityDescription":
     "Les sources peuvent être du texte collé ou un fichier privé PDF, Word ou PowerPoint. Les fichiers sont analysés avant conservation. Chaque proposition contient des citations et reste un brouillon jusqu’à votre vérification.",
   "delivery.assistant.allowanceUnlimited.one":

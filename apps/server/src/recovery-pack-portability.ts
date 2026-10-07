@@ -158,7 +158,7 @@ export function recoveryPackExportProfile(
     "omitted",
     "conceptKeys",
     content.conceptKeys.length,
-    "Pack-level concept grouping is not restored. Individual checkpoint concept keys are retained in CSV columns or OpenRound QTI extension metadata.",
+    "Pack-level concept grouping is not restored. Individual checkpoint concept keys are retained in CSV columns or Polling Pops QTI extension metadata.",
   );
   if (content.misconceptionKeys.length) {
     add(
@@ -166,7 +166,7 @@ export function recoveryPackExportProfile(
       "omitted",
       "misconceptionKeys",
       content.misconceptionKeys.length,
-      "Pack-level misconception grouping is not restored. Authored choice misconception keys are retained in CSV or OpenRound QTI extension metadata.",
+      "Pack-level misconception grouping is not restored. Authored choice misconception keys are retained in CSV or Polling Pops QTI extension metadata.",
     );
   }
   if (content.description) {
@@ -192,7 +192,7 @@ export function recoveryPackExportProfile(
     "transformed",
     "checkpoints[*].id",
     checkpointCount,
-    "OpenRound checkpoint-set import assigns fresh checkpoint and choice IDs while remapping the diagnostic-to-recheck link. The export uses the original frozen checkpoint IDs.",
+    "Polling Pops checkpoint-set import assigns fresh checkpoint and choice IDs while remapping the diagnostic-to-recheck link. The export uses the original frozen checkpoint IDs.",
   );
   for (const { role, question } of checkpoints) {
     if (question.mediaId || question.mediaAlt) {
@@ -227,7 +227,7 @@ export function recoveryPackExportProfile(
           "transformed",
           role,
           1,
-          "Spreadsheet-like cell prefixes are protected with a leading apostrophe, including negative numeric answers where present. OpenRound CSV import removes that protection and retains the original values.",
+          "Spreadsheet-like cell prefixes are protected with a leading apostrophe, including negative numeric answers where present. Polling Pops CSV import removes that protection and retains the original values.",
         );
       }
       if (cells.some((cell) => cell.startsWith("'") && csvFormulaEscapingRequired(cell.slice(1)))) {
@@ -236,7 +236,7 @@ export function recoveryPackExportProfile(
           "transformed",
           role,
           1,
-          "An authored leading apostrophe before a spreadsheet-like prefix is indistinguishable from CSV formula protection. OpenRound CSV import removes that apostrophe; use original Pack JSON when its exact text matters.",
+          "An authored leading apostrophe before a spreadsheet-like prefix is indistinguishable from CSV formula protection. Polling Pops CSV import removes that apostrophe; use original Pack JSON when its exact text matters.",
         );
       }
     }
@@ -273,14 +273,14 @@ export function recoveryPackExportProfile(
         "extension_only",
         "checkpoints[*].numeric",
         numericCount,
-        "Tolerance is encoded in standard QTI response-processing bounds and units appear in visible item text. OpenRound restoration of the authored tolerance and unit fields uses OPENROUND_METADATA.",
+        "Tolerance is encoded in standard QTI response-processing bounds and units appear in visible item text. Polling Pops restoration of the authored tolerance and unit fields uses OPENROUND_METADATA.",
       );
       add(
         "QTI_NUMERIC_FLOAT_PRECISION",
         "transformed",
         "checkpoints[*].correctValue",
         numericCount,
-        "QTI numeric responses use the float base type, so external engines may round decimal values or tolerance bounds. The exporter constructs exact decimal strings and OpenRound reimport preserves those strings; CSV also retains them exactly.",
+        "QTI numeric responses use the float base type, so external engines may round decimal values or tolerance bounds. The exporter constructs exact decimal strings and Polling Pops reimport preserves those strings; CSV also retains them exactly.",
       );
     }
   }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openround.dev/schemas/backup-restore-evidence.schema.json",
-  "title": "OpenRound off-host backup manifest or replacement-host restore receipt",
+  "title": "Polling Pops off-host backup manifest or replacement-host restore receipt",
   "description": "Redaction-safe evidence structures. Cross-document binding, timestamp arithmetic, privilege constraints, and acceptance rules are enforced by scripts/check-backup-restore-evidence.mjs.",
   "oneOf": [
     {

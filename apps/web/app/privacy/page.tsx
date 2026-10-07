@@ -11,13 +11,13 @@ export default function PrivacyPage() {
         <p className="eyebrow">Draft for legal review</p>
         <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5rem)" }}>Privacy notice</h1>
         <p>
-          <strong>Launch posture.</strong> OpenRound minimizes participant data and keeps Canadian
-          hosted data in the selected Canadian region. This draft must be reviewed before public or
-          school use.
+          <strong>Launch posture.</strong> Polling Pops minimizes participant data and keeps
+          Canadian hosted data in the selected Canadian region. This draft must be reviewed before
+          public or school use.
         </p>
         <h2>Guest participation</h2>
         <p>
-          Participants use a session-scoped nickname and opaque resume token. OpenRound does not
+          Participants use a session-scoped nickname and opaque resume token. Polling Pops does not
           create participant accounts, build cross-session profiles, sell participant data, or use
           it for advertising.
         </p>
@@ -37,9 +37,9 @@ export default function PrivacyPage() {
         <h2>Optional institution integrations</h2>
         <p>
           In an approved institution workspace, a creator may explicitly link an identity-provider
-          or LMS subject to an existing OpenRound account. We do not link accounts by matching email
-          addresses. Instructor OIDC/LTI does not identify live participants; learner launch, roster
-          access, and grade passback remain disabled in this release.
+          or LMS subject to an existing Polling Pops account. We do not link accounts by matching
+          email addresses. Instructor OIDC/LTI does not identify live participants; learner launch,
+          roster access, and grade passback remain disabled in this release.
         </p>
         <h2>Learning mode</h2>
         <p>

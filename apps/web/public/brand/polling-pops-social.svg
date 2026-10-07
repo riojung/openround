@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" fill="none" role="img" aria-labelledby="title description">
+  <title id="title">Polling Pops — Make every voice pop.</title>
+  <desc id="description">Live polls, interactive presentations, and learning rounds.</desc>
+  <rect width="1200" height="630" rx="32" fill="#FFF8E9"/>
+  <circle cx="1070" cy="132" r="235" fill="#FCE0E8"/>
+  <circle cx="1120" cy="595" r="220" fill="#D8EEE3"/>
+  <circle cx="926" cy="373" r="164" fill="#FFC857"/>
+  <g transform="translate(823 164) scale(3.6)">
+    <path d="m32 47 7 27" stroke="#39243C" stroke-linecap="round" stroke-width="10"/>
+    <path d="m32 47 7 27" stroke="#FFF8E9" stroke-linecap="round" stroke-width="5"/>
+    <circle cx="30" cy="29" r="25" fill="#F9688A" stroke="#39243C" stroke-width="3"/>
+    <path d="M9 32C14 12 42 7 51 23" stroke="#FFF8E9" stroke-linecap="round" stroke-width="6"/>
+    <path d="M10 40c12 12 32 12 42-4" stroke="#FFC857" stroke-linecap="round" stroke-width="4"/>
+    <path d="M20 35v5M30 28v12M40 22v18" stroke="#FFF8E9" stroke-linecap="round" stroke-width="5"/>
+    <path d="m57 7 2-4m-2 12 4 1" stroke="#20806A" stroke-linecap="round" stroke-width="3"/>
+  </g>
+  <g font-family="Trebuchet MS, sans-serif" fill="#39243C">
+    <text x="78" y="126" font-size="32" font-weight="900">Polling <tspan fill="#AC2855">Pops</tspan></text>
+    <text x="78" y="282" font-size="72" font-weight="900" letter-spacing="-3">Make every</text>
+    <text x="78" y="369" font-size="72" font-weight="900" letter-spacing="-3">voice <tspan fill="#AC2855">pop.</tspan></text>
+    <text x="82" y="451" font-size="26">Live polls. Interactive presentations.</text>
+    <text x="82" y="491" font-size="26">Learning that clicks. No participant accounts.</text>
+  </g>
+</svg>

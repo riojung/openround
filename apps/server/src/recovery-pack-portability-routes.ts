@@ -82,7 +82,7 @@ export async function registerRecoveryPackPortabilityRoutes(
       .header("content-type", "text/csv; charset=utf-8")
       .header(
         "content-disposition",
-        `attachment; filename="openround-recovery-pack-${version.id}.csv"`,
+        `attachment; filename="polling-pops-recovery-pack-${version.id}.csv"`,
       )
       .send(checkpointSetCsv(draft));
   });
@@ -97,7 +97,7 @@ export async function registerRecoveryPackPortabilityRoutes(
       .header("content-type", "application/zip")
       .header(
         "content-disposition",
-        `attachment; filename="openround-recovery-pack-${version.id}.qti.zip"`,
+        `attachment; filename="polling-pops-recovery-pack-${version.id}.qti.zip"`,
       )
       .send(result.archive);
   });

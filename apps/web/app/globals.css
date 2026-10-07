@@ -1,28 +1,33 @@
 :root {
-  --ui-canvas: #f6f8f7;
-  --ui-canvas-glow: rgba(8, 115, 117, 0.09);
+  --pop-berry: #ac2855;
+  --pop-pink: #f9688a;
+  --pop-mint: #d8eee3;
+  --pop-yellow: #ffc857;
+  --pop-plum: #39243c;
+  --ui-canvas: #fff8ef;
+  --ui-canvas-glow: rgba(249, 104, 138, 0.12);
   --ui-surface: #ffffff;
   --ui-surface-raised: #ffffff;
-  --ui-surface-soft: #f5f9f8;
-  --ui-surface-hover: #eef7f5;
+  --ui-surface-soft: #fff3f6;
+  --ui-surface-hover: #fce9ef;
   --ui-surface-translucent: rgba(255, 255, 255, 0.94);
-  --ui-border: #d6e2ea;
-  --ui-border-subtle: #e6ecef;
-  --ui-border-strong: #a9bbc7;
-  --ui-text: #102a43;
-  --ui-text-strong: #0b2239;
-  --ui-text-subtle: #486581;
-  --ui-text-muted: #526d82;
-  --ui-accent: #087375;
-  --ui-accent-hover: #055d5f;
-  --ui-accent-soft: #dff3f1;
-  --ui-accent-ink: #055d5f;
-  --ui-focus: #2c7fb8;
+  --ui-border: #e6d5df;
+  --ui-border-subtle: #f0e4e9;
+  --ui-border-strong: #ad8c9f;
+  --ui-text: #39243c;
+  --ui-text-strong: #302034;
+  --ui-text-subtle: #71596e;
+  --ui-text-muted: #71596e;
+  --ui-accent: #ac2855;
+  --ui-accent-hover: #862042;
+  --ui-accent-soft: #fce0e8;
+  --ui-accent-ink: #962348;
+  --ui-focus: #146552;
   --ui-on-accent: #ffffff;
-  --ui-overlay: rgba(11, 34, 57, 0.52);
-  --ui-shadow-sm: 0 10px 26px rgba(16, 42, 67, 0.055);
-  --ui-shadow-md: 0 16px 38px rgba(16, 42, 67, 0.1);
-  --ui-shadow-lg: 0 22px 60px rgba(16, 42, 67, 0.2);
+  --ui-overlay: rgba(57, 36, 60, 0.52);
+  --ui-shadow-sm: 0 4px 0 rgba(57, 36, 60, 0.035), 0 10px 26px rgba(57, 36, 60, 0.045);
+  --ui-shadow-md: 0 5px 0 rgba(57, 36, 60, 0.05), 0 16px 38px rgba(57, 36, 60, 0.08);
+  --ui-shadow-lg: 0 8px 0 rgba(57, 36, 60, 0.08), 0 22px 60px rgba(57, 36, 60, 0.14);
   --ui-success-bg: #dcfce7;
   --ui-success-text: #166534;
   --ui-warning-bg: #fff3c4;
@@ -34,32 +39,32 @@
   --ui-violet-text: #6941c6;
   --ui-skeleton-base: #e8eef2;
   --ui-skeleton-highlight: #f6f9fb;
-  --ui-hero-start: #0b2239;
-  --ui-hero-mid: #123e59;
-  --ui-hero-end: #087375;
+  --ui-hero-start: #39243c;
+  --ui-hero-mid: #672d57;
+  --ui-hero-end: #962348;
   --ui-hero-glow-warm: rgba(255, 196, 113, 0.24);
-  --ui-hero-glow-teal: rgba(64, 205, 178, 0.32);
+  --ui-hero-glow-teal: rgba(249, 104, 138, 0.32);
   --ui-on-hero: #ffffff;
-  --ui-on-hero-muted: #d7e9e8;
+  --ui-on-hero-muted: #f8dfe8;
   --ui-on-hero-border: rgba(255, 255, 255, 0.25);
   --ui-on-hero-surface: rgba(255, 255, 255, 0.1);
-  --ink: #102a43;
-  --ink-soft: #486581;
-  --navy: #0b2239;
-  --navy-raised: #143b59;
-  --teal: #087375;
-  --teal-dark: #055d5f;
-  --sky: #d9f1f4;
-  --cream: #fffaf0;
+  --ink: #39243c;
+  --ink-soft: #71596e;
+  --navy: #39243c;
+  --navy-raised: #56324f;
+  --teal: #ac2855;
+  --teal-dark: #862042;
+  --sky: #fce0e8;
+  --cream: #fff8ef;
   --paper: #ffffff;
-  --sand: #f1eadf;
-  --line: #d6e2ea;
+  --sand: #f7eadc;
+  --line: #e6d5df;
   --success: #147d64;
   --warning: #a15c00;
   --danger: #b42318;
-  --shadow: 0 18px 50px rgba(16, 42, 67, 0.12);
-  --radius: 20px;
-  --radius-small: 12px;
+  --shadow: var(--ui-shadow-md);
+  --radius: 28px;
+  --radius-small: 16px;
   color-scheme: light;
   font-family:
     Inter,
@@ -73,26 +78,35 @@
 }
 
 html[data-color-mode="dark"] {
-  --ui-canvas: #07151d;
-  --ui-canvas-glow: rgba(76, 199, 188, 0.08);
-  --ui-surface: #0d2530;
-  --ui-surface-raised: #12303b;
-  --ui-surface-soft: #102c34;
-  --ui-surface-hover: #173a43;
-  --ui-surface-translucent: rgba(13, 37, 48, 0.94);
-  --ui-border: #2a4b55;
-  --ui-border-subtle: #213b44;
-  --ui-border-strong: #4a6871;
-  --ui-text: #f1f8f7;
-  --ui-text-strong: #f7fbfa;
-  --ui-text-subtle: #c4d3d5;
-  --ui-text-muted: #aac0c3;
-  --ui-accent: #4cc7bc;
-  --ui-accent-hover: #76dad0;
-  --ui-accent-soft: #153f41;
-  --ui-accent-ink: #96e7de;
-  --ui-focus: #70cfea;
-  --ui-on-accent: #07191b;
+  --ink: var(--ui-text);
+  --ink-soft: var(--ui-text-subtle);
+  --line: var(--ui-border);
+  --paper: var(--ui-surface);
+  --sand: var(--ui-surface-soft);
+  --sky: var(--ui-accent-soft);
+  --cream: var(--ui-canvas);
+  --teal: var(--ui-accent);
+  --teal-dark: var(--ui-accent-ink);
+  --ui-canvas: #201924;
+  --ui-canvas-glow: rgba(249, 104, 138, 0.09);
+  --ui-surface: #2b2330;
+  --ui-surface-raised: #352a3a;
+  --ui-surface-soft: #332633;
+  --ui-surface-hover: #443042;
+  --ui-surface-translucent: rgba(43, 35, 48, 0.96);
+  --ui-border: #594353;
+  --ui-border-subtle: #443443;
+  --ui-border-strong: #9f8295;
+  --ui-text: #fff2f7;
+  --ui-text-strong: #fff8ef;
+  --ui-text-subtle: #dec9d6;
+  --ui-text-muted: #c9b1c3;
+  --ui-accent: #ff9bb9;
+  --ui-accent-hover: #ffc2d5;
+  --ui-accent-soft: #4d2a3d;
+  --ui-accent-ink: #ffbad0;
+  --ui-focus: #9cdebc;
+  --ui-on-accent: #39243c;
   --ui-overlay: rgba(0, 7, 10, 0.72);
   --ui-shadow-sm: 0 10px 28px rgba(0, 0, 0, 0.2);
   --ui-shadow-md: 0 18px 42px rgba(0, 0, 0, 0.27);
@@ -108,13 +122,13 @@ html[data-color-mode="dark"] {
   --ui-violet-text: #d5c3ff;
   --ui-skeleton-base: #17313a;
   --ui-skeleton-highlight: #21414a;
-  --ui-hero-start: #06131d;
-  --ui-hero-mid: #0b3141;
-  --ui-hero-end: #065b5d;
+  --ui-hero-start: #302034;
+  --ui-hero-mid: #522943;
+  --ui-hero-end: #762241;
   --ui-hero-glow-warm: rgba(255, 196, 113, 0.16);
-  --ui-hero-glow-teal: rgba(76, 199, 188, 0.24);
+  --ui-hero-glow-teal: rgba(249, 104, 138, 0.24);
   --ui-on-hero: #f7fbfa;
-  --ui-on-hero-muted: #d3e5e4;
+  --ui-on-hero-muted: #f8dfe8;
   --ui-on-hero-border: rgba(213, 240, 237, 0.28);
   --ui-on-hero-surface: rgba(210, 241, 237, 0.1);
   color-scheme: dark;
@@ -125,8 +139,8 @@ html[data-color-mode="dark"] {
 }
 
 html {
-  background: var(--cream);
-  color: var(--ink);
+  background: var(--ui-canvas);
+  color: var(--ui-text);
   min-width: 320px;
   scroll-behavior: smooth;
 }
@@ -135,8 +149,9 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(circle at 8% -10%, rgba(15, 139, 141, 0.14), transparent 34rem),
-    radial-gradient(circle at 105% 18%, rgba(92, 170, 210, 0.17), transparent 30rem), var(--cream);
+    radial-gradient(circle at 8% -10%, var(--ui-canvas-glow), transparent 34rem),
+    radial-gradient(circle at 105% 18%, rgba(255, 200, 87, 0.12), transparent 30rem),
+    var(--ui-canvas);
 }
 
 a {
@@ -193,11 +208,31 @@ button:disabled {
 .brand {
   align-items: center;
   display: inline-flex;
-  font-size: 1.1rem;
+  color: var(--ui-text-strong);
+  font-family: ui-rounded, "Arial Rounded MT Bold", "Trebuchet MS", system-ui, sans-serif;
+  font-size: 1.14rem;
   font-weight: 800;
   gap: 10px;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.04em;
   text-decoration: none;
+}
+
+.brand-pop {
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 48px;
+  width: 39px;
+}
+
+.brand-pop svg {
+  height: 100%;
+  width: 100%;
+}
+
+.brand[data-inverted="true"] .brand-pop {
+  background: #fff8e9;
+  border-radius: 14px;
+  padding: 3px;
 }
 
 .brand-mark {
@@ -237,7 +272,7 @@ button:disabled {
 .nav-text-button {
   background: transparent;
   border: 0;
-  color: var(--navy);
+  color: var(--ui-text-strong);
   font: inherit;
   font-size: 0.94rem;
   font-weight: 650;
@@ -270,18 +305,17 @@ button:disabled {
   text-decoration: none;
   transition:
     transform 140ms ease,
-    background 140ms ease,
     box-shadow 140ms ease;
 }
 
 .button {
-  background: var(--teal);
-  box-shadow: 0 8px 22px rgba(15, 139, 141, 0.22);
-  color: white;
+  background: var(--ui-accent);
+  box-shadow: 0 4px 0 color-mix(in srgb, var(--ui-accent) 75%, var(--pop-plum));
+  color: var(--ui-on-accent);
 }
 
 .button:hover:not(:disabled) {
-  background: var(--teal-dark);
+  background: var(--ui-accent-hover);
   transform: translateY(-1px);
 }
 
@@ -296,8 +330,8 @@ button:disabled {
 }
 
 .button-quiet {
-  background: var(--sky);
-  color: var(--navy);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-ink);
 }
 
 .button-danger {
@@ -326,8 +360,167 @@ button:disabled {
   padding: 64px 0 96px;
 }
 
+.pops-hero {
+  gap: clamp(32px, 5vw, 76px);
+  min-height: 720px;
+  padding: 38px 0 70px;
+}
+
+.pops-hero h1 {
+  font-family: ui-rounded, "Arial Rounded MT Bold", "Trebuchet MS", system-ui, sans-serif;
+  font-size: clamp(3.2rem, 6.4vw, 5.9rem);
+  font-weight: 900;
+  letter-spacing: -0.065em;
+  line-height: 1.03;
+  max-width: 670px;
+}
+
+.pops-benefits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  list-style: none;
+  margin: 30px 0 0;
+  padding: 0;
+}
+
+.pops-benefits li {
+  border: 1px solid var(--ui-border);
+  border-radius: 999px;
+  color: var(--ui-text-subtle);
+  font-size: 0.8rem;
+  font-weight: 750;
+  padding: 9px 13px;
+}
+
+.pops-benefits li::before {
+  background: var(--pop-pink);
+  border-radius: 50%;
+  content: "";
+  display: inline-block;
+  height: 8px;
+  margin-inline-end: 8px;
+  width: 8px;
+}
+
+.pops-benefits li:nth-child(2)::before {
+  background: #20806a;
+}
+
+.pops-benefits li:nth-child(3)::before {
+  background: var(--pop-yellow);
+}
+
+.pops-entry {
+  min-width: 0;
+}
+
+.pops-entry .join-card {
+  padding: 28px;
+}
+
+.pops-candy-scene {
+  display: grid;
+  height: 270px;
+  isolation: isolate;
+  place-items: center;
+  position: relative;
+}
+
+.pops-hero-mark {
+  filter: drop-shadow(7px 12px 0 rgba(57, 36, 60, 0.08));
+  height: 255px;
+  position: relative;
+  transform: rotate(-12deg);
+  width: 205px;
+}
+
+.pops-orbit {
+  border-radius: 50%;
+  position: absolute;
+  z-index: -1;
+}
+
+.pops-orbit-mint {
+  background: var(--pop-mint);
+  height: 205px;
+  inset-inline-start: 12%;
+  top: 18px;
+  width: 205px;
+}
+
+.pops-orbit-yellow {
+  background: var(--pop-yellow);
+  height: 130px;
+  inset-inline-end: 7%;
+  top: 83px;
+  width: 130px;
+}
+
+.pops-vote-bubble {
+  align-items: flex-end;
+  background: var(--ui-surface);
+  border: 2px solid var(--ui-border);
+  border-radius: 22px 22px 22px 6px;
+  box-shadow: var(--ui-shadow-sm);
+  display: flex;
+  gap: 7px;
+  height: 82px;
+  inset-inline-end: 4%;
+  padding: 15px;
+  position: absolute;
+  top: 170px;
+  transform: rotate(8deg);
+  width: 105px;
+}
+
+.pops-vote-bubble span {
+  background: var(--pop-pink);
+  border-radius: 5px;
+  height: 25px;
+  width: 20px;
+}
+
+.pops-vote-bubble span:nth-child(2) {
+  background: #20806a;
+  height: 43px;
+}
+
+.pops-vote-bubble span:nth-child(3) {
+  background: var(--pop-yellow);
+  height: 33px;
+}
+
+.pops-confetti {
+  border-radius: 999px;
+  height: 9px;
+  position: absolute;
+  width: 25px;
+}
+
+.pops-confetti-one {
+  background: var(--pop-pink);
+  left: 9%;
+  top: 36px;
+  transform: rotate(32deg);
+}
+
+.pops-confetti-two {
+  background: var(--pop-yellow);
+  right: 6%;
+  top: 30px;
+  transform: rotate(-32deg);
+}
+
+.pops-confetti-three {
+  background: #20806a;
+  left: 9%;
+  top: 184px;
+  transform: rotate(-22deg);
+}
+
 .eyebrow {
-  color: var(--teal-dark);
+  color: var(--ui-accent-ink);
   font-size: 0.78rem;
   font-weight: 850;
   letter-spacing: 0.14em;
@@ -345,7 +538,7 @@ p {
 h1,
 h2,
 h3 {
-  color: var(--navy);
+  color: var(--ui-text-strong);
   letter-spacing: -0.035em;
   line-height: 1.08;
 }
@@ -366,7 +559,7 @@ h3 {
 }
 
 .lead {
-  color: var(--ink-soft);
+  color: var(--ui-text-subtle);
   font-size: clamp(1.08rem, 2vw, 1.35rem);
   line-height: 1.65;
   max-width: 700px;
@@ -388,8 +581,8 @@ h3 {
 .join-card,
 .card,
 .panel {
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(214, 226, 234, 0.9);
+  background: var(--ui-surface-translucent);
+  border: 1px solid var(--ui-border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
@@ -400,7 +593,7 @@ h3 {
 }
 
 .join-card::before {
-  background: var(--teal);
+  background: linear-gradient(90deg, var(--pop-pink) 0 34%, var(--pop-yellow) 34% 67%, #9cdebc 67%);
   border-radius: 999px;
   content: "";
   height: 8px;
@@ -592,7 +785,7 @@ h3 {
 
 .field label,
 .field-label {
-  color: var(--navy);
+  color: var(--ui-text-strong);
   font-size: 0.88rem;
   font-weight: 800;
 }
@@ -600,13 +793,19 @@ h3 {
 .input,
 .textarea,
 .select {
-  background: white;
-  border: 1.5px solid #a9bdca;
+  background: var(--ui-surface);
+  border: 1.5px solid var(--ui-border-strong);
   border-radius: var(--radius-small);
-  color: var(--ink);
+  color: var(--ui-text);
   min-height: 48px;
   padding: 11px 14px;
   width: 100%;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ui-text-muted);
+  opacity: 1;
 }
 
 .textarea {
@@ -896,7 +1095,7 @@ h3 {
 
 .checkbox-field {
   align-items: center;
-  color: var(--navy);
+  color: var(--ui-text-strong);
   display: inline-flex;
   font-size: 0.92rem;
   font-weight: 750;
@@ -1095,7 +1294,7 @@ h3 {
 
 .card p,
 .muted {
-  color: var(--ink-soft);
+  color: var(--ui-text-muted);
   line-height: 1.58;
 }
 
@@ -1257,18 +1456,18 @@ h3 {
 }
 
 .question-tab {
-  background: white;
-  border: 1px solid var(--line);
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
   border-radius: 12px;
-  color: var(--ink);
+  color: var(--ui-text);
   min-height: 54px;
   padding: 10px 12px;
   text-align: left;
 }
 
 .question-tab[aria-current="true"] {
-  background: var(--sky);
-  border-color: var(--teal);
+  background: var(--ui-accent-soft);
+  border-color: var(--ui-accent);
 }
 
 .choice-row {
@@ -1330,6 +1529,35 @@ h3 {
   background-color: var(--experience-canvas);
   color: var(--experience-text);
   min-height: 100vh;
+}
+
+/* Validated experience snapshots supply every --experience-* value inline.
+   Keep themed controls independent of the workspace's light/dark appearance. */
+.live-shell[data-pattern],
+.experience-preview[data-pattern] {
+  --ui-canvas: var(--experience-canvas);
+  --ui-surface: var(--experience-surface);
+  --ui-surface-raised: var(--experience-surface);
+  --ui-surface-soft: var(--experience-surface-strong);
+  --ui-surface-hover: var(--experience-surface-strong);
+  --ui-text: var(--experience-text);
+  --ui-text-strong: var(--experience-text);
+  --ui-text-subtle: var(--experience-muted);
+  --ui-text-muted: var(--experience-muted);
+  --ui-accent: var(--experience-accent);
+  --ui-accent-ink: var(--experience-primary);
+  --ui-accent-soft: var(--experience-surface-strong);
+  --ui-on-accent: #ffffff;
+  --ui-focus: var(--experience-primary);
+  --ink: var(--experience-text);
+  --ink-soft: var(--experience-muted);
+  --navy: var(--experience-primary);
+  --teal: var(--experience-accent);
+  --teal-dark: var(--experience-primary);
+  --sky: var(--experience-surface-strong);
+  --paper: var(--experience-surface);
+  --sand: var(--experience-surface-strong);
+  --cream: var(--experience-canvas);
 }
 
 .live-shell[data-pattern="dots"] {
@@ -1440,6 +1668,29 @@ h3 {
 .live-shell .button,
 .live-shell .brand-mark {
   background: var(--experience-accent);
+  color: #ffffff;
+}
+
+.live-shell h1,
+.live-shell h2,
+.live-shell h3,
+.live-shell .field-label {
+  color: var(--experience-text);
+}
+
+.live-shell .muted {
+  color: var(--experience-muted);
+}
+
+.live-shell .eyebrow {
+  color: var(--experience-primary);
+}
+
+.live-shell .input,
+.live-shell .textarea,
+.live-shell .select {
+  background: var(--experience-surface);
+  color: var(--experience-text);
 }
 
 .live-shell .button:hover:not(:disabled) {
@@ -1455,6 +1706,8 @@ h3 {
 }
 
 .theme-preview {
+  --experience-canvas: var(--brand-primary, #39243c);
+  --experience-accent: var(--brand-accent, #ac2855);
   border-radius: 20px;
   margin: 18px 0;
   min-height: 150px;
@@ -2348,8 +2601,8 @@ html[data-openround-motion="reduced"] *::after {
 }
 
 .footer {
-  border-top: 1px solid rgba(72, 101, 129, 0.18);
-  color: var(--ink-soft);
+  border-top: 1px solid var(--ui-border);
+  color: var(--ui-text-subtle);
   padding: 32px 0 48px;
 }
 
@@ -2392,6 +2645,37 @@ html[data-openround-motion="reduced"] *::after {
 }
 
 @media (max-width: 820px) {
+  .pops-hero {
+    min-height: auto;
+    padding-bottom: 50px;
+  }
+
+  .pops-candy-scene {
+    height: 210px;
+  }
+
+  .pops-hero-mark {
+    height: 195px;
+    width: 156px;
+  }
+
+  .pops-orbit-mint {
+    height: 150px;
+    left: 26%;
+    width: 150px;
+  }
+
+  .pops-orbit-yellow {
+    height: 90px;
+    right: 22%;
+    width: 90px;
+  }
+
+  .pops-vote-bubble {
+    right: 16%;
+    top: 110px;
+  }
+
   .hero,
   .editor-layout,
   .media-editor,
@@ -2448,7 +2732,7 @@ html[data-openround-motion="reduced"] *::after {
   }
 
   .site-mobile-nav {
-    background: white;
+    background: var(--ui-surface);
     border: 1px solid var(--line);
     border-radius: 18px;
     box-shadow: 0 14px 34px rgba(16, 42, 67, 0.12);
@@ -2466,7 +2750,7 @@ html[data-openround-motion="reduced"] *::after {
     background: transparent;
     border: 0;
     border-radius: 12px;
-    color: var(--navy);
+    color: var(--ui-text-strong);
     font: inherit;
     font-weight: 750;
     padding: 13px 14px;

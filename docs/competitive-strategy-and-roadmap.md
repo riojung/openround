@@ -1,4 +1,4 @@
-# OpenRound competitive strategy and implementation roadmap
+# Polling Pops competitive strategy and implementation roadmap
 
 Research date: 2026-09-17
 
@@ -50,14 +50,14 @@ usefulness and accessibility evidence is still open.
 
 ## Executive decision
 
-OpenRound should not position itself as another live quiz platform. That category is mature, and
+Polling Pops should not position itself as another live quiz platform. That category is mature, and
 feature breadth alone would put a small team into a long catch-up race against products with large
 content libraries, AI generation, presentation editors, learning-management integrations, and many
 interaction types.
 
 The recommended position is:
 
-> **OpenRound is the open, privacy-preserving live comprehension system that helps a facilitator
+> **Polling Pops is the open, privacy-preserving live comprehension system that helps a facilitator
 > see what did not land, repair it immediately, and verify that understanding recovered.**
 
 The shortest expression of the workflow is **ask → diagnose → intervene → recheck → prove**. It
@@ -69,7 +69,7 @@ The initial market focus should be higher education and workplace learning sessi
 training. K–12 can continue to use the product, but institutional school sales should remain gated
 by child-privacy, contract, roster, and counsel work.
 
-## What OpenRound has today
+## What Polling Pops has today
 
 The implemented P0 already provides several useful foundations:
 
@@ -91,11 +91,11 @@ The following is a representative comparison, not an exhaustive feature audit. �
 the capability is prominent in the reviewed public material; it does not prove that an unlisted
 capability is absent.
 
-| Product               | Publicly emphasized strengths                                                                                                                            | Strategic implication for OpenRound                                                                                     |
+| Product               | Publicly emphasized strengths                                                                                                                            | Strategic implication for Polling Pops                                                                                  |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | Kahoot!               | Large ready-made library, many question types, AI creation, live and self-paced modes, reports, team play, and presentation content                      | Do not compete on entertainment, marketplace scale, or generic AI generation                                            |
 | Wayground             | Up to 100 participants on its starter plan, richer assessments, accommodations, anti-cheating, AI, assignments, and LMS/rostering on institutional plans | Accessibility and flexible checks are table stakes for education; roster-heavy workflows are expensive                  |
-| Mentimeter            | Full interactive presentations, 23 slide types, polls, quizzes, word clouds, Q&A, surveys, AI creation, and slide integrations                           | Do not build a general slide editor; make OpenRound work beside existing slides                                         |
+| Mentimeter            | Full interactive presentations, 23 slide types, polls, quizzes, word clouds, Q&A, surveys, AI creation, and slide integrations                           | Do not build a general slide editor; make Polling Pops work beside existing slides                                      |
 | Slido                 | Anonymous and moderated Q&A, upvoting, polls, quizzes, analytics, and deep meeting/presentation integrations                                             | Lightweight audience voice and co-moderation matter, particularly for workplace and higher education                    |
 | Wooclap               | More than 20 learning-oriented activity types, AI-assisted creation, learning-science positioning, analytics, and LMS/presentation integrations          | “Built for learning” alone is not differentiated; the product must own a more specific learning workflow                |
 | Vevox                 | Polling, anonymous Q&A, quizzes, attendance, analytics, and presentation/LMS integrations, with 100 participants on the free plan                        | A two-question-type product with a 20-person free limit will look constrained without a stronger outcome story          |
@@ -120,7 +120,7 @@ capability is absent.
 This last point is a positioning inference from public material, not a claim that competitors
 cannot repeat questions or support formative practice.
 
-## The differentiated product: OpenRound Recovery Loop
+## The differentiated product: Polling Pops Recovery Loop
 
 ### Core workflow
 
@@ -137,7 +137,7 @@ cannot repeat questions or support formative practice.
 Peer discussion followed by another concept question is supported by classroom research: the
 reported improvement transferred to a similar follow-up question rather than merely reflecting
 copying. Retrieval and corrective feedback research also supports treating questions as part of
-learning, not only measurement. OpenRound should operationalize that loop while avoiding claims
+learning, not only measurement. Polling Pops should operationalize that loop while avoiding claims
 that one software interaction proves durable learning.
 
 ### Diagnostic signals
@@ -265,7 +265,7 @@ live recommendations must remain fast, explainable, testable, and available to s
 
 ### Interoperability
 
-- Start with documented CSV and OpenRound JSON import/export.
+- Start with documented CSV and Polling Pops JSON import/export.
 - Add a constrained QTI 3 import/export profile for supported item types; produce a validation
   report instead of silently dropping unsupported content.
 - Treat LTI 1.3 Advantage as an institutional phase, with certification and security review as

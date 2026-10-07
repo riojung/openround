@@ -44,7 +44,7 @@ async function titleCard(page: Page, eyebrow: string, title: string, description
       </head>
       <body>
         <main>
-          <div class="brand"><span class="mark">O</span> OpenRound</div>
+          <div class="brand"><span class="mark">O</span> Polling Pops</div>
           <div class="eyebrow">${eyebrow}</div>
           <h1>${title}</h1>
           <p>${description}</p>
@@ -108,7 +108,7 @@ async function answerChoice(page: Page, choice: string) {
   await expect(page.getByText("Answer received and saved.")).toBeVisible();
 }
 
-test("record the OpenRound product demo", async ({ browser }) => {
+test("record the Polling Pops product demo", async ({ browser }) => {
   await mkdir(temporaryVideoDirectory, { recursive: true });
 
   // Chapter 1: product promise.
@@ -143,7 +143,7 @@ test("record the OpenRound product demo", async ({ browser }) => {
       page,
       "1 · Ask",
       "Author the evidence you need.",
-      "OpenRound supports scored, unscored, confidence-aware, and linked recheck checkpoints.",
+      "Polling Pops supports scored, unscored, confidence-aware, and linked recheck checkpoints.",
     );
     await page.goto("/signin");
     await beat(page, 1_100);
@@ -426,7 +426,7 @@ test("record the OpenRound product demo", async ({ browser }) => {
     const page = await context.newPage();
     await titleCard(
       page,
-      "Where OpenRound fits",
+      "Where Polling Pops fits",
       "Higher education. Technical training. Safety and compliance.",
       "Use the same privacy-preserving Recovery Loop anywhere a facilitator needs to know what landed—and what to do next.",
     );
@@ -436,7 +436,7 @@ test("record the OpenRound product demo", async ({ browser }) => {
     await beat(page, 1_800);
     await titleCard(
       page,
-      "OpenRound",
+      "Polling Pops",
       "Ask. Diagnose. Intervene. Recheck. Prove.",
       "Run it as the Apache-2.0 Community edition or use the hosted service. Participants still need only a code or QR link.",
     );

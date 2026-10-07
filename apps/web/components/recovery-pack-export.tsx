@@ -104,8 +104,8 @@ export function RecoveryPackExportPanel({
       <h3 id={headingId}>Checkpoint portability</h3>
       <p>
         CSV and QTI 3 export checkpoint projections, not the whole Recovery Pack workflow. Review
-        each format’s structured losses first. OpenRound JSON keeps the complete Pack content; media
-        references are included, not the private media files.
+        each format’s structured losses first. Polling Pops JSON keeps the complete Pack content;
+        media references are included, not the private media files.
       </p>
       <label className="field" htmlFor={formatId}>
         <span>Published Pack export format</span>

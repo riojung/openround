@@ -226,7 +226,7 @@ const messages = {
   "pages.help.duration": "期間 {duration}",
   "pages.help.enabledBuilder": "有効化されたラウンドビルダーを使用する",
   "pages.help.guides.currentDescription":
-    "OpenRound は、このワークスペースで有効になっている機能のガイダンスのみを示します。",
+    "Polling Pops は、このワークスペースで有効になっている機能のガイダンスのみを示します。",
   "pages.help.guides.currentTitle": "現在のワークスペースに関するガイダンス",
   "pages.help.guides.description":
     "1 分間のツアーから始めて、オーサリングと配信について詳しく説明します。",
@@ -246,13 +246,15 @@ const messages = {
   "pages.help.support.openSettings": "設定を開く",
   "pages.help.support.operations": "運営",
   "pages.help.support.privacyDescription":
-    "OpenRound がセッション スコープの学習データをどのように処理するかを確認します。",
+    "Polling Pops がセッション スコープの学習データをどのように処理するかを確認します。",
   "pages.help.support.privacyTitle": "プライバシー",
   "pages.help.support.readPrivacy": "プライバシー情報を読む",
   "pages.help.support.settingsDescription":
     "役割、統合、保持、請求、アカウント データを管理します。",
   "pages.help.support.settingsTitle": "ワークスペースの設定",
-  "pages.help.support.statusDescription": "OpenRound サービスの現在の可用性を確認します。",
+  "pages.help.guides.brandNote":
+    "これらのガイドは Polling Pops への名称変更前に収録されました。操作手順は引き続き有効ですが、配色とブランド表示は変更されています。",
+  "pages.help.support.statusDescription": "Polling Pops サービスの現在の可用性を確認します。",
   "pages.help.support.statusTitle": "サービス状況",
   "pages.help.support.title": "ワークスペースのサポート",
   "pages.help.support.trust": "信頼",
