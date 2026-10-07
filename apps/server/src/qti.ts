@@ -7,11 +7,14 @@ import {
   QuestionDraftSchema,
   QuizContentSchema,
   QuizDraftSchema,
+  RecoveryPackExportReportSchema,
   normalizeDecimalString,
   type ImportValidationReport,
   type QuestionDraft,
   type QuizDraft,
+  type RecoveryPackExportReport,
 } from "@openround/contracts";
+import { isXml10CodePoint } from "./portable-text.js";
 
 type ImportIssue = ImportValidationReport["errors"][number];
 
@@ -88,9 +91,64 @@ const xmlParser = new XMLParser({
   parseAttributeValue: false,
   parseTagValue: false,
   processEntities: false,
+  cdataPropName: "#cdata",
+  preserveOrder: true,
   removeNSPrefix: true,
-  trimValues: true,
+  trimValues: false,
 });
+
+const XML_CONTENT = Symbol("ordered XML content");
+type XmlSegment = { name: string; value: unknown };
+type XmlObject = Record<string, unknown> & { [XML_CONTENT]: XmlSegment[] };
+
+// Keep the structural shape used by manifest/response readers, but retain the
+// parser's ordered segments for text extraction instead of grouping CDATA first.
+function xmlObject(nodes: Array<Record<string, unknown>>, depth = 0): XmlObject {
+  if (depth > 64) throw new Error("QTI XML exceeds the supported nesting depth");
+  const result = Object.create(null) as XmlObject;
+  const segments: XmlSegment[] = [];
+  let text = "";
+  for (const node of nodes) {
+    for (const [name, children] of Object.entries(node)) {
+      if (name === ":@") continue;
+      if (name === "#text") {
+        text += String(children);
+        segments.push({ name, value: children });
+        continue;
+      }
+      let value: unknown;
+      if (name === "#cdata") {
+        value = (children as Array<Record<string, unknown>>)
+          .map((child) => String(child["#text"] ?? ""))
+          .join("");
+      } else {
+        const child = xmlObject(children as Array<Record<string, unknown>>, depth + 1);
+        const attributes = objectValue(node[":@"]);
+        if (attributes) {
+          for (const [key, value] of Object.entries(attributes)) {
+            child[key] = typeof value === "string" ? value.trim() : value;
+          }
+        }
+        const keys = Object.keys(child);
+        value =
+          keys.length === 0
+            ? ""
+            : keys.length === 1 && keys[0] === "#text"
+              ? child["#text"]
+              : child;
+      }
+      if (Object.hasOwn(result, name)) {
+        const existing = result[name];
+        if (Array.isArray(existing)) existing.push(value);
+        else result[name] = [existing, value];
+      } else result[name] = value;
+      segments.push({ name, value });
+    }
+  }
+  if (text.length) result["#text"] = text;
+  Object.defineProperty(result, XML_CONTENT, { value: segments });
+  return result;
+}
 
 function issue(
   severity: ImportIssue["severity"],
@@ -118,6 +176,7 @@ function asArray<T>(value: T | T[] | undefined): T[] {
 function xml(value: unknown) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
+    .replaceAll("\r", "&#13;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
@@ -189,7 +248,8 @@ function numericBounds(expected: string, tolerance: string) {
 
 function itemXml(question: QuestionDraft, setTitle: string) {
   const itemId = qtiIdentifier("item", question.id);
-  const title = `${setTitle}: ${question.prompt}`.slice(0, 160);
+  // Do not split a valid Unicode pair at the item-title truncation boundary.
+  const title = `${setTitle}: ${question.prompt}`.slice(0, 160).replace(/[\uD800-\uDBFF]$/, "");
   const supportedChoice =
     question.type === "single_select" ||
     question.type === "true_false" ||
@@ -260,8 +320,40 @@ async function zipBuffers(files: Array<{ path: string; content: Buffer }>) {
   return completed;
 }
 
-export async function exportQtiPackage(draft: QuizDraft): Promise<QtiExportResult> {
+export function qtiExportTextIssues(draft: QuizDraft): ImportIssue[] {
   const issues: ImportIssue[] = [];
+  const inspect = (text: string, field: string, row?: number) => {
+    if ([...text].some((character) => !isXml10CodePoint(character.codePointAt(0)!))) {
+      issues.push(
+        issue(
+          "error",
+          "INVALID_QTI_TEXT",
+          "This exported text contains characters forbidden by XML 1.0, including invalid Unicode surrogates. No QTI package is exported.",
+          { field, ...(row ? { row } : {}) },
+        ),
+      );
+    }
+  };
+  inspect(draft.title, "title");
+  for (const [index, question] of draft.questions.entries()) {
+    inspect(question.prompt, `questions.${index}.prompt`, index + 1);
+    if ("choices" in question) {
+      for (const [choiceIndex, choice] of question.choices.entries()) {
+        inspect(choice.label, `questions.${index}.choices.${choiceIndex}.label`, index + 1);
+      }
+    }
+    if (question.type === "numeric" && question.unit) {
+      inspect(question.unit, `questions.${index}.unit`, index + 1);
+    }
+  }
+  return issues;
+}
+
+export async function exportQtiPackage(
+  draft: QuizDraft,
+  options: { exportReport?: RecoveryPackExportReport } = {},
+): Promise<QtiExportResult> {
+  const issues: ImportIssue[] = qtiExportTextIssues(draft);
   const complete = QuizContentSchema.safeParse(draft);
   if (!complete.success) {
     for (const problem of complete.error.issues.slice(0, 50)) {
@@ -313,6 +405,15 @@ export async function exportQtiPackage(draft: QuizDraft): Promise<QtiExportResul
     path: "imsmanifest.xml",
     content: Buffer.from(manifestXml(draft, resources), "utf8"),
   });
+  if (options.exportReport) {
+    files.push({
+      path: "openround-export-report.json",
+      content: Buffer.from(
+        `${JSON.stringify(RecoveryPackExportReportSchema.parse(options.exportReport), null, 2)}\n`,
+        "utf8",
+      ),
+    });
+  }
   return {
     archive: await zipBuffers(files),
     validation: validation(draft.questions.length, issues),
@@ -427,7 +528,10 @@ function safeXmlDocument(content: Buffer, fileName: string) {
     if (depth < 0) throw new Error(`${fileName} has malformed XML nesting`);
   }
   if (depth !== 0) throw new Error(`${fileName} has malformed XML nesting`);
-  return { source, parsed: xmlParser.parse(source) as Record<string, unknown> };
+  return {
+    source,
+    parsed: xmlObject(xmlParser.parse(source) as Array<Record<string, unknown>>),
+  };
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {
@@ -455,53 +559,133 @@ function findByKey(value: unknown, key: string, depth = 0): unknown {
   return undefined;
 }
 
-function textContent(value: unknown, depth = 0): string {
+function xmlText(value: string) {
+  // XML 1.0 predefined entities and character references only, in one pass. Never
+  // resolve arbitrary entities or parse the decoded result as XML (including &amp;amp;).
+  const predefined: Record<string, string> = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+  };
+  return value.replace(/&(?:amp|lt|gt|quot|apos|#(?:[0-9]+|x[0-9a-fA-F]+));/g, (reference) => {
+    const name = reference.slice(1, -1);
+    if (!name.startsWith("#")) return predefined[name]!;
+    const codePoint = name.startsWith("#x")
+      ? Number.parseInt(name.slice(2), 16)
+      : Number.parseInt(name.slice(1), 10);
+    if (isXml10CodePoint(codePoint)) {
+      return String.fromCodePoint(codePoint);
+    }
+    throw new Error("QTI text contains a prohibited XML character reference");
+  });
+}
+
+function orderedTextContent(value: unknown, depth = 0, decodeEntities = true): string {
   if (depth > 64) throw new Error("QTI text exceeds the supported nesting depth");
-  if (typeof value === "string" || typeof value === "number") return String(value);
-  if (Array.isArray(value)) return value.map((child) => textContent(child, depth + 1)).join(" ");
+  if (typeof value === "string" || typeof value === "number") {
+    return decodeEntities ? xmlText(String(value)) : String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((child) => orderedTextContent(child, depth + 1, decodeEntities)).join(" ");
+  }
   const object = objectValue(value);
   if (!object) return "";
-  return Object.entries(object)
-    .filter(
-      ([key]) =>
-        key === "#text" ||
-        key.startsWith("qti-") ||
-        [
-          "p",
-          "div",
-          "span",
-          "em",
-          "strong",
-          "b",
-          "i",
-          "u",
-          "small",
-          "sub",
-          "sup",
-          "code",
-          "pre",
-          "blockquote",
-          "ul",
-          "ol",
-          "li",
-          "table",
-          "thead",
-          "tbody",
-          "tr",
-          "th",
-          "td",
-          "math",
-          "mi",
-          "mn",
-          "mo",
-          "mtext",
-        ].includes(key),
-    )
-    .map(([, child]) => textContent(child, depth + 1))
-    .filter(Boolean)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return (object as XmlObject)[XML_CONTENT].filter(
+    ({ name: key }) =>
+      key === "#text" ||
+      key === "#cdata" ||
+      key.startsWith("qti-") ||
+      [
+        "p",
+        "div",
+        "span",
+        "em",
+        "strong",
+        "b",
+        "i",
+        "u",
+        "small",
+        "sub",
+        "sup",
+        "code",
+        "pre",
+        "blockquote",
+        "ul",
+        "ol",
+        "li",
+        "table",
+        "thead",
+        "tbody",
+        "tr",
+        "th",
+        "td",
+        "math",
+        "mi",
+        "mn",
+        "mo",
+        "mtext",
+      ].includes(key),
+  )
+    .map(({ name, value: child }) => {
+      const text = orderedTextContent(child, depth + 1, decodeEntities && name !== "#cdata");
+      // Paragraph/list/table boundaries separate words; inline markup and CDATA
+      // concatenate exactly as authored, including whitespace at their edges.
+      return [
+        "p",
+        "div",
+        "pre",
+        "blockquote",
+        "ul",
+        "ol",
+        "li",
+        "table",
+        "thead",
+        "tbody",
+        "tr",
+        "th",
+        "td",
+      ].includes(name)
+        ? ` ${text} `
+        : text;
+    })
+    .join("");
+}
+
+function textContent(value: unknown): string {
+  const text = orderedTextContent(value);
+  // Do not normalize individual segments: doing so removes spaces at CDATA and
+  // inline-element boundaries. Own-profile plain text keeps internal CR/CRLF.
+  return typeof value === "object" ? text.replace(/\s+/g, " ").trim() : text.trim();
+}
+
+function numericPrompt(body: unknown, ownProfile: boolean) {
+  const paragraphs = asArray(objectValue(body)?.p);
+  // Our profile places the prompt and entry/unit in separate paragraphs. Do not
+  // append the unit to the authored prompt; leave generalized external imports unchanged.
+  if (
+    ownProfile &&
+    paragraphs.length === 2 &&
+    !findByKey(paragraphs[0], "qti-text-entry-interaction") &&
+    findByKey(paragraphs[1], "qti-text-entry-interaction")
+  ) {
+    return textContent(paragraphs[0]);
+  }
+  return textContent(findByKey(body, "p"));
+}
+
+function choiceLabel(choice: Record<string, unknown>, ownProfile: boolean) {
+  // Own exports use literal text, not mixed markup. Preserve its authored internal
+  // whitespace; keep external rich-text normalization and allowlists unchanged.
+  if (
+    ownProfile &&
+    typeof choice["#text"] === "string" &&
+    Object.keys(choice).every((key) => key === "identifier" || key === "#text")
+  ) {
+    return textContent(choice["#text"]);
+  }
+  return textContent(choice);
 }
 
 function outcomeValue(item: Record<string, unknown>, identifier: string) {
@@ -604,7 +788,7 @@ function parseQtiItem(content: Buffer, fileName: string, row: number, issues: Im
     const metadataChoices = new Map(
       (metadata?.choices ?? []).map((choice) => [choice.qtiIdentifier, choice]),
     );
-    const labels = simpleChoices.map((choice) => textContent(choice));
+    const labels = simpleChoices.map((choice) => choiceLabel(choice, Boolean(metadata)));
     const inferredTrueFalse =
       cardinality === "single" &&
       labels.length === 2 &&
@@ -635,12 +819,12 @@ function parseQtiItem(content: Buffer, fileName: string, row: number, issues: Im
       prompt:
         textContent(choiceInteraction["qti-prompt"]) ||
         textContent(findByKey(item["qti-item-body"], "p")),
-      choices: simpleChoices.map((choice) => {
+      choices: simpleChoices.map((choice, index) => {
         const identifier = String(choice.identifier ?? "");
         const extra = metadataChoices.get(identifier);
         return {
           id: randomUUID(),
-          label: textContent(choice),
+          label: labels[index]!,
           isCorrect: correctIds.has(identifier),
           ...(extra?.feedback ? { feedback: extra.feedback } : {}),
           ...(extra?.misconceptionKey ? { misconceptionKey: extra.misconceptionKey } : {}),
@@ -664,7 +848,7 @@ function parseQtiItem(content: Buffer, fileName: string, row: number, issues: Im
     checkpoint = {
       ...common,
       type: "numeric",
-      prompt: textContent(findByKey(item["qti-item-body"], "p")),
+      prompt: numericPrompt(item["qti-item-body"], Boolean(metadata)),
       correctValue: normalizeDecimalString(correctValue),
       tolerance: normalizeDecimalString(metadata?.tolerance ?? "0"),
       unit: metadata?.unit ?? null,

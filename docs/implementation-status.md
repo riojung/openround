@@ -556,6 +556,55 @@ durable-learning claim. Companion insertion, source-authoring with exact-content
 and explicit QTI/CSV loss reports remain the next Pack items. Partner-evidence, manual independent
 reviews, staging, and production-readiness decisions remain deferred; participant caps are unchanged.
 
+## Recovery Pack QTI/CSV portability — 2026-10-07
+
+Published Pack exports now offer a strict, deterministic preview/report and CSV or QTI checkpoint
+downloads alongside the unchanged native JSON content path. The projection contains the original
+frozen diagnostic, linked recheck, and optional delayed probe, never an unsaved draft or a latest-
+version substitution. The source title, Pack/version identifiers, version number, and canonical
+content hash bind each report to its immutable content. QTI archives embed that exact report as
+`openround-export-report.json`; either format also has a separately downloadable report.
+
+The loss report distinguishes omitted Pack identity/roles/container context, intervention cards,
+citations and private media; OpenRound-specific QTI extension metadata; and format transformations.
+It does not incorrectly label linked-recheck relationships or authored numeric tolerance as absent:
+CSV retains links, QTI preserves links in its extension, and QTI encodes tolerance bounds and unit
+text. External QTI engines may ignore extensions or round float grading values. Formula-like CSV
+cells are protected, while authored leading-apostrophe ambiguity is explicitly reported. Converted
+files are checkpoint interchange, not a complete Recovery Pack learning sequence. Native JSON
+remains the complete content format, with media references rather than embedded image bytes.
+Shared import compatibility also restores CSV formula protection for whitespace/tab prefixes and
+QTI predefined/numeric XML text entities without enabling arbitrary entity expansion. Exported
+numeric prompts no longer absorb the unit paragraph when reimported; authored choice whitespace and
+CR/CRLF text are preserved. Ordered text extraction keeps interleaved CDATA, ordinary text, and
+inline markup in document order without decoding CDATA or trimming individual segment boundaries.
+Existing XML/archive security limits remain in force.
+
+Export/report endpoints use the existing workspace-authorized creator read boundary, including
+viewers and Community deployments. They remain readable after authoring flags/allowlists are
+disabled; they do not reuse a Pro CSV-report entitlement. Private/no-store responses and bounded
+static findings avoid participant data, media identifiers/URLs, and validation payload leakage.
+Unsupported content blocks the whole download with a report rather than silently exporting a
+partial file. The browser validates format and all known frozen-source metadata before download,
+fences stale previews, preserves explicit retry, and never saves an error response as an artifact.
+This increment adds no database migration, new retention clock, learner data, or public access route.
+
+Verification: `CI=true pnpm check` passes formatting, lint, type checks, local tests, smoke support,
+and production builds. The local suites include 295 contract, 425 server, 454 web, and 122 database
+tests; 62 PostgreSQL tests remain skipped in this run. Production-browser coverage passes across
+desktop Chromium, Android Chromium, and mobile WebKit: 44 existing Pack/practice/accessibility
+scenarios and, after repairing the new test fixtures, three new portability scenarios in separate
+focused runs. The new scenarios cover frozen-source preview/download matching, actual CSV/QTI/JSON
+downloads, failure/retry, stale-preview fencing, read-only access, keyboard/focus behavior, axe, and
+mobile overflow. Registered-media omission and privacy are covered by server tests. An independent
+read-only code review found no remaining actionable issues. These checks do not substitute for
+manual assistive-technology review or external-LMS interoperability validation.
+
+Companion insertion and source-authoring with exact-content citation approval remain the next Pack
+items. Recovery Trail and Concept Health remain later increments. Partner-evidence decisions,
+staging, independent manual reviews, and production/readiness gates remain deferred; public caps
+are unchanged.
+
 ## Access/resilience provisional slice
 
 An Access/resilience implementation slice is complete in the repository provisionally, without

@@ -17,6 +17,16 @@ credentials remain hash-only in storage. Labelled personal links still do not es
 learner identity or pair an assignment to a participant from an earlier live session. The two
 checkpoint aggregates describe this practice attempt cohort, not delayed retention or causal learning.
 
+Published Recovery Pack CSV/QTI downloads and their loss reports are workspace-authorized creator
+reads, including viewers; they are not public participant endpoints. Conversion projects only the
+frozen diagnostic, linked recheck, and optional probe. It omits Pack cards, citations, and private
+media references/bytes and discloses those losses rather than fetching media URLs. Reports contain
+the published title, Pack/version identifiers, content hash, bounded field paths, and static reasons,
+not authored excerpts, participant answers, credentials, or media identifiers. QTI embeds the same
+report; CSV exposes a separately downloadable report. No additional durable data or retention clock
+is created. Downloaded content is held by the recipient and cannot be remotely erased. Native JSON
+continues to include complete content and media references, not image bytes or access tokens.
+
 | Data                                                | Purpose                                                                           |                                                                              Default retention | Location rule                                                               | Deletion                                                                                            |
 | --------------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------: | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Creator email and session                           | Account access and support                                                        |                                                                  Account life; session 30 days | Workspace home region                                                       | Account deletion anonymizes email and revokes sessions                                              |

@@ -23,6 +23,7 @@ import {
 import { clientUuid } from "../../lib/uuid";
 import { PackPracticeAction } from "../../components/practice/pack-practice-action";
 import type { PublishedPracticePack } from "../../lib/recovery-pack-practice";
+import { RecoveryPackExportPanel } from "../../components/recovery-pack-export";
 import styles from "./recovery-packs.module.css";
 
 interface PackRecord {
@@ -86,11 +87,12 @@ function PackLibrary() {
   const [packs, setPacks] = useState<PackRecord[]>([]);
   const [rounds, setRounds] = useState<RoundRecord[]>([]);
   const [selected, setSelected] = useState<PackRecord | null>(null);
-  const [publishedPracticePack, setPublishedPracticePack] = useState<PublishedPracticePack | null>(
-    null,
-  );
+  const [publishedPracticePack, setPublishedPracticePack] = useState<
+    (PublishedPracticePack & { contentHash: string }) | null
+  >(null);
   const [practiceSourceLoading, setPracticeSourceLoading] = useState(false);
   const [practiceSourceError, setPracticeSourceError] = useState("");
+  const [publishedSourceRefresh, setPublishedSourceRefresh] = useState(0);
   const [draft, setDraft] = useState<RecoveryPackDraft | null>(null);
   const [concepts, setConcepts] = useState("");
   const [misconceptions, setMisconceptions] = useState("");
@@ -174,7 +176,7 @@ function PackLibrary() {
     }
     const abort = new AbortController();
     setPracticeSourceLoading(true);
-    void apiFetch<{ version: PublishedPracticePack }>(
+    void apiFetch<{ version: PublishedPracticePack & { contentHash: string } }>(
       `/v1/recovery-packs/versions/${encodeURIComponent(versionId)}`,
       { signal: abort.signal },
     )
@@ -182,7 +184,7 @@ function PackLibrary() {
         if (abort.signal.aborted) return;
         if (version.id !== versionId || version.packId !== selectedPackId)
           throw new Error(
-            "The published Pack changed. Reload its saved source before assigning practice.",
+            "The published Pack changed. Reload its saved source before export review or practice.",
           );
         setPublishedPracticePack(version);
       })
@@ -193,7 +195,7 @@ function PackLibrary() {
         if (!abort.signal.aborted) setPracticeSourceLoading(false);
       });
     return () => abort.abort();
-  }, [selected?.id, selected?.currentVersionId]);
+  }, [selected?.id, selected?.currentVersionId, publishedSourceRefresh]);
 
   function adopt(pack: PackRecord) {
     setSelected(pack);
@@ -758,6 +760,37 @@ function PackLibrary() {
                     >
                       Export OpenRound JSON
                     </button>
+                    {practiceSourceLoading ? (
+                      <p role="status">Loading the frozen published export source…</p>
+                    ) : practiceSourceError ? (
+                      <>
+                        <p className="error" role="alert">
+                          {practiceSourceError}
+                        </p>
+                        <button
+                          className="button-quiet"
+                          type="button"
+                          disabled={Boolean(busy)}
+                          onClick={() => setPublishedSourceRefresh((value) => value + 1)}
+                        >
+                          Retry published export source
+                        </button>
+                      </>
+                    ) : null}
+                    {publishedPracticePack?.id === selected.currentVersionId ? (
+                      <RecoveryPackExportPanel
+                        key={`${selected.id}:${publishedPracticePack.id}:${publishedPracticePack.contentHash}`}
+                        source={{
+                          artifactType: "recovery_pack",
+                          packId: selected.id,
+                          packVersionId: publishedPracticePack.id,
+                          packVersion: publishedPracticePack.version,
+                          contentHash: publishedPracticePack.contentHash,
+                          title: publishedPracticePack.content.title,
+                        }}
+                        disabled={Boolean(busy)}
+                      />
+                    ) : null}
                     {writable ? (
                       <>
                         <label className="field">

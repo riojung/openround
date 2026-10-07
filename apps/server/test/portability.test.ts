@@ -80,6 +80,17 @@ function linkedDraft(): QuizDraft {
 }
 
 describe("checkpoint-set portability", () => {
+  it("removes precisely the exporter protection for whitespace-prefixed spreadsheet cells", () => {
+    const source = linkedDraft();
+    source.questions[0]!.prompt = " \t=Whitespace-prefixed expression";
+    source.questions[1]!.explanation = "\n+Line-prefixed expression";
+    const exported = checkpointSetCsv(source);
+    expect(exported).toContain("' \t=Whitespace-prefixed expression");
+    const imported = importCheckpointSet("csv", exported);
+    expect(imported.validation.errors).toEqual([]);
+    expect(imported.draft!.questions[0]!.prompt).toBe("=Whitespace-prefixed expression");
+    expect(imported.draft!.questions[1]!.explanation).toBe("+Line-prefixed expression");
+  });
   it("round-trips Pack-backed v3 JSON with fresh destination IDs and an unchanged source baseline", () => {
     const source = linkedDraft();
     source.questions[0]!.mediaId = null;
