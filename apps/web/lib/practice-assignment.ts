@@ -1,3 +1,5 @@
+import type { RecoveryPackPracticeSource } from "@openround/contracts";
+
 export type PracticePurpose = "recovery" | "assignment";
 export type PracticeTimeMode = "flex" | "timed";
 
@@ -6,7 +8,8 @@ export interface PracticeRecord {
   purpose: PracticePurpose;
   sourceSessionId: string | null;
   sourceReportId: string | null;
-  sourceQuizVersionId: string;
+  sourceQuizVersionId: string | null;
+  recoveryPackSource?: RecoveryPackPracticeSource | null;
   title: string;
   conceptKeys: string[];
   checkpointCount: number;
@@ -34,6 +37,38 @@ export interface CreatedPractice {
   followup: PracticeRecord;
   genericUrl: string;
   personalAccess: PracticeAccess[];
+}
+
+export type PracticeContext =
+  | {
+      sourceType?: "round";
+      quizId: string;
+      quizTitle: string;
+      version: number;
+      publishedAt: string;
+    }
+  | {
+      sourceType: "recovery_pack";
+      packId: string;
+      packTitle: string;
+      version: number;
+      publishedAt: string;
+    };
+
+export function practiceSourceDetails(context: PracticeContext, canEdit: boolean) {
+  return context.sourceType === "recovery_pack"
+    ? {
+        title: context.packTitle,
+        label: "Recovery Pack delayed probe",
+        href: "/recovery-packs",
+        linkLabel: "Open Recovery Pack library",
+      }
+    : {
+        title: context.quizTitle,
+        label: "Published Round",
+        href: `/quiz/${context.quizId}${canEdit ? "" : "/preview"}`,
+        linkLabel: "Open source Round",
+      };
 }
 
 export type PracticeStatus = "scheduled" | "open" | "closed" | "expired";
@@ -74,6 +109,12 @@ export function personalLabelsError(labels: string[], maximum = 250) {
     return "Keep every personal link label to 80 characters or fewer.";
   }
   return null;
+}
+
+export function practicePersonalLinkLimit(
+  entitlements: { maxPracticePersonalLinks: number } | null,
+) {
+  return Math.min(250, entitlements?.maxPracticePersonalLinks ?? 0);
 }
 
 export function practiceStatus(practice: PracticeRecord, now = new Date()): PracticeStatus {

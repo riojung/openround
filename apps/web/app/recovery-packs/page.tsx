@@ -21,6 +21,8 @@ import {
   recoveryPackTargetId,
 } from "../../lib/recovery-packs";
 import { clientUuid } from "../../lib/uuid";
+import { PackPracticeAction } from "../../components/practice/pack-practice-action";
+import type { PublishedPracticePack } from "../../lib/recovery-pack-practice";
 import styles from "./recovery-packs.module.css";
 
 interface PackRecord {
@@ -78,12 +80,17 @@ function RecoveryPacksWorkspace() {
 }
 
 function PackLibrary() {
-  const { canEdit, productFeatures } = useWorkspace();
+  const { canEdit, productFeatures, entitlements } = useWorkspace();
   const enabled = Boolean(productFeatures?.recoveryPacks);
   const writable = canEdit && enabled;
   const [packs, setPacks] = useState<PackRecord[]>([]);
   const [rounds, setRounds] = useState<RoundRecord[]>([]);
   const [selected, setSelected] = useState<PackRecord | null>(null);
+  const [publishedPracticePack, setPublishedPracticePack] = useState<PublishedPracticePack | null>(
+    null,
+  );
+  const [practiceSourceLoading, setPracticeSourceLoading] = useState(false);
+  const [practiceSourceError, setPracticeSourceError] = useState("");
   const [draft, setDraft] = useState<RecoveryPackDraft | null>(null);
   const [concepts, setConcepts] = useState("");
   const [misconceptions, setMisconceptions] = useState("");
@@ -155,6 +162,38 @@ function PackLibrary() {
       });
     return () => abort.abort();
   }, [sourceId]);
+
+  useEffect(() => {
+    setPublishedPracticePack(null);
+    setPracticeSourceError("");
+    const versionId = selected?.currentVersionId;
+    const selectedPackId = selected?.id;
+    if (!versionId || !selectedPackId) {
+      setPracticeSourceLoading(false);
+      return;
+    }
+    const abort = new AbortController();
+    setPracticeSourceLoading(true);
+    void apiFetch<{ version: PublishedPracticePack }>(
+      `/v1/recovery-packs/versions/${encodeURIComponent(versionId)}`,
+      { signal: abort.signal },
+    )
+      .then(({ version }) => {
+        if (abort.signal.aborted) return;
+        if (version.id !== versionId || version.packId !== selectedPackId)
+          throw new Error(
+            "The published Pack changed. Reload its saved source before assigning practice.",
+          );
+        setPublishedPracticePack(version);
+      })
+      .catch((caught) => {
+        if (!abort.signal.aborted) setPracticeSourceError(humanError(caught));
+      })
+      .finally(() => {
+        if (!abort.signal.aborted) setPracticeSourceLoading(false);
+      });
+    return () => abort.abort();
+  }, [selected?.id, selected?.currentVersionId]);
 
   function adopt(pack: PackRecord) {
     setSelected(pack);
@@ -312,8 +351,10 @@ function PackLibrary() {
           Pack. References stay frozen until you accept an update; existing published content and
           sessions are unchanged. Live explanation or worked-example playback is available in
           eligible new Round or Presentation sessions when enabled for the workspace. The
-          facilitator explicitly selects a card after revealing the Pack diagnostic. Practice and
-          Companion insertion are not available.
+          facilitator explicitly selects a card after revealing the Pack diagnostic. Standalone
+          delayed-probe practice is available from a published Pack with a delayed probe when Pack
+          authoring and practice assignments are enabled and the workspace has Pro follow-ups. Full
+          Pack practice, delayed recovery trails, and Companion insertion are not available.
         </p>
         {!enabled ? (
           <p className="notice">
@@ -762,6 +803,20 @@ function PackLibrary() {
                     ) : null}
                   </section>
                 ) : null}
+                <PackPracticeAction
+                  packId={selected.id}
+                  version={
+                    publishedPracticePack?.id === selected.currentVersionId
+                      ? publishedPracticePack
+                      : null
+                  }
+                  loading={practiceSourceLoading}
+                  loadError={practiceSourceError}
+                  recoveryPacksEnabled={enabled}
+                  practiceAssignmentsEnabled={productFeatures?.practiceAssignments === true}
+                  followups={entitlements?.followups === true}
+                  canEdit={canEdit}
+                />
                 <section className={styles.subsection} aria-label="Draft history">
                   <h3>Draft history</h3>
                   <button

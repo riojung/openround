@@ -80,6 +80,16 @@ export class ProductEventDispatcher {
     private readonly maximumPendingEvents = 10_000,
   ) {}
 
+  /** Observe an event already committed by an authoritative product transaction. */
+  recordPersisted(event: ProductEventRecord) {
+    try {
+      this.metrics.recordProductEvent({ ...event, authoritative: true });
+    } catch (error) {
+      // A metrics failure must never change a committed product receipt.
+      this.reportSafely(error);
+    }
+  }
+
   enqueue(input: ProductEventDispatch) {
     if (input.events.length === 0) return 0;
     if (this.closed || this.pendingEvents + input.events.length > this.maximumPendingEvents) {

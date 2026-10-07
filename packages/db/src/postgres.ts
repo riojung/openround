@@ -7,6 +7,7 @@ import {
   MAX_SESSION_DECISION_EVENTS,
   QUESTION_HEALTH_POST_USE_MAX_REPORTS,
   RecoveryPackCardReferenceSchema,
+  RecoveryPackPracticeSourceSchema,
   ReportSchema,
   ResponsePayloadSchema,
   SessionDecisionEventSchema,
@@ -32,6 +33,12 @@ import {
   WorkspaceDeletionInProgressError,
 } from "./types.js";
 import { runMigrations } from "./migrations.js";
+import {
+  assertRecoveryPackPracticeInput,
+  matchRecoveryPackPracticeReceipt,
+  recoveryPackPracticeSourceMatches,
+  recoveryPackPracticeCreationEvidence,
+} from "./recovery-pack-practice.js";
 import {
   PRESENTATION_CONTENT_SCHEMA_VERSION,
   PRESENTATION_DRAFT_SCHEMA_VERSION,
@@ -93,6 +100,7 @@ import type {
   ParticipantSignalRecord,
   Plan,
   ProductEventRecord,
+  RecoveryPackPracticeCreationContext,
   QuestionHealthObservationReport,
   QuestionHealthObservationReportPage,
   QuestionHealthDismissalIdentity,
@@ -719,8 +727,11 @@ function mapFollowupHistory(row: QueryResultRow, now: Date): FollowupHistoryReco
   return {
     id: String(row.id),
     ...source,
-    quizId: String(row.quiz_id),
-    sourceQuizVersionId: String(row.source_quiz_version_id),
+    quizId: row.quiz_id ? String(row.quiz_id) : null,
+    sourceQuizVersionId: row.source_quiz_version_id ? String(row.source_quiz_version_id) : null,
+    recoveryPackSource: row.recovery_pack_source
+      ? RecoveryPackPracticeSourceSchema.parse(row.recovery_pack_source)
+      : null,
     trustMode: TrustModeSchema.parse(row.trust_mode ?? "learning"),
     title: String(row.title),
     status,
@@ -733,7 +744,7 @@ function mapFollowupHistory(row: QueryResultRow, now: Date): FollowupHistoryReco
     expiresAt,
     createdAt: date(row.created_at),
     cursorCreatedAt: row.cursor_created_at ? String(row.cursor_created_at) : undefined,
-  };
+  } as FollowupHistoryRecord;
 }
 
 function mapFollowup(row: QueryResultRow): FollowupRecord {
@@ -753,7 +764,16 @@ function mapFollowup(row: QueryResultRow): FollowupRecord {
     id: String(row.id),
     workspaceId: String(row.workspace_id),
     trustMode: TrustModeSchema.parse(row.trust_mode ?? "learning"),
-    sourceQuizVersionId: String(row.source_quiz_version_id),
+    sourceQuizVersionId: row.source_quiz_version_id ? String(row.source_quiz_version_id) : null,
+    recoveryPackSource: row.recovery_pack_source
+      ? RecoveryPackPracticeSourceSchema.parse(row.recovery_pack_source)
+      : null,
+    creationMutation: row.creation_mutation_id
+      ? {
+          mutationId: String(row.creation_mutation_id),
+          requestHash: String(row.creation_request_hash),
+        }
+      : null,
     ...source,
     title: String(row.title),
     content: row.content as QuizDraft,
@@ -766,7 +786,7 @@ function mapFollowup(row: QueryResultRow): FollowupRecord {
     closedAt: row.closed_at ? date(row.closed_at) : null,
     createdBy: row.created_by ? String(row.created_by) : null,
     createdAt: date(row.created_at),
-  };
+  } as FollowupRecord;
 }
 
 function mapFollowupAccess(row: QueryResultRow): FollowupAccessRecord {
@@ -5844,8 +5864,9 @@ export class PostgresRepository implements Repository {
       `INSERT INTO followups
          (id, workspace_id, purpose, source_quiz_version_id, source_session_id,
           source_report_id, trust_mode, title, content, concept_keys, time_mode, generic_token_hash,
-          opens_at, closes_at, expires_at, closed_at, created_by, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+          opens_at, closes_at, expires_at, closed_at, created_by, created_at,
+          recovery_pack_source, creation_mutation_id, creation_request_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21)`,
       [
         input.id,
         input.workspaceId,
@@ -5865,6 +5886,9 @@ export class PostgresRepository implements Repository {
         input.closedAt,
         input.createdBy,
         input.createdAt,
+        input.recoveryPackSource ? JSON.stringify(input.recoveryPackSource) : null,
+        input.creationMutation?.mutationId ?? null,
+        input.creationMutation?.requestHash ?? null,
       ],
     );
     for (const item of access) {
@@ -5904,6 +5928,8 @@ export class PostgresRepository implements Repository {
     input: Extract<FollowupRecord, { purpose: "assignment" }>,
     access: FollowupAccessRecord[],
   ) {
+    if (input.recoveryPackSource || input.creationMutation || input.sourceQuizVersionId === null)
+      throw new TypeError("Round practice requires a Round source");
     return this.transaction(
       async (client) => {
         const workspace = await client.query(
@@ -5933,6 +5959,115 @@ export class PostgresRepository implements Repository {
         }
         await this.insertFollowup(client, input, access);
         return true;
+      },
+      { workspaceId: input.workspaceId },
+    );
+  }
+
+  async getRecoveryPackPracticeAssignment(
+    workspaceId: string,
+    packId: string,
+    mutationId: string,
+    requestHash: string,
+  ) {
+    const result = await this.workspaceQuery(
+      workspaceId,
+      "SELECT * FROM followups WHERE workspace_id = $1 AND creation_mutation_id = $2",
+      [workspaceId, mutationId],
+    );
+    return result.rows[0]
+      ? matchRecoveryPackPracticeReceipt(
+          mapFollowup(result.rows[0]),
+          packId,
+          mutationId,
+          requestHash,
+        )
+      : null;
+  }
+
+  async createRecoveryPackPracticeAssignment(
+    packId: string,
+    input: Extract<FollowupRecord, { purpose: "assignment" }>,
+    access: FollowupAccessRecord[],
+    context: RecoveryPackPracticeCreationContext,
+  ): Promise<{
+    followup: FollowupRecord;
+    created: boolean;
+    productEvent: ProductEventRecord | null;
+  } | null> {
+    const source = assertRecoveryPackPracticeInput(input);
+    const receipt = input.creationMutation!;
+    return this.transaction(
+      async (client) => {
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+          `pack-practice:${input.workspaceId}:${receipt.mutationId}`,
+        ]);
+        const replay = await client.query(
+          "SELECT * FROM followups WHERE workspace_id = $1 AND creation_mutation_id = $2",
+          [input.workspaceId, receipt.mutationId],
+        );
+        if (replay.rows[0])
+          return {
+            followup: matchRecoveryPackPracticeReceipt(
+              mapFollowup(replay.rows[0]),
+              packId,
+              receipt.mutationId,
+              receipt.requestHash,
+            ),
+            created: false,
+            productEvent: null,
+          };
+        const workspace = await client.query(
+          `/* create_recovery_pack_practice_workspace */ SELECT workspace.deletion_started_at, EXISTS (
+             SELECT 1 FROM workspace_media_deletion_jobs AS job WHERE job.workspace_id = workspace.id
+           ) AS media_deletion_started
+           FROM workspaces AS workspace WHERE workspace.id = $1 FOR SHARE`,
+          [input.workspaceId],
+        );
+        if (!workspace.rows[0]) return null;
+        if (
+          workspace.rows[0].deletion_started_at !== null ||
+          workspace.rows[0].media_deletion_started
+        )
+          throw new WorkspaceDeletionInProgressError(input.workspaceId);
+        const result = await client.query(
+          `/* create_recovery_pack_practice */ SELECT version.*
+         FROM recovery_packs AS pack
+         JOIN recovery_pack_versions AS version
+           ON version.id = pack.current_version_id AND version.pack_id = pack.id AND version.workspace_id = pack.workspace_id
+         WHERE pack.workspace_id = $1 AND pack.id = $2 AND version.id = $3
+         FOR SHARE OF pack`,
+          [input.workspaceId, packId, source.packVersionId],
+        );
+        const row = result.rows[0];
+        if (
+          !row ||
+          !recoveryPackPracticeSourceMatches(input, {
+            id: String(row.id),
+            workspaceId: String(row.workspace_id),
+            packId: String(row.pack_id),
+            version: Number(row.version),
+            content: upcastRecoveryPackContent(row.content, Number(row.content_schema_version)),
+            contentSchemaVersion: Number(row.content_schema_version),
+            contentHash: String(row.content_hash),
+            sourceDraftRevision: Number(row.source_draft_revision),
+            publishedAt: date(row.published_at),
+          })
+        )
+          return null;
+        await this.insertFollowup(client, input, access);
+        const { audit, productEvent } = recoveryPackPracticeCreationEvidence(
+          input,
+          access.length,
+          context,
+        );
+        await this.insertAuditEvent(client, audit);
+        await this.insertProductEventRecords(client, [productEvent]);
+        const stored = await client.query(
+          "SELECT * FROM followups WHERE workspace_id = $1 AND id = $2",
+          [input.workspaceId, input.id],
+        );
+        return { followup: mapFollowup(stored.rows[0]!), created: true, productEvent };
       },
       { workspaceId: input.workspaceId },
     );
@@ -5993,7 +6128,7 @@ export class PostgresRepository implements Repository {
                 WHERE followup_attempts.status = 'completed'
               )::integer AS completed_attempt_count
        FROM followups
-       JOIN quiz_versions
+       LEFT JOIN quiz_versions
          ON quiz_versions.id = followups.source_quiz_version_id
         AND quiz_versions.workspace_id = followups.workspace_id
        LEFT JOIN followup_attempts
@@ -6759,21 +6894,30 @@ export class PostgresRepository implements Repository {
   }
 
   async recordAudit(input: AuditInput) {
-    const sql = `INSERT INTO audit_events
-       (id, workspace_id, actor_id, action, target_type, target_id, request_id, metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`;
-    const values = [
-      randomUUID(),
-      input.workspaceId,
-      input.actorId,
-      input.action,
-      input.targetType,
-      input.targetId,
-      input.requestId,
-      JSON.stringify(input.metadata ?? {}),
-    ];
-    if (input.workspaceId) await this.workspaceQuery(input.workspaceId, sql, values);
-    else await this.systemQuery(sql, values);
+    await this.transaction(
+      (client) =>
+        this.insertAuditEvent(client, { id: randomUUID(), ...input, createdAt: new Date() }),
+      input.workspaceId ? { workspaceId: input.workspaceId } : { system: true },
+    );
+  }
+
+  private async insertAuditEvent(client: PoolClient, input: AuditEventRecord) {
+    await client.query(
+      `INSERT INTO audit_events
+       (id, workspace_id, actor_id, action, target_type, target_id, request_id, metadata, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        input.id,
+        input.workspaceId,
+        input.actorId,
+        input.action,
+        input.targetType,
+        input.targetId,
+        input.requestId,
+        JSON.stringify(input.metadata ?? {}),
+        input.createdAt,
+      ],
+    );
   }
 
   async listAuditEvents(workspaceId: string, since: Date | null, limit: number) {
@@ -6813,12 +6957,18 @@ export class PostgresRepository implements Repository {
 
   async recordProductEvents(events: ProductEventRecord[]) {
     if (events.length === 0) return;
+    await this.transaction((client) => this.insertProductEventRecords(client, events), {
+      workspaceId: events[0]!.workspaceId,
+    });
+  }
+
+  private async insertProductEventRecords(client: PoolClient, events: ProductEventRecord[]) {
+    if (events.length === 0) return;
     const workspaceId = events[0]!.workspaceId;
     if (events.some((event) => event.workspaceId !== workspaceId)) {
       throw new Error("Product event batches cannot span workspaces");
     }
-    await this.workspaceQuery(
-      workspaceId,
+    await client.query(
       `INSERT INTO product_events
          (id, workspace_id, event_name, dimensions, occurred_at, expires_at, created_at)
        SELECT input.id, $1, input.event_name, input.dimensions,
@@ -7099,7 +7249,7 @@ export class PostgresRepository implements Repository {
         );
         const followups = await queryWorkspaceData(
           `SELECT id, workspace_id, purpose, source_quiz_version_id, source_session_id,
-                  source_report_id, trust_mode, title, content, concept_keys, time_mode,
+                  source_report_id, recovery_pack_source, trust_mode, title, content, concept_keys, time_mode,
                   opens_at, closes_at,
                   expires_at, closed_at, created_by, created_at
            FROM followups WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,

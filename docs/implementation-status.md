@@ -443,6 +443,69 @@ Remaining Pack priorities are practice and Companion insertion, source-authoring
 content-hash-bound citation approval, and QTI/CSV exports with explicit loss reports. Delayed
 Recovery Trail and Concept Health remain subsequent incremental capabilities.
 
+## Recovery Pack delayed-probe practice — 2026-10-07
+
+An owner/editor can now assign the current published Pack's optional delayed probe as standalone
+accountless practice. The Pack library links to an exact published-version assignment form, with
+whole-assignment flex/timed mode, bounded opening/closing times, and optional labelled personal
+links. A missing delayed probe is explicitly unavailable; the diagnostic and immediate recheck are
+never substituted. This increment does not yet run the full diagnostic/card/recheck Pack sequence
+in practice or implement a multi-stage Recovery Trail.
+
+The existing practice runner handles start, private answer acknowledgement, reveal, resume,
+completion, aggregate progress, closure, revocation, and accommodations. Copies receive independent
+question/choice IDs and immutable Pack/version/content-hash/source-item attribution. Creator
+management and history resolve frozen Pack context rather than requiring a surviving Pack or a
+dummy Round. Participants receive only the authorized question and phase data, not source metadata,
+cards, hidden keys, or unrevealed explanations. Generic attempts remain unpaired; labelled personal
+links are accountless one-attempt passes, not persistent learner identities or paired source evidence.
+
+`POST /v1/recovery-packs/:id/practice-assignments` requires both Pack and practice creation gates,
+their workspace eligibility, editor/owner role, and the follow-ups entitlement. Personal passes use
+`maxPracticePersonalLinks`, including the existing Round assignment flow. The browser holds a
+256-bit access seed and exact pending request only in memory. An acknowledgement-loss retry uses
+the same mutation/version/settings/seed, recovering the same assignment and original unrevoked
+links before flag, source, or plan drift checks. Different intent under the same mutation conflicts;
+concurrent identical requests produce one assignment and one creation audit/event. Rejected invalid
+settings release the pending request for explicit correction. No link is displayed before server
+acknowledgement, and leaving the creation page loses the private seed. Raw credentials are not
+persisted or logged; management responses remain hash-only. Later-created or revoked personal passes
+are never reconstructed by the original receipt.
+
+Receipt recovery also covers a request whose initial lookup misses while an identical request
+commits and the source is then republished or deleted. Creation failures recheck the actor/intent-bound
+receipt before rejecting source or schedule drift. The assignment, access passes, media references,
+creation audit, and bounded product event commit atomically; failure to store either evidence record
+rolls back creation so an exact retry can safely try again. Replays never duplicate durable evidence,
+and best-effort metrics observe only actual insertion without another persistence write.
+
+Migration `056_recovery_pack_practice.sql` extends existing forced-RLS follow-up storage with
+immutable source/receipt metadata and a nullable Round version only for Pack assignments. Source
+publication and workspace-deletion fences apply transactionally at creation. Assignment-owned media
+references survive Pack deletion and release with assignment deletion/retention. Frozen content,
+source context, passes, and attempts follow existing tenant, account export/delete, and expiry
+boundaries. Pausing either gate blocks new assignments/passes without hiding retained assignments
+or interrupting participant completion. Older binaries do not understand Pack-only assignments;
+see the [upgrade runbook](runbooks/upgrade.md#recovery-pack-practice-compatibility).
+
+Verification: `pnpm check` passes formatting, Docker-context coverage, lint, typecheck, all 1,465
+unit/support tests, and every package build. All 60 PostgreSQL 17 integration tests pass separately
+in isolated disposable databases, including migration reruns, runtime-role tenant denial, concurrent
+receipts, workspace-deletion ordering, export/purge, and media retention. Regression tests reproduce
+commit/publication and commit/deletion races, inject both evidence-write failures, verify full
+rollback (including media references), and cover restart replay plus unrelated concurrent evidence.
+The combined production-browser Pack suite passes all 37 scenarios on desktop Chromium, mobile
+Chromium, and mobile WebKit, including six new lost-creation-acknowledgement, exact-retry, personal-link/CSV,
+source-deletion, answer/reload/resume, missing-probe, and automated accessibility scenarios.
+Four existing Round-practice and assignment/management accessibility regressions also pass across
+those profiles. Local Firefox cannot launch its temporary profile in this environment; manual
+assistive-device and external rollout/readiness gates are not claimed complete.
+
+Remaining Pack work includes full-sequence practice, Companion insertion, source-authoring proposals
+with exact-content citation approval, and explicit QTI/CSV loss reports. Delayed Recovery Trail and
+Concept Health remain later increments; partner-evidence decisions stay deferred and public
+participant caps are unchanged.
+
 ## Access/resilience provisional slice
 
 An Access/resilience implementation slice is complete in the repository provisionally, without

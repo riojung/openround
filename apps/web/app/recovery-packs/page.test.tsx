@@ -41,7 +41,15 @@ describe("Recovery Pack library capability notice", () => {
       expect(markup).toContain(
         "The facilitator explicitly selects a card after revealing the Pack diagnostic",
       );
-      expect(markup).toContain("Practice and Companion insertion are not available");
+      expect(markup).toContain(
+        "Standalone delayed-probe practice is available from a published Pack with a delayed probe",
+      );
+      expect(markup).toContain(
+        "when Pack authoring and practice assignments are enabled and the workspace has Pro follow-ups",
+      );
+      expect(markup).toContain(
+        "Full Pack practice, delayed recovery trails, and Companion insertion are not available",
+      );
       expect(markup).not.toContain("not available yet");
       if (!enabled) expect(markup).toContain("Pack authoring is not enabled for this workspace");
     },

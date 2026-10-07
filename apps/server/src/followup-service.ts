@@ -58,6 +58,7 @@ function view(record: FollowupRecord): Followup {
     purpose: record.purpose,
     trustMode: record.trustMode ?? "learning",
     sourceQuizVersionId: record.sourceQuizVersionId,
+    recoveryPackSource: record.recoveryPackSource ?? null,
     sourceSessionId: record.sourceSessionId,
     sourceReportId: record.sourceReportId,
     title: record.title,
@@ -71,6 +72,8 @@ function view(record: FollowupRecord): Followup {
     createdAt: record.createdAt.toISOString(),
   });
 }
+
+export { view as followupView };
 
 function timedDeadline(question: QuestionDraft, openedAt: Date, multiplier: TimeMultiplier) {
   return new Date(openedAt.getTime() + question.timeLimitSeconds * multiplier * 1_000);
@@ -402,10 +405,34 @@ export class FollowupService {
   async getForCreator(workspaceId: string, followupId: string) {
     const followup = await this.repository.getFollowup(workspaceId, followupId);
     if (!followup) throw new FollowupError("NOT_FOUND", "Follow-up not found");
-    const version = await this.repository.getQuizVersion(workspaceId, followup.sourceQuizVersionId);
-    if (!version) throw new FollowupError("CONFLICT", "Follow-up source version is unavailable");
-    const quiz = await this.repository.getQuiz(workspaceId, version.quizId);
-    if (!quiz) throw new FollowupError("CONFLICT", "Follow-up source Round is unavailable");
+    let context;
+    if (followup.recoveryPackSource) {
+      const source = followup.recoveryPackSource;
+      context = FollowupContextSchema.parse({
+        sourceType: "recovery_pack",
+        packId: source.packId,
+        packTitle: source.packTitle,
+        version: source.packVersion,
+        publishedAt: source.publishedAt,
+      });
+    } else {
+      if (!followup.sourceQuizVersionId) {
+        throw new FollowupError("CONFLICT", "Follow-up source version is unavailable");
+      }
+      const version = await this.repository.getQuizVersion(
+        workspaceId,
+        followup.sourceQuizVersionId,
+      );
+      if (!version) throw new FollowupError("CONFLICT", "Follow-up source version is unavailable");
+      const quiz = await this.repository.getQuiz(workspaceId, version.quizId);
+      if (!quiz) throw new FollowupError("CONFLICT", "Follow-up source Round is unavailable");
+      context = FollowupContextSchema.parse({
+        quizId: quiz.id,
+        quizTitle: version.content.title,
+        version: version.version,
+        publishedAt: version.publishedAt.toISOString(),
+      });
+    }
     const access = await this.repository.listFollowupAccess(workspaceId, followupId);
     const progress = await this.repository.getFollowupProgress(workspaceId, followupId);
     if (!progress) throw new FollowupError("CONFLICT", "Follow-up progress is unavailable");
@@ -417,12 +444,7 @@ export class FollowupService {
     );
     return {
       followup: view(followup),
-      context: FollowupContextSchema.parse({
-        quizId: quiz.id,
-        quizTitle: version.content.title,
-        version: version.version,
-        publishedAt: version.publishedAt.toISOString(),
-      }),
+      context,
       attemptCount: progress.attemptCount,
       completedAttemptCount: progress.completedAttemptCount,
       access: access.map((item) => ({

@@ -6,6 +6,8 @@ import {
   practiceLinksCsv,
   practicePurposeLabel,
   practiceStatus,
+  practiceSourceDetails,
+  practicePersonalLinkLimit,
   type CreatedPractice,
   type PracticeRecord,
 } from "./practice-assignment";
@@ -42,6 +44,15 @@ describe("standalone practice helpers", () => {
     expect(personalLabelsError(["x".repeat(81)])).toBe(
       "Keep every personal link label to 80 characters or fewer.",
     );
+  });
+  it("uses the personal-link entitlement rather than the participant limit", () => {
+    const limits = { maxParticipants: 100, maxPracticePersonalLinks: 2 };
+    expect(practicePersonalLinkLimit(limits)).toBe(2);
+    expect(personalLabelsError(["A", "B", "C"], practicePersonalLinkLimit(limits))).toContain(
+      "no more than 2",
+    );
+    expect(practicePersonalLinkLimit(null)).toBe(0);
+    expect(practicePersonalLinkLimit({ maxPracticePersonalLinks: 1_000 })).toBe(250);
   });
 
   it("caps the suggested close time to the retention window", () => {
@@ -87,5 +98,33 @@ describe("standalone practice helpers", () => {
       ],
     };
     expect(practiceLinksCsv(created)).toContain('"\'=HYPERLINK(""bad"")"');
+  });
+  it("keeps legacy Round links unchanged and labels frozen Pack contexts without a quiz ID", () => {
+    const round = {
+      quizId: "round",
+      quizTitle: "Existing Round",
+      version: 2,
+      publishedAt: "2026-10-07T12:00:00.000Z",
+    };
+    expect(practiceSourceDetails(round, true)).toMatchObject({
+      title: "Existing Round",
+      href: "/quiz/round",
+      linkLabel: "Open source Round",
+    });
+    expect(practiceSourceDetails(round, false).href).toBe("/quiz/round/preview");
+    const pack = {
+      sourceType: "recovery_pack" as const,
+      packId: "deleted-pack",
+      packTitle: "Frozen Pack title",
+      version: 3,
+      publishedAt: round.publishedAt,
+    };
+    expect(practiceSourceDetails(pack, false)).toEqual({
+      title: "Frozen Pack title",
+      label: "Recovery Pack delayed probe",
+      href: "/recovery-packs",
+      linkLabel: "Open Recovery Pack library",
+    });
+    expect(practiceSourceDetails(pack, true)).toEqual(practiceSourceDetails(pack, false));
   });
 });

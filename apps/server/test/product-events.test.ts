@@ -1,10 +1,54 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MemoryRepository } from "@openround/db";
 import { MetricsService } from "../src/metrics.js";
 import { ProductEventDispatcher } from "../src/product-events.js";
 
 describe("ProductEventDispatcher", () => {
+  it("observes transactionally persisted evidence without another database write", async () => {
+    const repository = new MemoryRepository();
+    const metrics = new MetricsService();
+    const recordMetric = vi.spyOn(metrics, "recordProductEvent");
+    const recordEvents = vi.spyOn(repository, "recordProductEvents");
+    const dispatcher = new ProductEventDispatcher(repository, metrics);
+    const event = {
+      id: randomUUID(),
+      workspaceId: randomUUID(),
+      name: "practice_assignment_created" as const,
+      occurredAt: new Date().toISOString(),
+      dimensions: { segment: "workplace" as const, betaVersion: "p0-2026" as const },
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 30 * 86_400_000),
+    };
+    dispatcher.recordPersisted(event);
+    await dispatcher.drain();
+    expect(recordMetric).toHaveBeenCalledExactlyOnceWith({ ...event, authoritative: true });
+    expect(recordEvents).not.toHaveBeenCalled();
+    expect(repository.productEvents).toEqual([]);
+  });
+
+  it("keeps metrics failures outside a committed product flow", () => {
+    const metrics = new MetricsService();
+    const failure = new Error("metrics unavailable");
+    vi.spyOn(metrics, "recordProductEvent").mockImplementation(() => {
+      throw failure;
+    });
+    const report = vi.fn();
+    const dispatcher = new ProductEventDispatcher(new MemoryRepository(), metrics, report);
+    expect(() =>
+      dispatcher.recordPersisted({
+        id: randomUUID(),
+        workspaceId: randomUUID(),
+        name: "practice_assignment_created",
+        occurredAt: new Date().toISOString(),
+        dimensions: {},
+        createdAt: new Date(),
+        expiresAt: new Date(),
+      }),
+    ).not.toThrow();
+    expect(report).toHaveBeenCalledExactlyOnceWith(failure);
+  });
+
   it("queues persistence without making the caller wait and supports deterministic draining", async () => {
     const repository = new MemoryRepository();
     const originalRecord = repository.recordProductEvents.bind(repository);

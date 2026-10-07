@@ -15,6 +15,7 @@ import type {
   QuestionHealthDismissalReason,
   QuestionHealthRevisionChange,
   QuizDraft,
+  RecoveryPackPracticeSource,
   Report,
   ResponsePayload,
   SessionDecisionEvent,
@@ -427,7 +428,10 @@ interface FollowupRecordBase {
   id: string;
   workspaceId: string;
   trustMode?: TrustMode;
-  sourceQuizVersionId: string;
+  sourceQuizVersionId: string | null;
+  recoveryPackSource?: RecoveryPackPracticeSource | null;
+  /** Internal creation receipt; never contains access seeds or plaintext credentials. */
+  creationMutation?: { mutationId: string; requestHash: string } | null;
   title: string;
   content: QuizDraft;
   conceptKeys: string[];
@@ -445,6 +449,9 @@ export type FollowupRecord = FollowupRecordBase &
   (
     | {
         purpose: "recovery";
+        sourceQuizVersionId: string;
+        recoveryPackSource?: null;
+        creationMutation?: null;
         sourceSessionId: string;
         sourceReportId: string;
       }
@@ -579,6 +586,13 @@ export class FollowupAccessLimitError extends Error {
   }
 }
 
+export class RecoveryPackPracticeAssignmentConflictError extends Error {
+  constructor(public readonly mutationId: string) {
+    super(`Practice creation mutation ${mutationId} was already used for a different request`);
+    this.name = "RecoveryPackPracticeAssignmentConflictError";
+  }
+}
+
 export class PublishedQuizLimitError extends Error {
   constructor(public readonly limit: number) {
     super(`This plan supports ${limit} published quizzes`);
@@ -690,8 +704,9 @@ export interface ReportHistoryRecord {
 
 interface FollowupHistoryRecordBase {
   id: string;
-  quizId: string;
-  sourceQuizVersionId: string;
+  quizId: string | null;
+  sourceQuizVersionId: string | null;
+  recoveryPackSource?: RecoveryPackPracticeSource | null;
   trustMode: TrustMode;
   title: string;
   status: "scheduled" | "open" | "closed" | "expired";
@@ -711,6 +726,9 @@ export type FollowupHistoryRecord = FollowupHistoryRecordBase &
   (
     | {
         purpose: "recovery";
+        quizId: string;
+        sourceQuizVersionId: string;
+        recoveryPackSource?: null;
         sourceSessionId: string;
         sourceReportId: string;
       }
@@ -742,6 +760,11 @@ export interface ProductEventRecord extends ProductEvent {
   workspaceId: string;
   expiresAt: Date;
   createdAt: Date;
+}
+
+export interface RecoveryPackPracticeCreationContext {
+  requestId: string;
+  segment?: Segment;
 }
 
 export interface QnaSettingsRecord {
@@ -962,7 +985,8 @@ export type MediaReferenceOwnerType =
   | "recovery_pack_draft"
   | "recovery_pack_version"
   | "recovery_pack_history"
-  | "recovery_pack_mutation";
+  | "recovery_pack_mutation"
+  | "followup";
 
 /**
  * A durable usage edge between a media asset and authoring content. References are
@@ -1494,6 +1518,22 @@ export interface Repository {
     input: Extract<FollowupRecord, { purpose: "assignment" }>,
     access: FollowupAccessRecord[],
   ): Promise<boolean>;
+  getRecoveryPackPracticeAssignment(
+    workspaceId: string,
+    packId: string,
+    mutationId: string,
+    requestHash: string,
+  ): Promise<FollowupRecord | null>;
+  createRecoveryPackPracticeAssignment(
+    packId: string,
+    input: Extract<FollowupRecord, { purpose: "assignment" }>,
+    access: FollowupAccessRecord[],
+    context: RecoveryPackPracticeCreationContext,
+  ): Promise<{
+    followup: FollowupRecord;
+    created: boolean;
+    productEvent: ProductEventRecord | null;
+  } | null>;
   getFollowup(workspaceId: string, followupId: string): Promise<FollowupRecord | null>;
   getFollowupProgress(
     workspaceId: string,
