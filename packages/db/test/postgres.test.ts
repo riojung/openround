@@ -66,6 +66,11 @@ import {
   recoveryPackDraft,
   recoveryPackRecord,
 } from "./support/recovery-pack-conformance.js";
+import {
+  expectRecoveryPackPracticeConformance,
+  expectRecoveryPackPracticeMediaLifecycle,
+  packPracticeFixture,
+} from "./support/recovery-pack-practice-conformance.js";
 
 const adminUrl = process.env.TEST_DATABASE_ADMIN_URL;
 const runtimeUrl = process.env.TEST_DATABASE_URL;
@@ -1040,6 +1045,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 53, name: "recovery_pack_presentation_media" },
       { version: 54, name: "recovery_pack_presentation_undo" },
       { version: 55, name: "recovery_pack_presentation_live_cards" },
+      { version: 56, name: "recovery_pack_practice" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -1092,6 +1098,25 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     const result = await repository.consumeMagicToken(tokenHash, new Date());
     expect(result).not.toBeNull();
     return result!;
+  }
+
+  async function packPracticeScoped<T>(
+    workspaceId: string,
+    work: (client: PoolClient) => Promise<T>,
+  ) {
+    const client = await runtimePool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+      const result = await work(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async function createPublishedRoundFixture(
@@ -1361,6 +1386,298 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       workspaceId: owner.workspaceId,
       editorId: owner.userId,
     });
+  });
+
+  it("freezes Pack practice and replays creation across concurrency, source changes and deletion", async () => {
+    const owner = await creator("pack-practice");
+    const other = await creator("pack-practice-other");
+    await expectRecoveryPackPracticeConformance(
+      repository,
+      owner.workspaceId,
+      other.workspaceId,
+      owner.userId,
+    );
+    const frozen = (
+      await repository.listFollowupHistory(owner.workspaceId, { limit: 50, now: new Date() })
+    ).items[0]!;
+    const restarted = new PostgresRepository(runtimeUrl!);
+    try {
+      const stored = (await restarted.getFollowup(owner.workspaceId, frozen.id))!;
+      expect(stored.recoveryPackSource).toEqual(frozen.recoveryPackSource);
+      if (stored.purpose !== "assignment") throw new Error("Expected frozen Pack assignment");
+      expect(
+        await restarted.createRecoveryPackPracticeAssignment(
+          stored.recoveryPackSource!.packId,
+          stored,
+          [],
+          { requestId: randomUUID() },
+        ),
+      ).toMatchObject({ created: false, productEvent: null, followup: { id: frozen.id } });
+      expect(
+        (await restarted.listAuditEvents(owner.workspaceId, null, 100)).filter(
+          ({ targetId, action }) =>
+            targetId === frozen.id && action === "recovery_pack.practice_assignment.create",
+        ),
+      ).toHaveLength(1);
+      const events = await packPracticeScoped(owner.workspaceId, (client) =>
+        client.query(
+          "SELECT * FROM product_events WHERE workspace_id = $1 AND event_name = 'practice_assignment_created'",
+          [owner.workspaceId],
+        ),
+      );
+      expect(events.rows).toHaveLength(1);
+      expect(events.rows[0]).toMatchObject({
+        dimensions: { betaVersion: "p0-2026", segment: "education" },
+        occurred_at: stored.createdAt,
+        created_at: stored.createdAt,
+        expires_at: new Date(stored.createdAt.getTime() + 30 * 86_400_000),
+      });
+    } finally {
+      await restarted.close();
+    }
+    // Do not leave a short-lived fixture for later global retention-count assertions.
+    await repository.deleteAccount(owner.userId);
+  });
+
+  it.each(["audit_events", "product_events"] as const)(
+    "rolls back Pack assignment, access, media, audit and event when %s insertion fails",
+    async (table) => {
+      const owner = await creator(`pack-practice-failed-${table}`);
+      const mediaId = randomUUID();
+      await repository.createMediaAsset({
+        id: mediaId,
+        workspaceId: owner.workspaceId,
+        objectKey: `media/${owner.workspaceId}/${mediaId}.png`,
+        mimeType: "image/png",
+        sizeBytes: 10,
+        scanStatus: "clean",
+        altText: "Delayed fraction diagram",
+        createdAt: new Date(),
+      });
+      const f = await packPracticeFixture(repository, owner.workspaceId, owner.userId, mediaId);
+      const adminPool = new Pool({ connectionString: adminUrl });
+      const identifier = `openround_practice_evidence_${randomUUID().replaceAll("-", "")}`;
+      let triggerCreated = false;
+      try {
+        await adminPool.query(
+          `CREATE FUNCTION public.${identifier}() RETURNS trigger LANGUAGE plpgsql AS $$
+           BEGIN
+             IF NEW.workspace_id = '${owner.workspaceId}'::uuid THEN
+               RAISE EXCEPTION 'Pack practice evidence failed';
+             END IF;
+             RETURN NEW;
+           END $$`,
+        );
+        await adminPool.query(
+          `CREATE TRIGGER ${identifier} BEFORE INSERT ON public.${table}
+           FOR EACH ROW EXECUTE FUNCTION public.${identifier}()`,
+        );
+        triggerCreated = true;
+        await expect(
+          repository.createRecoveryPackPracticeAssignment(f.pack.id, f.input, f.access, f.context),
+        ).rejects.toMatchObject({ code: "P0001", message: "Pack practice evidence failed" });
+        expect(await repository.getFollowup(owner.workspaceId, f.input.id)).toBeNull();
+        expect(await repository.listFollowupAccess(owner.workspaceId, f.input.id)).toEqual([]);
+        expect(
+          await repository.getRecoveryPackPracticeAssignment(
+            owner.workspaceId,
+            f.pack.id,
+            f.input.creationMutation!.mutationId,
+            f.input.creationMutation!.requestHash,
+          ),
+        ).toBeNull();
+        expect(
+          (await repository.listMediaReferences(owner.workspaceId, mediaId)).filter(
+            ({ ownerType }) => ownerType === "followup",
+          ),
+        ).toEqual([]);
+        expect(
+          (await repository.listAuditEvents(owner.workspaceId, null, 100)).filter(
+            ({ targetId }) => targetId === f.input.id,
+          ),
+        ).toEqual([]);
+        const events = await packPracticeScoped(owner.workspaceId, (client) =>
+          client.query(
+            "SELECT id FROM product_events WHERE workspace_id = $1 AND event_name = 'practice_assignment_created'",
+            [owner.workspaceId],
+          ),
+        );
+        expect(events.rows).toEqual([]);
+      } finally {
+        if (triggerCreated) {
+          await adminPool.query(`DROP TRIGGER ${identifier} ON public.${table}`);
+        }
+        await adminPool.query(`DROP FUNCTION IF EXISTS public.${identifier}()`);
+        await adminPool.end();
+      }
+
+      const created = await repository.createRecoveryPackPracticeAssignment(
+        f.pack.id,
+        f.input,
+        f.access,
+        f.context,
+      );
+      expect(created).toMatchObject({ created: true, followup: { id: f.input.id } });
+      expect(created!.productEvent).not.toBeNull();
+      expect(
+        await repository.createRecoveryPackPracticeAssignment(f.pack.id, f.input, f.access, {
+          requestId: randomUUID(),
+        }),
+      ).toMatchObject({ created: false, productEvent: null });
+      expect(
+        (await repository.listAuditEvents(owner.workspaceId, null, 100)).filter(
+          ({ targetId }) => targetId === f.input.id,
+        ),
+      ).toHaveLength(1);
+      const events = await packPracticeScoped(owner.workspaceId, (client) =>
+        client.query(
+          "SELECT id FROM product_events WHERE workspace_id = $1 AND event_name = 'practice_assignment_created'",
+          [owner.workspaceId],
+        ),
+      );
+      expect(events.rows).toEqual([{ id: created!.productEvent!.id }]);
+      expect(await repository.listFollowupAccess(owner.workspaceId, f.input.id)).toHaveLength(1);
+      expect(
+        (await repository.listMediaReferences(owner.workspaceId, mediaId)).filter(
+          ({ ownerType }) => ownerType === "followup",
+        ),
+      ).toHaveLength(1);
+      await repository.deleteAccount(owner.userId);
+    },
+  );
+
+  it("retains Pack practice media after source deletion until assignment expiry", async () => {
+    const owner = await creator("pack-practice-media");
+    await expectRecoveryPackPracticeMediaLifecycle(repository, owner.workspaceId, owner.userId);
+    // Its assignment is expired above, but creation evidence has independent 30-day retention.
+    await repository.deleteAccount(owner.userId);
+  });
+
+  it("keeps Pack practice source/receipt immutable, scoped, and compatible with account deletion", async () => {
+    const owner = await creator("pack-practice-lifecycle");
+    const other = await creator("pack-practice-lifecycle-other");
+    const f = await packPracticeFixture(repository, owner.workspaceId, owner.userId);
+    const saved = (await repository.createRecoveryPackPracticeAssignment(
+      f.pack.id,
+      f.input,
+      f.access,
+      f.context,
+    ))!.followup;
+    for (const column of [
+      "recovery_pack_source",
+      "creation_mutation_id",
+      "creation_request_hash",
+      "generic_token_hash",
+    ]) {
+      const replacement =
+        column === "recovery_pack_source"
+          ? JSON.stringify({ ...f.input.recoveryPackSource, packTitle: "Changed" })
+          : column === "creation_mutation_id"
+            ? randomUUID()
+            : "f".repeat(64);
+      await expect(
+        packPracticeScoped(owner.workspaceId, (client) =>
+          client.query(`UPDATE followups SET ${column} = $3 WHERE workspace_id = $1 AND id = $2`, [
+            owner.workspaceId,
+            saved.id,
+            replacement,
+          ]),
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+    }
+    const hidden = await packPracticeScoped(other.workspaceId, (client) =>
+      client.query("SELECT id FROM followups WHERE id = $1", [saved.id]),
+    );
+    expect(hidden.rows).toEqual([]);
+    await repository.claimWorkspaceMediaDeletion(owner.workspaceId);
+    expect(
+      (await repository.createRecoveryPackPracticeAssignment(
+        f.pack.id,
+        f.input,
+        f.access,
+        f.context,
+      ))!.followup.id,
+    ).toBe(saved.id);
+    await expect(
+      repository.createRecoveryPackPracticeAssignment(
+        f.pack.id,
+        {
+          ...f.input,
+          id: randomUUID(),
+          creationMutation: { mutationId: randomUUID(), requestHash: "e".repeat(64) },
+        },
+        [],
+        f.context,
+      ),
+    ).rejects.toBeInstanceOf(WorkspaceDeletionInProgressError);
+    await repository.deleteAccount(owner.userId);
+    expect(await repository.getFollowup(owner.workspaceId, saved.id)).toBeNull();
+    expect(await repository.listFollowupAccess(owner.workspaceId, saved.id)).toEqual([]);
+    expect(
+      await repository.getRecoveryPackPracticeAssignment(
+        owner.workspaceId,
+        f.pack.id,
+        f.input.creationMutation!.mutationId,
+        f.input.creationMutation!.requestHash,
+      ),
+    ).toBeNull();
+  });
+
+  it("validates strict Pack practice metadata JSON types and exact contract UUID variants", async () => {
+    const owner = await creator("pack-practice-types");
+    const f = await packPracticeFixture(repository, owner.workspaceId, owner.userId);
+    const source = f.input.recoveryPackSource!;
+    for (const changed of [
+      { contentHash: 1e63 },
+      { contentHash: "A".repeat(64) },
+      { packTitle: 123 },
+      { packVersion: "1" },
+      { packVersion: 0 },
+      { packVersion: 1.5 },
+      { packVersion: Number.MAX_SAFE_INTEGER + 1 },
+      { sourceItemId: 123 },
+      { packId: "11111111-1111-0111-8111-111111111111" },
+      { packVersionId: "11111111-1111-4111-7111-111111111111" },
+      { role: "recheck" },
+      { accessSeed: "secret" },
+    ]) {
+      const result = await packPracticeScoped(owner.workspaceId, (client) =>
+        client.query("SELECT openround_recovery_pack_practice_source_valid($1::jsonb) AS valid", [
+          JSON.stringify({ ...source, ...changed }),
+        ]),
+      );
+      expect(result.rows[0]!.valid, JSON.stringify(changed)).toBe(false);
+    }
+    for (const value of presentationRecoveryPackUuidCases.accepted) {
+      const result = await packPracticeScoped(owner.workspaceId, (client) =>
+        client.query("SELECT openround_recovery_pack_practice_source_valid($1::jsonb) AS valid", [
+          JSON.stringify({ ...source, packId: value, packVersionId: value, sourceItemId: value }),
+        ]),
+      );
+      expect(result.rows[0]!.valid, value).toBe(true);
+    }
+    await expect(
+      packPracticeScoped(owner.workspaceId, (client) =>
+        client.query(
+          `INSERT INTO followups (id, workspace_id, purpose, source_quiz_version_id, source_session_id, source_report_id, title, content, concept_keys, time_mode, generic_token_hash, opens_at, closes_at, expires_at, created_by, recovery_pack_source, creation_mutation_id, creation_request_hash)
+       VALUES ($1,$2,'assignment',NULL,NULL,NULL,$3,$4::jsonb,'{}','flex',$5,$6,$7,$8,$9,$10::jsonb,$11,$12)`,
+          [
+            randomUUID(),
+            owner.workspaceId,
+            f.input.title,
+            JSON.stringify(f.input.content),
+            randomUUID(),
+            f.input.opensAt,
+            f.input.closesAt,
+            f.input.expiresAt,
+            owner.userId,
+            JSON.stringify({ ...source, contentHash: 1e63 }),
+            randomUUID(),
+            "a".repeat(64),
+          ],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
   });
 
   it("retains Presentation Pack originals and accepted baselines after source deletion and local edits", async () => {
@@ -1684,7 +2001,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     return { session, sessions };
   }
 
-  it("linearizes workspace deletion ahead of concurrent Round, Presentation, and media creation", async () => {
+  it("linearizes workspace deletion ahead of concurrent Round, Presentation, Pack practice and media creation", async () => {
     const waitForWorkspaceLock = async (queryFragment: string) => {
       const deadline = Date.now() + 3_000;
       while (Date.now() < deadline) {
@@ -1808,6 +2125,36 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       status: "rejected",
       error: expect.any(WorkspaceDeletionInProgressError),
     });
+
+    const practiceOwner = await creator("deletion-race-pack-practice");
+    const practice = await packPracticeFixture(
+      repository,
+      practiceOwner.workspaceId,
+      practiceOwner.userId,
+    );
+    const practiceOutcome = await fenceBefore(
+      practiceOwner.workspaceId,
+      "create_recovery_pack_practice_workspace",
+      () =>
+        repository.createRecoveryPackPracticeAssignment(
+          practice.pack.id,
+          practice.input,
+          practice.access,
+          practice.context,
+        ),
+    );
+    expect(practiceOutcome).toMatchObject({
+      status: "rejected",
+      error: expect.any(WorkspaceDeletionInProgressError),
+    });
+    expect(
+      await repository.getRecoveryPackPracticeAssignment(
+        practiceOwner.workspaceId,
+        practice.pack.id,
+        practice.input.creationMutation!.mutationId,
+        practice.input.creationMutation!.requestHash,
+      ),
+    ).toBeNull();
 
     const mediaOwner = await creator("deletion-race-media");
     const mediaId = randomUUID();

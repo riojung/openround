@@ -19,6 +19,7 @@ import {
   localDateTimeValue,
   parsePersonalLabels,
   personalLabelsError,
+  practicePersonalLinkLimit,
   practiceLinksCsv,
   type CreatedPractice,
   type PracticeTimeMode,
@@ -107,7 +108,7 @@ function AssignPracticeContent() {
     () => parsePersonalLabels(personalLabelsText),
     [personalLabelsText],
   );
-  const personalLabelLimit = Math.min(250, entitlements?.maxParticipants ?? 250);
+  const personalLabelLimit = practicePersonalLinkLimit(entitlements);
   const rawLabelError = personalLabelsError(personalLabels, personalLabelLimit);
   const labelError = rawLabelError
     ? personalLabels.length > personalLabelLimit

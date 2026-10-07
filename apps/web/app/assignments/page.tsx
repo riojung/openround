@@ -9,6 +9,7 @@ import { WorkspaceProvider, useWorkspace } from "../../components/workspace/work
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
 import type { CursorPage, FollowupSummary } from "../../components/workspace/workspace-types";
 import styles from "../../components/workspace/workspace-content.module.css";
+import { PackPracticeAttribution } from "../../components/practice/pack-practice-attribution";
 
 function AssignmentsWorkspace() {
   const { locale, t } = useLocale();
@@ -105,6 +106,7 @@ function AssignmentsWorkspace() {
             <div className={styles.rowTopline}>
               <div>
                 <h2 lang="">{assignment.title}</h2>
+                <PackPracticeAttribution source={assignment.recoveryPackSource} />
                 <p className={styles.summaryLine}>
                   {t("pages.assignments.created", {
                     date: formatDateTime(locale, assignment.createdAt),

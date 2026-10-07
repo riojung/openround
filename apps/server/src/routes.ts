@@ -2806,12 +2806,25 @@ export async function registerRoutes(
       );
     }
     const { id } = FollowupParamsSchema.parse(request.params);
+    const source = await repository.getFollowup(creator.workspaceId, id);
+    if (
+      source?.recoveryPackSource &&
+      !evidenceWorkspaceFeatureEnabled(config, creator.workspaceId, "recoveryPacks")
+    ) {
+      return apiError(
+        reply,
+        404,
+        "NOT_FOUND",
+        "Recovery Pack practice is not available in this workspace",
+        request.id,
+      );
+    }
     const input = CreateAssignmentPersonalPassSchema.parse(request.body);
     const created = await followups.createAssignmentPersonalPass(
       creator,
       id,
       input.label,
-      entitlements.maxParticipants,
+      entitlements.maxPracticePersonalLinks,
     );
     const url = `${config.WEB_ORIGIN}/followup/${id}#token=${encodeURIComponent(created.access.token!)}`;
     await repository.recordAudit({

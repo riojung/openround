@@ -159,6 +159,35 @@ Whole-room flex still needs a flex-capable rollback target after creation is ena
 [deployment rollback policy](deployment.md#failure-and-rollback-policy). These compatibility checks
 do not replace the external security, accessibility, capacity, or restore gates.
 
+### Recovery Pack practice compatibility
+
+Apply migration 056 before deploying Pack-practice writers. It expands existing forced-RLS
+follow-up tables with immutable Pack source and creation-receipt metadata. Legacy Round/recovery
+rows remain readable and writable with their existing source version; only new Pack assignments
+may omit a Round version. Published-version/workspace-deletion fences, scoped mutation uniqueness,
+and assignment-owned media references are enforced in the database. Keep the migration during
+rollback; never fabricate a Round or drop frozen source data to make old readers accept these rows.
+
+Do not enable new Pack practice until every serving web/server/worker reader understands Pack
+source context and nullable Round references. Keep at least one creation gate off
+(`FEATURE_RECOVERY_PACKS` or `FEATURE_PRACTICE_ASSIGNMENTS`) throughout a mixed-version deployment;
+after draining older readers, enable both only for eligible workspaces. Once Pack assignments exist,
+use a Pack-practice-capable rollback target. Disabling a flag stops new creation/passes but does not
+make old binaries compatible or hide retained assignment management and participant completion.
+
+Rehearse current published-version fencing, no-probe rejection, concurrent/exact lost-acknowledgement
+retries, changed intent rejection, role/tenant denial, and close/retention bounds. Include an initial
+receipt miss followed by an overlapping commit and source publication/deletion; the original receipt
+must still recover. Inject failure into either creation evidence write and verify the assignment,
+passes, media references, audit, and event all roll back before an exact retry succeeds. Verify only
+one creation audit/event and no stored/logged access seed or raw links. After creation, publish/delete
+the Pack, pause gates, and downgrade the plan: exact receipt recovery and existing start/answer/
+resume/manage flows must still work. A revoked original pass must not reappear, and later-created
+passes must not be included in the original private receipt. Check frozen history/context, media
+access after source deletion, account export/delete, assignment expiry, and reference cleanup.
+Generic and personal practice evidence must not be presented as paired source recovery. These checks
+do not replace external rollout, accessibility, or security review.
+
 ## Presentation concurrent-response rollout
 
 `PRESENTATION_CONCURRENT_RESPONSE_WRITES` defaults to `false`. Leave it off while a prior server

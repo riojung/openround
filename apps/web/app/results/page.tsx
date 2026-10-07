@@ -18,6 +18,7 @@ import type {
   RoundFilterOption,
 } from "../../components/workspace/workspace-types";
 import styles from "../../components/workspace/workspace-content.module.css";
+import { PackPracticeAttribution } from "../../components/practice/pack-practice-attribution";
 
 type ReportStatusFilter = "all" | ReportSummary["status"];
 type FollowupStatusFilter = "all" | FollowupSummary["status"];
@@ -456,6 +457,7 @@ function PracticeList({ rounds }: { rounds: RoundFilterOption[] }) {
             <div className={styles.rowTopline}>
               <div>
                 <h2 lang="">{followup.title}</h2>
+                <PackPracticeAttribution source={followup.recoveryPackSource} />
                 <p className={styles.summaryLine}>
                   {t("pages.assignments.created", {
                     date: formatDateTime(locale, followup.createdAt),

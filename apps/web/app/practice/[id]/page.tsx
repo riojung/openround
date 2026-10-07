@@ -14,17 +14,12 @@ import { apiFetch, humanError } from "../../../lib/api";
 import {
   practicePurposeLabel,
   practiceStatus,
+  practiceSourceDetails,
   type PracticeAccess,
+  type PracticeContext,
   type PracticeRecord,
   type PracticeStatus,
 } from "../../../lib/practice-assignment";
-
-interface PracticeContext {
-  quizId: string;
-  quizTitle: string;
-  version: number;
-  publishedAt: string;
-}
 
 interface PracticeDetail {
   followup: PracticeRecord;
@@ -97,7 +92,14 @@ function PracticeManagementContent() {
 
   async function createPersonalPass(event: FormEvent) {
     event.preventDefault();
-    if (!detail || !personalLabel.trim() || entitlements?.followups !== true) return;
+    if (
+      !detail ||
+      !personalLabel.trim() ||
+      entitlements?.followups !== true ||
+      !assignmentAccessEnabled ||
+      !canEdit
+    )
+      return;
     setBusyAction("personal");
     setError("");
     setCopyStatus("");
@@ -216,6 +218,11 @@ function PracticeManagementContent() {
   }
 
   const status = detail ? practiceStatus(detail.followup) : null;
+  const source = detail ? practiceSourceDetails(detail.context, canEdit) : null;
+  const isPackPractice = detail?.context.sourceType === "recovery_pack";
+  const assignmentAccessEnabled =
+    productFeatures?.practiceAssignments === true &&
+    (!isPackPractice || productFeatures?.recoveryPacks === true);
   const mutable = canEdit && status !== "closed" && status !== "expired";
   const personalPassCreationAvailable = mutable && entitlements?.followups === true;
 
@@ -257,7 +264,7 @@ function PracticeManagementContent() {
               <div>
                 <p className="eyebrow">{practicePurposeLabel(detail.followup.purpose)}</p>
                 <h2 id="practice-summary-heading" ref={summaryHeadingRef} tabIndex={-1}>
-                  {detail.context.quizTitle}
+                  {source?.title}
                 </h2>
               </div>
               <div className={styles.statusGroup}>
@@ -287,19 +294,22 @@ function PracticeManagementContent() {
               {formatDate(detail.followup.closesAt)}.
             </p>
             <p>Source version published {formatDate(detail.context.publishedAt)}.</p>
-            {detail.followup.purpose === "assignment" &&
-            productFeatures?.practiceAssignments !== true ? (
+            {isPackPractice ? (
+              <p>
+                Frozen Recovery Pack delayed probe. This is one standalone checkpoint, not full Pack
+                recovery or a delayed recovery trail. Source edits or deletion do not change this
+                practice.
+              </p>
+            ) : null}
+            {detail.followup.purpose === "assignment" && !assignmentAccessEnabled ? (
               <p className="notice">
                 New standalone assignment access is paused for this workspace. Existing links,
                 accommodations, revocation, and close controls remain available.
               </p>
             ) : null}
             <div className={styles.managementActions}>
-              <Link
-                className="button-quiet small-button"
-                href={"/quiz/" + detail.context.quizId + (canEdit ? "" : "/preview")}
-              >
-                Open source Round
+              <Link className="button-quiet small-button" href={source!.href}>
+                {source!.linkLabel}
               </Link>
               {detail.followup.sourceReportId ? (
                 <Link
@@ -351,7 +361,7 @@ function PracticeManagementContent() {
               Original links are intentionally not retrievable.{" "}
               {detail.followup.purpose === "recovery"
                 ? "These participant links came from the source session and can be revoked or accommodated here."
-                : personalPassCreationAvailable && productFeatures?.practiceAssignments === true
+                : personalPassCreationAvailable && assignmentAccessEnabled
                   ? "Create a new one-attempt personal link when an individual needs access."
                   : "Existing personal links remain available for status and revocation."}
             </p>
@@ -371,7 +381,7 @@ function PracticeManagementContent() {
             ) : null}
             {personalPassCreationAvailable &&
             detail.followup.purpose === "assignment" &&
-            productFeatures?.practiceAssignments === true ? (
+            assignmentAccessEnabled ? (
               <form className={styles.fields} onSubmit={createPersonalPass}>
                 <label className="field" htmlFor="personal-pass-label">
                   <span>Personal link label</span>

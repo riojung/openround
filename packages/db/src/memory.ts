@@ -59,6 +59,7 @@ import type {
   ParticipantSignalRecord,
   Plan,
   ProductEventRecord,
+  RecoveryPackPracticeCreationContext,
   QuestionHealthDismissalIdentity,
   QuestionHealthDismissalRecord,
   QuestionHealthDismissalWrite,
@@ -85,6 +86,16 @@ import type {
   WorkspaceSummaryRecord,
 } from "./types.js";
 import { quizMediaIds } from "./media-references.js";
+import {
+  createRecoveryPackRepository,
+  type MemoryRecoveryPackRepository,
+} from "./recovery-packs.js";
+import {
+  assertRecoveryPackPracticeInput,
+  matchRecoveryPackPracticeReceipt,
+  recoveryPackPracticeSourceMatches,
+  recoveryPackPracticeCreationEvidence,
+} from "./recovery-pack-practice.js";
 import {
   ROUND_CONTENT_SCHEMA_VERSION,
   ROUND_DRAFT_SCHEMA_VERSION,
@@ -1324,7 +1335,9 @@ export class MemoryRepository implements Repository {
       ) ||
       [...this.followups.values()].some(
         (followup) =>
-          followup.workspaceId === workspaceId && versionIds.has(followup.sourceQuizVersionId),
+          followup.workspaceId === workspaceId &&
+          followup.sourceQuizVersionId !== null &&
+          versionIds.has(followup.sourceQuizVersionId),
       ) ||
       this.isLibraryArtifactReferenced(workspaceId, "round", quizId)
     )
@@ -2122,6 +2135,11 @@ export class MemoryRepository implements Repository {
   }
 
   private deleteFollowupTree(followupId: string) {
+    const followup = this.followups.get(followupId);
+    if (followup)
+      this.removeMediaReferencesForOwners(followup.workspaceId, [
+        { ownerType: "followup", ownerId: followupId },
+      ]);
     this.followups.delete(followupId);
     const accessIds = new Set<string>();
     for (const [tokenHash, access] of this.followupAccess) {
@@ -3853,8 +3871,10 @@ export class MemoryRepository implements Repository {
     ) {
       throw new Error("A follow-up already exists for this report");
     }
-    const version = this.versions.get(input.sourceQuizVersionId);
-    if (!version || version.workspaceId !== input.workspaceId) {
+    const version = input.sourceQuizVersionId
+      ? this.versions.get(input.sourceQuizVersionId)
+      : undefined;
+    if (!input.recoveryPackSource && (!version || version.workspaceId !== input.workspaceId)) {
       throw new Error("Follow-up source version does not exist");
     }
     if (input.purpose === "recovery") {
@@ -3888,7 +3908,18 @@ export class MemoryRepository implements Repository {
       accessTokenHashes.add(item.tokenHash);
       this.assertFollowupAccess(input, item);
     }
+    const mediaIds = input.recoveryPackSource ? quizMediaIds(input.content) : [];
+    this.validateMediaReferences(input.workspaceId, mediaIds);
     this.followups.set(input.id, structuredClone(input));
+    for (const mediaId of mediaIds) {
+      this.mediaReferences.set(`${input.workspaceId}:${mediaId}:followup:${input.id}`, {
+        workspaceId: input.workspaceId,
+        mediaId,
+        ownerType: "followup",
+        ownerId: input.id,
+        createdAt: input.createdAt,
+      });
+    }
     for (const item of access) {
       this.followupAccess.set(item.tokenHash, structuredClone(item));
     }
@@ -3906,6 +3937,8 @@ export class MemoryRepository implements Repository {
     input: Extract<FollowupRecord, { purpose: "assignment" }>,
     access: FollowupAccessRecord[],
   ) {
+    if (input.recoveryPackSource || input.creationMutation || input.sourceQuizVersionId === null)
+      throw new TypeError("Round practice requires a Round source");
     const quiz = this.quizzes.get(sourceQuizId);
     if (
       !quiz ||
@@ -3917,6 +3950,88 @@ export class MemoryRepository implements Repository {
     }
     this.storeFollowup(input, access);
     return true;
+  }
+
+  async getRecoveryPackPracticeAssignment(
+    workspaceId: string,
+    packId: string,
+    mutationId: string,
+    requestHash: string,
+  ) {
+    const record = this.findRecoveryPackPracticeReceipt(workspaceId, mutationId);
+    return record
+      ? matchRecoveryPackPracticeReceipt(record, packId, mutationId, requestHash)
+      : null;
+  }
+
+  private findRecoveryPackPracticeReceipt(workspaceId: string, mutationId: string) {
+    return [...this.followups.values()].find(
+      (record) =>
+        record.workspaceId === workspaceId && record.creationMutation?.mutationId === mutationId,
+    );
+  }
+
+  async createRecoveryPackPracticeAssignment(
+    packId: string,
+    input: Extract<FollowupRecord, { purpose: "assignment" }>,
+    access: FollowupAccessRecord[],
+    context: RecoveryPackPracticeCreationContext,
+  ): Promise<{
+    followup: FollowupRecord;
+    created: boolean;
+    productEvent: ProductEventRecord | null;
+  } | null> {
+    const source = assertRecoveryPackPracticeInput(input);
+    const receipt = input.creationMutation!;
+    const packs = createRecoveryPackRepository(this) as MemoryRecoveryPackRepository;
+    return packs.withPracticeCreationLock(input.workspaceId, async () => {
+      const replay = this.findRecoveryPackPracticeReceipt(input.workspaceId, receipt.mutationId);
+      if (replay)
+        return {
+          followup: matchRecoveryPackPracticeReceipt(
+            replay,
+            packId,
+            receipt.mutationId,
+            receipt.requestHash,
+          ),
+          created: false,
+          productEvent: null,
+        };
+      this.assertWorkspaceLiveSessionCreationAllowed(input.workspaceId);
+      if (!this.workspaces.has(input.workspaceId)) return null;
+      const pack = packs.packs.get(packId);
+      const version = packs.versions.get(source.packVersionId);
+      if (
+        !pack ||
+        pack.workspaceId !== input.workspaceId ||
+        source.packId !== packId ||
+        pack.currentVersionId !== source.packVersionId ||
+        !version ||
+        version.workspaceId !== input.workspaceId ||
+        !recoveryPackPracticeSourceMatches(input, version)
+      )
+        return null;
+      const { audit, productEvent } = recoveryPackPracticeCreationEvidence(
+        input,
+        access.length,
+        context,
+      );
+      const stagedAudit: AuditEventRecord[] = [];
+      const stagedEvents: ProductEventRecord[] = [];
+      await this.recordAudit(audit, stagedAudit, audit.createdAt, audit.id);
+      await this.recordProductEvents([productEvent], stagedEvents);
+      // Deletion can begin while a memory insertion hook is pending; never publish a partial receipt.
+      this.assertWorkspaceLiveSessionCreationAllowed(input.workspaceId);
+      if (!this.workspaces.has(input.workspaceId)) return null;
+      this.storeFollowup(input, access);
+      this.audits.push(...stagedAudit);
+      this.productEvents.push(...stagedEvents);
+      return {
+        followup: structuredClone(input),
+        created: true,
+        productEvent: structuredClone(productEvent),
+      };
+    });
   }
 
   private assertFollowupAccess(followup: FollowupRecord, input: FollowupAccessRecord) {
@@ -3985,8 +4100,14 @@ export class MemoryRepository implements Repository {
       .filter((followup) => followup.workspaceId === workspaceId)
       .filter((followup) => !options.purpose || followup.purpose === options.purpose)
       .flatMap((followup): FollowupHistoryRecord[] => {
-        const version = this.versions.get(followup.sourceQuizVersionId);
-        if (!version || (options.quizId && version.quizId !== options.quizId)) return [];
+        const version = followup.sourceQuizVersionId
+          ? this.versions.get(followup.sourceQuizVersionId)
+          : undefined;
+        if (
+          (!version && !followup.recoveryPackSource) ||
+          (options.quizId && version?.quizId !== options.quizId)
+        )
+          return [];
         const attempts = [...this.followupAttempts.values()].filter(
           (attempt) => attempt.followupId === followup.id,
         );
@@ -4014,8 +4135,9 @@ export class MemoryRepository implements Repository {
           {
             id: followup.id,
             ...source,
-            quizId: version.quizId,
+            quizId: version?.quizId ?? null,
             sourceQuizVersionId: followup.sourceQuizVersionId,
+            recoveryPackSource: followup.recoveryPackSource ?? null,
             trustMode: followup.trustMode ?? "learning",
             title: followup.title,
             status,
@@ -4028,7 +4150,7 @@ export class MemoryRepository implements Repository {
             closesAt: new Date(followup.closesAt),
             expiresAt: new Date(followup.expiresAt),
             createdAt: new Date(followup.createdAt),
-          },
+          } as FollowupHistoryRecord,
         ];
       })
       .filter((item) => !options.status || item.status === options.status)
@@ -4435,8 +4557,17 @@ export class MemoryRepository implements Repository {
     return true;
   }
 
-  async recordAudit(input: AuditInput) {
-    this.audits.push({ id: crypto.randomUUID(), ...structuredClone(input), createdAt: new Date() });
+  async recordAudit(
+    input: AuditInput,
+    target = this.audits,
+    createdAt = new Date(),
+    id: string = crypto.randomUUID(),
+  ) {
+    await this.insertAuditEvent({ id, ...structuredClone(input), createdAt }, target);
+  }
+
+  protected async insertAuditEvent(event: AuditEventRecord, target = this.audits) {
+    target.push(structuredClone(event));
   }
 
   async listAuditEvents(workspaceId: string, since: Date | null, limit: number) {
@@ -4465,17 +4596,28 @@ export class MemoryRepository implements Repository {
     return purged;
   }
 
-  async recordProductEvents(events: ProductEventRecord[]) {
+  async recordProductEvents(events: ProductEventRecord[], target = this.productEvents) {
+    await this.insertProductEventRecords(events, target);
+  }
+
+  protected async insertProductEventRecords(
+    events: ProductEventRecord[],
+    target = this.productEvents,
+  ) {
     const workspaceId = events[0]?.workspaceId;
     if (events.some((event) => event.workspaceId !== workspaceId)) {
       throw new Error("Product event batches cannot span workspaces");
     }
-    const ids = new Set(this.productEvents.map((event) => event.id));
+    const ids = new Set(
+      [...this.productEvents, ...(target === this.productEvents ? [] : target)].map(
+        (event) => event.id,
+      ),
+    );
     for (const event of events) {
       if (ids.has(event.id)) throw new Error("Product event already exists");
       ids.add(event.id);
     }
-    this.productEvents.push(...structuredClone(events));
+    target.push(...structuredClone(events));
   }
 
   async purgeProductEvents(now: Date) {
@@ -4602,7 +4744,13 @@ export class MemoryRepository implements Repository {
         ),
         followups: [...this.followups.values()]
           .filter((followup) => ownedWorkspaceIds.has(followup.workspaceId))
-          .map(({ genericTokenHash: _genericTokenHash, ...followup }) => structuredClone(followup)),
+          .map(
+            ({
+              genericTokenHash: _genericTokenHash,
+              creationMutation: _creationMutation,
+              ...followup
+            }) => structuredClone(followup),
+          ),
         followupAccess: [...this.followupAccess.values()]
           .filter((access) => ownedWorkspaceIds.has(access.workspaceId))
           .map(({ tokenHash: _tokenHash, ...access }) => structuredClone(access)),

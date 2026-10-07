@@ -543,6 +543,22 @@ export const RecoveryPackSourceSchema = z.object({
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
+/** Frozen assignment provenance survives deletion of its published source Pack. */
+export const RecoveryPackPracticeSourceSchema = z
+  .object({
+    artifactType: z.literal("recovery_pack"),
+    packId: z.string().uuid(),
+    packVersionId: z.string().uuid(),
+    packVersion: z.number().int().positive(),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    packTitle: z.string().trim().min(1).max(160),
+    publishedAt: z.string().datetime(),
+    sourceItemId: z.string().uuid(),
+    role: z.literal("delayed_probe"),
+  })
+  .strict();
+export type RecoveryPackPracticeSource = z.infer<typeof RecoveryPackPracticeSourceSchema>;
+
 export const SourceCitationSchema = z.object({
   sourceName: z.string().trim().min(1).max(200),
   sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
@@ -2623,8 +2639,9 @@ export type ReportSummary = z.infer<typeof ReportSummarySchema>;
 const FollowupSummaryBaseSchema = z.object({
   id: z.string().uuid(),
   trustMode: TrustModeSchema.default("learning"),
-  sourceQuizVersionId: z.string().uuid(),
-  quizId: z.string().uuid(),
+  sourceQuizVersionId: z.string().uuid().nullable(),
+  quizId: z.string().uuid().nullable(),
+  recoveryPackSource: RecoveryPackPracticeSourceSchema.nullable().default(null),
   title: z.string().min(1).max(160),
   status: FollowupHistoryStatusSchema,
   conceptKeys: z.array(ConceptKeySchema),
@@ -2636,20 +2653,38 @@ const FollowupSummaryBaseSchema = z.object({
   expiresAt: z.string().datetime(),
   createdAt: z.string().datetime(),
 });
-export const FollowupSummarySchema = z.discriminatedUnion("purpose", [
-  FollowupSummaryBaseSchema.extend({
-    purpose: z.literal("recovery"),
-    sourceSessionId: z.string().uuid(),
-    sourceReportId: z.string().uuid(),
-    conceptKeys: z.array(ConceptKeySchema).min(1).max(12),
-  }),
-  FollowupSummaryBaseSchema.extend({
-    purpose: z.literal("assignment"),
-    sourceSessionId: z.null(),
-    sourceReportId: z.null(),
-    conceptKeys: z.array(ConceptKeySchema).length(0),
-  }),
-]);
+export const FollowupSummarySchema = z
+  .discriminatedUnion("purpose", [
+    FollowupSummaryBaseSchema.extend({
+      purpose: z.literal("recovery"),
+      sourceSessionId: z.string().uuid(),
+      sourceReportId: z.string().uuid(),
+      conceptKeys: z.array(ConceptKeySchema).min(1).max(12),
+      sourceQuizVersionId: z.string().uuid(),
+      quizId: z.string().uuid(),
+      recoveryPackSource: z.null().default(null),
+    }),
+    FollowupSummaryBaseSchema.extend({
+      purpose: z.literal("assignment"),
+      sourceSessionId: z.null(),
+      sourceReportId: z.null(),
+      conceptKeys: z.array(ConceptKeySchema).length(0),
+    }),
+  ])
+  .superRefine((input, context) => {
+    if (input.purpose !== "assignment") return;
+    if (
+      input.recoveryPackSource
+        ? input.sourceQuizVersionId !== null || input.quizId !== null
+        : input.sourceQuizVersionId === null || input.quizId === null
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["recoveryPackSource"],
+        message: "Practice must reference either a Round version or a frozen Recovery Pack source",
+      });
+    }
+  });
 export type FollowupSummary = z.infer<typeof FollowupSummarySchema>;
 
 export const SessionSummaryPageSchema = z.object({
@@ -3167,10 +3202,47 @@ export const CreatePracticeAssignmentSchema = z
   });
 export type CreatePracticeAssignment = z.infer<typeof CreatePracticeAssignmentSchema>;
 
+export const CreateRecoveryPackPracticeAssignmentSchema = z
+  .object({
+    sourcePackVersionId: z.string().uuid(),
+    mutationId: z.string().uuid(),
+    accessSeed: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    title: z.string().trim().min(1).max(160).optional(),
+    timeMode: FollowupTimeModeSchema.default("flex"),
+    opensAt: z.string().datetime().optional(),
+    closesAt: z.string().datetime(),
+    personalLabels: z.array(PracticeRecipientLabelSchema).max(250).default([]),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.opensAt && new Date(input.opensAt) >= new Date(input.closesAt)) {
+      context.addIssue({
+        code: "custom",
+        path: ["closesAt"],
+        message: "The assignment close time must be after its open time",
+      });
+    }
+    const seen = new Set<string>();
+    for (const [index, label] of input.personalLabels.entries()) {
+      const key = label.toLocaleLowerCase();
+      if (seen.has(key))
+        context.addIssue({
+          code: "custom",
+          path: ["personalLabels", index],
+          message: "Personal link labels must be unique",
+        });
+      seen.add(key);
+    }
+  });
+export type CreateRecoveryPackPracticeAssignment = z.infer<
+  typeof CreateRecoveryPackPracticeAssignmentSchema
+>;
+
 const FollowupBaseSchema = z.object({
   id: z.string().uuid(),
   trustMode: TrustModeSchema.default("learning"),
-  sourceQuizVersionId: z.string().uuid(),
+  sourceQuizVersionId: z.string().uuid().nullable(),
+  recoveryPackSource: RecoveryPackPracticeSourceSchema.nullable().default(null),
   title: z.string(),
   conceptKeys: z.array(ConceptKeySchema),
   checkpointCount: z.number().int().positive(),
@@ -3181,28 +3253,57 @@ const FollowupBaseSchema = z.object({
   closedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
 });
-export const FollowupSchema = z.discriminatedUnion("purpose", [
-  FollowupBaseSchema.extend({
-    purpose: z.literal("recovery"),
-    sourceSessionId: z.string().uuid(),
-    sourceReportId: z.string().uuid(),
-    conceptKeys: z.array(ConceptKeySchema).min(1).max(12),
-  }),
-  FollowupBaseSchema.extend({
-    purpose: z.literal("assignment"),
-    sourceSessionId: z.null(),
-    sourceReportId: z.null(),
-    conceptKeys: z.array(ConceptKeySchema).length(0),
-  }),
-]);
+export const FollowupSchema = z
+  .discriminatedUnion("purpose", [
+    FollowupBaseSchema.extend({
+      purpose: z.literal("recovery"),
+      sourceSessionId: z.string().uuid(),
+      sourceReportId: z.string().uuid(),
+      conceptKeys: z.array(ConceptKeySchema).min(1).max(12),
+      sourceQuizVersionId: z.string().uuid(),
+      recoveryPackSource: z.null().default(null),
+    }),
+    FollowupBaseSchema.extend({
+      purpose: z.literal("assignment"),
+      sourceSessionId: z.null(),
+      sourceReportId: z.null(),
+      conceptKeys: z.array(ConceptKeySchema).length(0),
+    }),
+  ])
+  .superRefine((input, context) => {
+    if (
+      input.purpose === "assignment" &&
+      (input.recoveryPackSource
+        ? input.sourceQuizVersionId !== null
+        : input.sourceQuizVersionId === null)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["recoveryPackSource"],
+        message: "Practice must reference either a Round version or a frozen Recovery Pack source",
+      });
+    }
+  });
 export type Followup = z.infer<typeof FollowupSchema>;
 
-export const FollowupContextSchema = z.object({
-  quizId: z.string().uuid(),
-  quizTitle: z.string().min(1).max(160),
-  version: z.number().int().positive(),
-  publishedAt: z.string().datetime(),
-});
+export const FollowupContextSchema = z.union([
+  z.object({
+    sourceType: z.literal("round").default("round"),
+    quizId: z.string().uuid(),
+    quizTitle: z.string().min(1).max(160),
+    version: z.number().int().positive(),
+    publishedAt: z.string().datetime(),
+  }),
+  z
+    .object({
+      sourceType: z.literal("recovery_pack"),
+      packId: z.string().uuid(),
+      packTitle: z.string().min(1).max(160),
+      version: z.number().int().positive(),
+      publishedAt: z.string().datetime(),
+    })
+    .strict(),
+]);
 export type FollowupContext = z.infer<typeof FollowupContextSchema>;
 
 export const FollowupAccessKindSchema = z.enum([

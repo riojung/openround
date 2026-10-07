@@ -192,6 +192,11 @@ export class MemoryRecoveryPackRepository
     }
   }
 
+  /** Share the Pack/account lifecycle fence with atomic practice snapshot creation. */
+  async withPracticeCreationLock<T>(workspaceId: string, work: () => T) {
+    return this.locked(workspaceId, async () => work());
+  }
+
   exportAccount({ ownedWorkspaceIds }: MemoryRepositoryLifecycleContext) {
     return {
       recoveryPacks: [...this.packs.values()]

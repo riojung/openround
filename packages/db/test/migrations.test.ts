@@ -27,6 +27,23 @@ afterEach(async () => {
 });
 
 describe("database migration discovery", () => {
+  it("expands frozen Pack practice on existing forced-RLS followup and media tables", async () => {
+    const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migration = (await discoverMigrations(migrationsDirectory)).find(
+      ({ version }) => version === 56,
+    )!;
+    expect(migration.name).toBe("recovery_pack_practice");
+    expect(migration.sql).toContain("ADD COLUMN IF NOT EXISTS recovery_pack_source jsonb");
+    expect(migration.sql).toContain("ON followups (workspace_id, creation_mutation_id)");
+    expect(migration.sql).toContain(
+      "NEW.creation_request_hash IS DISTINCT FROM OLD.creation_request_hash",
+    );
+    expect(migration.sql).toContain("openround_remove_owned_media_references('followup')");
+    expect(migration.sql).toContain("version.id = pack.current_version_id");
+    expect(migration.sql).not.toContain("CREATE TABLE");
+    expect(migration.sql).not.toContain("DISABLE ROW LEVEL SECURITY");
+    expect(migration.sql).not.toContain("REFERENCES recovery_pack");
+  });
   it("adds frozen Presentation live card attribution and nullable command hashes to existing scoped tables", async () => {
     const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const migrations = await discoverMigrations(migrationsDirectory);

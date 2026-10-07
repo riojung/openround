@@ -53,6 +53,7 @@ const followupSummaryKeys = [
   "sourceSessionId",
   "sourceReportId",
   "quizId",
+  "recoveryPackSource",
   "title",
   "status",
   "conceptKeys",
@@ -344,6 +345,7 @@ describe("P0 beta API privacy and recovery regressions", () => {
     }>();
     expectExactKeys(followupsBody, ["items", "nextCursor"]);
     expectExactKeys(followupsBody.items[0], followupSummaryKeys);
+    expect(followupsBody.items[0]!.recoveryPackSource).toBeNull();
     expect(JSON.stringify([sessionsBody, reportsBody, followupsBody])).not.toMatch(
       /hostToken|state_snapshot|participantAlias|responsePayload|chatContent/,
     );
