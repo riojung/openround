@@ -79,7 +79,7 @@ roadmap treats those limits as gates rather than footnotes.
 ## Current OpenRound baseline
 
 **Implementation snapshot reconciled 2026-10-07:** the repository status below is aligned with
-`main` at `e8849ab` (merged PR #76), plus the delayed-probe practice increment on this implementation branch.
+`main` at `fc48d89` (merged PR #88), plus the Pack QTI/CSV portability increment on this implementation branch.
 The research date at the top of this document describes the
 market-source review and has not been refreshed; it is not the date of this implementation audit.
 
@@ -102,22 +102,22 @@ OpenRound is already much more than a happy-path quiz application. The audited r
 
 The current constraints matter more than the feature count:
 
-| Boundary                 | Current reality                                                                                                                                                                                                                                                                                    |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Public readiness         | Source CI and local production smoke are complete; thirteen release-readiness gates remain, primarily awaiting external or human evidence. These are not missing product-code features.                                                                                                            |
-| Rollout                  | Major workspace, builder, Presentation, Group, Discover, rehearsal, practice, live-flex, Question Health, Session Decision Replay, and Recovery Pack capabilities are gated or require workspace allowlisting; repository presence does not mean general availability.                             |
-| Presentation delivery    | Live Presentations have server-authoritative realtime synchronization, acknowledgement/reconnect handling, role-filtered projections, and report reconciliation. The older polling-only description is obsolete.                                                                                   |
-| Live accessibility       | Whole-room timed/flex mode is implemented for new Rounds and Presentations behind `FEATURE_LIVE_FLEX_MODE` and a workspace allowlist. It has no countdown; the facilitator closes the window. Private individual extra-time passes remain deferred pending fairness, privacy, and reveal research. |
-| Response breadth         | Six response types are implemented. Exact short text and rank/order are not; add them only if the roadmap's observed demand threshold passes. Moderated open response, drawing, and word cloud remain deliberate later decisions.                                                                  |
-| Existing-deck workflow   | A structured Presentation builder exists. Companion mode is a research prototype, not a production sidecar; native slide add-ins are explicitly out of scope.                                                                                                                                      |
-| Reuse                    | Recovery Packs support immutable versions, independent Round/Presentation draft insertion, three-way update review/undo, and eligible live cards. Standalone delayed-probe practice preserves frozen provenance; full-sequence practice and Companion insertion remain pending.                    |
-| Question Health          | Deterministic advice, dismiss/reopen, approved draft edits with same-revision undo, immutable published-version analysis, and exact-version aggregate post-use observations are implemented in a gated slice. Advice usefulness and retained-revision thresholds remain unmeasured.                |
-| Session Decision Replay  | New eligible sessions can capture aggregate facilitator-decision events in durable state and show a read-only Report V4 timeline. Older report versions remain readable without replay; rollout and partner-value evidence remain open.                                                            |
-| Presentation editing     | Text boxes can be positioned/resized on a bounded 16:9 slide with guides, keyboard controls, and an image-safe region. This is not a full freeform design canvas or production slide companion.                                                                                                    |
-| Content/session deletion | Owners can permanently delete archived Rounds/Presentations and finished or expired session history after confirmation. Retained sessions and practice assignments block content deletion.                                                                                                         |
-| Longitudinal evidence    | Immediate linked rechecks, accountless practice/follow-ups, and standalone Pack delayed-probe assignments exist. Pack practice does not pair results to source participants. Multi-stage Recovery Trail access/evidence and privacy-safe Concept Health views remain unimplemented.                |
-| Institution mode         | Creator OIDC and instructor LTI launch/Deep Linking foundations exist. Verified learners, NRPS/AGS roster and grade delivery, managed SAML/SCIM, certification, and institutional pilots remain contract-gated.                                                                                    |
-| Maintainability          | Core session repositories and mutation orchestration have been split behind stable facades. Some large routes/builders remain and should be refactored when touched; this is ongoing engineering hygiene, not a Phase 0 feature blocker.                                                           |
+| Boundary                 | Current reality                                                                                                                                                                                                                                                                                                                    |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Public readiness         | Source CI and local production smoke are complete; thirteen release-readiness gates remain, primarily awaiting external or human evidence. These are not missing product-code features.                                                                                                                                            |
+| Rollout                  | Major workspace, builder, Presentation, Group, Discover, rehearsal, practice, live-flex, Question Health, Session Decision Replay, and Recovery Pack capabilities are gated or require workspace allowlisting; repository presence does not mean general availability.                                                             |
+| Presentation delivery    | Live Presentations have server-authoritative realtime synchronization, acknowledgement/reconnect handling, role-filtered projections, and report reconciliation. The older polling-only description is obsolete.                                                                                                                   |
+| Live accessibility       | Whole-room timed/flex mode is implemented for new Rounds and Presentations behind `FEATURE_LIVE_FLEX_MODE` and a workspace allowlist. It has no countdown; the facilitator closes the window. Private individual extra-time passes remain deferred pending fairness, privacy, and reveal research.                                 |
+| Response breadth         | Six response types are implemented. Exact short text and rank/order are not; add them only if the roadmap's observed demand threshold passes. Moderated open response, drawing, and word cloud remain deliberate later decisions.                                                                                                  |
+| Existing-deck workflow   | A structured Presentation builder exists. Companion mode is a research prototype, not a production sidecar; native slide add-ins are explicitly out of scope.                                                                                                                                                                      |
+| Reuse                    | Recovery Packs support immutable versions, independent Round/Presentation draft insertion, three-way update review/undo, eligible live cards, delayed-probe and full-sequence practice, and published-checkpoint CSV/QTI exports with source-bound loss reports. Companion insertion and source-authoring approval remain pending. |
+| Question Health          | Deterministic advice, dismiss/reopen, approved draft edits with same-revision undo, immutable published-version analysis, and exact-version aggregate post-use observations are implemented in a gated slice. Advice usefulness and retained-revision thresholds remain unmeasured.                                                |
+| Session Decision Replay  | New eligible sessions can capture aggregate facilitator-decision events in durable state and show a read-only Report V4 timeline. Older report versions remain readable without replay; rollout and partner-value evidence remain open.                                                                                            |
+| Presentation editing     | Text boxes can be positioned/resized on a bounded 16:9 slide with guides, keyboard controls, and an image-safe region. This is not a full freeform design canvas or production slide companion.                                                                                                                                    |
+| Content/session deletion | Owners can permanently delete archived Rounds/Presentations and finished or expired session history after confirmation. Retained sessions and practice assignments block content deletion.                                                                                                                                         |
+| Longitudinal evidence    | Immediate linked rechecks, accountless practice/follow-ups, and standalone Pack delayed-probe assignments exist. Pack practice does not pair results to source participants. Multi-stage Recovery Trail access/evidence and privacy-safe Concept Health views remain unimplemented.                                                |
+| Institution mode         | Creator OIDC and instructor LTI launch/Deep Linking foundations exist. Verified learners, NRPS/AGS roster and grade delivery, managed SAML/SCIM, certification, and institutional pilots remain contract-gated.                                                                                                                    |
+| Maintainability          | Core session repositories and mutation orchestration have been split behind stable facades. Some large routes/builders remain and should be refactored when touched; this is ongoing engineering hygiene, not a Phase 0 feature blocker.                                                                                           |
 
 The repository-side functionality committed for Phase 0 is implemented. Phase 0 is not formally
 closed because the research, manual review, and deployment evidence gates remain open. Phase 1 is
@@ -516,10 +516,14 @@ recovery. There is no fallback to an immediate checkpoint, no paired-source lear
 dummy Round. An explicit full-sequence mode now adds the frozen diagnostic, ordered intervention
 cards, and linked recheck to that same runner, with durable current-stage resume and fenced answer/
 Continue recovery. It does not include the optional probe or claim paired-source/delayed evidence.
-Companion insertion, source-authoring/citation approval, and explicit QTI/CSV Pack loss reporting
-remain next. See the
+Published Pack CSV/QTI exports now project all frozen checkpoints with a deterministic source-
+version/hash-bound loss report. They disclose omitted Pack context/media/citations, QTI extension-
+only semantics, and format transformations; they are not complete Pack interchange. Native JSON
+remains the complete content format, with media references rather than embedded image bytes.
+Companion insertion and source-authoring/citation approval remain next. See the
 [delayed-probe checkpoint](implementation-status.md#recovery-pack-delayed-probe-practice--2026-10-07)
-and [full-sequence checkpoint](implementation-status.md#recovery-pack-full-sequence-practice--2026-10-07).
+[full-sequence checkpoint](implementation-status.md#recovery-pack-full-sequence-practice--2026-10-07),
+and [portability checkpoint](implementation-status.md#recovery-pack-qticsv-portability--2026-10-07).
 Delayed Recovery Trail and Concept Health remain later capabilities. This checkpoint does not
 change public participant caps, launch readiness, or the institution/video delivery deferrals.
 
@@ -771,10 +775,13 @@ facilitator explicitly selects a card after revealing the Pack diagnostic. Stand
 practice now reuses the accountless assignment runner with frozen source/version/hash attribution,
 private link recovery, and source-independent retention. Full-sequence practice now adds a frozen
 diagnostic → ordered cards → linked recheck journey with current-stage projections, reload/resume,
-and version-fenced acknowledgement recovery. Companion insertion, source-authoring approval, and
-QTI/CSV loss reports remain pending. See the
+and version-fenced acknowledgement recovery. Immutable published checkpoints can also be exported
+as CSV or QTI with an explicit, downloadable loss report; QTI packages embed that same report.
+These formats do not replace complete native JSON content. Companion insertion and source-authoring
+approval remain pending. See the
 [delayed-probe checkpoint](implementation-status.md#recovery-pack-delayed-probe-practice--2026-10-07)
-and [full-sequence checkpoint](implementation-status.md#recovery-pack-full-sequence-practice--2026-10-07).
+[full-sequence checkpoint](implementation-status.md#recovery-pack-full-sequence-practice--2026-10-07),
+and [portability checkpoint](implementation-status.md#recovery-pack-qticsv-portability--2026-10-07).
 
 MVP acceptance:
 

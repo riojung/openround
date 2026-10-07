@@ -61,9 +61,13 @@ function validation(
   };
 }
 
+export function csvFormulaEscapingRequired(value: string) {
+  return /^(?:\s*[=+@-]|[\t\r\n])/.test(value);
+}
+
 function csvCell(value: unknown) {
   const raw = value === null || value === undefined ? "" : String(value);
-  const protectedValue = /^(?:\s*[=+@-]|[\t\r\n])/.test(raw) ? `'${raw}` : raw;
+  const protectedValue = csvFormulaEscapingRequired(raw) ? `'${raw}` : raw;
   return /[",\n\r]/.test(protectedValue)
     ? `"${protectedValue.replaceAll('"', '""')}"`
     : protectedValue;
@@ -225,7 +229,9 @@ function parseCsv(data: string) {
 }
 
 function importedCell(value: string) {
-  return /^'[=+@-]/.test(value) ? value.slice(1) : value;
+  return value.startsWith("'") && csvFormulaEscapingRequired(value.slice(1))
+    ? value.slice(1)
+    : value;
 }
 
 function integer(value: string, fallback: number) {

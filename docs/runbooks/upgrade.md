@@ -223,6 +223,24 @@ purge, and copied-media retention. Also run a legacy assignment with more than s
 to verify bounded receipts do not truncate ordinary practice. These checks make no paired-source,
 causal-learning, demand, or production-readiness claim.
 
+### Recovery Pack CSV/QTI export compatibility
+
+Pack portability adds read-only published-version export/report routes and UI; it needs no new
+migration, table, entitlement, or rollout flag. Deploy the matching server/web pair so previews and
+downloads share the strict report contract. Existing native JSON export/import remains unchanged.
+Disabling Pack authoring must leave retained versions and exports readable by authorized workspace
+members, including viewers; cross-workspace and unauthenticated reads remain denied.
+
+Rehearse immutable version/hash binding after a draft edit or later publication, all two or three
+checkpoints, optional-data loss findings, source deletion, feature-disabled reads, and failed/stale
+downloads. A blocked format returns validation failure with the report, never a partial attachment.
+CSV downloads expose a separate report route; QTI archives also embed `openround-export-report.json`.
+Keep the report with the artifact when assessing interoperability. Pack cards, container topology,
+citations, and private media are not exported in these converted files. OpenRound-specific QTI
+metadata is not guaranteed to survive another LMS, and numeric grading depends on that LMS's float
+handling. Native JSON is the complete content path but contains media references, not image bytes.
+Conversion warnings are not evidence of external LMS interoperability or release readiness.
+
 ## Presentation concurrent-response rollout
 
 `PRESENTATION_CONCURRENT_RESPONSE_WRITES` defaults to `false`. Leave it off while a prior server
