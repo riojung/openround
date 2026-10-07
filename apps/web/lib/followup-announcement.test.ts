@@ -31,4 +31,23 @@ describe("follow-up status announcement", () => {
       ),
     ).toBe("Practice complete.");
   });
+  it("announces the active guidance card and explicitly suspends countdown language", () => {
+    expect(
+      followupStatusAnnouncement(
+        snapshot({
+          phase: "intervention",
+          intervention: {
+            index: 1,
+            count: 3,
+            card: {
+              id: "card",
+              title: "Use the evidence",
+              body: "Private guidance",
+              citations: [],
+            },
+          },
+        }),
+      ),
+    ).toBe("Recovery guidance card 2 of 3: Use the evidence. No countdown.");
+  });
 });

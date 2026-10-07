@@ -544,6 +544,9 @@ export const RecoveryPackSourceSchema = z.object({
 });
 
 /** Frozen assignment provenance survives deletion of its published source Pack. */
+export const RecoveryPackPracticeModeSchema = z.enum(["delayed_probe", "full_sequence"]);
+export type RecoveryPackPracticeMode = z.infer<typeof RecoveryPackPracticeModeSchema>;
+
 export const RecoveryPackPracticeSourceSchema = z
   .object({
     artifactType: z.literal("recovery_pack"),
@@ -554,7 +557,7 @@ export const RecoveryPackPracticeSourceSchema = z
     packTitle: z.string().trim().min(1).max(160),
     publishedAt: z.string().datetime(),
     sourceItemId: z.string().uuid(),
-    role: z.literal("delayed_probe"),
+    role: RecoveryPackPracticeModeSchema,
   })
   .strict();
 export type RecoveryPackPracticeSource = z.infer<typeof RecoveryPackPracticeSourceSchema>;
@@ -948,6 +951,26 @@ export const RecoveryInterventionCardSchema = RecoveryInterventionCardDraftSchem
   title: z.string().trim().min(1).max(160),
   body: z.string().trim().min(1).max(2_000),
 });
+
+/** Internal immutable assignment context, never a participant projection. */
+export const RecoveryPackPracticeSequenceSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    interventions: z.array(RecoveryInterventionCardSchema.strict()).min(1).max(5),
+    citations: z.array(SourceCitationSchema.strict()).max(20),
+  })
+  .strict()
+  .superRefine((sequence, context) => {
+    if (
+      new Set(sequence.interventions.map((card) => card.id)).size !== sequence.interventions.length
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["interventions"],
+        message: "Intervention card IDs must be unique",
+      });
+  });
+export type RecoveryPackPracticeSequence = z.infer<typeof RecoveryPackPracticeSequenceSchema>;
 
 export const RecoveryPackCardSelectionSchema = z
   .object({
@@ -2684,6 +2707,15 @@ export const FollowupSummarySchema = z
         message: "Practice must reference either a Round version or a frozen Recovery Pack source",
       });
     }
+    if (
+      input.recoveryPackSource &&
+      input.checkpointCount !== (input.recoveryPackSource.role === "full_sequence" ? 2 : 1)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["checkpointCount"],
+        message: "Pack practice checkpoint count must match its frozen mode",
+      });
   });
 export type FollowupSummary = z.infer<typeof FollowupSummarySchema>;
 
@@ -3204,6 +3236,7 @@ export type CreatePracticeAssignment = z.infer<typeof CreatePracticeAssignmentSc
 
 export const CreateRecoveryPackPracticeAssignmentSchema = z
   .object({
+    mode: RecoveryPackPracticeModeSchema.default("delayed_probe"),
     sourcePackVersionId: z.string().uuid(),
     mutationId: z.string().uuid(),
     accessSeed: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
@@ -3283,6 +3316,15 @@ export const FollowupSchema = z
         message: "Practice must reference either a Round version or a frozen Recovery Pack source",
       });
     }
+    if (
+      input.recoveryPackSource &&
+      input.checkpointCount !== (input.recoveryPackSource.role === "full_sequence" ? 2 : 1)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["checkpointCount"],
+        message: "Pack practice checkpoint count must match its frozen mode",
+      });
   });
 export type Followup = z.infer<typeof FollowupSchema>;
 
@@ -3340,37 +3382,110 @@ export const StartFollowupSchema = z.object({
   attemptToken: z.string().min(32).max(1_000).optional(),
 });
 
-export const FollowupAnswerSubmitSchema = z.object({
-  idempotencyKey: z.string().min(1).max(160),
-  response: ResponsePayloadSchema,
-  confidence: ConfidenceValueSchema.optional(),
-});
+export const FollowupAnswerSubmitSchema = z
+  .object({
+    idempotencyKey: z.string().min(1).max(160),
+    response: ResponsePayloadSchema,
+    confidence: ConfidenceValueSchema.optional(),
+    questionId: z.string().uuid().optional(),
+    expectedVersion: z.number().int().nonnegative().optional(),
+  })
+  .superRefine((input, context) => {
+    if ((input.questionId === undefined) !== (input.expectedVersion === undefined))
+      context.addIssue({
+        code: "custom",
+        path: ["expectedVersion"],
+        message: "Checkpoint identity and expected version must be supplied together",
+      });
+  });
 export type FollowupAnswerSubmit = z.infer<typeof FollowupAnswerSubmitSchema>;
 
-export const FollowupSnapshotSchema = z.object({
-  mode: z.literal("followup"),
-  purpose: FollowupPurposeSchema,
-  trustMode: TrustModeSchema.default("learning"),
-  followupId: z.string().uuid(),
-  attemptId: z.string().uuid(),
-  version: z.number().int().nonnegative(),
-  title: z.string(),
-  status: z.enum(["in_progress", "completed"]),
-  phase: z.enum(["question_open", "answer_reveal", "completed"]),
-  questionIndex: z.number().int().nonnegative().nullable(),
-  questionCount: z.number().int().positive(),
-  question: PublicQuestionSchema.nullable(),
-  deadline: z.string().datetime().nullable(),
-  timeMode: FollowupTimeModeSchema,
-  timeMultiplier: TimeMultiplierSchema,
-  response: ResponsePayloadSchema.nullable(),
-  confidence: ConfidenceValueSchema.nullable(),
-  correct: z.boolean().nullable(),
-  correctResponse: ResponsePayloadSchema.nullable(),
-  explanation: z.string().nullable(),
-  feedback: z.string().nullable(),
-  completedAt: z.string().datetime().nullable(),
-});
+/** Empty legacy advances remain accepted; sequence advances require both fields on the server. */
+export const FollowupAdvanceSchema = z
+  .object({
+    idempotencyKey: z.string().uuid().optional(),
+    expectedVersion: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if ((input.idempotencyKey === undefined) !== (input.expectedVersion === undefined))
+      context.addIssue({
+        code: "custom",
+        path: ["expectedVersion"],
+        message: "An advance receipt key and expected version must be supplied together",
+      });
+  })
+  .default({});
+export type FollowupAdvance = z.infer<typeof FollowupAdvanceSchema>;
+
+export const FollowupInterventionSchema = z
+  .object({
+    index: z.number().int().min(0).max(4),
+    count: z.number().int().min(1).max(5),
+    card: RecoveryInterventionCardSchema.strict(),
+  })
+  .strict()
+  .refine((input) => input.index < input.count, {
+    path: ["index"],
+    message: "The active card must be within the frozen sequence",
+  });
+
+export const FollowupSnapshotSchema = z
+  .object({
+    mode: z.literal("followup"),
+    purpose: FollowupPurposeSchema,
+    trustMode: TrustModeSchema.default("learning"),
+    followupId: z.string().uuid(),
+    attemptId: z.string().uuid(),
+    version: z.number().int().nonnegative(),
+    title: z.string(),
+    status: z.enum(["in_progress", "completed"]),
+    phase: z.enum(["question_open", "answer_reveal", "intervention", "completed"]),
+    practiceMode: RecoveryPackPracticeModeSchema.nullable().default(null),
+    intervention: FollowupInterventionSchema.nullable().default(null),
+    questionIndex: z.number().int().nonnegative().nullable(),
+    questionCount: z.number().int().positive(),
+    question: PublicQuestionSchema.nullable(),
+    deadline: z.string().datetime().nullable(),
+    timeMode: FollowupTimeModeSchema,
+    timeMultiplier: TimeMultiplierSchema,
+    response: ResponsePayloadSchema.nullable(),
+    confidence: ConfidenceValueSchema.nullable(),
+    correct: z.boolean().nullable(),
+    correctResponse: ResponsePayloadSchema.nullable(),
+    explanation: z.string().nullable(),
+    feedback: z.string().nullable(),
+    completedAt: z.string().datetime().nullable(),
+  })
+  .superRefine((snapshot, context) => {
+    if (snapshot.phase === "intervention") {
+      if (
+        snapshot.practiceMode !== "full_sequence" ||
+        snapshot.purpose !== "assignment" ||
+        snapshot.status !== "in_progress" ||
+        !snapshot.intervention ||
+        snapshot.question !== null ||
+        snapshot.deadline !== null ||
+        snapshot.response !== null ||
+        snapshot.confidence !== null ||
+        snapshot.correct !== null ||
+        snapshot.correctResponse !== null ||
+        snapshot.explanation !== null ||
+        snapshot.feedback !== null
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["intervention"],
+          message: "Only the active intervention card may be delivered during a Pack card stage",
+        });
+    } else if (snapshot.intervention !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["intervention"],
+        message: "Intervention cards are available only during their authorized stage",
+      });
+    }
+  });
 export type FollowupSnapshot = z.infer<typeof FollowupSnapshotSchema>;
 
 export const AuthoringSourceTypeSchema = z.enum(["pasted_text", "pdf", "docx", "pptx"]);

@@ -266,7 +266,7 @@ async function fixture(timeMode: "timed" | "flex" = "timed", reportVersion: 2 | 
   };
 }
 
-async function assignmentFixture() {
+async function assignmentFixture(checkpointCount = 1) {
   const repository = new MemoryRepository();
   const service = new FollowupService(repository);
   const workspaceId = randomUUID();
@@ -321,6 +321,19 @@ async function assignmentFixture() {
       },
     ],
   };
+  if (checkpointCount > 1) {
+    const main = published.questions[0]!;
+    if (main.type !== "single_select") throw new Error("Expected main choices");
+    published.questions = [
+      ...Array.from({ length: checkpointCount }, (_, index) => ({
+        ...structuredClone(main),
+        id: index === 0 ? main.id : randomUUID(),
+        linkedRecheckQuestionId: index === 0 ? main.linkedRecheckQuestionId : null,
+        choices: main.choices.map((choice) => ({ ...choice, id: randomUUID() })),
+      })),
+      published.questions[1]!,
+    ];
+  }
   await repository.createQuiz({
     id: quizId,
     workspaceId,
@@ -372,6 +385,65 @@ async function assignmentFixture() {
 }
 
 describe("self-paced follow-up", () => {
+  it("honors optional answer fences and retains more than sixteen legacy advance receipts", async () => {
+    const { repository, service, creator, quizId, quizVersionId, now } =
+      await assignmentFixture(20);
+    const created = await service.createAssignment(
+      creator,
+      quizId,
+      {
+        sourceQuizVersionId: quizVersionId,
+        timeMode: "flex",
+        closesAt: new Date(now.getTime() + 86_400_000).toISOString(),
+        personalLabels: ["Fenced learner"],
+      },
+      30,
+      100,
+      now,
+    );
+    const token = created.personalAccess[0]!.token;
+    let snapshot = (await service.start(created.followup.id, token, undefined, now)).snapshot;
+    const record = repository.followups.get(created.followup.id)!;
+    let firstAnswer;
+    let firstAdvance;
+    for (const question of record.content.questions) {
+      if (question.type !== "single_select") throw new Error("Expected choice checkpoints");
+      const answer = {
+        idempotencyKey: randomUUID(),
+        questionId: question.id,
+        expectedVersion: snapshot.version,
+        response: {
+          kind: "choice" as const,
+          choiceIds: [question.choices.find((choice) => choice.isCorrect)!.id],
+        },
+        confidence: 2 as const,
+      };
+      firstAnswer ??= answer;
+      snapshot = await service.answer(created.followup.id, token, answer, now);
+      const advance = { idempotencyKey: randomUUID(), expectedVersion: snapshot.version };
+      firstAdvance ??= advance;
+      snapshot = await service.advance(created.followup.id, token, now, advance);
+      await expect(service.answer(created.followup.id, token, firstAnswer, now)).resolves.toEqual(
+        snapshot,
+      );
+      await expect(service.advance(created.followup.id, token, now, firstAdvance)).resolves.toEqual(
+        snapshot,
+      );
+    }
+    expect(snapshot).toMatchObject({ status: "completed", questionCount: 20, practiceMode: null });
+    expect(repository.followupAnswers.size).toBe(20);
+    const attempt = [...repository.followupAttempts.values()][0]!;
+    expect(Object.keys(attempt.advanceReceipts ?? {})).toHaveLength(20);
+    await expect(
+      service.answer(
+        created.followup.id,
+        token,
+        { ...firstAnswer!, expectedVersion: snapshot.version },
+        now,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
   it("creates follow-ups from ready Report V2, V3, and V4 evidence", async () => {
     const v2 = await fixture("flex", 2);
     const v3 = await fixture("flex", 3);

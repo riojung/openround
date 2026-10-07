@@ -17,6 +17,12 @@ import {
   shouldReplaceSavedAttempt,
 } from "../../../lib/followup-resume";
 import { clientUuid } from "../../../lib/uuid";
+import { FollowupInterventionCard } from "../../../components/practice/followup-intervention-card";
+import {
+  createFollowupCommandRecovery,
+  mayApplyFollowupSnapshot,
+  type FollowupCommandRecoveryState,
+} from "../../../lib/followup-command-recovery";
 
 async function followupFetch<T>(path: string, token: string, init: RequestInit = {}) {
   const response = await fetch(`${API_URL}${path}`, {
@@ -40,7 +46,7 @@ async function followupFetch<T>(path: string, token: string, init: RequestInit =
   return response.json() as Promise<T>;
 }
 
-export default function FollowupPage() {
+function FollowupContent() {
   const { id } = useParams<{ id: string }>();
   const [snapshot, setSnapshot] = useState<FollowupSnapshot | null>(null);
   const [attemptToken, setAttemptToken] = useState("");
@@ -53,6 +59,41 @@ export default function FollowupPage() {
   const [accessRevision, setAccessRevision] = useState(0);
   const accessRevisionRef = useRef(0);
   const confidenceControlRef = useRef<HTMLButtonElement>(null);
+  const [commandState, setCommandState] = useState<FollowupCommandRecoveryState>({
+    busy: false,
+    pendingAction: null,
+  });
+  const snapshotRef = useRef<FollowupSnapshot | null>(null);
+  const snapshotReady = useRef(false);
+  const [snapshotSyncRequired, setSnapshotSyncRequired] = useState(false);
+  const snapshotSyncBusy = useRef(false);
+  const mounted = useRef(true);
+  const recovery = useRef<{
+    key: string;
+    manager: ReturnType<typeof createFollowupCommandRecovery>;
+  } | null>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      recovery.current?.manager.reset();
+    };
+  }, []);
+
+  useEffect(() => {
+    const heading = document.querySelector<HTMLElement>("#main h1");
+    heading?.focus();
+  }, [snapshot?.phase, snapshot?.question?.id, snapshot?.intervention?.index]);
+
+  function adoptSnapshot(incoming: FollowupSnapshot) {
+    if (!mayApplyFollowupSnapshot(snapshotRef.current, incoming)) return false;
+    snapshotRef.current = incoming;
+    snapshotReady.current = true;
+    setSnapshotSyncRequired(false);
+    setSnapshot(incoming);
+    return true;
+  }
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -71,6 +112,13 @@ export default function FollowupPage() {
         setError("");
       }
       accessRevisionRef.current += 1;
+      recovery.current?.manager.reset();
+      recovery.current = null;
+      setCommandState({ busy: false, pendingAction: null });
+      snapshotReady.current = false;
+      snapshotSyncBusy.current = false;
+      setSnapshotSyncRequired(false);
+      snapshotRef.current = null;
       setBusy(false);
       sessionStorage.setItem(accessKey, incomingAccessToken);
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -148,7 +196,7 @@ export default function FollowupPage() {
         } else result = await start();
         if (accessIsCurrent()) {
           setAttemptToken(result.attemptToken);
-          setSnapshot(result.snapshot);
+          adoptSnapshot(result.snapshot);
           setError("");
         }
       } catch (caught) {
@@ -170,7 +218,14 @@ export default function FollowupPage() {
   }, [snapshot?.question?.id]);
 
   function chooseChoice(choiceId: string) {
-    if (!snapshot?.question || snapshot.phase !== "question_open" || busy) return;
+    if (
+      !snapshot?.question ||
+      snapshot.phase !== "question_open" ||
+      !snapshotReady.current ||
+      busy ||
+      commandState.pendingAction
+    )
+      return;
     if (snapshot.question.type === "multi_select") {
       setSelectedChoiceIds((current) =>
         current.includes(choiceId)
@@ -197,7 +252,84 @@ export default function FollowupPage() {
     return ratingValue === null ? null : { kind: "rating", value: ratingValue };
   }
 
+  function commandManager() {
+    const revision = accessRevisionRef.current;
+    const key = `${id}:${attemptToken}:${revision}`;
+    if (recovery.current?.key !== key) {
+      const wrapper = {
+        key,
+        manager: null as unknown as ReturnType<typeof createFollowupCommandRecovery>,
+      };
+      wrapper.manager = createFollowupCommandRecovery({
+        execute: async (action, body) => {
+          const result = await followupFetch<{ snapshot: FollowupSnapshot }>(
+            `/v1/followups/${id}/${action === "answer" ? "answers" : "advance"}`,
+            attemptToken,
+            { method: "POST", body },
+          );
+          return result.snapshot;
+        },
+        onState: (state) => {
+          if (
+            !mounted.current ||
+            recovery.current !== wrapper ||
+            accessRevisionRef.current !== revision
+          )
+            return;
+          setCommandState(state);
+          setBusy(state.busy);
+        },
+      });
+      recovery.current = wrapper;
+    }
+    return recovery.current.manager;
+  }
+
+  async function runCommand(action: "answer" | "advance", payload: () => object, retry = false) {
+    const revision = accessRevisionRef.current;
+    const manager = commandManager();
+    setError("");
+    try {
+      const incoming = await (retry ? manager.retry() : manager.run(action, payload));
+      if (mounted.current && accessRevisionRef.current === revision && incoming)
+        adoptSnapshot(incoming);
+    } catch (caught) {
+      if (!mounted.current || accessRevisionRef.current !== revision) return;
+      setError(humanError(caught));
+      if ((caught as { status?: number }).status === 409) {
+        snapshotReady.current = false;
+        setSnapshotSyncRequired(true);
+        await refreshSnapshot();
+      }
+    }
+  }
+
+  async function refreshSnapshot() {
+    if (!attemptToken || snapshotSyncBusy.current) return;
+    const revision = accessRevisionRef.current;
+    snapshotSyncBusy.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await followupFetch<{ snapshot: FollowupSnapshot }>(
+        `/v1/followups/${id}/snapshot`,
+        attemptToken,
+      );
+      if (!mounted.current || accessRevisionRef.current !== revision) return;
+      if (!adoptSnapshot(result.snapshot))
+        throw new Error("This practice update could not be verified. Retry practice sync.");
+    } catch (caught) {
+      if (mounted.current && accessRevisionRef.current === revision) setError(humanError(caught));
+    } finally {
+      if (mounted.current && accessRevisionRef.current === revision) {
+        snapshotSyncBusy.current = false;
+        setBusy(false);
+      }
+    }
+  }
+
   async function submit() {
+    if (!snapshotReady.current || busy || commandState.pendingAction) return;
     const answer = response();
     if (!snapshot?.question || !answer || !attemptToken) {
       setError("Complete the response before submitting.");
@@ -208,47 +340,22 @@ export default function FollowupPage() {
       window.requestAnimationFrame(() => confidenceControlRef.current?.focus());
       return;
     }
-    const requestAccessRevision = accessRevisionRef.current;
-    setBusy(true);
-    setError("");
-    try {
-      const result = await followupFetch<{ snapshot: FollowupSnapshot }>(
-        `/v1/followups/${id}/answers`,
-        attemptToken,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            idempotencyKey: `${snapshot.attemptId}:${snapshot.question.id}:${clientUuid()}`,
-            response: answer,
-            ...(confidence === null ? {} : { confidence }),
-          }),
-        },
-      );
-      if (accessRevisionRef.current === requestAccessRevision) setSnapshot(result.snapshot);
-    } catch (caught) {
-      if (accessRevisionRef.current === requestAccessRevision) setError(humanError(caught));
-    } finally {
-      if (accessRevisionRef.current === requestAccessRevision) setBusy(false);
-    }
+    await runCommand("answer", () => ({
+      idempotencyKey: clientUuid(),
+      questionId: snapshot.question!.id,
+      expectedVersion: snapshot.version,
+      response: answer,
+      ...(confidence === null ? {} : { confidence }),
+    }));
   }
 
   async function advance() {
-    if (!attemptToken) return;
-    const requestAccessRevision = accessRevisionRef.current;
-    setBusy(true);
-    setError("");
-    try {
-      const result = await followupFetch<{ snapshot: FollowupSnapshot }>(
-        `/v1/followups/${id}/advance`,
-        attemptToken,
-        { method: "POST", body: "{}" },
-      );
-      if (accessRevisionRef.current === requestAccessRevision) setSnapshot(result.snapshot);
-    } catch (caught) {
-      if (accessRevisionRef.current === requestAccessRevision) setError(humanError(caught));
-    } finally {
-      if (accessRevisionRef.current === requestAccessRevision) setBusy(false);
-    }
+    if (!attemptToken || !snapshot || !snapshotReady.current || busy || commandState.pendingAction)
+      return;
+    await runCommand("advance", () => ({
+      expectedVersion: snapshot.version,
+      idempotencyKey: clientUuid(),
+    }));
   }
 
   const displayedChoiceIds =
@@ -257,6 +364,7 @@ export default function FollowupPage() {
       : selectedChoiceIds;
   const revealed = snapshot?.phase === "answer_reveal";
   const assignment = snapshot?.purpose === "assignment";
+  const locked = busy || commandState.pendingAction !== null || snapshotSyncRequired;
 
   return (
     <div className="live-shell" lang="en-CA">
@@ -264,7 +372,9 @@ export default function FollowupPage() {
         <Brand inverted />
         {snapshot ? (
           <span className="status-pill">
-            {snapshot.timeMode === "flex" ? "No countdown" : `${snapshot.timeMultiplier}× time`}
+            {snapshot.phase === "intervention" || snapshot.timeMode === "flex"
+              ? "No countdown"
+              : `${snapshot.timeMultiplier}× time`}
           </span>
         ) : null}
       </header>
@@ -284,6 +394,41 @@ export default function FollowupPage() {
             ) : null}
           </section>
         ) : null}
+        {commandState.pendingAction ? (
+          <section className="live-card">
+            <p role="status" aria-live="polite">
+              {commandState.busy
+                ? "Waiting for acknowledgement…"
+                : "The request was not acknowledged. Keep this page open and retry the same request; no new response or continue action will be sent."}
+            </p>
+            <button
+              className="button"
+              disabled={busy}
+              onClick={() => void runCommand(commandState.pendingAction!, () => ({}), true)}
+              type="button"
+            >
+              {commandState.pendingAction === "answer"
+                ? "Retry response acknowledgement"
+                : "Retry continue acknowledgement"}
+            </button>
+          </section>
+        ) : null}
+        {snapshotSyncRequired ? (
+          <section className="live-card">
+            <p role="status" aria-live="polite">
+              Refresh the current practice state before responding or continuing. No action will be
+              sent until the current state is confirmed.
+            </p>
+            <button
+              className="button"
+              disabled={busy}
+              onClick={() => void refreshSnapshot()}
+              type="button"
+            >
+              {busy ? "Syncing practice…" : "Retry practice sync"}
+            </button>
+          </section>
+        ) : null}
         {!snapshot && !error ? (
           <section className="live-card">
             <p>Opening your private practice…</p>
@@ -292,9 +437,18 @@ export default function FollowupPage() {
         {snapshot?.status === "completed" ? (
           <section className="live-card">
             <p className="eyebrow">{assignment ? "Practice complete" : "Follow-up complete"}</p>
-            <h1>Thanks for checking your understanding.</h1>
+            <h1 tabIndex={-1}>Thanks for checking your understanding.</h1>
             <p className="lead">Your responses were saved without creating an account.</p>
           </section>
+        ) : null}
+        {snapshot?.phase === "intervention" &&
+        snapshot.intervention &&
+        snapshot.status === "in_progress" ? (
+          <FollowupInterventionCard
+            intervention={snapshot.intervention}
+            busy={locked}
+            onContinue={() => void advance()}
+          />
         ) : null}
         {snapshot?.question && snapshot.status === "in_progress" ? (
           <section className="live-card">
@@ -309,7 +463,7 @@ export default function FollowupPage() {
             <p className="eyebrow" lang="">
               {snapshot.title}
             </p>
-            <h1 lang="" style={{ fontSize: "clamp(2rem, 7vw, 4rem)" }}>
+            <h1 lang="" tabIndex={-1} style={{ fontSize: "clamp(2rem, 7vw, 4rem)" }}>
               {snapshot.question.prompt}
             </h1>
             <div lang="">
@@ -338,7 +492,7 @@ export default function FollowupPage() {
                       data-correct={correct || undefined}
                       data-incorrect={(revealed && selected && !correct) || undefined}
                       data-selected={selected || undefined}
-                      disabled={snapshot.phase !== "question_open" || busy}
+                      disabled={snapshot.phase !== "question_open" || locked}
                       key={choice.id}
                       onClick={() => chooseChoice(choice.id)}
                       type="button"
@@ -358,7 +512,7 @@ export default function FollowupPage() {
                 </span>
                 <input
                   className="input"
-                  disabled={snapshot.phase !== "question_open" || busy}
+                  disabled={snapshot.phase !== "question_open" || locked}
                   inputMode="decimal"
                   onChange={(event) => setNumericValue(event.target.value)}
                   value={
@@ -378,7 +532,7 @@ export default function FollowupPage() {
                       aria-pressed={ratingValue === value}
                       className="answer-button"
                       data-selected={ratingValue === value || undefined}
-                      disabled={snapshot.phase !== "question_open" || busy}
+                      disabled={snapshot.phase !== "question_open" || locked}
                       key={value}
                       onClick={() => setRatingValue(value)}
                       type="button"
@@ -405,6 +559,7 @@ export default function FollowupPage() {
                   ].map(([value, label]) => (
                     <button
                       aria-pressed={confidence === value}
+                      disabled={locked}
                       className="button-quiet"
                       data-selected={confidence === value || undefined}
                       key={value}
@@ -421,7 +576,7 @@ export default function FollowupPage() {
             {snapshot.phase === "question_open" ? (
               <button
                 className="button"
-                disabled={busy}
+                disabled={locked}
                 onClick={() => void submit()}
                 type="button"
               >
@@ -441,7 +596,7 @@ export default function FollowupPage() {
                 {snapshot.feedback ? <div lang="">{snapshot.feedback}</div> : null}
                 <button
                   className="button"
-                  disabled={busy}
+                  disabled={locked}
                   onClick={() => void advance()}
                   style={{ marginTop: 16 }}
                   type="button"
@@ -450,7 +605,9 @@ export default function FollowupPage() {
                     ? assignment
                       ? "Finish practice"
                       : "Finish follow-up"
-                    : "Next question"}
+                    : snapshot.practiceMode === "full_sequence"
+                      ? "Review recovery guidance"
+                      : "Next question"}
                 </button>
               </div>
             ) : null}
@@ -459,4 +616,9 @@ export default function FollowupPage() {
       </main>
     </div>
   );
+}
+
+export default function FollowupPage() {
+  const { id } = useParams<{ id: string }>();
+  return <FollowupContent key={id} />;
 }

@@ -9,6 +9,7 @@ import {
   questionDelivery,
   type CreateFollowup,
   type CreatePracticeAssignment,
+  type FollowupAdvance,
   type FollowupAnswerSubmit,
   type Followup,
   type FollowupSnapshot,
@@ -587,6 +588,8 @@ export class FollowupService {
       status: "in_progress",
       phase: "question_open",
       currentIndex: 0,
+      interventionIndex: null,
+      advanceReceipts: {},
       version: 0,
       timeMultiplier: access?.timeMultiplier ?? 1,
       questionOpenedAt: now,
@@ -621,7 +624,9 @@ export class FollowupService {
     const { followup, attempt } = await this.authorizeAttempt(followupId, attemptToken, now);
     this.assertAvailable(followup, now, true);
     const question =
-      attempt.status === "in_progress" ? followup.content.questions[attempt.currentIndex] : null;
+      attempt.status === "in_progress" && attempt.phase !== "intervention"
+        ? followup.content.questions[attempt.currentIndex]
+        : null;
     if (!question || question.mediaId !== mediaId) {
       throw new FollowupError("NOT_FOUND", "Media is not part of the current checkpoint");
     }
@@ -637,6 +642,36 @@ export class FollowupService {
     const authorized = await this.authorizeAttempt(followupId, attemptToken, now);
     const { followup } = authorized;
     this.assertAvailable(followup, now, true);
+    const fullSequence = followup.recoveryPackSource?.role === "full_sequence";
+    const fencedAnswer = input.questionId !== undefined && input.expectedVersion !== undefined;
+    if (
+      (fullSequence && !fencedAnswer) ||
+      (input.questionId === undefined) !== (input.expectedVersion === undefined)
+    ) {
+      throw new FollowupError(
+        "ANSWER_INVALID",
+        "Sequence answers require the current question and version",
+      );
+    }
+    if (fencedAnswer) {
+      const duplicate = await this.repository.getFollowupAnswerByIdempotencyKey(
+        authorized.attempt.id,
+        input.idempotencyKey,
+      );
+      if (duplicate) {
+        this.assertAnswerReceipt(duplicate, input);
+        return this.currentSnapshot(followupId, attemptToken, now);
+      }
+      if (input.expectedVersion !== authorized.attempt.version) {
+        throw new FollowupError("STALE_VERSION", "The follow-up changed; refresh and try again");
+      }
+      if (
+        authorized.attempt.phase !== "question_open" ||
+        followup.content.questions[authorized.attempt.currentIndex]?.id !== input.questionId
+      ) {
+        throw new FollowupError("CONFLICT", "This question is not the current checkpoint");
+      }
+    }
     const timed = await this.revealTimedOutAttempt(authorized.attempt, now);
     const attempt = timed.attempt;
     if (attempt.status === "completed") {
@@ -646,13 +681,22 @@ export class FollowupService {
     if (!question) throw new FollowupError("CONFLICT", "Current checkpoint was not found");
     if (timed.expired) return this.snapshot(followup, attempt);
     const existing = await this.repository.getFollowupAnswer(attempt.id, question.id);
-    if (existing?.idempotencyKey === input.idempotencyKey) return this.snapshot(followup, attempt);
+    if (existing?.idempotencyKey === input.idempotencyKey) {
+      if (fencedAnswer) {
+        this.assertAnswerReceipt(existing, input);
+        return this.currentSnapshot(followupId, attemptToken, now);
+      }
+      return this.snapshot(followup, attempt);
+    }
     if (existing || attempt.phase !== "question_open") {
       throw new FollowupError("CONFLICT", "This checkpoint was already answered");
     }
     const confidenceMode = questionConfidence(question);
     if (confidenceMode === "required" && input.confidence === undefined) {
       throw new FollowupError("ANSWER_INVALID", "Choose a confidence level before submitting");
+    }
+    if (fencedAnswer && confidenceMode === "off" && input.confidence !== undefined) {
+      throw new FollowupError("ANSWER_INVALID", "This checkpoint does not accept confidence");
     }
     let evaluated: ReturnType<typeof evaluateResponse>;
     try {
@@ -671,6 +715,7 @@ export class FollowupService {
       confidence: confidenceMode === "off" ? null : (input.confidence ?? null),
       correct: question.type === "poll" || question.type === "rating" ? null : evaluated.correct,
       idempotencyKey: input.idempotencyKey,
+      submittedVersion: fencedAnswer ? attempt.version : null,
       acceptedAt: now,
     };
     const nextAttempt: FollowupAttemptRecord = {
@@ -680,9 +725,29 @@ export class FollowupService {
       updatedAt: now,
     };
     try {
-      await this.repository.commitFollowupAnswer(nextAttempt, answer, attempt.version);
+      const accepted = await this.repository.commitFollowupAnswer(
+        nextAttempt,
+        answer,
+        attempt.version,
+      );
+      if (fencedAnswer) {
+        this.assertAnswerReceipt(accepted, input);
+        // A concurrent submission may have already answered and progressed further.
+        // Read the authoritative state rather than returning our proposed transition.
+        return this.currentSnapshot(followupId, attemptToken, now);
+      }
     } catch (error) {
       if (error instanceof FollowupVersionConflictError) {
+        if (fencedAnswer) {
+          const duplicate = await this.repository.getFollowupAnswerByIdempotencyKey(
+            attempt.id,
+            input.idempotencyKey,
+          );
+          if (duplicate) {
+            this.assertAnswerReceipt(duplicate, input);
+            return this.currentSnapshot(followupId, attemptToken, now);
+          }
+        }
         throw new FollowupError("STALE_VERSION", "The follow-up changed; refresh and try again");
       }
       throw error;
@@ -690,38 +755,115 @@ export class FollowupService {
     return this.snapshot(followup, nextAttempt, answer);
   }
 
-  async advance(followupId: string, attemptToken: string, now = new Date()) {
+  async advance(
+    followupId: string,
+    attemptToken: string,
+    now = new Date(),
+    input?: FollowupAdvance,
+  ) {
     const authorized = await this.authorizeAttempt(followupId, attemptToken, now);
     const { followup } = authorized;
     this.assertAvailable(followup, now, true);
+    const fullSequence = followup.recoveryPackSource?.role === "full_sequence";
+    if (
+      (fullSequence && (input?.expectedVersion === undefined || !input.idempotencyKey)) ||
+      (input?.expectedVersion === undefined) !== (input?.idempotencyKey === undefined)
+    ) {
+      throw new FollowupError("ANSWER_INVALID", "Continue requires a version and command ID");
+    }
+    if (input?.idempotencyKey !== undefined && input.expectedVersion !== undefined) {
+      if (this.matchesAdvanceReceipt(authorized.attempt, input)) {
+        return this.currentSnapshot(followupId, attemptToken, now);
+      }
+      if (input.expectedVersion !== authorized.attempt.version) {
+        throw new FollowupError("STALE_VERSION", "The follow-up changed; refresh and try again");
+      }
+    }
     const timed = await this.revealTimedOutAttempt(authorized.attempt, now);
     const attempt = timed.attempt;
     if (attempt.status === "completed") return this.snapshot(followup, attempt);
     if (timed.expired) return this.snapshot(followup, attempt);
-    if (attempt.phase !== "answer_reveal") {
+    if (attempt.phase !== "answer_reveal" && !(fullSequence && attempt.phase === "intervention")) {
       throw new FollowupError("CONFLICT", "Answer the current checkpoint before continuing");
     }
-    const last = attempt.currentIndex >= followup.content.questions.length - 1;
-    const nextIndex = last ? attempt.currentIndex : attempt.currentIndex + 1;
+    const cards = followup.recoveryPackSequence?.interventions;
+    if (fullSequence && !cards?.length) {
+      throw new FollowupError("CONFLICT", "The frozen intervention sequence is unavailable");
+    }
+    const interventionIndex = attempt.interventionIndex ?? 0;
+    if (
+      attempt.phase === "intervention" &&
+      (!cards || interventionIndex < 0 || interventionIndex >= cards.length)
+    ) {
+      throw new FollowupError("CONFLICT", "The current intervention card is unavailable");
+    }
+    const entersCards =
+      fullSequence && attempt.phase === "answer_reveal" && attempt.currentIndex === 0;
+    const continuesCards =
+      fullSequence && attempt.phase === "intervention" && interventionIndex < cards!.length - 1;
+    const showsCard = entersCards || continuesCards;
+    const last = !showsCard && attempt.currentIndex >= followup.content.questions.length - 1;
+    const nextIndex = last || showsCard ? attempt.currentIndex : attempt.currentIndex + 1;
     const nextQuestion = followup.content.questions[nextIndex]!;
     const nextAttempt: FollowupAttemptRecord = {
       ...attempt,
       status: last ? "completed" : "in_progress",
-      phase: last ? "completed" : "question_open",
+      phase: last ? "completed" : showsCard ? "intervention" : "question_open",
       currentIndex: nextIndex,
+      interventionIndex: showsCard ? (entersCards ? 0 : interventionIndex + 1) : null,
       version: attempt.version + 1,
-      questionOpenedAt: now,
+      questionOpenedAt: showsCard ? attempt.questionOpenedAt : now,
       deadlineAt:
-        !last && followup.timeMode === "timed"
+        !last && !showsCard && followup.timeMode === "timed"
           ? timedDeadline(nextQuestion, now, attempt.timeMultiplier)
           : null,
       completedAt: last ? now : null,
       updatedAt: now,
     };
-    const saved = await this.repository.advanceFollowupAttempt(nextAttempt, attempt.version);
-    if (!saved)
+    const saved = await this.repository.advanceFollowupAttempt(
+      nextAttempt,
+      attempt.version,
+      input?.idempotencyKey,
+    );
+    if (!saved) {
+      if (input?.idempotencyKey !== undefined && input.expectedVersion !== undefined) {
+        const current = await this.authorizeAttempt(followupId, attemptToken, now);
+        if (this.matchesAdvanceReceipt(current.attempt, input)) {
+          this.assertAvailable(current.followup, now, true);
+          return this.snapshot(current.followup, current.attempt);
+        }
+      }
       throw new FollowupError("STALE_VERSION", "The follow-up changed; refresh and try again");
-    return this.snapshot(followup, nextAttempt);
+    }
+    return this.currentSnapshot(followupId, attemptToken, now);
+  }
+
+  private async currentSnapshot(followupId: string, attemptToken: string, now: Date) {
+    const current = await this.authorizeAttempt(followupId, attemptToken, now);
+    this.assertAvailable(current.followup, now, true);
+    return this.snapshot(current.followup, current.attempt);
+  }
+
+  private matchesAdvanceReceipt(attempt: FollowupAttemptRecord, input: FollowupAdvance) {
+    if (input.idempotencyKey === undefined) return false;
+    const acceptedVersion = attempt.advanceReceipts?.[input.idempotencyKey];
+    if (acceptedVersion === undefined) return false;
+    if (acceptedVersion !== input.expectedVersion) {
+      throw new FollowupError("CONFLICT", "This command ID was used for a different version");
+    }
+    return true;
+  }
+
+  private assertAnswerReceipt(answer: FollowupAnswerRecord, input: FollowupAnswerSubmit) {
+    if (
+      answer.checkpointId !== input.questionId ||
+      answer.submittedVersion !== input.expectedVersion ||
+      JSON.stringify(canonicalizeResponse(answer.response)) !==
+        JSON.stringify(canonicalizeResponse(input.response)) ||
+      answer.confidence !== (input.confidence ?? null)
+    ) {
+      throw new FollowupError("CONFLICT", "This answer ID was used for a different submission");
+    }
   }
 
   private async authorizeAttempt(followupId: string, token: string, now: Date) {
@@ -782,6 +924,8 @@ export class FollowupService {
       return FollowupSnapshotSchema.parse({
         mode: "followup",
         purpose: followup.purpose,
+        practiceMode: followup.recoveryPackSource?.role ?? null,
+        intervention: null,
         trustMode: followup.trustMode ?? "learning",
         followupId: followup.id,
         attemptId: attempt.id,
@@ -804,6 +948,40 @@ export class FollowupService {
         completedAt: attempt.completedAt?.toISOString() ?? null,
       });
     }
+    if (attempt.phase === "intervention") {
+      const index = attempt.interventionIndex ?? 0;
+      const cards = followup.recoveryPackSequence?.interventions;
+      const card = cards?.[index];
+      if (!card || followup.recoveryPackSource?.role !== "full_sequence") {
+        throw new FollowupError("CONFLICT", "The current intervention card is unavailable");
+      }
+      return FollowupSnapshotSchema.parse({
+        mode: "followup",
+        purpose: followup.purpose,
+        practiceMode: "full_sequence",
+        intervention: { index, count: cards!.length, card: structuredClone(card) },
+        trustMode: followup.trustMode ?? "learning",
+        followupId: followup.id,
+        attemptId: attempt.id,
+        version: attempt.version,
+        title: followup.title,
+        status: attempt.status,
+        phase: attempt.phase,
+        questionIndex: null,
+        questionCount: followup.content.questions.length,
+        question: null,
+        deadline: null,
+        timeMode: followup.timeMode,
+        timeMultiplier: attempt.timeMultiplier,
+        response: null,
+        confidence: null,
+        correct: null,
+        correctResponse: null,
+        explanation: null,
+        feedback: null,
+        completedAt: null,
+      });
+    }
     const question = followup.content.questions[attempt.currentIndex]!;
     const answer =
       suppliedAnswer ??
@@ -814,6 +992,8 @@ export class FollowupService {
     return FollowupSnapshotSchema.parse({
       mode: "followup",
       purpose: followup.purpose,
+      practiceMode: followup.recoveryPackSource?.role ?? null,
+      intervention: null,
       trustMode: followup.trustMode ?? "learning",
       followupId: followup.id,
       attemptId: attempt.id,

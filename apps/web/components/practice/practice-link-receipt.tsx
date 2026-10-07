@@ -46,9 +46,10 @@ export function PracticeLinkReceipt({ created }: { created: CreatedPractice }) {
         Save your private links
       </h2>
       <p>
-        This assignment contains one frozen delayed probe, not the full Recovery Pack or a delayed
-        recovery trail. Existing assignments do not change when the source Pack changes or is
-        deleted.
+        {created.followup.recoveryPackSource?.role === "full_sequence"
+          ? "This assignment contains the frozen diagnostic, intervention cards, and linked recheck, not the optional delayed probe or a delayed recovery trail."
+          : "This assignment contains one frozen delayed probe, not the full Recovery Pack or a delayed recovery trail."}{" "}
+        Existing assignments do not change when the source Pack changes or is deleted.
       </p>
       <p>
         Save or download these links now. OpenRound stores only token hashes; these exact links are
