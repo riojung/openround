@@ -625,6 +625,83 @@ items. Recovery Trail and Concept Health remain later increments. Partner-eviden
 staging, independent manual reviews, and production/readiness gates remain deferred; public caps
 are unchanged.
 
+## Recovery Pack source-assisted authoring — 2026-10-07
+
+The next increment adds source-assisted Pack authoring to the creator library. It reuses the
+existing text/PDF/DOCX/PPTX authoring pipeline and a validated ready job, converts one diagnostic /
+meaningfully different linked recheck plus a cited source-derived intervention, and creates an
+editable unpublished Pack. Conversion makes no additional AI/provider call. Legacy ready outputs
+without slide proposals use their cited explanation; longer source slides disclose the Pack card's
+2,000-character conversion limit. The source and complete proposal hashes are canonical across
+browser, server, and PostgreSQL JSONB. Ordinary Round/Presentation source workflows remain intact.
+
+Source-derived Packs require separate explicit review of saved content and every citation before
+publication. Approval binds the complete content hash, saved revision, source digest, and full
+source-output hash. Draft edits/restore invalidate it; publication verifies it inside the Pack lock
+before immutable-version deduplication. Creator UI shows the full diagnostic, keys, rationales,
+cards, recheck, optional probe, and per-item/global citations; no checkbox starts selected. Unsaved
+changes disable approval/publication. Human approval is not automated verification of source truth
+or pedagogical quality. Manual/legacy Packs retain their existing publication behavior.
+
+Migration 058 stores creator-only source provenance, a bounded original citation catalog, and
+idempotent approval receipts under forced workspace RLS and tenant-aware cascades. The original
+catalog, not client-supplied excerpts, validates each checkpoint/card citation. Source-job expiry
+does not erase retained Pack review evidence; raw source text/file bytes are not copied again.
+Account export/delete and Pack retention/cascades include the new records. Review metadata never
+enters published content, participant projections, or portable JSON; an import carries content,
+not source approval. Existing Pack schemas, public participant caps, and Learning mode are unchanged.
+Approval retry receipts are bounded by the existing 30-day mutation-receipt retention; the current
+approval binding and original citation catalog remain until the parent Pack is deleted/purged.
+
+Creation and approval use single-flight, stable mutation intents. Exact accepted creation retries
+resolve before source expiry/rollout checks, recover the same Pack, and reject same-key changed
+intent. Approval retries cannot reapprove a later edit. Saved draft adoption, source selection,
+role change, reload, and workspace navigation clear obsolete review actions. Existing drafts,
+versions, and review remain readable when creation is paused or the member is a viewer. New writes
+stay behind the existing Pack flag and evidence allowlist; newly queued sources still use normal
+provider configuration, upload scanning, and quotas. Source-review-aware publishers are required
+for rollback once these Packs exist; see the [upgrade runbook](runbooks/upgrade.md).
+
+Verification: the full local `CI=true pnpm check` passes formatting, lint, strict type checks,
+unit/support suites, and production builds. Package suites include 297 contract, 445 server,
+491 web, and 124 database tests. The default local run skips 64 PostgreSQL tests; a separate fresh,
+isolated-schema run passed source conformance, forced-RLS/job-purge/export/delete, and manual Pack
+conformance (three tests), then removed only that fixture schema. Twenty source API tests and
+30 focused web tests cover validation and retry boundaries. Independent read-only review found
+and verified repair of an uncited Add card path, with no remaining actionable issue.
+
+The source workflow passes production-browser checks on desktop Chromium, Android Chromium,
+and mobile WebKit (three scenarios) with the actual API/worker and a test-owned loopback provider.
+It covers source submission, deterministic conversion, explicit save/review/approval, separate
+publish, lost creation/approval acknowledgements, dirty invalidation, added cards, viewer/paused
+reads, keyboard/focus, automated axe checks, and mobile overflow. That pass exposed and repaired
+missing route-local translation loading and duplicate inner landmarks. The existing CI beta job
+opts into this fixture; no new job or duplicate suite was added. To run it locally:
+
+```bash
+BETA_E2E_AUTHORING=true PLAYWRIGHT_PRODUCTION=true pnpm test:e2e:beta \
+  tests/beta-e2e/recovery-pack-source-authoring.spec.ts
+```
+
+All 43 existing Pack browser scenarios also pass across those three projects, covering authoring,
+Round/Presentation insertion/update/undo, live cards and control recovery, accountless practice,
+and portability. The legacy source/import-to-Round review journey also passes on desktop Chromium
+(47 browser scenarios in total across the focused runs). The full repository check was rerun after
+the translation/accessibility fixes and passes. Local automation does not substitute for independent manual assistive-technology
+or physical-device review. Firefox was not rerun locally; the existing CI browser project includes
+it, but this checkpoint does not claim local Firefox verification.
+
+Companion Pack insertion remains the next Pack workflow increment. Recovery Trail and Concept
+Health remain later capabilities. Partner-evidence decisions, staging, independent manual reviews,
+and production/readiness gates remain deferred.
+
+Follow-up review hardening — 2026-10-08: a temporary Pack Save/Reload busy state no longer discards
+an already accepted source-job response. It still blocks new submissions, but in-flight responses
+are fenced by current edit permission, source generation, and component lifetime instead. Accepted
+jobs remain visible and resume polling without another quota-consuming submission.
+The full repository check and five production-browser source scenarios pass, including real
+Save/Reload races that prove one accepted job/provider call/quota increment and continued polling.
+
 ## Access/resilience provisional slice
 
 An Access/resilience implementation slice is complete in the repository provisionally, without

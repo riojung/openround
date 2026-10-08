@@ -18,6 +18,7 @@ import {
   RecoveryPackMutationConflictError,
   RecoveryPackNotFoundError,
   RecoveryPackMediaValidationError,
+  RecoveryPackSourceReviewRequiredError,
   ROUND_DRAFT_SCHEMA_VERSION,
   WorkspaceDeletionInProgressError,
   type CreatorContext,
@@ -118,6 +119,8 @@ export async function registerRecoveryPackRoutes(
       );
     if (error instanceof RecoveryPackMediaValidationError)
       return apiError(reply, 422, "VALIDATION_ERROR", error.message, requestId);
+    if (error instanceof RecoveryPackSourceReviewRequiredError)
+      return apiError(reply, 409, "CONFLICT", error.message, requestId);
     if (
       error instanceof RecoveryPackDraftConflictError ||
       error instanceof QuizDraftRevisionConflictError

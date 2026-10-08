@@ -19,7 +19,7 @@
 ## Recent content, report, and deletion upgrades
 
 The current feature code includes migrations through
-`057_recovery_pack_sequence_practice.sql`. Apply the complete ordered migration set with the restricted
+`058_recovery_pack_source_authoring.sql`. Apply the complete ordered migration set with the restricted
 one-shot migration job before starting the new server; do not grant the runtime role ownership or
 direct mutation privileges on published Presentation versions.
 
@@ -240,6 +240,35 @@ citations, and private media are not exported in these converted files. Polling 
 metadata is not guaranteed to survive another LMS, and numeric grading depends on that LMS's float
 handling. Native JSON is the complete content path but contains media references, not image bytes.
 Conversion warnings are not evidence of external LMS interoperability or release readiness.
+
+### Recovery Pack source-review compatibility
+
+Apply migration `058_recovery_pack_source_authoring.sql` before deploying source-assisted Pack
+creation. It adds forced-workspace-RLS source provenance/citation catalogs and approval receipts
+with tenant-aware parent cascades. The runtime role may update only approval columns in the
+provenance table; do not broaden its privileges. Source job IDs are logical references without a
+foreign key: temporary job purge must not erase retained Pack content or approval evidence.
+
+Deploy the matching web/server pair behind `FEATURE_RECOVERY_PACKS` and the evidence workspace
+allowlist. Existing ready authoring jobs can propose an editable diagnostic/card/recheck without
+another provider call; normal provider configuration, source-upload scanning, quotas, and job
+retention continue to apply when creating a new authoring job. Explicit saved-content and citation
+approval is required before publishing a source-derived Pack. Manual/legacy Packs need no new
+approval, and published content/native JSON formats are unchanged. Approval never edits or
+retroactively endorses immutable versions.
+
+Once source-derived Packs exist, use a source-review-aware rollback target. Older publishers do
+not enforce this approval boundary; disabling the feature does not make those older writers safe.
+Keep migration 058 during rollback. A pause blocks new creation/approval/publication while retained
+drafts, versions, and source review remain readable. An accepted creation retry resolves its durable
+receipt before source expiry or feature checks and returns the existing Pack, not a duplicate.
+
+Rehearse stale output/content hashes, fabricated or removed per-item citations, explicit consent,
+edit/restore invalidation, approval acknowledgement loss, publish races, and reused mutation keys
+with changed intent. Verify approval and publication remain separate; old versions are unchanged;
+source-job purge preserves review/receipt recovery; tenant/viewer denial, account export/delete,
+Pack deletion, and media retention still pass. Importing native content must not import an approval.
+These checks do not establish source truth, customer demand, or production release readiness.
 
 ## Presentation concurrent-response rollout
 

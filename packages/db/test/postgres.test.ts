@@ -68,6 +68,11 @@ import {
   recoveryPackRecord,
 } from "./support/recovery-pack-conformance.js";
 import {
+  createExpiringSourceJob,
+  expectRecoveryPackSourceConformance,
+  sourcePackFixture,
+} from "./support/recovery-pack-source-conformance.js";
+import {
   expectRecoveryPackPracticeConformance,
   expectRecoveryPackPracticeMediaLifecycle,
   packPracticeFixture,
@@ -1052,6 +1057,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 55, name: "recovery_pack_presentation_live_cards" },
       { version: 56, name: "recovery_pack_practice" },
       { version: 57, name: "recovery_pack_sequence_practice" },
+      { version: 58, name: "recovery_pack_source_authoring" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -1154,6 +1160,98 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     });
     return { content, version };
   }
+
+  it("persists source Recovery Packs with approval intent, exact citations, restores and publish fencing", async () => {
+    const owner = await creator("source-recovery-pack-owner");
+    const other = await creator("source-recovery-pack-other");
+    await expectRecoveryPackSourceConformance({
+      repository: createRecoveryPackRepository(repository),
+      workspaceId: owner.workspaceId,
+      otherWorkspaceId: other.workspaceId,
+      editorId: owner.userId,
+    });
+  });
+
+  it("retains source review evidence across job expiry with forced tenant isolation and account cascades", async () => {
+    const owner = await creator("source-recovery-pack-retention");
+    const other = await creator("source-recovery-pack-isolation");
+    const packs = createRecoveryPackRepository(repository);
+    const fixture = sourcePackFixture(owner.workspaceId, owner.userId);
+    await createExpiringSourceJob(repository, fixture);
+    const mutationId = randomUUID();
+    const requestHash = "c".repeat(64);
+    const pack = await packs.createSourceRecoveryPack(
+      fixture.record,
+      fixture.provenance,
+      mutationId,
+      requestHash,
+    );
+    const approval = {
+      workspaceId: owner.workspaceId,
+      packId: pack.id,
+      editorId: owner.userId,
+      expectedDraftRevision: 0,
+      expectedContentHash: pack.sourceReview!.contentHash!,
+      sourceDigest: fixture.provenance.sourceDigest,
+      sourceOutputHash: fixture.provenance.sourceOutputHash,
+      mutationId: randomUUID(),
+    };
+    await packs.approveRecoveryPackSource(approval);
+    const client = await runtimePool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [other.workspaceId]);
+      for (const table of ["recovery_pack_sources", "recovery_pack_source_approvals"])
+        expect(
+          (await client.query(`SELECT * FROM ${table} WHERE pack_id = $1`, [pack.id])).rows,
+        ).toEqual([]);
+      await client.query("ROLLBACK");
+      await client.query("BEGIN");
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [owner.workspaceId]);
+      await expect(
+        client.query("UPDATE recovery_pack_sources SET source_name = 'forged' WHERE pack_id = $1", [
+          pack.id,
+        ]),
+      ).rejects.toMatchObject({ code: "42501" });
+      await client.query("ROLLBACK");
+      const security = await client.query<{ relforcerowsecurity: boolean }>(
+        "SELECT relforcerowsecurity FROM pg_class WHERE relname IN ('recovery_pack_sources', 'recovery_pack_source_approvals')",
+      );
+      expect(security.rows).toHaveLength(2);
+      expect(security.rows.every((row) => row.relforcerowsecurity)).toBe(true);
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+    const exported = await repository.exportAccount(owner.userId);
+    expect(exported.recoveryPackSources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pack_id: pack.id,
+          citation_catalog: fixture.provenance.citationCatalog,
+        }),
+      ]),
+    );
+    expect(exported.recoveryPackSourceApprovals).toEqual(
+      expect.arrayContaining([expect.objectContaining({ mutation_id: approval.mutationId })]),
+    );
+    await repository.purgeExpired(new Date(Date.now() + 31 * 86_400_000));
+    expect(
+      await repository.getAuthoringJob(owner.workspaceId, fixture.provenance.authoringJobId),
+    ).toBeNull();
+    expect((await packs.getRecoveryPack(owner.workspaceId, pack.id))?.sourceReview?.approved).toBe(
+      true,
+    );
+    expect(
+      await packs.replaySourceRecoveryPack(owner.workspaceId, mutationId, requestHash),
+    ).toMatchObject({ id: pack.id });
+    expect((await repository.exportAccount(owner.userId)).recoveryPackSourceApprovals).toEqual([]);
+    await repository.deleteAccount(owner.userId);
+    expect(
+      await packs.replaySourceRecoveryPack(owner.workspaceId, mutationId, requestHash),
+    ).toBeNull();
+    expect((await repository.exportAccount(other.userId)).recoveryPackSources).toEqual([]);
+  });
 
   it("persists Recovery Packs with mutation replay, version ordering, and forced tenant isolation", async () => {
     const owner = await creator("recovery-pack-owner");

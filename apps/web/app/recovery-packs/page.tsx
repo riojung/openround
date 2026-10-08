@@ -24,16 +24,19 @@ import { clientUuid } from "../../lib/uuid";
 import { PackPracticeAction } from "../../components/practice/pack-practice-action";
 import type { PublishedPracticePack } from "../../lib/recovery-pack-practice";
 import { RecoveryPackExportPanel } from "../../components/recovery-pack-export";
+import { AuthoringAssistant } from "../../components/authoring-assistant";
+import {
+  PackSourceCitations,
+  RecoveryPackSourceReviewPanel,
+} from "../../components/recovery-pack-source";
+import {
+  createRecoveryPackSourceApproval,
+  newRecoveryPackInterventionCard,
+  recoveryPackSourceApproved,
+  type RecoveryPackRecord as PackRecord,
+} from "../../lib/recovery-pack-source";
 import styles from "./recovery-packs.module.css";
 
-interface PackRecord {
-  id: string;
-  title: string;
-  draft: RecoveryPackDraft;
-  draftRevision: number;
-  currentVersionId: string | null;
-  publishedDraftRevision: number | null;
-}
 interface RoundRecord {
   id: string;
   title: string;
@@ -111,8 +114,17 @@ function PackLibrary() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [announcement, setAnnouncement] = useState("");
+  const [contentChecked, setContentChecked] = useState(false);
+  const [citationsChecked, setCitationsChecked] = useState(false);
+  const [sourceReviewInvalidated, setSourceReviewInvalidated] = useState(false);
+  const reviewApproval = useRef<ReturnType<typeof createRecoveryPackSourceApproval> | null>(null);
+  const writableRef = useRef(writable);
+  writableRef.current = writable;
+  const errorParagraph = useRef<HTMLParagraphElement>(null);
+  const detailHeading = useRef<HTMLHeadingElement>(null);
   const alive = useRef(true);
   const running = useRef(false);
+  const sourceCreationRunning = useRef(false);
   const retrySave = useRef<RetryMutation | null>(null);
   const retryInsert = useRef<RetryMutation | null>(null);
   const retryRestore = useRef<RetryMutation | null>(null);
@@ -138,6 +150,7 @@ function PackLibrary() {
     return () => {
       alive.current = false;
       abort.abort();
+      reviewApproval.current?.cancel();
     };
   }, []);
 
@@ -197,7 +210,29 @@ function PackLibrary() {
     return () => abort.abort();
   }, [selected?.id, selected?.currentVersionId, publishedSourceRefresh]);
 
+  useEffect(() => {
+    if (error) errorParagraph.current?.focus();
+  }, [error]);
+
+  useEffect(() => {
+    if (!writable) resetSourceReview();
+  }, [writable]);
+
+  function resetSourceReview() {
+    setContentChecked(false);
+    setCitationsChecked(false);
+    reviewApproval.current?.cancel();
+    reviewApproval.current = null;
+  }
+
+  function invalidateSourceReview() {
+    resetSourceReview();
+    if (selected?.sourceReview) setSourceReviewInvalidated(true);
+  }
+
   function adopt(pack: PackRecord) {
+    resetSourceReview();
+    setSourceReviewInvalidated(false);
     setSelected(pack);
     setDraft(structuredClone(pack.draft));
     setConcepts(pack.draft.conceptKeys.join(", "));
@@ -250,6 +285,7 @@ function PackLibrary() {
         retrySave.current = null;
         retryInsert.current = null;
         retryRestore.current = null;
+        resetSourceReview();
       }
     } finally {
       running.current = false;
@@ -290,6 +326,20 @@ function PackLibrary() {
     retrySave.current = null;
     if (alive.current) adopt(result.pack);
     return "Draft saved. Published versions are unchanged.";
+  }
+
+  async function approveSource() {
+    if (!selected?.sourceReview || !writable || dirty || !contentChecked || !citationsChecked)
+      return;
+    reviewApproval.current ??= createRecoveryPackSourceApproval({
+      pack: selected,
+      canApprove: () => alive.current && writableRef.current,
+    });
+    const pack = await reviewApproval.current.approve();
+    if (pack && alive.current) {
+      adopt(pack);
+      return "Saved Pack content and citations approved. Publish the saved draft separately when ready.";
+    }
   }
 
   async function insert() {
@@ -370,7 +420,7 @@ function PackLibrary() {
           <p className="notice">Your workspace role can view Packs but cannot modify them.</p>
         ) : null}
         {error ? (
-          <p className="error" role="alert">
+          <p className="error" role="alert" tabIndex={-1} ref={errorParagraph}>
             {error}
           </p>
         ) : null}
@@ -408,6 +458,44 @@ function PackLibrary() {
             </ul>
             {writable ? (
               <>
+                <AuthoringAssistant
+                  canEdit={writable}
+                  artifactType="recovery_pack"
+                  recoveryPackTarget={{
+                    disabled: Boolean(busy),
+                    beforeCreate: () => {
+                      if (running.current || !writableRef.current) return false;
+                      if (dirty && !window.confirm("Discard unsaved Pack changes?")) return false;
+                      running.current = true;
+                      sourceCreationRunning.current = true;
+                      setBusy("Creating source Pack draft");
+                      setError("");
+                      setAnnouncement("");
+                      return true;
+                    },
+                    onCreated: (pack) => {
+                      if (!alive.current || !writableRef.current) return;
+                      retrySave.current = null;
+                      retryRestore.current = null;
+                      adopt(pack);
+                      setAnnouncement(
+                        "Source Pack created as an unpublished draft. Review and approve its saved content and citations before publishing.",
+                      );
+                      detailHeading.current?.focus();
+                    },
+                    onBusyChange: (isBusy) => {
+                      if (!alive.current) return;
+                      if (isBusy) setBusy("Creating source Pack draft");
+                      else if (sourceCreationRunning.current) {
+                        sourceCreationRunning.current = false;
+                        running.current = false;
+                        setBusy((current) =>
+                          current === "Creating source Pack draft" ? "" : current,
+                        );
+                      }
+                    },
+                  }}
+                />
                 <h3>Create from published material</h3>
                 <label className="field">
                   <span>Source Round</span>
@@ -415,7 +503,9 @@ function PackLibrary() {
                     className="select"
                     value={sourceId}
                     disabled={Boolean(busy)}
-                    onChange={(event) => setSourceId(event.target.value)}
+                    onChange={(event) => {
+                      setSourceId(event.target.value);
+                    }}
                   >
                     <option value="">Choose a published Round</option>
                     {rounds
@@ -433,7 +523,9 @@ function PackLibrary() {
                     className="select"
                     value={sourceQuestionId}
                     disabled={Boolean(busy) || !currentSource}
-                    onChange={(event) => setSourceQuestionId(event.target.value)}
+                    onChange={(event) => {
+                      setSourceQuestionId(event.target.value);
+                    }}
                   >
                     <option value="">Choose a checkpoint pair</option>
                     {pairs.map((pair) => (
@@ -523,7 +615,7 @@ function PackLibrary() {
             ) : null}
           </section>
           <section className={styles.panel} aria-labelledby="pack-detail-title">
-            <h2 id="pack-detail-title">
+            <h2 id="pack-detail-title" tabIndex={-1} ref={detailHeading}>
               {selected ? selected.title || "Untitled Pack" : "Select a Pack"}
             </h2>
             {selected && draft ? (
@@ -535,7 +627,11 @@ function PackLibrary() {
                     ? " · a frozen published version is available"
                     : " · unpublished"}
                 </p>
-                <fieldset className={styles.editor} disabled={!writable || Boolean(busy)}>
+                <fieldset
+                  className={styles.editor}
+                  disabled={!writable || Boolean(busy)}
+                  onChangeCapture={invalidateSourceReview}
+                >
                   <legend className="sr-only">Pack draft</legend>
                   <label className="field">
                     <span>Title</span>
@@ -621,24 +717,20 @@ function PackLibrary() {
                         />
                       </label>
                       {card.citations.length ? (
-                        <p className="muted">
-                          Citations:{" "}
-                          {card.citations
-                            .map((citation) => `${citation.sourceName}, ${citation.locator}`)
-                            .join("; ")}
-                        </p>
+                        <PackSourceCitations citations={card.citations} />
                       ) : null}
                       <button
                         className="button-quiet small-button"
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
+                          invalidateSourceReview();
                           setDraft({
                             ...draft,
                             interventions: draft.interventions.filter(
                               (candidate) => candidate.id !== card.id,
                             ),
-                          })
-                        }
+                          });
+                        }}
                       >
                         Remove card {index + 1}
                       </button>
@@ -648,18 +740,25 @@ function PackLibrary() {
                     className="button-quiet"
                     type="button"
                     disabled={draft.interventions.length >= 5}
-                    onClick={() =>
+                    onClick={() => {
+                      invalidateSourceReview();
                       setDraft({
                         ...draft,
                         interventions: [
                           ...draft.interventions,
-                          { id: clientUuid(), title: "", body: "", citations: [] },
+                          newRecoveryPackInterventionCard(selected, clientUuid()),
                         ],
-                      })
-                    }
+                      });
+                    }}
                   >
                     Add intervention card
                   </button>
+                  {selected.sourceReview ? (
+                    <p className="muted">
+                      New source cards inherit original Pack citations. Check that these spans
+                      support your edited guidance before saving and approving.
+                    </p>
+                  ) : null}
                   <CheckpointEditor
                     label="Different linked recheck"
                     question={draft.recheck}
@@ -684,6 +783,23 @@ function PackLibrary() {
                     ))}
                   </ul>
                 </details>
+                {selected.sourceReview && editedDraft ? (
+                  <RecoveryPackSourceReviewPanel
+                    pack={selected}
+                    draft={editedDraft}
+                    dirty={dirty}
+                    invalidated={sourceReviewInvalidated}
+                    canEdit={writable}
+                    busy={Boolean(busy)}
+                    contentChecked={contentChecked}
+                    citationsChecked={citationsChecked}
+                    onContentChecked={setContentChecked}
+                    onCitationsChecked={setCitationsChecked}
+                    onApprove={() =>
+                      void run("Approving saved content and citations", approveSource)
+                    }
+                  />
+                ) : null}
                 {publishError ? <p className="notice">Before publishing: {publishError}</p> : null}
                 <div className="button-row">
                   <button
@@ -697,9 +813,25 @@ function PackLibrary() {
                   <button
                     className="button-quiet"
                     type="button"
-                    disabled={!writable || Boolean(busy) || dirty || Boolean(publishError)}
+                    disabled={
+                      !writable ||
+                      Boolean(busy) ||
+                      dirty ||
+                      Boolean(publishError) ||
+                      Boolean(
+                        selected.sourceReview &&
+                        (sourceReviewInvalidated || !recoveryPackSourceApproved(selected)),
+                      )
+                    }
                     onClick={() =>
                       void run("Publishing Pack", async () => {
+                        if (
+                          !writableRef.current ||
+                          dirty ||
+                          (selected.sourceReview &&
+                            (sourceReviewInvalidated || !recoveryPackSourceApproved(selected)))
+                        )
+                          return;
                         const result = await apiFetch<{ pack: PackRecord }>(
                           `/v1/recovery-packs/${selected.id}/publish`,
                           {

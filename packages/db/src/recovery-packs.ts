@@ -14,6 +14,17 @@ import {
   upcastRecoveryPackDraft,
 } from "./artifact-schemas.js";
 import { recoveryPackMediaIds } from "./media-references.js";
+import { RecoveryPackContentSchema } from "@openround/contracts";
+import {
+  assertSourceApproval,
+  assertSourceCitations,
+  assertSourceProvenance,
+  assertSourcePublish,
+  sourceApprovalRequestHash,
+  withRecoveryPackSourceReview,
+  type RecoveryPackSourceRecord,
+  type RecoveryPackSourceApprovalReceipt,
+} from "./recovery-pack-source.js";
 import {
   RecoveryPackDraftConflictError,
   RecoveryPackMutationConflictError,
@@ -24,6 +35,8 @@ import {
   type RecoveryPackMutationReplay,
   type RecoveryPackRecord,
   type RecoveryPackRepository,
+  type RecoveryPackSourceApproval,
+  type RecoveryPackSourceProvenance,
   type RecoveryPackVersionRecord,
 } from "./recovery-pack-types.js";
 
@@ -128,6 +141,27 @@ function mapReceipt(row: QueryResultRow): MutationReceipt {
   };
 }
 
+function mapSource(row: QueryResultRow): RecoveryPackSourceRecord {
+  return {
+    workspaceId: String(row.workspace_id),
+    packId: String(row.pack_id),
+    authoringJobId: String(row.authoring_job_id),
+    sourceName: String(row.source_name),
+    sourceDigest: String(row.source_digest),
+    sourceOutputHash: String(row.source_output_hash),
+    citationCatalog: row.citation_catalog,
+    creationMutationId: String(row.creation_mutation_id),
+    creationRequestHash: String(row.creation_request_hash),
+    approvedContentHash:
+      row.approved_content_hash == null ? null : String(row.approved_content_hash),
+    approvedDraftRevision:
+      row.approved_draft_revision == null ? null : Number(row.approved_draft_revision),
+    approvedAt: row.approved_at == null ? null : date(row.approved_at),
+    approvedBy: row.approved_by == null ? null : String(row.approved_by),
+    createdAt: date(row.created_at),
+  };
+}
+
 function assertMutationMatches(receipt: MutationReceipt, input: RecoveryPackMutationReplay) {
   if (
     receipt.workspaceId !== input.workspaceId ||
@@ -157,10 +191,16 @@ export class MemoryRecoveryPackRepository
   readonly versions = new Map<string, RecoveryPackVersionRecord>();
   readonly history = new Map<string, RecoveryPackHistoryRecord>();
   private readonly mutations = new Map<string, MutationReceipt>();
+  private readonly sources = new Map<string, RecoveryPackSourceRecord>();
+  private readonly sourceApprovals = new Map<string, RecoveryPackSourceApprovalReceipt>();
   private readonly locks = new Map<string, Promise<void>>();
   private readonly deletedWorkspaces = new Set<string>();
 
   constructor(private readonly repository: MemoryRepository) {}
+
+  private review(pack: RecoveryPackRecord) {
+    return withRecoveryPackSourceReview(normalizeRecord(pack), this.sources.get(pack.id));
+  }
 
   private assertWritable(workspaceId: string) {
     if (this.deletedWorkspaces.has(workspaceId))
@@ -201,7 +241,7 @@ export class MemoryRecoveryPackRepository
     return {
       recoveryPacks: [...this.packs.values()]
         .filter((item) => ownedWorkspaceIds.has(item.workspaceId))
-        .map((item) => structuredClone(normalizeRecord(item))),
+        .map((item) => structuredClone(this.review(item))),
       recoveryPackVersions: [...this.versions.values()]
         .filter((item) => ownedWorkspaceIds.has(item.workspaceId))
         .map((item) => structuredClone(normalizeVersion(item))),
@@ -214,10 +254,19 @@ export class MemoryRecoveryPackRepository
           ...structuredClone(item),
           mutationId: key.slice(key.indexOf(":") + 1),
         })),
+      recoveryPackSources: [...this.sources.values()]
+        .filter((item) => ownedWorkspaceIds.has(item.workspaceId))
+        .map((item) => structuredClone(item)),
+      recoveryPackSourceApprovals: [...this.sourceApprovals.entries()]
+        .filter(([, item]) => ownedWorkspaceIds.has(item.workspaceId))
+        .map(([key, item]) => ({
+          ...structuredClone(item),
+          mutationId: key.slice(key.indexOf(":") + 1),
+        })),
     };
   }
 
-  async deleteAccount({ ownedWorkspaceIds }: MemoryRepositoryLifecycleContext) {
+  async deleteAccount({ ownedWorkspaceIds, userId }: MemoryRepositoryLifecycleContext) {
     for (const workspaceId of ownedWorkspaceIds) this.deletedWorkspaces.add(workspaceId);
     for (const workspaceId of ownedWorkspaceIds) {
       // Wait for in-flight writes before enumerating: a create may not have installed its Pack
@@ -228,6 +277,8 @@ export class MemoryRecoveryPackRepository
         }
       });
     }
+    for (const [key, source] of this.sources)
+      if (source.approvedBy === userId) this.sources.set(key, { ...source, approvedBy: null });
   }
 
   async purgeExpired(now: Date) {
@@ -244,49 +295,133 @@ export class MemoryRecoveryPackRepository
         (left, right) =>
           right.updatedAt.getTime() - left.updatedAt.getTime() || left.id.localeCompare(right.id),
       )
-      .map((item) => structuredClone(normalizeRecord(item)));
+      .map((item) => structuredClone(this.review(item)));
   }
 
   async createRecoveryPack(input: RecoveryPackRecord) {
+    return this.locked(input.workspaceId, async () => this.createPackContents(input));
+  }
+
+  private async createPackContents(input: RecoveryPackRecord) {
+    this.assertWritable(input.workspaceId);
+    if (this.packs.has(input.id)) throw new Error("Recovery Pack already exists");
+    const created = structuredClone(withRecoveryPackSourceReview(normalizeRecord(input)));
+    this.validateMedia(created.workspaceId, created.draft);
+    const snapshot: RecoveryPackHistoryRecord = {
+      id: randomUUID(),
+      workspaceId: created.workspaceId,
+      packId: created.id,
+      revision: created.draftRevision,
+      draft: structuredClone(created.draft),
+      draftSchemaVersion: created.draftSchemaVersion,
+      savedBy: created.lastEditedBy,
+      mutationId: null,
+      createdAt: created.createdAt,
+    };
+    await this.repository.replaceMediaReferences(
+      created.workspaceId,
+      "recovery_pack_draft",
+      created.id,
+      recoveryPackMediaIds(created.draft),
+      created.createdAt,
+    );
+    await this.repository.replaceMediaReferences(
+      created.workspaceId,
+      "recovery_pack_history",
+      snapshot.id,
+      recoveryPackMediaIds(created.draft),
+      created.createdAt,
+    );
+    this.packs.set(created.id, created);
+    this.history.set(`${created.id}:${snapshot.revision}`, snapshot);
+    return structuredClone(this.review(created));
+  }
+
+  async replaySourceRecoveryPack(workspaceId: string, mutationId: string, requestHash: string) {
+    const source = [...this.sources.values()].find(
+      (item) => item.workspaceId === workspaceId && item.creationMutationId === mutationId,
+    );
+    if (!source) return null;
+    if (source.creationRequestHash !== requestHash)
+      throw new RecoveryPackMutationConflictError(mutationId);
+    return this.getRecoveryPack(workspaceId, source.packId);
+  }
+
+  async createSourceRecoveryPack(
+    input: RecoveryPackRecord,
+    provenance: RecoveryPackSourceProvenance,
+    mutationId: string,
+    requestHash: string,
+  ) {
     return this.locked(input.workspaceId, async () => {
-      this.assertWritable(input.workspaceId);
-      if (this.packs.has(input.id)) throw new Error("Recovery Pack already exists");
-      const created = structuredClone(normalizeRecord(input));
-      this.validateMedia(created.workspaceId, created.draft);
-      const snapshot: RecoveryPackHistoryRecord = {
-        id: randomUUID(),
+      const previous = await this.replaySourceRecoveryPack(
+        input.workspaceId,
+        mutationId,
+        requestHash,
+      );
+      if (previous) return previous;
+      assertSourceProvenance(provenance);
+      assertSourceCitations(RecoveryPackContentSchema.parse(input.draft), provenance);
+      const created = await this.createPackContents(input);
+      this.sources.set(created.id, {
+        ...structuredClone(provenance),
         workspaceId: created.workspaceId,
         packId: created.id,
-        revision: created.draftRevision,
-        draft: structuredClone(created.draft),
-        draftSchemaVersion: created.draftSchemaVersion,
-        savedBy: created.lastEditedBy,
-        mutationId: null,
+        creationMutationId: mutationId,
+        creationRequestHash: requestHash,
+        approvedContentHash: null,
+        approvedDraftRevision: null,
+        approvedAt: null,
+        approvedBy: null,
         createdAt: created.createdAt,
-      };
-      await this.repository.replaceMediaReferences(
-        created.workspaceId,
-        "recovery_pack_draft",
-        created.id,
-        recoveryPackMediaIds(created.draft),
-        created.createdAt,
-      );
-      await this.repository.replaceMediaReferences(
-        created.workspaceId,
-        "recovery_pack_history",
-        snapshot.id,
-        recoveryPackMediaIds(created.draft),
-        created.createdAt,
-      );
-      this.packs.set(created.id, created);
-      this.history.set(`${created.id}:${snapshot.revision}`, snapshot);
-      return structuredClone(created);
+      });
+      return structuredClone(this.review(created));
+    });
+  }
+
+  async approveRecoveryPackSource(input: RecoveryPackSourceApproval) {
+    return this.locked(input.workspaceId, async () => {
+      const key = `${input.workspaceId}:${input.mutationId}`;
+      const requestHash = sourceApprovalRequestHash(input);
+      const receipt = this.sourceApprovals.get(key);
+      if (receipt && receipt.requestHash !== requestHash)
+        throw new RecoveryPackMutationConflictError(input.mutationId);
+      const current = this.packs.get(input.packId);
+      if (!current || current.workspaceId !== input.workspaceId)
+        throw new RecoveryPackNotFoundError();
+      if (receipt) {
+        return structuredClone(this.review(current));
+      }
+      this.assertWritable(input.workspaceId);
+      if (current.draftRevision !== input.expectedDraftRevision)
+        throw new RecoveryPackDraftConflictError(
+          input.expectedDraftRevision,
+          current.draftRevision,
+          current.lastEditedBy,
+        );
+      const source = this.sources.get(input.packId);
+      assertSourceApproval(current, source, input);
+      const now = input.now ?? new Date();
+      this.sources.set(input.packId, {
+        ...source!,
+        approvedContentHash: input.expectedContentHash,
+        approvedDraftRevision: input.expectedDraftRevision,
+        approvedAt: now,
+        approvedBy: input.editorId,
+      });
+      this.sourceApprovals.set(key, {
+        workspaceId: input.workspaceId,
+        packId: input.packId,
+        requestHash,
+        createdAt: now,
+      });
+      return structuredClone(this.review(current));
     });
   }
 
   async getRecoveryPack(workspaceId: string, packId: string) {
     const item = this.packs.get(packId);
-    return item?.workspaceId === workspaceId ? structuredClone(normalizeRecord(item)) : null;
+    return item?.workspaceId === workspaceId ? structuredClone(this.review(item)) : null;
   }
 
   async updateRecoveryPackDraft(input: RecoveryPackDraftUpdate) {
@@ -297,7 +432,7 @@ export class MemoryRecoveryPackRepository
       const prior = this.mutations.get(key);
       if (prior) {
         assertMutationMatches(prior, input);
-        return structuredClone(replay(current, prior));
+        return structuredClone(this.review(replay(current, prior)));
       }
       this.assertWritable(input.workspaceId);
       if (current.draftRevision !== input.expectedRevision) {
@@ -370,7 +505,7 @@ export class MemoryRecoveryPackRepository
         now,
       );
       await this.prune(input.workspaceId, input.packId, now);
-      return structuredClone(updated);
+      return structuredClone(this.review(updated));
     });
   }
 
@@ -380,7 +515,7 @@ export class MemoryRecoveryPackRepository
     const receipt = this.mutations.get(`${input.workspaceId}:${input.mutationId}`);
     if (!receipt) return null;
     assertMutationMatches(receipt, input);
-    return structuredClone(replay(current, receipt));
+    return structuredClone(this.review(replay(current, receipt)));
   }
 
   private async prune(workspaceId: string, packId: string, now: Date) {
@@ -416,6 +551,13 @@ export class MemoryRecoveryPackRepository
         this.mutations.delete(key);
       }
     }
+    for (const [key, item] of this.sourceApprovals)
+      if (
+        item.workspaceId === workspaceId &&
+        item.packId === packId &&
+        item.createdAt.getTime() < cutoff
+      )
+        this.sourceApprovals.delete(key);
   }
 
   async publishRecoveryPack(input: RecoveryPackVersionRecord, expectedDraftRevision: number) {
@@ -432,6 +574,12 @@ export class MemoryRecoveryPackRepository
         );
       }
       const normalized = normalizeVersion(input);
+      assertSourcePublish(
+        current,
+        this.sources.get(input.packId),
+        normalized.content,
+        normalized.contentHash,
+      );
       for (const mediaId of recoveryPackMediaIds(normalized.content)) {
         const asset = await this.repository.getMediaAsset(input.workspaceId, mediaId);
         if (!asset || asset.scanStatus !== "clean")
@@ -530,6 +678,10 @@ export class MemoryRecoveryPackRepository
         this.mutations.delete(key);
       }
     this.repository.removeMediaReferencesForOwners(workspaceId, owners);
+    this.sources.delete(packId);
+    for (const [key, item] of this.sourceApprovals)
+      if (item.workspaceId === workspaceId && item.packId === packId)
+        this.sourceApprovals.delete(key);
     this.packs.delete(packId);
     return true;
   }
@@ -537,6 +689,39 @@ export class MemoryRecoveryPackRepository
 
 export class PostgresRecoveryPackRepository implements RecoveryPackRepository {
   constructor(private readonly repository: PostgresRepository) {}
+
+  private async source(client: PoolClient, workspaceId: string, packId: string) {
+    const result = await client.query(
+      "SELECT * FROM recovery_pack_sources WHERE workspace_id = $1 AND pack_id = $2",
+      [workspaceId, packId],
+    );
+    return result.rows[0] ? mapSource(result.rows[0]) : undefined;
+  }
+
+  private async review(client: PoolClient, pack: RecoveryPackRecord) {
+    return withRecoveryPackSourceReview(pack, await this.source(client, pack.workspaceId, pack.id));
+  }
+
+  private async replaySource(
+    client: PoolClient,
+    workspaceId: string,
+    mutationId: string,
+    requestHash: string,
+  ) {
+    const result = await client.query(
+      "SELECT * FROM recovery_pack_sources WHERE workspace_id = $1 AND creation_mutation_id = $2",
+      [workspaceId, mutationId],
+    );
+    if (!result.rows[0]) return null;
+    const source = mapSource(result.rows[0]);
+    if (source.creationRequestHash !== requestHash)
+      throw new RecoveryPackMutationConflictError(mutationId);
+    const pack = await client.query(
+      "SELECT * FROM recovery_packs WHERE workspace_id = $1 AND id = $2",
+      [workspaceId, source.packId],
+    );
+    return pack.rows[0] ? withRecoveryPackSourceReview(mapRecord(pack.rows[0]), source) : null;
+  }
 
   /** Lock the workspace before any Pack row, matching account-deletion lock ordering. */
   private async lockWorkspaceForWrite(client: PoolClient, workspaceId: string) {
@@ -583,10 +768,17 @@ export class PostgresRecoveryPackRepository implements RecoveryPackRepository {
   async listRecoveryPacks(workspaceId: string) {
     return this.transaction(workspaceId, async (client) => {
       const result = await client.query(
-        "SELECT * FROM recovery_packs WHERE workspace_id = $1 ORDER BY updated_at DESC, id",
+        `SELECT pack.*, to_jsonb(source) AS source_record FROM recovery_packs pack
+         LEFT JOIN recovery_pack_sources source ON source.workspace_id = pack.workspace_id AND source.pack_id = pack.id
+         WHERE pack.workspace_id = $1 ORDER BY pack.updated_at DESC, pack.id`,
         [workspaceId],
       );
-      return result.rows.map(mapRecord);
+      return result.rows.map((row) =>
+        withRecoveryPackSourceReview(
+          mapRecord(row),
+          row.source_record ? mapSource(row.source_record) : undefined,
+        ),
+      );
     });
   }
 
@@ -595,40 +787,140 @@ export class PostgresRecoveryPackRepository implements RecoveryPackRepository {
     return this.transaction(item.workspaceId, async (client) => {
       if (!(await this.lockWorkspaceForWrite(client, item.workspaceId)))
         throw new WorkspaceDeletionInProgressError(item.workspaceId);
-      const inserted = await client.query(
-        `INSERT INTO recovery_packs (id, workspace_id, title, description, draft, draft_revision,
+      return this.createPackContents(client, item);
+    });
+  }
+
+  private async createPackContents(client: PoolClient, item: RecoveryPackRecord) {
+    const inserted = await client.query(
+      `INSERT INTO recovery_packs (id, workspace_id, title, description, draft, draft_revision,
            draft_schema_version, current_version_id, published_draft_revision, last_edited_by, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [
+        item.id,
+        item.workspaceId,
+        item.title,
+        item.description,
+        JSON.stringify(item.draft),
+        item.draftRevision,
+        item.draftSchemaVersion,
+        item.currentVersionId,
+        item.publishedDraftRevision,
+        item.lastEditedBy,
+        item.createdAt,
+        item.updatedAt,
+      ],
+    );
+    await client.query(
+      `INSERT INTO recovery_pack_draft_history (id, workspace_id, pack_id, revision, draft, draft_schema_version, saved_by, mutation_id, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8)`,
+      [
+        randomUUID(),
+        item.workspaceId,
+        item.id,
+        item.draftRevision,
+        JSON.stringify(item.draft),
+        item.draftSchemaVersion,
+        item.lastEditedBy,
+        item.createdAt,
+      ],
+    );
+    return mapRecord(inserted.rows[0]!);
+  }
+
+  async replaySourceRecoveryPack(workspaceId: string, mutationId: string, requestHash: string) {
+    return this.transaction(workspaceId, (client) =>
+      this.replaySource(client, workspaceId, mutationId, requestHash),
+    );
+  }
+
+  async createSourceRecoveryPack(
+    input: RecoveryPackRecord,
+    provenance: RecoveryPackSourceProvenance,
+    mutationId: string,
+    requestHash: string,
+  ) {
+    return this.transaction(input.workspaceId, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+        `recovery-pack-source:${input.workspaceId}:${mutationId}`,
+      ]);
+      const workspaceWritable = await this.lockWorkspaceForWrite(client, input.workspaceId);
+      const prior = await this.replaySource(client, input.workspaceId, mutationId, requestHash);
+      if (prior) return prior;
+      if (!workspaceWritable) throw new WorkspaceDeletionInProgressError(input.workspaceId);
+      assertSourceProvenance(provenance);
+      assertSourceCitations(RecoveryPackContentSchema.parse(input.draft), provenance);
+      const created = await this.createPackContents(client, normalizeRecord(input));
+      const source = await client.query(
+        `INSERT INTO recovery_pack_sources (workspace_id, pack_id, authoring_job_id, source_name, source_digest, source_output_hash,
+          citation_catalog, creation_mutation_id, creation_request_hash, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
         [
-          item.id,
-          item.workspaceId,
-          item.title,
-          item.description,
-          JSON.stringify(item.draft),
-          item.draftRevision,
-          item.draftSchemaVersion,
-          item.currentVersionId,
-          item.publishedDraftRevision,
-          item.lastEditedBy,
-          item.createdAt,
-          item.updatedAt,
+          created.workspaceId,
+          created.id,
+          provenance.authoringJobId,
+          provenance.sourceName,
+          provenance.sourceDigest,
+          provenance.sourceOutputHash,
+          JSON.stringify(provenance.citationCatalog),
+          mutationId,
+          requestHash,
+          created.createdAt,
+        ],
+      );
+      return withRecoveryPackSourceReview(created, mapSource(source.rows[0]!));
+    });
+  }
+
+  async approveRecoveryPackSource(input: RecoveryPackSourceApproval) {
+    return this.transaction(input.workspaceId, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+        `recovery-pack-source:${input.workspaceId}:${input.mutationId}`,
+      ]);
+      const workspaceWritable = await this.lockWorkspaceForWrite(client, input.workspaceId);
+      const requestHash = sourceApprovalRequestHash(input);
+      const prior = await client.query(
+        "SELECT * FROM recovery_pack_source_approvals WHERE workspace_id = $1 AND mutation_id = $2",
+        [input.workspaceId, input.mutationId],
+      );
+      if (prior.rows[0] && prior.rows[0].request_hash !== requestHash)
+        throw new RecoveryPackMutationConflictError(input.mutationId);
+      const locked = await client.query(
+        "SELECT * FROM recovery_packs WHERE workspace_id = $1 AND id = $2 FOR UPDATE",
+        [input.workspaceId, input.packId],
+      );
+      if (!locked.rows[0]) throw new RecoveryPackNotFoundError();
+      const current = mapRecord(locked.rows[0]);
+      if (prior.rows[0]) {
+        return this.review(client, current);
+      }
+      if (!workspaceWritable) throw new WorkspaceDeletionInProgressError(input.workspaceId);
+      if (current.draftRevision !== input.expectedDraftRevision)
+        throw new RecoveryPackDraftConflictError(
+          input.expectedDraftRevision,
+          current.draftRevision,
+          current.lastEditedBy,
+        );
+      const source = await this.source(client, input.workspaceId, input.packId);
+      assertSourceApproval(current, source, input);
+      const now = input.now ?? new Date();
+      const approved = await client.query(
+        `UPDATE recovery_pack_sources SET approved_content_hash = $3, approved_draft_revision = $4, approved_at = $5, approved_by = $6
+         WHERE workspace_id = $1 AND pack_id = $2 RETURNING *`,
+        [
+          input.workspaceId,
+          input.packId,
+          input.expectedContentHash,
+          input.expectedDraftRevision,
+          now,
+          input.editorId,
         ],
       );
       await client.query(
-        `INSERT INTO recovery_pack_draft_history (id, workspace_id, pack_id, revision, draft, draft_schema_version, saved_by, mutation_id, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8)`,
-        [
-          randomUUID(),
-          item.workspaceId,
-          item.id,
-          item.draftRevision,
-          JSON.stringify(item.draft),
-          item.draftSchemaVersion,
-          item.lastEditedBy,
-          item.createdAt,
-        ],
+        "INSERT INTO recovery_pack_source_approvals (workspace_id, mutation_id, pack_id, request_hash, created_at) VALUES ($1,$2,$3,$4,$5)",
+        [input.workspaceId, input.mutationId, input.packId, requestHash, now],
       );
-      return mapRecord(inserted.rows[0]!);
+      return withRecoveryPackSourceReview(current, mapSource(approved.rows[0]!));
     });
   }
 
@@ -638,7 +930,7 @@ export class PostgresRecoveryPackRepository implements RecoveryPackRepository {
         "SELECT * FROM recovery_packs WHERE workspace_id = $1 AND id = $2",
         [workspaceId, packId],
       );
-      return result.rows[0] ? mapRecord(result.rows[0]) : null;
+      return result.rows[0] ? this.review(client, mapRecord(result.rows[0])) : null;
     });
   }
 
@@ -661,7 +953,7 @@ export class PostgresRecoveryPackRepository implements RecoveryPackRepository {
       if (prior.rows[0]) {
         const receipt = mapReceipt(prior.rows[0]);
         assertMutationMatches(receipt, input);
-        return replay(current, receipt);
+        return this.review(client, replay(current, receipt));
       }
       if (!workspaceWritable) throw new WorkspaceDeletionInProgressError(input.workspaceId);
       if (current.draftRevision !== input.expectedRevision)
@@ -738,7 +1030,7 @@ export class PostgresRecoveryPackRepository implements RecoveryPackRepository {
         "DELETE FROM recovery_pack_draft_mutations WHERE workspace_id = $1 AND pack_id = $2 AND created_at < now() - interval '30 days'",
         [input.workspaceId, input.packId],
       );
-      return updated;
+      return this.review(client, updated);
     });
   }
 
@@ -756,7 +1048,7 @@ export class PostgresRecoveryPackRepository implements RecoveryPackRepository {
       if (!result.rows[0]) return null;
       const receipt = mapReceipt(result.rows[0]);
       assertMutationMatches(receipt, input);
-      return replay(mapRecord(pack.rows[0]), receipt);
+      return this.review(client, replay(mapRecord(pack.rows[0]), receipt));
     });
   }
 
@@ -777,6 +1069,12 @@ export class PostgresRecoveryPackRepository implements RecoveryPackRepository {
           current.draftRevision,
           current.lastEditedBy,
         );
+      assertSourcePublish(
+        current,
+        await this.source(client, item.workspaceId, item.packId),
+        item.content,
+        item.contentHash,
+      );
       const mediaIds = recoveryPackMediaIds(item.content);
       if (mediaIds.length) {
         const assets = await client.query(

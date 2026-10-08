@@ -1,4 +1,9 @@
-import type { RecoveryPackContent, RecoveryPackDraft } from "@openround/contracts";
+import type {
+  RecoveryPackContent,
+  RecoveryPackDraft,
+  RecoveryPackSourceReview,
+  SourceCitation,
+} from "@openround/contracts";
 
 export interface RecoveryPackRecord {
   id: string;
@@ -13,6 +18,27 @@ export interface RecoveryPackRecord {
   lastEditedBy: string | null;
   createdAt: Date;
   updatedAt: Date;
+  sourceReview?: RecoveryPackSourceReview;
+}
+
+export interface RecoveryPackSourceProvenance {
+  authoringJobId: string;
+  sourceName: string;
+  sourceDigest: string;
+  sourceOutputHash: string;
+  citationCatalog: SourceCitation[];
+}
+
+export interface RecoveryPackSourceApproval {
+  workspaceId: string;
+  packId: string;
+  editorId: string;
+  expectedDraftRevision: number;
+  expectedContentHash: string;
+  sourceDigest: string;
+  sourceOutputHash: string;
+  mutationId: string;
+  now?: Date;
 }
 
 export interface RecoveryPackVersionRecord {
@@ -57,6 +83,18 @@ export type RecoveryPackMutationReplay = Pick<
 export interface RecoveryPackRepository {
   listRecoveryPacks(workspaceId: string): Promise<RecoveryPackRecord[]>;
   createRecoveryPack(input: RecoveryPackRecord): Promise<RecoveryPackRecord>;
+  replaySourceRecoveryPack(
+    workspaceId: string,
+    mutationId: string,
+    requestHash: string,
+  ): Promise<RecoveryPackRecord | null>;
+  createSourceRecoveryPack(
+    input: RecoveryPackRecord,
+    provenance: RecoveryPackSourceProvenance,
+    mutationId: string,
+    requestHash: string,
+  ): Promise<RecoveryPackRecord>;
+  approveRecoveryPackSource(input: RecoveryPackSourceApproval): Promise<RecoveryPackRecord>;
   getRecoveryPack(workspaceId: string, packId: string): Promise<RecoveryPackRecord | null>;
   updateRecoveryPackDraft(input: RecoveryPackDraftUpdate): Promise<RecoveryPackRecord | null>;
   replayRecoveryPackMutation(input: RecoveryPackMutationReplay): Promise<RecoveryPackRecord | null>;
@@ -108,5 +146,26 @@ export class RecoveryPackMediaValidationError extends Error {
   ) {
     super(message);
     this.name = "RecoveryPackMediaValidationError";
+  }
+}
+
+export class RecoveryPackSourceReviewConflictError extends Error {
+  constructor() {
+    super("The Recovery Pack content or source changed; review the current draft");
+    this.name = "RecoveryPackSourceReviewConflictError";
+  }
+}
+
+export class RecoveryPackSourceReviewRequiredError extends Error {
+  constructor() {
+    super("Approve the current Recovery Pack content and source citations before publishing");
+    this.name = "RecoveryPackSourceReviewRequiredError";
+  }
+}
+
+export class RecoveryPackSourceCitationValidationError extends Error {
+  constructor(message = "Every Recovery Pack item must cite an original source span") {
+    super(message);
+    this.name = "RecoveryPackSourceCitationValidationError";
   }
 }
