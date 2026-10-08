@@ -1,9 +1,8 @@
 import type { WorkspaceProductFeatures } from "@openround/contracts";
 
 /**
- * The current videos demonstrate the complete professional authoring workflow. Keep them hidden
- * when any covered capability is rolled back so the help centre never teaches a route that the
- * viewer cannot use.
+ * The longer user guide covers themes, interaction, Presentations, and practice. Keep it hidden
+ * when any covered capability is rolled back. Quick start requires only the Round Builder.
  */
 export function professionalBuilderGuidesAvailable(
   features: WorkspaceProductFeatures | null | undefined,
@@ -12,9 +11,10 @@ export function professionalBuilderGuidesAvailable(
     features?.uxBeta &&
     features.workspaceShell &&
     features.builderV2 &&
+    features.roundExperiences &&
+    features.audiencePulse &&
+    features.roomChat &&
     features.presentations &&
-    features.groups &&
-    features.discover &&
     features.practiceAssignments,
   );
 }

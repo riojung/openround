@@ -7,7 +7,7 @@ import { useLocale } from "../../components/locale-provider";
 import { WorkspaceProvider, useWorkspace } from "../../components/workspace/workspace-provider";
 import { WorkspaceShell } from "../../components/workspace/workspace-shell";
 import { HomeFirstRunActions } from "./home-first-run-actions";
-import { professionalBuilderGuidesAvailable } from "../../lib/help-guide-availability";
+import { professionalRoundBuilderAvailable } from "../../lib/help-guide-availability";
 import { pluralCategory } from "../../lib/i18n/format";
 import styles from "./home.module.css";
 
@@ -255,7 +255,7 @@ function HomeWorkspace() {
           <HomeFirstRunActions
             canEdit={canEdit}
             createHref={createHref}
-            guideAvailable={professionalBuilderGuidesAvailable(productFeatures)}
+            guideAvailable={professionalRoundBuilderAvailable(productFeatures)}
           />
         </section>
       ) : null}

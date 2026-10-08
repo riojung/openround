@@ -1,0 +1,84 @@
+{
+  "quickStart": {
+    "duration": "3:22",
+    "chapters": [
+      {
+        "title": "Sign in and find your workspace",
+        "start": 0
+      },
+      {
+        "title": "Create a blank Round",
+        "start": 25.904
+      },
+      {
+        "title": "Write a question and its answers",
+        "start": 46.371
+      },
+      {
+        "title": "Preview and publish",
+        "start": 71.804
+      },
+      {
+        "title": "Open a lobby and share the QR code",
+        "start": 94.684
+      },
+      {
+        "title": "Join as a participant",
+        "start": 124.984
+      },
+      {
+        "title": "Start, answer, and reveal",
+        "start": 149.217
+      },
+      {
+        "title": "Review results and try it yourself",
+        "start": 174.717
+      }
+    ],
+    "voice": "en-US-AvaMultilingualNeural",
+    "scriptSha256": "492e53bf51b1a07e4cefa38276d80538b38a7eed6938e55d6eb631f1e1a5842c"
+  },
+  "userGuide": {
+    "duration": "4:43",
+    "chapters": [
+      {
+        "title": "Choose an experience for your audience",
+        "start": 0
+      },
+      {
+        "title": "Add confidence and concept information",
+        "start": 33.776
+      },
+      {
+        "title": "Prepare a linked recheck",
+        "start": 63.909
+      },
+      {
+        "title": "Combine context slides with questions",
+        "start": 94.445
+      },
+      {
+        "title": "Read Audience Pulse without judging people",
+        "start": 122.612
+      },
+      {
+        "title": "Enable chat and moderate Q and A",
+        "start": 153.124
+      },
+      {
+        "title": "Explain, then verify with a recheck",
+        "start": 186.06
+      },
+      {
+        "title": "Interpret recovery evidence honestly",
+        "start": 218.972
+      },
+      {
+        "title": "Share practice and return to your work",
+        "start": 249.34
+      }
+    ],
+    "voice": "en-US-AvaMultilingualNeural",
+    "scriptSha256": "88125c2754efd0f8a0a0540294fb10f8aaee0dded3770132afb23483df116405"
+  }
+}

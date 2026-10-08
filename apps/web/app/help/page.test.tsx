@@ -65,6 +65,9 @@ describe("Help centre video guides", () => {
       "presentationRealtime",
       "groups",
       "discover",
+      "roundExperiences",
+      "audiencePulse",
+      "roomChat",
     ] as const) {
       fixtures.workspace.productFeatures[feature] = true;
     }
@@ -76,19 +79,20 @@ describe("Help centre video guides", () => {
     expect(markup).toContain('data-require-beta="false"');
     expect(markup).toContain('id="quick-start"');
     expect(markup).toContain('id="round-builder-guide"');
-    expect(markup).toContain('src="/guides/openround-quick-start.mp4"');
-    expect(markup).toContain('src="/guides/openround-builder-guide.mp4"');
-    expect(markup).toContain('src="/guides/openround-quick-start.vtt"');
-    expect(markup).toContain('src="/guides/openround-builder-guide.vtt"');
+    expect(markup).toContain('src="/guides/polling-pops-quick-start.mp4"');
+    expect(markup).toContain('src="/guides/polling-pops-user-guide.mp4"');
+    expect(markup).toContain('src="/guides/polling-pops-quick-start.vtt"');
+    expect(markup).toContain('src="/guides/polling-pops-user-guide.vtt"');
     expect(markup.match(/kind="captions"/g)).toHaveLength(2);
     expect(markup.match(/controls=""/g)).toHaveLength(2);
     expect(markup.match(/preload="none"/g)).toHaveLength(2);
     expect(markup.match(/Read transcript for/g)).toHaveLength(2);
     expect(markup).toContain("Quick start: create your first Round");
-    expect(markup).toContain("Workspace and builder guide");
-    expect(markup).toContain("Every route creates a reviewable draft.");
-    expect(markup).toContain("The Builder has three working areas.");
-    expect(markup).toContain('href="/create?start=starters"');
+    expect(markup).toContain("User guide: interact, recover, and follow up");
+    expect(markup).toContain("make your first Polling Pops Round together.");
+    expect(markup).toContain("Chat starts off.");
+    expect(markup).not.toContain("recorded before the Polling Pops rebrand");
+    expect(markup).toContain('href="/help/first-round"');
     expect(markup).toContain('href="/create?start=blank"');
   });
 
@@ -106,21 +110,22 @@ describe("Help centre video guides", () => {
     expect(markup).toContain("Use the classic Round workflow");
     expect(markup).toContain("Open the dashboard, name a checkpoint set");
     expect(markup).toContain('href="/dashboard"');
-    expect(markup).not.toContain("openround-quick-start.mp4");
+    expect(markup).not.toContain("polling-pops-quick-start.mp4");
     expect(markup).not.toContain('href="/create?start=starters"');
     expect(markup).not.toContain("Presentations have their own grounded starting methods");
     expect(markup).not.toContain("Groups lets facilitator teams");
   });
 
-  it("hides combined videos when an independently rolled-out capability is unavailable", () => {
+  it("keeps quick start available when an advanced capability is unavailable", () => {
     fixtures.workspace.productFeatures.presentations = false;
 
     const markup = renderToStaticMarkup(withEnglishLocale(<HelpPage />));
 
-    expect(markup).toContain("Use the enabled Round Builder");
-    expect(markup).toContain('href="/create?start=starters"');
-    expect(markup).not.toContain("openround-quick-start.mp4");
-    expect(markup).not.toContain('href="/create?start=blank"');
+    expect(markup).toContain("The full user-guide video is hidden");
+    expect(markup).toContain('href="/help/first-round"');
+    expect(markup).toContain("polling-pops-quick-start.mp4");
+    expect(markup).not.toContain("polling-pops-user-guide.mp4");
+    expect(markup).toContain('href="/create?start=blank"');
   });
 
   it("sends read-only members to Library instead of a creation route", () => {
@@ -130,7 +135,37 @@ describe("Help centre video guides", () => {
 
     expect(markup.match(/href="\/library"/g)?.length).toBeGreaterThan(1);
     expect(markup).toContain("Open Library");
-    expect(markup).not.toContain("Try a starter Round");
+    expect(markup).not.toContain('href="/create?start=blank"');
     expect(markup).not.toContain("Start a blank Round");
+  });
+
+  it.each(["roundExperiences", "audiencePulse", "roomChat"] as const)(
+    "hides advanced guidance when %s is disabled",
+    (feature) => {
+      fixtures.workspace.productFeatures[feature] = false;
+      const markup = renderToStaticMarkup(withEnglishLocale(<HelpPage />));
+      expect(markup).toContain("polling-pops-quick-start.mp4");
+      expect(markup).not.toContain("polling-pops-user-guide.mp4");
+    },
+  );
+
+  it("covers each feature with an illustrated searchable written guide", () => {
+    const markup = renderToStaticMarkup(withEnglishLocale(<HelpPage />));
+    expect(markup).toContain('id="feature-guides"');
+    expect(markup).toContain("Written feature guides");
+    expect(markup).toContain('type="search"');
+    expect(markup).toContain("currently written in English");
+    for (const id of [
+      "audience-pulse",
+      "room-chat",
+      "q-and-a",
+      "reports",
+      "groups",
+      "recovery-packs",
+      "privacy-and-deletion",
+    ])
+      expect(markup).toContain(`href="/help/${id}"`);
+    expect(markup).toContain('href="#video-guides"');
+    expect(markup).toContain("Not enabled here");
   });
 });

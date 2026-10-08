@@ -199,8 +199,8 @@ export const workspacePageEnglishMessages = {
   "pages.groups.workspaceGroups": "Workspace groups",
   "pages.groups.workspaceMember": "Workspace member",
   "pages.help.builder.description":
-    "Tour the workspace, Round Builder, Presentation Builder, previews, and delivery paths.",
-  "pages.help.builder.title": "Workspace and builder guide",
+    "Explore themes, confidence, linked rechecks, Presentations, Pulse, chat, reports, and practice.",
+  "pages.help.builder.title": "User guide: interact, recover, and follow up",
   "pages.help.builder.try": "Start a blank Round",
   "pages.help.card.classicDescription":
     "Open the dashboard, name a checkpoint set, and add the first question.",
@@ -215,6 +215,7 @@ export const workspacePageEnglishMessages = {
   "pages.help.card.hostTitle": "Host a Round",
   "pages.help.card.openDashboard": "Open Round dashboard",
   "pages.help.card.openGuide": "Open creation guide",
+  "pages.help.card.readGuide": "Read guide",
   "pages.help.card.recoveryDescription":
     "Interpret initial understanding, interventions, rechecks, and unresolved concepts.",
   "pages.help.card.recoveryTitle": "Read the Recovery Story",
@@ -225,16 +226,16 @@ export const workspacePageEnglishMessages = {
     "Polling Pops shows only guidance for capabilities that are enabled in this workspace.",
   "pages.help.guides.currentTitle": "Guidance for your current workspace",
   "pages.help.guides.description":
-    "Start with the one-minute tour, then go deeper into authoring and delivery.",
+    "Follow the quick start, then explore the full workflow. English narration, captions, and transcripts are included.",
   "pages.help.guides.title": "Watch, then try it yourself",
   "pages.help.hiddenVideos":
-    "The combined videos are hidden because they demonstrate capabilities that are not all enabled for this workspace. Your available workflow remains fully supported.",
+    "The full user-guide video is hidden because some demonstrated capabilities are not enabled for this workspace. Your available workflow remains fully supported.",
   "pages.help.openDashboard": "Open Round dashboard",
   "pages.help.openVideo": "Open the video file",
   "pages.help.quickStart.description":
     "Learn the shortest path from your workspace to a reviewed, published Round.",
   "pages.help.quickStart.title": "Quick start: create your first Round",
-  "pages.help.quickStart.try": "Try a starter Round",
+  "pages.help.quickStart.try": "Create your first Round",
   "pages.help.readTranscript": "Read transcript for {title}",
   "pages.help.support.administration": "Administration",
   "pages.help.support.description":

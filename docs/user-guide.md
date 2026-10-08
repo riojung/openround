@@ -6,6 +6,46 @@ do not need accounts.
 
 For a local first run, complete the [quick start](quick-start.md) first.
 
+For video guidance, open **Help** (`/help`). The quick start follows sign-in, authoring,
+preview, publishing, hosting, QR/link joining, answering, and results. The longer user guide
+covers themes, confidence, linked rechecks, Presentations, Audience Pulse, chat/Q&A,
+recovery evidence, and account-free practice. Both include conversational English neural
+narration, matching captions, transcripts, and clickable chapters. The figures and conversations
+are synthetic demonstrations, not customer or long-term learning evidence. Help shows only
+videos whose demonstrated capabilities are enabled; quick start does not require every advanced
+feature. The MP4s are also bundled under `/guides/polling-pops-quick-start.mp4` and
+`/guides/polling-pops-user-guide.mp4` for direct viewing.
+
+### Feature-specific written guidance in Help
+
+Open **Help → Written feature guides**, or `/help#feature-guides`. Each feature has an original
+Polling Pops illustrated cover and a shareable `/help/<guide>` page. Search the guide text or
+filter by topic. Each page includes prerequisites, numbered steps, a success check, safety/permission
+notes, troubleshooting, related guides, and an appropriate next action. Relevant pages also link
+to the exact chapter of an available video; chapter links load paused, never autoplay.
+
+Coverage includes:
+
+- **Getting started:** sign-in, your first Round, and troubleshooting.
+- **Create and organize:** response types, starters, confidence/concepts, linked rechecks,
+  experiences, preview/publication, Presentations, import/export, Library, question reuse,
+  Question Health, source authoring, and Recovery Packs.
+- **Host and participate:** host setup/QR, timing/scoring, guest participation/reconnect,
+  cohost/presenter/embed access, and accessibility.
+- **Audience interaction:** Pulse, moderated room chat, and Q&A.
+- **Recovery and evidence:** the Recovery Loop, reports, Decision replay, rehearsal,
+  standalone practice, and session follow-ups.
+- **Workspace and safety:** Groups, members/branding/billing, privacy/export/deletion, and
+  approved institution integrations.
+
+The written guides are currently in English and marked with their content language. Optional
+guides remain readable when a capability is disabled, but are labelled **Not enabled here** and
+do not offer a disabled-feature action. Creator actions are not offered to read-only members.
+This documentation does not enable beta, institution, provider, or paid capabilities.
+
+Guide content is maintained in `apps/web/lib/help-feature-guides.ts`; tests verify unique routes,
+required sections, search/filter behavior, feature/role-safe actions, and valid video chapter links.
+
 The default Community setup uses the classic Round workflow. The professional workspace and
 Presentation builder require operator-enabled beta flags and a workspace allowlist. Live
 Presentations, whole-room flex timing, Question Health, and decision replay have additional

@@ -1,6 +1,7 @@
 import type { WorkspacePageMessages } from "./index";
 
 const messages = {
+  "pages.help.card.readGuide": "가이드 읽기",
   "pages.activity.accuracyValue": "{value}% 정확도",
   "pages.activity.assignment": "{status} 할당",
   "pages.activity.emptyDescription": "새로운 전달, 증거, 그룹 일정 활동이 자동으로 나타납니다.",
@@ -198,7 +199,7 @@ const messages = {
   "pages.groups.workspaceMember": "워크스페이스 멤버",
   "pages.help.builder.description":
     "작업 공간, 라운드 빌더, 프리젠테이션 빌더, 미리 보기 및 배송 경로를 둘러보세요.",
-  "pages.help.builder.title": "작업공간 및 빌더 가이드",
+  "pages.help.builder.title": "사용자 가이드: 소통, 이해 회복, 후속 학습",
   "pages.help.builder.try": "빈 라운드 시작",
   "pages.help.card.classicDescription":
     "대시보드를 열고 체크포인트 세트 이름을 지정한 후 첫 번째 질문을 추가하세요.",
@@ -223,16 +224,16 @@ const messages = {
     "Polling Pops는 이 작업 영역에서 활성화된 기능에 대한 지침만 표시합니다.",
   "pages.help.guides.currentTitle": "현재 작업공간에 대한 지침",
   "pages.help.guides.description":
-    "1분 둘러보기로 시작한 다음 작성 및 전달에 대해 자세히 알아보세요.",
+    "빠른 시작을 따라 한 뒤 전체 흐름을 살펴보세요. 영어 음성, 자막, 대본이 제공됩니다.",
   "pages.help.guides.title": "시청한 후 직접 시도해 보세요.",
   "pages.help.hiddenVideos":
-    "결합된 비디오는 이 작업 영역에서 일부 활성화되지 않은 기능을 보여주기 때문에 숨겨집니다. 사용 가능한 워크플로는 계속 완벽하게 지원됩니다.",
+    "전체 사용자 가이드는 이 작업공간에서 일부 소개 기능이 비활성화되어 숨겨집니다. 사용 가능한 흐름은 계속 지원됩니다.",
   "pages.help.openDashboard": "라운드 대시보드 열기",
   "pages.help.openVideo": "비디오 파일 열기",
   "pages.help.quickStart.description":
     "작업공간에서 검토 및 게시된 라운드까지의 최단 경로를 알아보세요.",
   "pages.help.quickStart.title": "빠른 시작: 첫 번째 라운드 만들기",
-  "pages.help.quickStart.try": "스타터 라운드를 시도해 보세요",
+  "pages.help.quickStart.try": "첫 라운드 만들기",
   "pages.help.readTranscript": "{title}에 대한 기록 읽기",
   "pages.help.support.administration": "행정",
   "pages.help.support.description":

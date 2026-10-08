@@ -6,30 +6,15 @@ import { useWorkspace } from "../../components/workspace/workspace-provider";
 import { VideoGuide } from "../../components/workspace/video-guide";
 import guideStyles from "../../components/workspace/video-guide.module.css";
 import styles from "../../components/workspace/workspace-hub.module.css";
+import { helpVideoScripts } from "../../lib/help-video-scripts";
+import videoMetadata from "../../lib/help-video-metadata.json";
 import {
   professionalBuilderGuidesAvailable,
   professionalRoundBuilderAvailable,
 } from "../../lib/help-guide-availability";
 
-const quickStartTranscript = [
-  "Welcome to OpenRound. Your workspace keeps Rounds, Presentations, Sessions, Assignments, Results, Discover, and Groups together. Use Create whenever you are ready to begin.",
-  "For a new Round, choose a starter, bring a trusted source, import structured work, or start blank. Every route creates a reviewable draft. Nothing publishes automatically.",
-  "The Round Builder keeps the question map, direct-edit canvas, and inspector in view. Write the prompt and answers, mark the correct response, then use Diagnose to require confidence and tag the concepts you want to measure.",
-  "Use Recover to add a fresh recheck. OpenRound links the diagnostic and recheck so reports can show whether understanding improved after support. Resolve the readiness items and wait for Saved.",
-  "Preview the learner experience, publish the exact saved revision, then return to Library to host live or assign the Round for account-free practice. You are ready to try it.",
-] as const;
-
-const builderGuideTranscript = [
-  "OpenRound is organized around a professional workspace. Home summarizes active work. Library holds Rounds and Presentations. Sessions and Assignments track delivery, Results collects evidence, and Groups supports facilitator collaboration. Universal search and Create stay available from the header.",
-  "Creating a Round begins with one clear choice. Use a Recovery starter for speed, a trusted document for source-grounded proposals, a structural import for existing work, or a blank canvas for full control. Source and import results remain drafts until a person reviews them.",
-  "The Builder has three working areas. The map on the left shows order, type, readiness, and recovery relationships. The central canvas is where you edit the prompt and responses directly. The inspector on the right holds settings that should not compete with the content. Autosave, undo, preview, and publish remain in the command bar.",
-  "Build controls timing, points, and the explanation shown after reveal. Diagnose captures purpose, required or optional confidence, concept keys, and misconception feedback. Recover creates a fresh recheck and pairs it with the diagnostic question. The readiness panel links every blocker back to the field that needs attention.",
-  "Presentations have their own grounded starting methods. Bring a trusted PDF, Word document, PowerPoint deck, or pasted text; choose a facilitation starter; or begin with a blank Presentation. The conversion is structured and responsive rather than a promise of pixel-perfect slide reproduction.",
-  "Inside the Presentation Builder, content slides and interactive questions share one ordered map. Each content slide has exactly one title and up to seven text boxes, for eight text elements total. Use the move handle and corner resize handle for bounded placement, or enter percentages in the Layout inspector. Layout guides show the grid, safe margins, and alignment cues; nine-region shortcuts provide quick arrangements. Applying a layout resets text to its starter positions, and Undo restores the prior arrangement. The canvas, preview, facilitator, and participant views share the same slide rendering, with narrow screens reading top to bottom and left to right. Images keep their preset placement and reserve space clear of text. Unbounded design, rotation, shapes, and detailed font styling remain deferred. Question blocks reuse the same Build, Diagnose, and Recover model as a Round, and you can insert independent question copies from a published Round.",
-  "Preview moves through the authored sequence. Content slides communicate context but are never treated as evidence of learning. The facilitator controls when to advance and when to launch an interaction.",
-  "Interactive blocks switch to a participant-safe view. Learners see the prompt and choices, while answer keys, private notes, citations marked private, and facilitator metadata stay out of participant projections until the appropriate reveal phase.",
-  "After publishing, use Sessions to host live, Assignments for account-free Round practice, and Results to review response and Recovery Loop evidence. Groups lets facilitator teams curate and schedule together without forcing learners to become workspace members.",
-] as const;
+const quickStartTranscript = helpVideoScripts.quickStart.map((scene) => scene.narration);
+const builderGuideTranscript = helpVideoScripts.userGuide.map((scene) => scene.narration);
 
 export function HelpGuidance() {
   const { t } = useLocale();
@@ -40,7 +25,6 @@ export function HelpGuidance() {
   const assignmentsAvailable = productFeatures?.practiceAssignments === true;
   const createHref = roundBuilderAvailable ? "/create?start=starters" : "/dashboard";
   const libraryHref = workspaceAvailable ? "/library" : "/dashboard";
-  const resultsHref = workspaceAvailable ? "/results" : "/dashboard";
   const fallbackHref = canEdit ? createHref : libraryHref;
 
   return (
@@ -48,50 +32,56 @@ export function HelpGuidance() {
       <section
         aria-labelledby="video-guides-title"
         className={`${styles.section} ${guideStyles.section}`}
+        id="video-guides"
       >
         <div className={styles.sectionHeading}>
           <div>
             <h2 id="video-guides-title">
-              {showProfessionalVideos
+              {roundBuilderAvailable
                 ? t("pages.help.guides.title")
                 : t("pages.help.guides.currentTitle")}
             </h2>
             <p>
-              {showProfessionalVideos
+              {roundBuilderAvailable
                 ? t("pages.help.guides.description")
                 : t("pages.help.guides.currentDescription")}
             </p>
           </div>
         </div>
 
-        {showProfessionalVideos ? (
+        {roundBuilderAvailable ? (
           <>
-            <p className="muted">{t("pages.help.guides.brandNote")}</p>
             <div className={guideStyles.grid}>
               <VideoGuide
-                captionsSrc="/guides/openround-quick-start.vtt"
+                captionsSrc="/guides/polling-pops-quick-start.vtt"
+                chapters={videoMetadata.quickStart.chapters}
                 description={t("pages.help.quickStart.description")}
-                duration="1:05"
+                duration={videoMetadata.quickStart.duration}
                 id="quick-start"
-                posterSrc="/guides/openround-quick-start-poster.jpg"
+                posterSrc="/guides/polling-pops-quick-start-poster.jpg"
                 title={t("pages.help.quickStart.title")}
                 transcript={quickStartTranscript}
-                tryHref={canEdit ? "/create?start=starters" : "/library"}
-                tryLabel={canEdit ? t("pages.help.quickStart.try") : t("pages.common.openLibrary")}
-                videoSrc="/guides/openround-quick-start.mp4"
-              />
-              <VideoGuide
-                captionsSrc="/guides/openround-builder-guide.vtt"
-                description={t("pages.help.builder.description")}
-                duration="2:55"
-                id="round-builder-guide"
-                posterSrc="/guides/openround-builder-guide-poster.jpg"
-                title={t("pages.help.builder.title")}
-                transcript={builderGuideTranscript}
                 tryHref={canEdit ? "/create?start=blank" : "/library"}
-                tryLabel={canEdit ? t("pages.help.builder.try") : t("pages.common.openLibrary")}
-                videoSrc="/guides/openround-builder-guide.mp4"
+                tryLabel={canEdit ? t("pages.help.quickStart.try") : t("pages.common.openLibrary")}
+                videoSrc="/guides/polling-pops-quick-start.mp4"
               />
+              {showProfessionalVideos ? (
+                <VideoGuide
+                  captionsSrc="/guides/polling-pops-user-guide.vtt"
+                  chapters={videoMetadata.userGuide.chapters}
+                  description={t("pages.help.builder.description")}
+                  duration={videoMetadata.userGuide.duration}
+                  id="round-builder-guide"
+                  posterSrc="/guides/polling-pops-user-guide-poster.jpg"
+                  title={t("pages.help.builder.title")}
+                  transcript={builderGuideTranscript}
+                  tryHref={canEdit ? "/create?start=blank" : "/library"}
+                  tryLabel={canEdit ? t("pages.help.builder.try") : t("pages.common.openLibrary")}
+                  videoSrc="/guides/polling-pops-user-guide.mp4"
+                />
+              ) : (
+                <p className={styles.notice}>{t("pages.help.hiddenVideos")}</p>
+              )}
             </div>
           </>
         ) : (
@@ -118,7 +108,7 @@ export function HelpGuidance() {
       </section>
 
       <section className={styles.cardGrid}>
-        <Link className={styles.quickCard} href={createHref}>
+        <Link className={styles.quickCard} href="/help/first-round">
           <span className={styles.cardIcon}>01</span>
           <h3>{t("pages.help.card.createTitle")}</h3>
           <p>
@@ -126,14 +116,12 @@ export function HelpGuidance() {
               ? t("pages.help.card.createDescription")
               : t("pages.help.card.classicDescription")}
           </p>
-          <span className={styles.cardLink}>
-            {roundBuilderAvailable
-              ? t("pages.help.card.openGuide")
-              : t("pages.help.card.openDashboard")}{" "}
-            →
-          </span>
+          <span className={styles.cardLink}>{t("pages.help.card.openGuide")} →</span>
         </Link>
-        <Link className={styles.quickCard} href={libraryHref}>
+        <Link
+          className={styles.quickCard}
+          href={assignmentsAvailable ? "/help/practice" : "/help/hosting-and-qr"}
+        >
           <span className={styles.cardIcon} data-tone="coral">
             02
           </span>
@@ -147,22 +135,15 @@ export function HelpGuidance() {
               ? t("pages.help.card.hostAssignDescription")
               : t("pages.help.card.hostDescription")}
           </p>
-          <span className={styles.cardLink}>
-            {workspaceAvailable
-              ? t("pages.common.openLibrary")
-              : t("pages.assignments.chooseRound")}{" "}
-            →
-          </span>
+          <span className={styles.cardLink}>{t("pages.help.card.readGuide")} →</span>
         </Link>
-        <Link className={styles.quickCard} href={resultsHref}>
+        <Link className={styles.quickCard} href="/help/reports">
           <span className={styles.cardIcon} data-tone="violet">
             03
           </span>
           <h3>{t("pages.help.card.recoveryTitle")}</h3>
           <p>{t("pages.help.card.recoveryDescription")}</p>
-          <span className={styles.cardLink}>
-            {workspaceAvailable ? t("pages.common.viewResults") : t("pages.help.openDashboard")} →
-          </span>
+          <span className={styles.cardLink}>{t("pages.help.card.readGuide")} →</span>
         </Link>
       </section>
     </>
