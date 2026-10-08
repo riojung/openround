@@ -3,7 +3,7 @@
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-const repository = "riojung/openround";
+const repository = "riojung/pollingpops";
 const environmentName = "single-vm-staging";
 
 export function validateStagingEnvironment(value) {

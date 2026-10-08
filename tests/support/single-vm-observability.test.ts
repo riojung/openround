@@ -103,7 +103,7 @@ describe("single-VM observability deployment", () => {
     expect(openRoundScrape.static_configs[0].targets).toEqual(["server:4000"]);
     expect(openRoundScrape.authorization).toEqual({
       type: "Bearer",
-      credentials_file: "/run/openround/metrics-token",
+      credentials_file: "/run/pollingpops/metrics-token",
     });
     expect(openRoundScrape.static_configs[0].labels.deployment).toBe("__OPENROUND_DEPLOYMENT__");
 
@@ -123,9 +123,9 @@ describe("single-VM observability deployment", () => {
     );
     expect(receiverFiles).toEqual(
       new Map([
-        ["paging", "/run/openround/paging-url"],
-        ["warnings", "/run/openround/warning-url"],
-        ["tickets", "/run/openround/ticket-url"],
+        ["paging", "/run/pollingpops/paging-url"],
+        ["warnings", "/run/pollingpops/warning-url"],
+        ["tickets", "/run/pollingpops/ticket-url"],
       ]),
     );
   });

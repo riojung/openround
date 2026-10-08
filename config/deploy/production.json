@@ -2,17 +2,17 @@
   "schemaVersion": 1,
   "environment": "production",
   "deploymentMode": "single-vm",
-  "publicWebUrl": "https://app.openround.example",
-  "publicApiUrl": "https://app.openround.example",
-  "publicMediaUrl": "https://media.openround.example",
+  "publicWebUrl": "https://app.pollingpops.example",
+  "publicApiUrl": "https://app.pollingpops.example",
+  "publicMediaUrl": "https://media.pollingpops.example",
   "imageRepository": "ghcr.io/riojung/openround/openround",
   "imagePlatform": "linux/amd64",
   "billingMode": "stripe",
   "singleVm": {
-    "host": "production-vm.openround.example",
+    "host": "production-vm.pollingpops.example",
     "port": 22,
     "user": "openround",
-    "deployPath": "/opt/openround/production",
+    "deployPath": "/opt/pollingpops/production",
     "composeFiles": ["compose.single-vm.yaml", "compose.single-vm.observability.yaml"],
     "deploymentFiles": [
       "infra/single-vm/Caddyfile",
@@ -33,6 +33,6 @@
   "requireSigning": true,
   "requireReadinessGate": true,
   "readinessTarget": "single-vm-beta",
-  "cosignIdentityRegexp": "^https://github\\.com/riojung/openround/\\.github/workflows/release\\.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$",
+  "cosignIdentityRegexp": "^https://github\\.com/riojung/(pollingpops|openround)/\\.github/workflows/release\\.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$",
   "cosignOidcIssuer": "https://token.actions.githubusercontent.com"
 }

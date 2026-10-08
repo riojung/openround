@@ -18,7 +18,7 @@ scrape_configs:
     metrics_path: /metrics
     authorization:
       type: Bearer
-      credentials_file: /run/openround/metrics-token
+      credentials_file: /run/pollingpops/metrics-token
     static_configs:
       - targets: ["server:4000"]
         labels:

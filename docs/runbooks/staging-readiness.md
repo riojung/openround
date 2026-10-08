@@ -273,7 +273,7 @@ and confirm the effective switches through `/v1/workspaces` before dispatching r
 Dispatch the first run with no soak:
 
 ```bash
-gh api --method POST repos/riojung/openround/dispatches --input - <<'JSON'
+gh api --method POST repos/riojung/pollingpops/dispatches --input - <<'JSON'
 {
   "event_type": "staging-readiness",
   "client_payload": {

@@ -16,7 +16,7 @@ interface DashboardPanel {
 async function dashboardPanels() {
   const dashboard = JSON.parse(
     await readFile(
-      join(repositoryRoot, "infra/observability/grafana/dashboards/openround-overview.json"),
+      join(repositoryRoot, "infra/observability/grafana/dashboards/pollingpops-overview.json"),
       "utf8",
     ),
   ) as { panels: DashboardPanel[] };

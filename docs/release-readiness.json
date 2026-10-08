@@ -11,13 +11,13 @@
       "status": "complete",
       "criterion": "Main passes checks, PostgreSQL isolation, browser coverage, dependency review, secret scanning, SBOM generation, and CodeQL.",
       "evidence": [
-        "https://github.com/riojung/openround/actions/runs/36173766173",
-        "https://github.com/riojung/openround/actions/runs/36173765973",
-        "https://github.com/riojung/openround/actions/runs/36172849143",
-        "https://github.com/riojung/openround/actions/runs/36073326995",
-        "https://github.com/riojung/openround/actions/runs/36073327061",
-        "https://github.com/riojung/openround/actions/runs/36052921874",
-        "https://github.com/riojung/openround/actions/runs/35868559946"
+        "https://github.com/riojung/pollingpops/actions/runs/36173766173",
+        "https://github.com/riojung/pollingpops/actions/runs/36173765973",
+        "https://github.com/riojung/pollingpops/actions/runs/36172849143",
+        "https://github.com/riojung/pollingpops/actions/runs/36073326995",
+        "https://github.com/riojung/pollingpops/actions/runs/36073327061",
+        "https://github.com/riojung/pollingpops/actions/runs/36052921874",
+        "https://github.com/riojung/pollingpops/actions/runs/35868559946"
       ]
     },
     {
@@ -28,8 +28,8 @@
       "status": "complete",
       "criterion": "The containerized production profile passes media, observability, multi-writer, backup/restore, restart, and 100-client correctness checks.",
       "evidence": [
-        "https://github.com/riojung/openround/actions/runs/36173765942",
-        "https://github.com/riojung/openround/actions/runs/36073327273"
+        "https://github.com/riojung/pollingpops/actions/runs/36173765942",
+        "https://github.com/riojung/pollingpops/actions/runs/36073327273"
       ]
     },
     {
@@ -119,7 +119,7 @@
       "requiredFor": ["single-vm-beta-preflight", "single-vm-beta", "single-vm-ga"],
       "status": "pending",
       "criterion": "Main requires passing CI and security checks, review, conversation resolution, and blocks force pushes and deletion.",
-      "evidence": ["https://github.com/riojung/openround/rules/23705684"],
+      "evidence": ["https://github.com/riojung/pollingpops/rules/23705684"],
       "nextAction": "Add a second human reviewer, activate the prepared ruleset, pass a normally reviewed canary PR without bypass, and record the ruleset insight."
     },
     {

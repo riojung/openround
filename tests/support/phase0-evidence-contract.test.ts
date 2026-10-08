@@ -49,21 +49,21 @@ describe("Phase 0 evidence contract", () => {
     expect(sourceCi).toMatchObject({ status: "complete" });
     expect(sourceCi?.evidence).toEqual(
       expect.arrayContaining([
-        "https://github.com/riojung/openround/actions/runs/36173766173",
-        "https://github.com/riojung/openround/actions/runs/36173765973",
-        "https://github.com/riojung/openround/actions/runs/36172849143",
+        "https://github.com/riojung/pollingpops/actions/runs/36173766173",
+        "https://github.com/riojung/pollingpops/actions/runs/36173765973",
+        "https://github.com/riojung/pollingpops/actions/runs/36172849143",
       ]),
     );
     expect(
       sourceCi?.evidence.every((url) =>
-        /^https:\/\/github\.com\/riojung\/openround\/actions\/runs\/\d+$/.test(url),
+        /^https:\/\/github\.com\/riojung\/pollingpops\/actions\/runs\/\d+$/.test(url),
       ),
     ).toBe(true);
 
     const localProductionSmoke = gates.get("local-production-smoke");
     expect(localProductionSmoke).toMatchObject({ status: "complete" });
     expect(localProductionSmoke?.evidence).toContain(
-      "https://github.com/riojung/openround/actions/runs/36173765942",
+      "https://github.com/riojung/pollingpops/actions/runs/36173765942",
     );
     expect(ledger.gates.filter(({ status: gateStatus }) => gateStatus === "complete")).toHaveLength(
       2,

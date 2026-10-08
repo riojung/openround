@@ -29,6 +29,9 @@ import {
   assertProductionReleaseRevision,
   assertRemoteRollbackSource,
   assertRemoteTargetNotActive,
+  fetchAcceptedGithubRelease,
+  fetchPublishedReleaseAsset,
+  fetchPublishedReleaseTagObject,
   main as deployMain,
   resolveReviewedDeploymentInputHashes,
   runtimeEnvironmentSha256,
@@ -167,7 +170,7 @@ function singleVmConfig(environment: "staging" | "production" = "staging") {
       host: target.sshHost,
       port: 22,
       user: "openround",
-      deployPath: production ? "/opt/openround/production" : "/opt/openround/staging",
+      deployPath: production ? "/opt/pollingpops/production" : "/opt/pollingpops/staging",
       composeFiles: ["compose.single-vm.yaml", "compose.single-vm.observability.yaml"],
       deploymentFiles: [
         "infra/single-vm/Caddyfile",
@@ -203,7 +206,7 @@ function singleVmRuntimeEnvironment(environment: "staging" | "production" = "sta
     `OPENROUND_DEPLOYMENT_ENVIRONMENT=${environment}`,
     `OPENROUND_APP_DOMAIN=${target.appHost}`,
     `OPENROUND_MEDIA_DOMAIN=${target.mediaHost}`,
-    "OPENROUND_ACME_EMAIL=ops@openround.example",
+    "OPENROUND_ACME_EMAIL=ops@pollingpops.example",
     "OPENROUND_SERVER_INGRESS_SUBNET=172.30.255.0/29",
     "OPENROUND_CADDY_PROXY_IP=172.30.255.2",
     "POSTGRES_OWNER_PASSWORD=owner-secret",
@@ -330,8 +333,8 @@ function releaseBindingFixture() {
     buildId,
     githubRelease: {
       id: 123_456_789,
-      apiUrl: "https://api.github.com/repos/riojung/openround/releases/123456789",
-      htmlUrl: "https://github.com/riojung/openround/releases/tag/v0.9.0",
+      apiUrl: "https://api.github.com/repos/riojung/pollingpops/releases/123456789",
+      htmlUrl: "https://github.com/riojung/pollingpops/releases/tag/v0.9.0",
       targetCommitish: buildId,
       draft: true,
       createdAt: "2026-09-26T12:00:00Z",
@@ -345,8 +348,8 @@ function releaseBindingFixture() {
         name,
         size: 100 + index,
         digest: name === `openround-${tag}-manifest.json` ? manifestDigest : serverDigest,
-        apiUrl: `https://api.github.com/repos/riojung/openround/releases/assets/${id}`,
-        downloadUrl: `https://github.com/riojung/openround/releases/download/${tag}/${name}`,
+        apiUrl: `https://api.github.com/repos/riojung/pollingpops/releases/assets/${id}`,
+        downloadUrl: `https://github.com/riojung/pollingpops/releases/download/${tag}/${name}`,
       };
     }),
   };
@@ -525,6 +528,7 @@ async function withSignedReleaseAcceptance<T>(
   options: {
     changeOtherGate?: boolean;
     extraChangedPath?: boolean;
+    legacyRepository?: boolean;
     manifestDigestOverride?: string;
     publishAcceptance?: boolean;
     releasePublished?: boolean;
@@ -549,6 +553,7 @@ async function withSignedReleaseAcceptance<T>(
   const artifactsRoot = join(repositoryRoot, "artifacts");
   await mkdir(artifactsRoot, { recursive: true });
   const root = await mkdtemp(join(artifactsRoot, "signed release acceptance "));
+  const releaseRepository = options.legacyRepository ? "riojung/openround" : "riojung/pollingpops";
   try {
     await run("git", ["init", "--quiet"], { cwd: root, capture: true });
     await run("git", ["config", "user.name", "Polling Pops Test"], { cwd: root, capture: true });
@@ -672,7 +677,7 @@ async function withSignedReleaseAcceptance<T>(
             headBranch: "main",
             status: "completed",
             conclusion: "success",
-            url: `https://github.com/riojung/openround/actions/runs/${1_000 + index}`,
+            url: `https://github.com/${releaseRepository}/actions/runs/${1_000 + index}`,
             commit: candidateBuildId,
             startedAt: "2026-09-26T10:00:00Z",
             completedAt: "2026-09-26T11:00:00Z",
@@ -714,8 +719,8 @@ async function withSignedReleaseAcceptance<T>(
         name,
         size: content.length,
         digest,
-        apiUrl: `https://api.github.com/repos/riojung/openround/releases/assets/${id}`,
-        downloadUrl: `https://github.com/riojung/openround/releases/download/v0.9.0/${name}`,
+        apiUrl: `https://api.github.com/repos/${releaseRepository}/releases/assets/${id}`,
+        downloadUrl: `https://github.com/${releaseRepository}/releases/download/v0.9.0/${name}`,
       };
     });
     const checksumAsset = releaseAssets.find(({ name }) => name === "SHA256SUMS")!;
@@ -725,7 +730,7 @@ async function withSignedReleaseAcceptance<T>(
     signedRelease.evidence = [
       checksumAsset.downloadUrl,
       checksumAsset.digest,
-      "https://github.com/riojung/openround/actions/runs/999",
+      `https://github.com/${releaseRepository}/actions/runs/999`,
     ];
     delete signedRelease.nextAction;
     Object.assign(signedRelease, {
@@ -754,8 +759,8 @@ async function withSignedReleaseAcceptance<T>(
         buildId: candidateBuildId,
         githubRelease: {
           id: releaseId,
-          apiUrl: `https://api.github.com/repos/riojung/openround/releases/${releaseId}`,
-          htmlUrl: "https://github.com/riojung/openround/releases/tag/untagged-draft-fixture",
+          apiUrl: `https://api.github.com/repos/${releaseRepository}/releases/${releaseId}`,
+          htmlUrl: `https://github.com/${releaseRepository}/releases/tag/untagged-draft-fixture`,
           targetCommitish: candidateBuildId,
           draft: true,
           createdAt: releaseCreatedAt,
@@ -819,10 +824,10 @@ async function withSignedReleaseAcceptance<T>(
         if (requestedReleaseId !== releaseId) throw new Error("unexpected release lookup ID");
         return {
           id: releaseId,
-          url: `https://api.github.com/repos/riojung/openround/releases/${releaseId}`,
+          url: `https://api.github.com/repos/riojung/pollingpops/releases/${releaseId}`,
           html_url: options.releasePublished
-            ? "https://github.com/riojung/openround/releases/tag/v0.9.0"
-            : "https://github.com/riojung/openround/releases/tag/untagged-draft-fixture",
+            ? "https://github.com/riojung/pollingpops/releases/tag/v0.9.0"
+            : "https://github.com/riojung/pollingpops/releases/tag/untagged-draft-fixture",
           tag_name: "v0.9.0",
           target_commitish: candidateBuildId,
           name: "Polling Pops v0.9.0",
@@ -836,8 +841,11 @@ async function withSignedReleaseAcceptance<T>(
             name: asset.name,
             size: asset.size,
             digest: asset.digest,
-            url: asset.apiUrl,
-            browser_download_url: asset.downloadUrl,
+            url: asset.apiUrl.replace("riojung/openround", "riojung/pollingpops"),
+            browser_download_url: asset.downloadUrl.replace(
+              "riojung/openround",
+              "riojung/pollingpops",
+            ),
             state: "uploaded",
           })),
         };
@@ -941,13 +949,85 @@ describe("operations environment contract", () => {
         tag: "v0.9.0",
         buildId: fixture.buildId,
         certificateIdentity:
-          "https://github.com/riojung/openround/.github/workflows/release.yml@refs/tags/v0.9.0",
+          "https://github.com/riojung/pollingpops/.github/workflows/release.yml@refs/tags/v0.9.0",
         imageDigests: {
           server: fixture.manifest.images.server.digest,
           web: fixture.manifest.images.web.digest,
         },
       });
     });
+  });
+
+  it("retains the original certificate identity for an accepted legacy release after the repository rename", async () => {
+    await withSignedReleaseAcceptance({ legacyRepository: true }, async (fixture) => {
+      const acceptance = await assertProductionReleaseRevision({
+        operationsRevision: fixture.operationsRevision,
+        manifest: fixture.manifest,
+        manifestPath: fixture.manifestPath,
+        root: fixture.root,
+        trustedRemoteUrls: fixture.trustedRemoteUrls,
+        tagObjectLookup: fixture.tagObjectLookup,
+        releaseLookup: fixture.releaseLookup,
+        releaseAssetLookup: fixture.releaseAssetLookup,
+      });
+      expect(acceptance.certificateIdentity).toBe(
+        "https://github.com/riojung/openround/.github/workflows/release.yml@refs/tags/v0.9.0",
+      );
+      expect(acceptance.githubRelease.apiUrl).toBe(
+        `https://api.github.com/repos/riojung/openround/releases/${fixture.releaseId}`,
+      );
+    });
+  });
+
+  it("looks up release objects and metadata assets through the canonical repository API", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (_url, options) =>
+        new Headers(options?.headers).get("Accept") === "application/octet-stream"
+          ? new Response("release asset", { status: 200 })
+          : new Response("{}", { status: 200 }),
+      );
+    await fetchPublishedReleaseTagObject("b".repeat(40));
+    await fetchAcceptedGithubRelease(123);
+    await fetchPublishedReleaseAsset({ id: 456, name: "SHA256SUMS" });
+    expect(fetchSpy.mock.calls.map(([url]) => url)).toEqual([
+      `https://api.github.com/repos/riojung/pollingpops/git/tags/${"b".repeat(40)}`,
+      "https://api.github.com/repos/riojung/pollingpops/releases/123",
+      "https://api.github.com/repos/riojung/pollingpops/releases/assets/456",
+    ]);
+    for (const [, options] of fetchSpy.mock.calls.slice(0, 2)) {
+      expect(options?.redirect).toBe("error");
+    }
+  });
+
+  it("uses new installation folders while retaining exact canonical and legacy workflow identities", async () => {
+    for (const environment of ["staging", "production"] as const) {
+      const config = JSON.parse(
+        await readFile(join(repositoryRoot, `config/deploy/${environment}.json`), "utf8"),
+      );
+      expect(config.singleVm.deployPath).toBe(`/opt/pollingpops/${environment}`);
+      expect(config.imageRepository).toBe("ghcr.io/riojung/openround/openround");
+      expect(config.singleVm.projectName).toBe(`openround-${environment}`);
+      expect(config.singleVm.user).toBe("openround");
+      const identity = new RegExp(config.cosignIdentityRegexp);
+      const workflow = environment === "production" ? "release.yml" : "staging-images.yml";
+      const reference = environment === "production" ? "refs/tags/v0.9.0" : "refs/heads/main";
+      for (const repository of ["riojung/pollingpops", "riojung/openround"]) {
+        expect(
+          identity.test(
+            `https://github.com/${repository}/.github/workflows/${workflow}@${reference}`,
+          ),
+        ).toBe(true);
+      }
+      for (const invalid of [
+        `https://github.com/attacker/pollingpops/.github/workflows/${workflow}@${reference}`,
+        `https://github.com/riojung/pollingpops-copy/.github/workflows/${workflow}@${reference}`,
+        `https://github.com/riojung/openround/.github/workflows/unreviewed.yml@${reference}`,
+        `https://github.com/riojung/pollingpops/.github/workflows/${workflow}@refs/heads/feature`,
+      ]) {
+        expect(identity.test(invalid)).toBe(false);
+      }
+    }
   });
 
   it("permits clean-host redeployment after the unchanged accepted release is published", async () => {
@@ -1114,7 +1194,7 @@ describe("operations environment contract", () => {
 
   it("verifies production images against the exact accepted release-tag identity", async () => {
     const certificateIdentity =
-      "https://github.com/riojung/openround/.github/workflows/release.yml@refs/tags/v0.9.0";
+      "https://github.com/riojung/pollingpops/.github/workflows/release.yml@refs/tags/v0.9.0";
     const output = await captureStdout(() =>
       verifySignatures(productionConfig(), buildManifest("production"), true, certificateIdentity),
     );
@@ -1432,7 +1512,7 @@ describe("deployment configuration and manifest validation", () => {
     expect(assertConfiguredHostedTarget(configured)).toBe(configured);
 
     for (const [field, value] of [
-      ["publicWebUrl", "https://staging.openround.example"],
+      ["publicWebUrl", "https://staging.pollingpops.example"],
       ["publicWebUrl", "https://127.0.0.1"],
       ["publicWebUrl", "https://[::ffff:127.0.0.1]"],
       ["publicWebUrl", "https://192.0.2.10"],
@@ -2732,7 +2812,7 @@ describe("operations CLI dry runs", () => {
       productBuildMain([
         "staging",
         "--api-url",
-        "https://staging.openround.example",
+        "https://staging.pollingpops.example",
         "--registry",
         "ghcr.io/riojung/openround/openround",
         "--push",
@@ -2793,7 +2873,7 @@ describe("operations CLI dry runs", () => {
       productBuildMain([
         "staging",
         "--api-url",
-        "https://staging.openround.example",
+        "https://staging.pollingpops.example",
         "--registry",
         "ghcr.io/riojung/openround/openround",
         "--push",
@@ -2857,7 +2937,7 @@ describe("operations CLI dry runs", () => {
     expect(output.lastIndexOf("cosign verify")).toBeLessThan(output.indexOf("ssh -T"));
     expect(output).toContain("StrictHostKeyChecking=yes");
     expect(output).toContain(`openround@${stagingTarget.sshHost}`);
-    expect(output).toContain("/opt/openround/staging");
+    expect(output).toContain("/opt/pollingpops/staging");
     expect(output).toContain("openround-staging");
     expect(output).not.toContain("owner-secret");
     expect(output).not.toContain("app-secret");

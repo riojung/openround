@@ -907,7 +907,7 @@
   ],
   "refresh": "10s",
   "schemaVersion": 41,
-  "tags": ["openround", "provisioned"],
+  "tags": ["pollingpops", "provisioned"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},

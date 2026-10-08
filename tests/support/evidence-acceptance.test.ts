@@ -84,7 +84,7 @@ describe("release evidence acceptance", () => {
 
   it("accepts stable HTTPS and checksum references", () => {
     expect(
-      assertStableEvidenceReference("https://github.com/riojung/openround/actions/runs/123"),
+      assertStableEvidenceReference("https://github.com/riojung/pollingpops/actions/runs/123"),
     ).toContain("github.com");
     expect(assertStableEvidenceReference(`sha256:${"a".repeat(64)}`)).toHaveLength(71);
   });
@@ -93,7 +93,7 @@ describe("release evidence acceptance", () => {
     for (const reference of [
       "pending",
       "http://evidence.openround.dev/run",
-      "https://staging.openround.example/run",
+      "https://staging.pollingpops.example/run",
       "https://localhost/run",
       "https://10.0.0.2/run",
       "https://172.20.0.2/run",

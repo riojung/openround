@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   requiredReleaseAssetNames,
+  resolveReleaseCertificateIdentity,
   validateAcceptedGithubRelease,
   validateDraftGithubRelease,
   validatePublishedGithubRelease,
@@ -21,7 +22,7 @@ function digest(content: string) {
   return `sha256:${createHash("sha256").update(content).digest("hex")}`;
 }
 
-function fixture() {
+function fixture(repository = "riojung/pollingpops") {
   const nonChecksumAssets = requiredReleaseAssetNames(tag).filter((name) => name !== "SHA256SUMS");
   const digests = new Map(nonChecksumAssets.map((name) => [name, digest(`content:${name}\n`)]));
   const checksums = `${nonChecksumAssets
@@ -38,8 +39,8 @@ function fixture() {
           ? Buffer.byteLength(checksums)
           : Buffer.byteLength(`content:${name}\n`),
       digest: allDigests.get(name)!,
-      apiUrl: `https://api.github.com/repos/riojung/openround/releases/assets/${id}`,
-      downloadUrl: `https://github.com/riojung/openround/releases/download/${tag}/${name}`,
+      apiUrl: `https://api.github.com/repos/${repository}/releases/assets/${id}`,
+      downloadUrl: `https://github.com/${repository}/releases/download/${tag}/${name}`,
     };
   });
   const binding = {
@@ -49,8 +50,8 @@ function fixture() {
     buildId,
     githubRelease: {
       id: 123_456,
-      apiUrl: "https://api.github.com/repos/riojung/openround/releases/123456",
-      htmlUrl: "https://github.com/riojung/openround/releases/tag/untagged-draft-fixture",
+      apiUrl: `https://api.github.com/repos/${repository}/releases/123456`,
+      htmlUrl: `https://github.com/${repository}/releases/tag/untagged-draft-fixture`,
       targetCommitish: buildId,
       draft: true,
       createdAt: "2026-09-26T12:00:00Z",
@@ -94,7 +95,7 @@ function fixture() {
     headBranch: "main",
     status: "completed",
     conclusion: "success",
-    url: `https://github.com/riojung/openround/actions/runs/${runId}`,
+    url: `https://github.com/${repository}/actions/runs/${runId}`,
     commit: buildId,
     startedAt: "2026-09-26T10:00:00Z",
     completedAt: "2026-09-26T11:00:00Z",
@@ -137,6 +138,91 @@ describe("signed release acceptance binding", () => {
     );
   });
 
+  it("verifies an unchanged legacy binding against renamed GitHub metadata and its original signer", () => {
+    const { binding, checksums, preflight, release } = fixture("riojung/openround");
+    const originalBinding = JSON.stringify(binding);
+    const renamedRelease = structuredClone(release);
+    renamedRelease.url = renamedRelease.url.replace("riojung/openround", "riojung/pollingpops");
+    renamedRelease.html_url = renamedRelease.html_url.replace(
+      "riojung/openround",
+      "riojung/pollingpops",
+    );
+    for (const asset of renamedRelease.assets) {
+      asset.url = asset.url.replace("riojung/openround", "riojung/pollingpops");
+      asset.browser_download_url = asset.browser_download_url.replace(
+        "riojung/openround",
+        "riojung/pollingpops",
+      );
+    }
+
+    expect(validateReleaseBinding(binding)).toBe(binding);
+    expect(validateReleaseChecksums(checksums, binding).size).toBe(12);
+    expect(validateReleasePreflightEvidence(preflight, binding, evidenceCandidateBuildId)).toBe(
+      preflight,
+    );
+    expect(validateDraftGithubRelease(renamedRelease, binding)).toBe(renamedRelease);
+    const published = {
+      ...renamedRelease,
+      html_url: `https://github.com/riojung/pollingpops/releases/tag/${tag}`,
+      draft: false,
+      published_at: "2026-09-26T15:00:00Z",
+    };
+    expect(validatePublishedGithubRelease(published, binding, "2026-09-26T14:00:00Z")).toBe(
+      published,
+    );
+    expect(resolveReleaseCertificateIdentity(binding)).toBe(
+      `https://github.com/riojung/openround/.github/workflows/release.yml@refs/tags/${tag}`,
+    );
+    expect(resolveReleaseCertificateIdentity(fixture().binding)).toBe(
+      `https://github.com/riojung/pollingpops/.github/workflows/release.yml@refs/tags/${tag}`,
+    );
+    expect(JSON.stringify(binding)).toBe(originalBinding);
+  });
+
+  it("rejects repository substitutions, mixed bound identities, and altered legacy resource paths", () => {
+    for (const repository of [
+      "attacker/openround",
+      "attacker/pollingpops",
+      "riojung/openround-copy",
+      "riojung/pollingpops-copy",
+    ]) {
+      const { binding } = fixture(repository);
+      expect(() => validateReleaseBinding(binding)).toThrow(/trusted GitHub URL/);
+      expect(() => resolveReleaseCertificateIdentity(binding)).toThrow(/trusted GitHub URL/);
+    }
+    const { binding, release, preflight } = fixture("riojung/openround");
+    const mixed = structuredClone(binding);
+    mixed.assets[0].apiUrl = mixed.assets[0].apiUrl.replace(
+      "riojung/openround",
+      "riojung/pollingpops",
+    );
+    expect(() => validateReleaseBinding(mixed)).toThrow(/trusted GitHub URL/);
+    expect(() =>
+      validateReleaseBinding({
+        ...binding,
+        githubRelease: {
+          ...binding.githubRelease,
+          htmlUrl: "https://github.com/riojung/openround/releases/attacker/path",
+        },
+      }),
+    ).toThrow(/trusted GitHub release/);
+    for (const suffix of ["?redirect=attacker", "/extra", "#fragment"]) {
+      expect(() =>
+        validateDraftGithubRelease({ ...release, url: `${release.url}${suffix}` }, binding),
+      ).toThrow();
+    }
+    const unrelated = structuredClone(release);
+    unrelated.assets[0].url = unrelated.assets[0].url.replace("riojung", "attacker");
+    expect(() => validateDraftGithubRelease(unrelated, binding)).toThrow(/does not match/);
+    preflight.candidateWorkflows.ci.url = preflight.candidateWorkflows.ci.url.replace(
+      "riojung/openround",
+      "riojung/pollingpops",
+    );
+    expect(() =>
+      validateReleasePreflightEvidence(preflight, binding, evidenceCandidateBuildId),
+    ).toThrow(/trusted workflow run/);
+  });
+
   it("continues to verify historical OpenRound release names after the rebrand", () => {
     const { binding, release } = fixture();
     const historical = { ...release, name: `OpenRound ${binding.tag}` };
@@ -154,7 +240,7 @@ describe("signed release acceptance binding", () => {
 
     const published = {
       ...release,
-      html_url: "https://github.com/riojung/openround/releases/tag/v0.9.0",
+      html_url: "https://github.com/riojung/pollingpops/releases/tag/v0.9.0",
       draft: false,
       published_at: "2026-09-26T15:00:00Z",
     };
@@ -174,7 +260,7 @@ describe("signed release acceptance binding", () => {
 
     const published = {
       ...release,
-      html_url: "https://github.com/riojung/openround/releases/tag/v0.9.0",
+      html_url: "https://github.com/riojung/pollingpops/releases/tag/v0.9.0",
       draft: false,
       published_at: "2026-09-26T15:00:00Z",
     };
@@ -197,7 +283,7 @@ describe("signed release acceptance binding", () => {
   it("accepts only a trusted temporary asset URL while the release is a draft", () => {
     const { binding, release } = fixture();
     const draft = structuredClone(release);
-    draft.assets[0].browser_download_url = `https://github.com/riojung/openround/releases/download/untagged-draft-fixture/${draft.assets[0].name}`;
+    draft.assets[0].browser_download_url = `https://github.com/riojung/pollingpops/releases/download/untagged-draft-fixture/${draft.assets[0].name}`;
     expect(validateDraftGithubRelease(draft, binding)).toBe(draft);
 
     draft.assets[0].browser_download_url = `https://attacker.example/riojung/openround/releases/download/untagged-draft-fixture/${draft.assets[0].name}`;

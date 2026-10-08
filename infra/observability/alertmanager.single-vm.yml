@@ -23,15 +23,15 @@ route:
 receivers:
   - name: paging
     webhook_configs:
-      - url_file: /run/openround/paging-url
+      - url_file: /run/pollingpops/paging-url
         send_resolved: true
   - name: warnings
     webhook_configs:
-      - url_file: /run/openround/warning-url
+      - url_file: /run/pollingpops/warning-url
         send_resolved: true
   - name: tickets
     webhook_configs:
-      - url_file: /run/openround/ticket-url
+      - url_file: /run/pollingpops/ticket-url
         send_resolved: true
 
 inhibit_rules:

@@ -45,7 +45,7 @@ describe("single-VM security boundaries", () => {
 
   it("reconciles the MinIO application policy on every initialization", () => {
     expect(compose).toContain(
-      "mc admin policy create local openround-media /tmp/openround-media-policy.json",
+      "mc admin policy create local openround-media /tmp/pollingpops-media-policy.json",
     );
     expect(compose).not.toContain("mc admin policy info local openround-media");
   });

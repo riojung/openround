@@ -36,6 +36,7 @@ import {
   validateRollbackConfirmation,
 } from "./lib.mjs";
 import {
+  resolveReleaseCertificateIdentity,
   validateAcceptedGithubRelease,
   validatePublishedGithubRelease,
   validateReleaseChecksums,
@@ -59,17 +60,15 @@ const READINESS_GATE_INPUT_FILES = Object.freeze([
   "docs/release-readiness.json",
 ]);
 const TRUSTED_PRODUCTION_RELEASE_REMOTE_URLS = Object.freeze([
-  "https://github.com/riojung/openround.git",
-  "git@github.com:riojung/openround.git",
-  "ssh://git@github.com/riojung/openround.git",
+  "https://github.com/riojung/pollingpops.git",
+  "git@github.com:riojung/pollingpops.git",
+  "ssh://git@github.com/riojung/pollingpops.git",
 ]);
-const TRUSTED_PRODUCTION_RELEASE_WORKFLOW_IDENTITY_PREFIX =
-  "https://github.com/riojung/openround/.github/workflows/release.yml@refs/tags/";
 const TRUSTED_PRODUCTION_RELEASE_TAG_API =
-  "https://api.github.com/repos/riojung/openround/git/tags/";
-const TRUSTED_PRODUCTION_RELEASE_API = "https://api.github.com/repos/riojung/openround/releases/";
+  "https://api.github.com/repos/riojung/pollingpops/git/tags/";
+const TRUSTED_PRODUCTION_RELEASE_API = "https://api.github.com/repos/riojung/pollingpops/releases/";
 const TRUSTED_PRODUCTION_RELEASE_ASSET_API =
-  "https://api.github.com/repos/riojung/openround/releases/assets/";
+  "https://api.github.com/repos/riojung/pollingpops/releases/assets/";
 const MAX_RELEASE_METADATA_ASSET_BYTES = 1024 * 1024;
 const MAX_PRIOR_DEPLOYMENT_RECEIPT_BYTES = 64 * 1024;
 const SHA256_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -738,7 +737,7 @@ export async function assertProductionReleaseRevision({
     ...binding,
     acceptedAt,
     releaseState: acceptedRelease.draft === true ? "draft" : "published",
-    certificateIdentity: `${TRUSTED_PRODUCTION_RELEASE_WORKFLOW_IDENTITY_PREFIX}${binding.tag}`,
+    certificateIdentity: resolveReleaseCertificateIdentity(binding),
   };
 }
 

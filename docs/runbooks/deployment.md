@@ -6,6 +6,10 @@ monitoring route, or provider account has been provisioned.
 
 ## Supported topology
 
+The canonical repository and new checkout/deployment directory names use `pollingpops`.
+Existing image/data namespaces and provisioned roots are not migrated automatically. Follow the
+[repository rename guide](repository-rename.md) before operating an existing hosted environment.
+
 | Environment   | Single-host implementation                                     | Image policy                                 |
 | ------------- | -------------------------------------------------------------- | -------------------------------------------- |
 | `development` | Local `compose.yaml` and optional overlays                     | Locally built images                         |
@@ -74,7 +78,7 @@ target config is reviewed, dispatch **Staging images** through the default-branc
 event:
 
 ```bash
-gh api --method POST repos/riojung/openround/dispatches --input - <<'JSON'
+gh api --method POST repos/riojung/pollingpops/dispatches --input - <<'JSON'
 {
   "event_type": "staging-images"
 }
@@ -301,7 +305,7 @@ Provision staging and production independently. At minimum:
 2. Install current Docker Engine and the Compose v2 plugin. Configure Docker to start at boot and
    authenticate the deployment user to the image registry without putting a token in this repo.
 3. Create a dedicated non-root `openround` deployment user, its SSH key, and the configured deploy
-   root (for example `/opt/openround/staging`) owned only by that user. Docker control is effectively
+   root (for example `/opt/pollingpops/staging`) owned only by that user. Docker control is effectively
    host-administrator access even without `sudo`; restrict this account and key to the dedicated VM,
    prohibit unrelated workloads, and do not grant additional passwordless administration.
 4. Permit inbound HTTP/HTTPS only (TCP 80/443 and optionally UDP 443) plus SSH from the approved

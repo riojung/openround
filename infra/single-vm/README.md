@@ -119,6 +119,10 @@ build ID.
 
 ## Validate, migrate, and start
 
+The paths below use the new-install `/opt/pollingpops` defaults. Existing hosts must retain their
+actual reviewed deployment root, SSH account, and Compose project name; see the
+[repository rename guide](../../docs/runbooks/repository-rename.md) before changing them.
+
 The deployment command combines the reviewed operator runtime with the reserved image and build
 values, uploads a generated release `.env`, then performs Compose interpolation validation, image
 pull, application configuration validation, build-ID validation, one-shot migration, startup, and
@@ -129,7 +133,7 @@ For diagnostics after deployment, run validation from the active release with th
 reviewed Compose project name. For example:
 
 ```sh
-cd /opt/openround/staging/current
+cd /opt/pollingpops/staging/current
 COMPOSE_PROJECT_NAME=openround-staging docker compose \
   --env-file .env \
   -f compose.single-vm.yaml \

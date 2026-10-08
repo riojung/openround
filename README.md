@@ -11,8 +11,8 @@ dark mode, and downloadable assets. New blank Rounds and Presentations use **Can
 
 **Accountless, server-authoritative comprehension recovery for live learning.**
 
-[![CI](https://github.com/riojung/openround/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/riojung/openround/actions/workflows/ci.yml)
-[![Security](https://github.com/riojung/openround/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/riojung/openround/actions/workflows/security.yml)
+[![CI](https://github.com/riojung/pollingpops/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/riojung/pollingpops/actions/workflows/ci.yml)
+[![Security](https://github.com/riojung/pollingpops/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/riojung/pollingpops/actions/workflows/security.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Polling Pops helps higher-education and workplace facilitators identify confusion, make an
@@ -69,8 +69,8 @@ You need Docker Desktop or Docker Engine with Docker Compose v2, at least 2 GB o
 and local ports `8080`, `8025`, and `9000`.
 
 ```bash
-git clone https://github.com/riojung/openround.git
-cd openround
+git clone https://github.com/riojung/pollingpops.git
+cd pollingpops
 docker compose up --build --detach --wait
 docker compose ps
 curl -fsS http://localhost:8080/health/ready
@@ -95,6 +95,8 @@ docker compose down
 For the first-Round walkthrough, cross-device setup, optional media profile, and troubleshooting,
 follow the [complete quick start](docs/quick-start.md). For profile-aware restarts, full rebuilds,
 and safe Docker disk cleanup, use the [operations runbook](docs/runbooks/deployment.md).
+Existing clones and hosts should also read the
+[repository rename guide](docs/runbooks/repository-rename.md) before changing deployment paths.
 
 ## Architecture
 
@@ -162,7 +164,7 @@ the Compose-oriented `.env.example` unchanged.
 
 Contributions are welcome when they preserve Polling Pops’ accessibility, privacy, clean-room, and
 server-authoritative correctness boundaries. Read [CONTRIBUTING.md](CONTRIBUTING.md), open an
-[issue](https://github.com/riojung/openround/issues) for substantial changes, and run `pnpm check`
+[issue](https://github.com/riojung/pollingpops/issues) for substantial changes, and run `pnpm check`
 before submitting a pull request.
 
 Polling Pops is an independent project. Do not contribute copied content, branding, code, sounds,
@@ -171,7 +173,7 @@ screenshots, or other expressive assets from another product; see [NOTICE](NOTIC
 ## Security
 
 Do not report vulnerabilities in public issues. Use
-[GitHub private vulnerability reporting](https://github.com/riojung/openround/security/advisories/new)
+[GitHub private vulnerability reporting](https://github.com/riojung/pollingpops/security/advisories/new)
 and review the [security policy](SECURITY.md) before deploying Polling Pops. The included policy pages,
 credentials, and infrastructure settings are development defaults, not production approval.
 

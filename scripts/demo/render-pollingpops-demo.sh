@@ -2,24 +2,24 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-artifact_dir="$repo_dir/artifacts/openround-demo"
+artifact_dir="$repo_dir/artifacts/pollingpops-demo"
 raw_dir="$artifact_dir/raw"
 rendered_dir="$artifact_dir/rendered"
 audio_dir="$artifact_dir/audio"
-ffmpeg_bin="${OPENROUND_FFMPEG:-/tmp/openround-video-tools/node_modules/ffmpeg-static/ffmpeg}"
-edge_tts_bin="${OPENROUND_EDGE_TTS:-/tmp/openround-voice-tools/bin/edge-tts}"
+ffmpeg_bin="${OPENROUND_FFMPEG:-/tmp/pollingpops-video-tools/node_modules/ffmpeg-static/ffmpeg}"
+edge_tts_bin="${OPENROUND_EDGE_TTS:-/tmp/pollingpops-voice-tools/bin/edge-tts}"
 presenter_voice="${OPENROUND_VOICE:-en-US-AvaMultilingualNeural}"
 
 if [[ ! -x "$ffmpeg_bin" ]]; then
   echo "ffmpeg-static is missing. Install it with:" >&2
-  echo "  npm install --prefix /tmp/openround-video-tools ffmpeg-static" >&2
+  echo "  npm install --prefix /tmp/pollingpops-video-tools ffmpeg-static" >&2
   exit 1
 fi
 
 if [[ ! -x "$edge_tts_bin" ]]; then
   echo "The neural voice renderer is missing. Install it with:" >&2
-  echo "  python3 -m venv /tmp/openround-voice-tools" >&2
-  echo "  /tmp/openround-voice-tools/bin/pip install edge-tts" >&2
+  echo "  python3 -m venv /tmp/pollingpops-voice-tools" >&2
+  echo "  /tmp/pollingpops-voice-tools/bin/pip install edge-tts" >&2
   exit 1
 fi
 
@@ -88,22 +88,22 @@ for index in "${!chapters[@]}"; do
   printf "file '%s'\n" "$rendered" >> "$concat_file"
 done
 
-silent_video="$rendered_dir/OpenRound_Product_Demo_without_captions.mp4"
+silent_video="$rendered_dir/PollingPops_Product_Demo_without_captions.mp4"
 "$ffmpeg_bin" -y -f concat -safe 0 -i "$concat_file" -c copy "$silent_video"
 
-python3 "$repo_dir/scripts/demo/write-openround-captions.py" \
+python3 "$repo_dir/scripts/demo/write-pollingpops-captions.py" \
   --ffmpeg "$ffmpeg_bin" \
   --video "$silent_video" \
-  --output "$artifact_dir/OpenRound_Product_Demo.srt"
+  --output "$artifact_dir/PollingPops_Product_Demo.srt"
 
 "$ffmpeg_bin" -y \
   -i "$silent_video" \
-  -i "$artifact_dir/OpenRound_Product_Demo.srt" \
+  -i "$artifact_dir/PollingPops_Product_Demo.srt" \
   -map 0:v:0 -map 0:a:0 -map 1:0 \
   -c:v copy -c:a copy -c:s mov_text \
   -metadata:s:s:0 language=eng \
   -metadata:s:s:0 title="English" \
   -movflags +faststart \
-  "$artifact_dir/OpenRound_Product_Demo.mp4"
+  "$artifact_dir/PollingPops_Product_Demo.mp4"
 
-echo "$artifact_dir/OpenRound_Product_Demo.mp4"
+echo "$artifact_dir/PollingPops_Product_Demo.mp4"

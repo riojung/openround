@@ -117,7 +117,7 @@ describe("release tag governance specification", () => {
       update_allows_fetch_and_merge: false,
     });
     expect(immutabilityRuleset.bypass_actors).toEqual([]);
-    expect(runbook).toContain("gh api --method POST repos/riojung/openround/rulesets");
+    expect(runbook).toContain("gh api --method POST repos/riojung/pollingpops/rulesets");
     expect(normalizedRunbook).toContain("single named owner user, `riojung`");
     expect(normalizedRunbook).toContain("never to a repository role");
     expect(normalizedRunbook).toContain("Only that named owner may create a");
@@ -267,6 +267,17 @@ describe("staging image trust boundary", () => {
 });
 
 describe("production release target boundary", () => {
+  it("uses the configured existing image repository in both release build phases after renaming", async () => {
+    const workflow = await readFile(join(repositoryRoot, ".github/workflows/release.yml"), "utf8");
+    expect(
+      workflow.match(
+        /registry="\$\(jq -r '\.imageRepository' config\/deploy\/production\.json\)"/g,
+      ),
+    ).toHaveLength(2);
+    expect(workflow.match(/--registry "\$registry"/g)).toHaveLength(2);
+    expect(workflow).not.toContain("ghcr.io/${GITHUB_REPOSITORY}/openround");
+  });
+
   it("validates the production target and host-key pin before building release images", async () => {
     const workflow = await readFile(join(repositoryRoot, ".github/workflows/release.yml"), "utf8");
     const preflight = workflow.match(/ {2}preflight:\n([\s\S]*?)(?=\n {2}images:)/)?.[1];
