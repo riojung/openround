@@ -571,6 +571,7 @@ export const SourceCitationSchema = z.object({
   locator: z.string().trim().min(1).max(120),
   excerpt: z.string().trim().min(1).max(500),
 });
+export type SourceCitation = z.infer<typeof SourceCitationSchema>;
 
 const CommonQuestionDraftSchema = z.object({
   id: z.string().uuid(),
@@ -3644,6 +3645,77 @@ export const AuthoringDraftSchema = z.object({
   conversionNotes: z.array(z.string().trim().min(1).max(300)).max(10).optional(),
 });
 export type AuthoringDraft = z.infer<typeof AuthoringDraftSchema>;
+
+/** Canonical complete source-output binding, identical after JSON/JSONB round trips. */
+export function authoringDraftContentHash(output: unknown): string {
+  return bytesToHex(
+    sha256(new TextEncoder().encode(JSON.stringify(AuthoringDraftSchema.parse(output)))),
+  );
+}
+
+const RecoveryPackSourceHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
+
+/** Creator-only review state; never embedded in immutable Pack content or native JSON. */
+export const RecoveryPackSourceReviewSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    authoringJobId: z.string().uuid(),
+    sourceName: z.string().trim().min(1).max(200),
+    sourceDigest: RecoveryPackSourceHashSchema,
+    sourceOutputHash: RecoveryPackSourceHashSchema,
+    contentHash: RecoveryPackSourceHashSchema.nullable(),
+    approvedContentHash: RecoveryPackSourceHashSchema.nullable(),
+    approvedDraftRevision: z.number().int().nonnegative().nullable(),
+    approvedAt: z.string().datetime().nullable(),
+    approved: z.boolean(),
+  })
+  .strict();
+export type RecoveryPackSourceReview = z.infer<typeof RecoveryPackSourceReviewSchema>;
+
+export const RecoveryPackSourceProposalSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    authoringJobId: z.string().uuid(),
+    sourceName: z.string().trim().min(1).max(200),
+    sourceDigest: RecoveryPackSourceHashSchema,
+    sourceOutputHash: RecoveryPackSourceHashSchema,
+    contentHash: RecoveryPackSourceHashSchema,
+    draft: RecoveryPackContentSchema,
+    conversionNotes: z.array(z.string().trim().min(1).max(300)).max(10),
+  })
+  .strict()
+  .superRefine((proposal, context) => {
+    if (recoveryPackContentHash(proposal.draft) !== proposal.contentHash)
+      context.addIssue({
+        code: "custom",
+        path: ["contentHash"],
+        message: "Content hash must match the complete proposal",
+      });
+  });
+export type RecoveryPackSourceProposal = z.infer<typeof RecoveryPackSourceProposalSchema>;
+
+export const ApplySourceRecoveryPackSchema = z
+  .object({
+    draft: RecoveryPackContentSchema,
+    sourceOutputHash: RecoveryPackSourceHashSchema,
+    expectedContentHash: RecoveryPackSourceHashSchema,
+    mutationId: z.string().uuid(),
+  })
+  .strict();
+export type ApplySourceRecoveryPack = z.infer<typeof ApplySourceRecoveryPackSchema>;
+
+export const ApproveRecoveryPackSourceSchema = z
+  .object({
+    expectedDraftRevision: z.number().int().nonnegative(),
+    expectedContentHash: RecoveryPackSourceHashSchema,
+    sourceDigest: RecoveryPackSourceHashSchema,
+    sourceOutputHash: RecoveryPackSourceHashSchema,
+    mutationId: z.string().uuid(),
+    approveContent: z.literal(true),
+    approveCitations: z.literal(true),
+  })
+  .strict();
+export type ApproveRecoveryPackSource = z.infer<typeof ApproveRecoveryPackSourceSchema>;
 
 export const AuthoringJobSchema = z.object({
   id: z.string().uuid(),

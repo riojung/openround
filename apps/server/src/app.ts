@@ -53,6 +53,7 @@ import { registerLiveRoomRoutes } from "./live-room-routes.js";
 import { registerQuestionHealthRoutes } from "./question-health-routes.js";
 import { registerRecoveryPackRoutes } from "./recovery-pack-routes.js";
 import { registerRecoveryPackPortabilityRoutes } from "./recovery-pack-portability-routes.js";
+import { registerRecoveryPackSourceRoutes } from "./recovery-pack-source-routes.js";
 import { registerRecoveryPackPracticeRoutes } from "./recovery-pack-practice-routes.js";
 import { registerRecoveryPackPresentationRoutes } from "./recovery-pack-presentation-routes.js";
 import { registerRecoveryPackPresentationUpdateRoutes } from "./recovery-pack-presentation-update-routes.js";
@@ -371,6 +372,7 @@ export async function buildApp(
   await registerQuestionHealthRoutes(app, { config, repository, auth });
   await registerRecoveryPackRoutes(app, { config, repository, packs: recoveryPacks, auth });
   await registerRecoveryPackPortabilityRoutes(app, { packs: recoveryPacks, auth });
+  await registerRecoveryPackSourceRoutes(app, { config, repository, packs: recoveryPacks, auth });
   await registerRecoveryPackPracticeRoutes(app, {
     config,
     repository,

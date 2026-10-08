@@ -2,6 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   CreateRecoveryPackSchema,
+  ApplySourceRecoveryPackSchema,
+  ApproveRecoveryPackSourceSchema,
+  AuthoringDraftSchema,
+  RecoveryPackSourceProposalSchema,
+  RecoveryPackSourceReviewSchema,
   InsertRecoveryPackSchema,
   OpenRoundCheckpointSetExportSchema,
   PublishRecoveryPackSchema,
@@ -16,6 +21,7 @@ import {
   RecoveryPackSourceSchema,
   UpdateRecoveryPackSchema,
   recoveryPackContentHash,
+  authoringDraftContentHash,
   type RecoveryPackContent,
   type RecoveryPackDraft,
 } from "../src/index.js";
@@ -119,6 +125,124 @@ function reversePropertyOrder(value: unknown): unknown {
 }
 
 describe("Recovery Pack authoring and publication contracts", () => {
+  it("binds source proposals and review requests to complete canonical content with strict hashes and intent", () => {
+    const draft = RecoveryPackContentSchema.parse(pack());
+    const expectedContentHash = recoveryPackContentHash(draft);
+    const proposal = {
+      schemaVersion: 1,
+      authoringJobId: randomUUID(),
+      sourceName: sourceCitation.sourceName,
+      sourceDigest: sourceCitation.sourceDigest,
+      sourceOutputHash: contentHash,
+      contentHash: expectedContentHash,
+      draft,
+      conversionNotes: ["Review the linked recheck."],
+    };
+    expect(RecoveryPackSourceProposalSchema.parse(proposal)).toEqual(proposal);
+    expect(RecoveryPackSourceProposalSchema.safeParse({ ...proposal, contentHash }).success).toBe(
+      false,
+    );
+    expect(
+      RecoveryPackSourceProposalSchema.safeParse({
+        ...proposal,
+        conversionNotes: Array(11).fill("Note"),
+      }).success,
+    ).toBe(false);
+    const apply = {
+      draft,
+      sourceOutputHash: contentHash,
+      expectedContentHash,
+      mutationId: randomUUID(),
+    };
+    const approval = {
+      expectedDraftRevision: 0,
+      expectedContentHash,
+      sourceDigest: sourceCitation.sourceDigest,
+      sourceOutputHash: contentHash,
+      mutationId: randomUUID(),
+      approveContent: true,
+      approveCitations: true,
+    };
+    expect(ApplySourceRecoveryPackSchema.parse(apply)).toEqual(apply);
+    expect(ApproveRecoveryPackSourceSchema.parse(approval)).toEqual(approval);
+    for (const malformed of ["abc", "G".repeat(64), "A".repeat(64), "a".repeat(65)]) {
+      expect(
+        ApplySourceRecoveryPackSchema.safeParse({ ...apply, sourceOutputHash: malformed }).success,
+      ).toBe(false);
+      expect(
+        ApproveRecoveryPackSourceSchema.safeParse({ ...approval, expectedContentHash: malformed })
+          .success,
+      ).toBe(false);
+    }
+    expect(
+      ApplySourceRecoveryPackSchema.safeParse({ ...apply, approveContent: true }).success,
+    ).toBe(false);
+    expect(
+      ApproveRecoveryPackSourceSchema.safeParse({ ...approval, approveCitations: false }).success,
+    ).toBe(false);
+    expect(
+      ApproveRecoveryPackSourceSchema.safeParse({ ...approval, expectedDraftRevision: -1 }).success,
+    ).toBe(false);
+    expect(
+      ApproveRecoveryPackSourceSchema.safeParse({ ...approval, reviewer: randomUUID() }).success,
+    ).toBe(false);
+    const review = {
+      schemaVersion: 1,
+      authoringJobId: proposal.authoringJobId,
+      sourceName: proposal.sourceName,
+      sourceDigest: proposal.sourceDigest,
+      sourceOutputHash: contentHash,
+      contentHash: expectedContentHash,
+      approvedContentHash: null,
+      approvedDraftRevision: null,
+      approvedAt: null,
+      approved: false,
+    };
+    expect(RecoveryPackSourceReviewSchema.parse(review)).toEqual(review);
+    expect(
+      RecoveryPackSourceReviewSchema.safeParse({ ...review, citationCatalog: [sourceCitation] })
+        .success,
+    ).toBe(false);
+    expect(RecoveryPackContentSchema.parse({ ...draft, sourceReview: review })).toEqual(draft);
+    expect(
+      RecoveryPackJsonSchema.parse({
+        format: "openround-recovery-pack",
+        schemaVersion: 1,
+        content: draft,
+      }),
+    ).not.toHaveProperty("sourceReview");
+  });
+
+  it("canonicalizes authoring output for source-output binding after JSONB property reordering", () => {
+    const draft = pack();
+    const output = AuthoringDraftSchema.parse({
+      schemaVersion: 1,
+      sourceName: sourceCitation.sourceName,
+      sourceDigest: sourceCitation.sourceDigest,
+      checkpointSet: {
+        title: "Source checkpoints",
+        description: "",
+        questions: [draft.diagnostic, draft.recheck],
+      },
+      citations: [draft.diagnostic, draft.recheck].map((item) => ({
+        checkpointId: item.id,
+        locator: sourceCitation.locator,
+        excerpt: sourceCitation.excerpt,
+      })),
+      generatedAt: new Date().toISOString(),
+      provider: "test",
+      model: "test",
+      conversionNotes: ["Review source"],
+    });
+    expect(authoringDraftContentHash(reversePropertyOrder(output))).toBe(
+      authoringDraftContentHash(output),
+    );
+    expect(authoringDraftContentHash({ ...output, sourceName: "Different source" })).not.toBe(
+      authoringDraftContentHash(output),
+    );
+    expect(() => authoringDraftContentHash({ ...output, schemaVersion: 2 })).toThrow();
+  });
+
   it("accepts an immutable recovery topology with cited interventions and an optional delayed probe", () => {
     const draft = pack();
     expect(RecoveryPackContentSchema.parse(draft)).toEqual(draft);

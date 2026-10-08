@@ -14,6 +14,11 @@ import {
 } from "../lib/authoring-proposals";
 import { recordAuthoringEvent, recordCreationEvent } from "./workspace/product-events";
 import { useLocale } from "./locale-provider";
+import {
+  RecoveryPackSourceProposalPanel,
+  type RecoveryPackSourceTarget,
+} from "./recovery-pack-source";
+import { recoveryPackSourceGeneration } from "../lib/recovery-pack-source";
 
 interface AuthoringStatus {
   enabled: boolean;
@@ -27,7 +32,8 @@ interface AuthoringAssistantProps {
   plain?: boolean;
   trackCreation?: boolean;
   terminology?: "legacy" | "round";
-  artifactType?: "round" | "presentation";
+  artifactType?: "round" | "presentation" | "recovery_pack";
+  recoveryPackTarget?: RecoveryPackSourceTarget;
   insertionTarget?: {
     presentationId: string;
     expectedRevision: number;
@@ -79,6 +85,7 @@ export function AuthoringAssistant({
   terminology = "legacy",
   artifactType = "round",
   insertionTarget,
+  recoveryPackTarget,
 }: AuthoringAssistantProps) {
   const router = useRouter();
   const { t } = useLocale();
@@ -96,19 +103,34 @@ export function AuthoringAssistant({
   const [error, setError] = useState("");
   const [errorIsLocalized, setErrorIsLocalized] = useState(false);
   const [expanded, setExpanded] = useState(plain);
+  const [sourceGeneration, setSourceGeneration] = useState(0);
   const mounted = useRef(true);
+  const submitting = useRef(false);
+  const submissionGeneration = useRef(0);
+  const refreshGeneration = useRef(0);
+  // A Pack action's temporary busy state gates new submissions, not a source
+  // request already in flight. Keep permission and source-generation fences.
+  const sourcePermission = useRef(canEdit);
+  sourcePermission.current = canEdit;
+
+  function sourceChanged() {
+    submissionGeneration.current += 1;
+    setSourceGeneration((current) => current + 1);
+    recoveryPackTarget?.onSourceChanged?.();
+  }
 
   const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
     try {
       const [statusResult, jobResult] = await Promise.all([
         apiFetch<{ status: AuthoringStatus }>("/v1/authoring/status"),
         apiFetch<{ jobs: AuthoringJob[] }>("/v1/authoring/jobs"),
       ]);
-      if (!mounted.current) return;
+      if (!mounted.current || generation !== refreshGeneration.current) return;
       setStatus(statusResult.status);
       setJobs(jobResult.jobs);
     } catch (caught) {
-      if (mounted.current) {
+      if (mounted.current && generation === refreshGeneration.current) {
         setError(humanError(caught));
         setErrorIsLocalized(false);
       }
@@ -120,6 +142,8 @@ export function AuthoringAssistant({
     void refresh();
     return () => {
       mounted.current = false;
+      submissionGeneration.current += 1;
+      refreshGeneration.current += 1;
     };
   }, [refresh]);
 
@@ -131,10 +155,21 @@ export function AuthoringAssistant({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (
+      submitting.current ||
+      !canEdit ||
+      recoveryPackTarget?.disabled ||
+      !status?.enabled ||
+      status.remaining === 0
+    )
+      return;
+    submitting.current = true;
+    const generation = ++submissionGeneration.current;
     setBusy(true);
     setError("");
     setErrorIsLocalized(false);
-    if (trackCreation) recordCreationEvent("creation_started", "source", artifactType);
+    if (trackCreation && artifactType !== "recovery_pack")
+      recordCreationEvent("creation_started", "source", artifactType);
     try {
       let body: Record<string, unknown>;
       if (sourceMode === "pasted_text") {
@@ -157,23 +192,39 @@ export function AuthoringAssistant({
           ),
         };
       }
+      if (
+        !mounted.current ||
+        !sourcePermission.current ||
+        generation !== submissionGeneration.current
+      )
+        return;
       const result = await apiFetch<{ job: AuthoringJob }>("/v1/authoring/jobs", {
         method: "POST",
         body: JSON.stringify(body),
       });
+      if (
+        !mounted.current ||
+        !sourcePermission.current ||
+        generation !== submissionGeneration.current
+      )
+        return;
       setJobs((current) => [result.job, ...current.filter((job) => job.id !== result.job.id)]);
       setText("");
       setFile(null);
       await refresh();
     } catch (caught) {
-      setError(humanError(caught));
-      setErrorIsLocalized(caught instanceof LocalizedAuthoringError);
+      if (mounted.current && generation === submissionGeneration.current) {
+        setError(humanError(caught));
+        setErrorIsLocalized(caught instanceof LocalizedAuthoringError);
+      }
     } finally {
-      setBusy(false);
+      submitting.current = false;
+      if (mounted.current) setBusy(false);
     }
   }
 
   async function apply(job: AuthoringJob) {
+    if (artifactType === "recovery_pack") return;
     setApplyingId(job.id);
     setError("");
     setErrorIsLocalized(false);
@@ -283,22 +334,26 @@ export function AuthoringAssistant({
       <summary>
         {insertionTarget
           ? t("delivery.assistant.insertTrustedSource")
-          : artifactType === "presentation"
-            ? t("delivery.assistant.draftPresentation")
-            : t(
-                terminology === "round"
-                  ? "delivery.assistant.draftQuestions"
-                  : "delivery.assistant.draftCheckpoints",
-              )}
+          : artifactType === "recovery_pack"
+            ? "Draft a Recovery Pack from a trusted source"
+            : artifactType === "presentation"
+              ? t("delivery.assistant.draftPresentation")
+              : t(
+                  terminology === "round"
+                    ? "delivery.assistant.draftQuestions"
+                    : "delivery.assistant.draftCheckpoints",
+                )}
       </summary>
       <p className="muted">
-        {artifactType === "presentation"
-          ? t("delivery.assistant.presentationDescription")
-          : t(
-              terminology === "round"
-                ? "delivery.assistant.roundDescription"
-                : "delivery.assistant.checkpointDescription",
-            )}{" "}
+        {artifactType === "recovery_pack"
+          ? "Upload a private source or paste trusted text to propose a diagnostic, a different linked recheck, and a cited facilitator card for your review."
+          : artifactType === "presentation"
+            ? t("delivery.assistant.presentationDescription")
+            : t(
+                terminology === "round"
+                  ? "delivery.assistant.roundDescription"
+                  : "delivery.assistant.checkpointDescription",
+              )}{" "}
         {t("delivery.assistant.securityDescription")}
       </p>
       <p className="notice" aria-live="polite">
@@ -313,7 +368,7 @@ export function AuthoringAssistant({
         <p className="notice">{t("delivery.assistant.disabled")}</p>
       ) : canEdit ? (
         <form onSubmit={submit}>
-          <fieldset disabled={busy || status?.remaining === 0}>
+          <fieldset disabled={busy || recoveryPackTarget?.disabled || status?.remaining === 0}>
             <legend>{t("delivery.assistant.sourceType")}</legend>
             <div
               className="button-row"
@@ -324,7 +379,10 @@ export function AuthoringAssistant({
                 <input
                   checked={sourceMode === "pasted_text"}
                   name="authoring-source-mode"
-                  onChange={() => setSourceMode("pasted_text")}
+                  onChange={() => {
+                    sourceChanged();
+                    setSourceMode("pasted_text");
+                  }}
                   type="radio"
                 />
                 {t("delivery.assistant.pasteText")}
@@ -333,7 +391,10 @@ export function AuthoringAssistant({
                 <input
                   checked={sourceMode === "file"}
                   name="authoring-source-mode"
-                  onChange={() => setSourceMode("file")}
+                  onChange={() => {
+                    sourceChanged();
+                    setSourceMode("file");
+                  }}
                   type="radio"
                 />
                 {t("delivery.assistant.uploadPrivateFile")}
@@ -346,7 +407,10 @@ export function AuthoringAssistant({
                   <input
                     className="input"
                     maxLength={200}
-                    onChange={(event) => setSourceName(event.target.value)}
+                    onChange={(event) => {
+                      sourceChanged();
+                      setSourceName(event.target.value);
+                    }}
                     required
                     value={sourceName}
                   />
@@ -357,7 +421,10 @@ export function AuthoringAssistant({
                     className="textarea"
                     maxLength={100_000}
                     minLength={50}
-                    onChange={(event) => setText(event.target.value)}
+                    onChange={(event) => {
+                      sourceChanged();
+                      setText(event.target.value);
+                    }}
                     placeholder={t("delivery.assistant.textPlaceholder")}
                     required
                     rows={8}
@@ -371,7 +438,10 @@ export function AuthoringAssistant({
                 <input
                   accept=".pdf,.docx,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation"
                   className="input"
-                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                  onChange={(event) => {
+                    sourceChanged();
+                    setFile(event.target.files?.[0] ?? null);
+                  }}
                   required
                   type="file"
                 />
@@ -412,7 +482,17 @@ export function AuthoringAssistant({
                     {t("delivery.assistant.proposalFailed")} <span lang="en-CA">{job.error}</span>
                   </p>
                 ) : null}
-                {job.output ? (
+                {artifactType === "recovery_pack" &&
+                job.status === "ready" &&
+                job.output &&
+                recoveryPackTarget ? (
+                  <RecoveryPackSourceProposalPanel
+                    key={`${recoveryPackSourceGeneration(job)}:${sourceGeneration}`}
+                    job={job}
+                    canEdit={canEdit}
+                    target={recoveryPackTarget}
+                  />
+                ) : artifactType !== "recovery_pack" && job.output ? (
                   <div className="authoring-proposal">
                     <h4>{job.output.checkpointSet.title}</h4>
                     {artifactType === "presentation" && job.output.contentSlideProposals?.length ? (

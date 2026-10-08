@@ -2,6 +2,25 @@
 
 This engineering inventory is not a legal opinion. Confirm purposes, legal basis, processor location, notices, and contracts before production.
 
+Source-assisted Recovery Pack conversion reuses an existing validated authoring output; it makes
+no new provider request. Pack content copies the selected diagnostic/recheck, source-derived card,
+and citations. A separate creator-only record retains source name/digest, logical job ID, canonical
+source-output hash, and a bounded catalog of originally validated citation spans. It does not copy
+the uploaded source file or raw source body. Content/citation approval records the saved revision,
+complete content hash, time, and creator principal; idempotency receipts retain request hashes,
+not request bodies. Review metadata and approval are absent from published content, participant
+projections, and native Pack JSON. An import does not claim or inherit the original approval.
+
+These records follow the Pack's retention/deletion lifecycle, not temporary authoring-job expiry.
+They are included in the creator's private account export and cascade with Pack/workspace deletion.
+Approval retry receipts are additionally pruned after 30 days; the current approval binding and
+original citation catalog remain with the Pack.
+Existing separately copied published content follows its destination's retention. Creation and
+approval audit entries store action/target metadata, not citation excerpts, source text, or learner
+responses. Terminal authoring processing still clears raw source text/file bytes; source-job purge
+does not delete the Pack's bounded source evidence. Human approval attests review of that exact
+saved content and those source spans; it is not evidence of factual or pedagogical correctness.
+
 Recovery Pack practice is session-scoped/accountless. A full-sequence assignment freezes the
 published diagnostic, intervention cards/citations, and linked recheck; a delayed-probe assignment
 continues to freeze only its optional probe. These copies and question media follow the assignment's

@@ -2,12 +2,14 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-const fixtures = vi.hoisted(() => ({ enabled: true }));
+const fixtures = vi.hoisted(() => ({ enabled: true, canEdit: true }));
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
 vi.mock("../../components/workspace/workspace-provider", () => ({
   WorkspaceProvider: ({ children }: { children: ReactNode }) => children,
   useWorkspace: () => ({
-    canEdit: true,
+    canEdit: fixtures.canEdit,
     creator: { workspaceId: "workspace" },
     productFeatures: { recoveryPacks: fixtures.enabled },
   }),
@@ -20,10 +22,22 @@ vi.mock("../../components/workspace/workspace-shell", () => ({
 import RecoveryPacksPage from "./page";
 
 describe("Recovery Pack library capability notice", () => {
+  it.each([
+    [true, true],
+    [true, false],
+    [false, true],
+  ])("mounts trusted-source creation only when enabled=%s and editable=%s", (enabled, canEdit) => {
+    fixtures.enabled = enabled!;
+    fixtures.canEdit = canEdit!;
+    const markup = renderToStaticMarkup(<RecoveryPacksPage />);
+    expect(markup.includes("Draft a Recovery Pack from a trusted source")).toBe(enabled && canEdit);
+    expect(markup).toContain("Your Packs");
+  });
   it.each([true, false])(
     "keeps insertion, review, and live playback availability accurate with authoring enabled=%s",
     (enabled) => {
       fixtures.enabled = enabled;
+      fixtures.canEdit = true;
       const markup = renderToStaticMarkup(<RecoveryPacksPage />);
 
       expect(markup).toContain(

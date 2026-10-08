@@ -7155,6 +7155,12 @@ export class PostgresRepository implements Repository {
                   resulting_at, created_at
            FROM recovery_pack_draft_mutations WHERE workspace_id = ANY($1::uuid[]) ORDER BY pack_id, created_at, mutation_id`,
         );
+        const recoveryPackSources = await queryWorkspaceData(
+          "SELECT * FROM recovery_pack_sources WHERE workspace_id = ANY($1::uuid[]) ORDER BY pack_id",
+        );
+        const recoveryPackSourceApprovals = await queryWorkspaceData(
+          "SELECT * FROM recovery_pack_source_approvals WHERE workspace_id = ANY($1::uuid[]) ORDER BY pack_id, created_at, mutation_id",
+        );
         const mediaAssets = await queryWorkspaceData(
           `SELECT id, workspace_id, object_key, mime_type, size_bytes, scan_status, alt_text,
                   created_at
@@ -7466,6 +7472,8 @@ export class PostgresRepository implements Repository {
               Number(row.draft_schema_version ?? RECOVERY_PACK_DRAFT_SCHEMA_VERSION),
             ),
           })),
+          recoveryPackSources: recoveryPackSources.rows,
+          recoveryPackSourceApprovals: recoveryPackSourceApprovals.rows,
           libraryFavorites: libraryFavorites.rows,
           mediaAssets: mediaAssets.rows,
           mediaReferences: mediaReferences.rows,
@@ -7608,6 +7616,10 @@ export class PostgresRepository implements Repository {
         );
         await client.query(
           "DELETE FROM recovery_pack_draft_mutations WHERE created_at < $1::timestamptz - interval '30 days'",
+          [now],
+        );
+        await client.query(
+          "DELETE FROM recovery_pack_source_approvals WHERE created_at < $1::timestamptz - interval '30 days'",
           [now],
         );
         return [...result.rows, ...presentationResult.rows].map((row) => String(row.id));

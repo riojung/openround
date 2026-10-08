@@ -152,6 +152,9 @@ export function localeDomainsForPath(pathname: string): LocaleDomain[] {
   if (path === "/create" || path === "/create/") {
     return ["delivery-authoring", "report-round"];
   }
+  if (path === "/recovery-packs" || path === "/recovery-packs/") {
+    return ["delivery-authoring"];
+  }
   if (
     path === "/presentation/join" ||
     path.startsWith("/presentation/join/") ||

@@ -16,6 +16,11 @@ import {
   recoveryPackRecord,
 } from "./support/recovery-pack-conformance.js";
 import { expectRecoveryPackUpdateMediaConformance } from "./support/recovery-pack-update-media-conformance.js";
+import {
+  createExpiringSourceJob,
+  expectRecoveryPackSourceConformance,
+  sourcePackFixture,
+} from "./support/recovery-pack-source-conformance.js";
 
 async function creator(repository: MemoryRepository) {
   const tokenHash = randomUUID();
@@ -32,6 +37,70 @@ async function creator(repository: MemoryRepository) {
 }
 
 describe("Recovery Pack repositories", () => {
+  it("preserves source provenance, exact approval retries, citation validation and publish fencing", async () => {
+    await expectRecoveryPackSourceConformance({
+      repository: createRecoveryPackRepository(new MemoryRepository()),
+      workspaceId: randomUUID(),
+      otherWorkspaceId: randomUUID(),
+      editorId: randomUUID(),
+    });
+  });
+
+  it("exports and deletes retained source evidence, and keeps approvals when source jobs expire", async () => {
+    const repository = new MemoryRepository();
+    const owner = await creator(repository);
+    const packs = createRecoveryPackRepository(repository);
+    const fixture = sourcePackFixture(owner.workspaceId, owner.userId);
+    await createExpiringSourceJob(repository, fixture);
+    const mutationId = randomUUID();
+    const requestHash = "c".repeat(64);
+    const pack = await packs.createSourceRecoveryPack(
+      fixture.record,
+      fixture.provenance,
+      mutationId,
+      requestHash,
+    );
+    const approval = {
+      workspaceId: owner.workspaceId,
+      packId: pack.id,
+      editorId: owner.userId,
+      expectedDraftRevision: 0,
+      expectedContentHash: pack.sourceReview!.contentHash!,
+      sourceDigest: fixture.provenance.sourceDigest,
+      sourceOutputHash: fixture.provenance.sourceOutputHash,
+      mutationId: randomUUID(),
+    };
+    await packs.approveRecoveryPackSource(approval);
+    expect((await repository.exportAccount(owner.userId)).recoveryPackSourceApprovals).toEqual(
+      expect.arrayContaining([expect.objectContaining({ mutationId: approval.mutationId })]),
+    );
+    await repository.purgeExpired(new Date(Date.now() + 31 * 86_400_000));
+    expect(
+      await repository.getAuthoringJob(owner.workspaceId, fixture.provenance.authoringJobId),
+    ).toBeNull();
+    expect((await packs.getRecoveryPack(owner.workspaceId, pack.id))?.sourceReview?.approved).toBe(
+      true,
+    );
+    expect(
+      await packs.replaySourceRecoveryPack(owner.workspaceId, mutationId, requestHash),
+    ).toMatchObject({ id: pack.id });
+    const exported = await repository.exportAccount(owner.userId);
+    expect(exported.recoveryPackSources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          packId: pack.id,
+          citationCatalog: fixture.provenance.citationCatalog,
+        }),
+      ]),
+    );
+    expect(exported.recoveryPackSourceApprovals).toEqual([]);
+    await repository.deleteAccount(owner.userId);
+    expect(await packs.getRecoveryPack(owner.workspaceId, pack.id)).toBeNull();
+    expect(
+      await packs.replaySourceRecoveryPack(owner.workspaceId, mutationId, requestHash),
+    ).toBeNull();
+  });
+
   it("retains updated probe-only media across source deletion and immutable Round copies", async () => {
     const repository = new MemoryRepository();
     const owner = await creator(repository);
