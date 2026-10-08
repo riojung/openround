@@ -4,6 +4,65 @@ import metadata from "../../apps/web/lib/help-video-metadata.json";
 import { signInBeta } from "./sign-in";
 import { helpFeatureGuides } from "../../apps/web/lib/help-feature-guides";
 
+for (const role of ["owner", "viewer"] as const) {
+  test(`first-run Home keeps quick start available for ${role}s with advanced features disabled`, async ({
+    page,
+  }) => {
+    await signInBeta(page);
+    await page.route("**/v1/auth/me", async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      body.creator.role = role;
+      for (const feature of [
+        "roundExperiences",
+        "audiencePulse",
+        "roomChat",
+        "presentations",
+        "practiceAssignments",
+      ]) {
+        body.productFeatures[feature] = false;
+      }
+      await route.fulfill({ response, json: body });
+    });
+    await page.route("**/v1/home/summary", (route) =>
+      route.fulfill({
+        json: {
+          generatedAt: new Date().toISOString(),
+          recentArtifacts: [],
+          sessions: [],
+          assignments: [],
+          resultHighlights: [],
+          groupSchedule: [],
+          totals: {
+            artifacts: 0,
+            activeSessions: 0,
+            activeAssignments: 0,
+            upcomingGroupItems: 0,
+          },
+        },
+      }),
+    );
+    await page.goto("/home");
+    const watch = page.getByRole("link", { name: /Watch.*quick start/ });
+    await expect(watch).toHaveAttribute("href", "/help#quick-start");
+    await expect(page.getByRole("link", { name: "Create your first artifact" })).toHaveCount(
+      role === "owner" ? 1 : 0,
+    );
+    await watch.click();
+    await expect(page).toHaveURL(/\/help#quick-start$/);
+    await expect(page.locator("#quick-start video")).toBeVisible();
+    await expect(page.locator("#round-builder-guide video")).toHaveCount(0);
+    if (role === "viewer") {
+      await expect(
+        page.locator("#quick-start").getByRole("link", { name: "Create your first Round" }),
+      ).toHaveCount(0);
+      await expect(
+        page.locator("#quick-start").getByRole("link", { name: "Open Library" }),
+      ).toHaveAttribute("href", "/library");
+    }
+  });
+}
+
 test("Help videos load on demand and chapters seek without autoplay", async ({ page }) => {
   await signInBeta(page);
   const requestedVideos: string[] = [];

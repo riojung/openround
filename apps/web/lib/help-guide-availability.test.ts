@@ -48,6 +48,9 @@ describe("help guide availability", () => {
       professionalRoundBuilderAvailable({
         ...enabledFeatures,
         presentations: false,
+        roundExperiences: false,
+        audiencePulse: false,
+        roomChat: false,
         groups: false,
         discover: false,
         practiceAssignments: false,
