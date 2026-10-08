@@ -221,6 +221,51 @@ function expectNoAuthoringSecrets(snapshot: unknown) {
 }
 
 describe("PresentationSessionService realtime integration", () => {
+  it("returns a usable rotated companion pass when its audit fails without revoking the host", async () => {
+    const { repository, service, hosted, ids } = await fixture();
+    const sessionId = hosted.snapshot.sessionId;
+    const input = {
+      workspaceId: ids.workspaceId,
+      userId: ids.userId,
+      sessionId,
+      requestId: randomUUID(),
+    };
+    const previousPass = await service.createCompanionPass(input);
+    const audit = vi
+      .spyOn(repository, "recordAudit")
+      .mockRejectedValueOnce(new Error("audit unavailable"));
+    const rotated = await service.createCompanionPass({ ...input, requestId: randomUUID() });
+
+    expect(rotated.credentialId).not.toBe(previousPass.credentialId);
+    await expect(
+      service.getCompanionSnapshot(sessionId, rotated.companionToken),
+    ).resolves.toMatchObject({ projection: "companion" });
+    await expect(
+      service.getCompanionSnapshot(sessionId, previousPass.companionToken),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      service.companionCommand({
+        sessionId,
+        companionToken: rotated.companionToken,
+        commandId: randomUUID(),
+        expectedRevision: 0,
+        action: "advance",
+      }),
+    ).resolves.toMatchObject({ projection: "companion", revision: 1 });
+    await expect(
+      service.sync({ sessionId, projection: "host", controlToken: hosted.controlToken }),
+    ).resolves.toMatchObject({ snapshot: { projection: "host", revision: 1 } });
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "presentation.session.companion_pass.create",
+        metadata: { credentialId: rotated.credentialId },
+      }),
+    );
+    const auditPayload = JSON.stringify(audit.mock.calls);
+    for (const token of [rotated.companionToken, previousPass.companionToken, hosted.controlToken])
+      expect(auditPayload).not.toContain(token);
+  });
+
   it("rotates and revokes only companion credentials, with tenant and role fences", async () => {
     const { repository, sessions, service, hosted, joined, ids } = await fixture();
     const sessionId = hosted.snapshot.sessionId;

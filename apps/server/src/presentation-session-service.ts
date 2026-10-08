@@ -464,15 +464,19 @@ export class PresentationSessionService {
       revokedAt: null,
     });
     this.sessionUpdatedHandler?.(session.id);
-    await this.dependencies.repository.recordAudit({
-      workspaceId: input.workspaceId,
-      actorId: input.userId,
-      action: "presentation.session.companion_pass.create",
-      targetType: "presentation_live_session",
-      targetId: session.id,
-      requestId: input.requestId,
-      metadata: { credentialId: credential.id },
-    });
+    // Rotation is already durable and has revoked the previous companion pass. Audit failure
+    // must not prevent delivery of the replacement credential, as with session creation.
+    await this.dependencies.repository
+      .recordAudit({
+        workspaceId: input.workspaceId,
+        actorId: input.userId,
+        action: "presentation.session.companion_pass.create",
+        targetType: "presentation_live_session",
+        targetId: session.id,
+        requestId: input.requestId,
+        metadata: { credentialId: credential.id },
+      })
+      .catch(() => undefined);
     return {
       credentialId: credential.id,
       companionToken,
