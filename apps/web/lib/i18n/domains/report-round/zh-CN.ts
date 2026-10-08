@@ -41,7 +41,7 @@ const messages = {
   "reportRound.assign.ready": "练习准备",
   "reportRound.assign.saveLinks": "立即保存并分享这些链接",
   "reportRound.assign.hashNotice":
-    "OpenRound 仅存储令牌哈希值。离开此页面后，这些确切的链接将无法再次显示。",
+    "Polling Pops 仅存储令牌哈希值。离开此页面后，这些确切的链接将无法再次显示。",
   "reportRound.assign.genericLink": "通用匿名链接",
   "reportRound.assign.genericPracticeLink": "通用练习链接",
   "reportRound.assign.copy": "复制",
@@ -79,7 +79,7 @@ const messages = {
   "reportRound.assign.oneLabelPerLine": "每行一个标签",
   "reportRound.assign.labelsPlaceholder": "学习者1\n学习者2",
   "reportRound.assign.labelsHelp":
-    "标签仅为协调员标识链接。 OpenRound 不会向任何人发送电子邮件或创建学习者帐户。此计划最多提供 {maximum} 标签。将创建 {count} 个人链接。",
+    "标签仅为协调员标识链接。 Polling Pops 不会向任何人发送电子邮件或创建学习者帐户。此计划最多提供 {maximum} 标签。将创建 {count} 个人链接。",
   "reportRound.assign.creating": "创建实践...",
   "reportRound.assign.create": "创建作业",
   "reportRound.import.eyebrow": "可移植性",
@@ -103,9 +103,9 @@ const messages = {
   "reportRound.import.content": "导入内容",
   "reportRound.import.bulkExample": "什么是最安全的行动？\n* 遵循完整的程序\n- 走捷径",
   "reportRound.import.pasteContent": "将 {format} 内容粘贴到此处",
-  "reportRound.import.jsonHelpRound": "粘贴 OpenRound JSON 导出或选择其 .json 文件。",
-  "reportRound.import.jsonHelpLegacy": "粘贴 OpenRound 检查点集导出或选择其 .json 文件。",
-  "reportRound.import.csvHelp": "粘贴 OpenRound CSV 导出或选择其 .csv 文件。",
+  "reportRound.import.jsonHelpRound": "粘贴 Polling Pops JSON 导出或选择其 .json 文件。",
+  "reportRound.import.jsonHelpLegacy": "粘贴 Polling Pops 检查点集导出或选择其 .json 文件。",
+  "reportRound.import.csvHelp": "粘贴 Polling Pops CSV 导出或选择其 .csv 文件。",
   "reportRound.import.bulkHelpRound": "用空行分隔问题。以“*”开头表示正确，以“-”开头表示错误。",
   "reportRound.import.bulkHelpLegacy": "用空行分隔检查点。以“*”开头表示正确，以“-”开头表示错误。",
   "reportRound.import.qtiHelp": "选择 QTI 3 ZIP 包。支持选择响应、多选、真/假和数字项。",
@@ -247,7 +247,7 @@ const messages = {
   "reportRound.rehearsal.scenario.split_room.title": "分裂反应模式",
   "reportRound.rehearsal.scenario.split_room.short": "5 正确 · 5 选择一个错误选项",
   "reportRound.rehearsal.scenario.split_room.description":
-    "练习均匀阅读而不取代 OpenRound 的生产洞察优先级。",
+    "练习均匀阅读而不取代 Polling Pops 的生产洞察优先级。",
   "reportRound.rehearsal.scenario.confident_misconception.title": "自信的误解",
   "reportRound.rehearsal.scenario.confident_misconception.short": "4 非常肯定错误 · 6 正确",
   "reportRound.rehearsal.scenario.confident_misconception.description":
@@ -378,7 +378,7 @@ const messages = {
   "reportRound.rehearsal.everyRoleDescription":
     "所有者、编辑者和查看者可以排练，因为此流程无法发布、托管、编辑或创建学习者记录。",
   "reportRound.rehearsal.telemetry":
-    "OpenRound 仅记录选定的场景、开始/完成以及产品学习的粗略持续时间桶，而不会记录 Round 文本、响应或学习者标识符。",
+    "Polling Pops 仅记录选定的场景、开始/完成以及产品学习的粗略持续时间桶，而不会记录 Round 文本、响应或学习者标识符。",
   "reportRound.editor.reuseLimit": "请选择更少的问题，使此互动测验不超过200题的限制。",
   "reportRound.editor.history.questionAdded": "已添加问题。",
   "reportRound.editor.history.questionsReused.one": "已复用{count}个问题。",

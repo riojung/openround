@@ -1,6 +1,6 @@
 # Institution integration guide
 
-OpenRound's institution features are an operator-gated foundation for approved adult and
+Polling Pops’ institution features are an operator-gated foundation for approved adult and
 higher-education pilots. They do not make a deployment contract-ready by themselves. K–12 mode,
 identified learner launches, NRPS roster access, AGS grade passback, managed SAML/SCIM, and LMS
 certification remain disabled or unimplemented until their separate privacy, security, contract,
@@ -15,7 +15,7 @@ not silently identify live participants.
   owner can inspect, but cannot self-enable, these capabilities.
 - A policy must be `pilot` or `active` before any institution capability can run.
 - K–12 is represented by a literal `false` in the public contract and a database constraint.
-- OpenRound keys external identities by workspace, provider, issuer, and subject. It never links
+- Polling Pops keys external identities by workspace, provider, issuer, and subject. It never links
   accounts from an email match.
 - OIDC and LTI state are hashed, short-lived, and single-use. OIDC uses authorization code, PKCE,
   state, and nonce. LTI validates the platform signature, issuer, audience/authorized party,
@@ -113,9 +113,9 @@ LTI_TRANSACTION_TTL_SECONDS=300
 LTI_LAUNCH_TTL_SECONDS=900
 ```
 
-Give the LMS administrator these OpenRound values:
+Give the LMS administrator these Polling Pops values:
 
-| LMS field                 | OpenRound value                         |
+| LMS field                 | Polling Pops value                      |
 | ------------------------- | --------------------------------------- |
 | OIDC login initiation URL | `https://YOUR_API_ORIGIN/v1/lti/login`  |
 | Redirect/launch URL       | `https://YOUR_API_ORIGIN/v1/lti/launch` |
@@ -151,12 +151,12 @@ published checkpoint set and posts a signed `JWT` response to the registered LMS
 Completing the same launch twice returns the original signed response.
 
 Resource-link launches support instructors and a published `openround_quiz_id`. Learner launches
-are rejected in this release. Use OpenRound's anonymous live-round link or QR for participants;
+are rejected in this release. Use Polling Pops’ anonymous live-round link or QR for participants;
 do not enable institution identity, NRPS, or AGS based only on these instructor flows.
 
 ## 4. Audit and residency evidence
 
-The Account screen displays the workspace's immutable home-region assignment. OpenRound never
+The Account screen displays the workspace's immutable home-region assignment. Polling Pops never
 moves an existing workspace automatically. A deployment still needs infrastructure evidence that
 database, object storage, cache, telemetry, backups, and processors obey that assignment.
 

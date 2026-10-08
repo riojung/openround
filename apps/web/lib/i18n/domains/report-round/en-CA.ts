@@ -40,7 +40,7 @@ export const reportRoundEnglishMessages = {
   "reportRound.assign.ready": "Practice ready",
   "reportRound.assign.saveLinks": "Save and share these links now",
   "reportRound.assign.hashNotice":
-    "OpenRound stores only token hashes. These exact links cannot be displayed again after you leave this page.",
+    "Polling Pops stores only token hashes. These exact links cannot be displayed again after you leave this page.",
   "reportRound.assign.genericLink": "Generic anonymous link",
   "reportRound.assign.genericPracticeLink": "Generic practice link",
   "reportRound.assign.copy": "Copy",
@@ -81,7 +81,7 @@ export const reportRoundEnglishMessages = {
   "reportRound.assign.oneLabelPerLine": "One label per line",
   "reportRound.assign.labelsPlaceholder": "Learner 1\nLearner 2",
   "reportRound.assign.labelsHelp":
-    "Labels identify links for the facilitator only. OpenRound does not email anyone or create learner accounts. Up to {maximum} labels are available on this plan. {count} personal link(s) will be created.",
+    "Labels identify links for the facilitator only. Polling Pops does not email anyone or create learner accounts. Up to {maximum} labels are available on this plan. {count} personal link(s) will be created.",
   "reportRound.assign.creating": "Creating practice…",
   "reportRound.assign.create": "Create assignment",
   "reportRound.import.eyebrow": "Portability",
@@ -106,10 +106,10 @@ export const reportRoundEnglishMessages = {
   "reportRound.import.bulkExample":
     "What is the safest action?\n* Follow the complete procedure\n- Take a shortcut",
   "reportRound.import.pasteContent": "Paste {format} content here",
-  "reportRound.import.jsonHelpRound": "Paste an OpenRound JSON export or choose its .json file.",
+  "reportRound.import.jsonHelpRound": "Paste a Polling Pops JSON export or choose its .json file.",
   "reportRound.import.jsonHelpLegacy":
-    "Paste an OpenRound checkpoint-set export or choose its .json file.",
-  "reportRound.import.csvHelp": "Paste an OpenRound CSV export or choose its .csv file.",
+    "Paste a Polling Pops checkpoint-set export or choose its .json file.",
+  "reportRound.import.csvHelp": "Paste a Polling Pops CSV export or choose its .csv file.",
   "reportRound.import.bulkHelpRound":
     "Separate questions with a blank line. Start choices with '* ' for correct or '- ' for incorrect.",
   "reportRound.import.bulkHelpLegacy":
@@ -262,7 +262,7 @@ export const reportRoundEnglishMessages = {
   "reportRound.rehearsal.scenario.split_room.title": "Split response pattern",
   "reportRound.rehearsal.scenario.split_room.short": "5 correct · 5 choose one wrong option",
   "reportRound.rehearsal.scenario.split_room.description":
-    "Practise reading an even split without replacing OpenRound's production insight priority.",
+    "Practise reading an even split without replacing Polling Pops’ production insight priority.",
   "reportRound.rehearsal.scenario.confident_misconception.title": "Confident misconception",
   "reportRound.rehearsal.scenario.confident_misconception.short": "4 very-sure wrong · 6 correct",
   "reportRound.rehearsal.scenario.confident_misconception.description":
@@ -408,7 +408,7 @@ export const reportRoundEnglishMessages = {
   "reportRound.rehearsal.everyRoleDescription":
     "Owners, editors, and viewers can rehearse because this flow cannot publish, host, edit, or create learner records.",
   "reportRound.rehearsal.telemetry":
-    "OpenRound records only the selected scenario, start/completion, and a coarse duration bucket for product learning—never Round text, responses, or learner identifiers.",
+    "Polling Pops records only the selected scenario, start/completion, and a coarse duration bucket for product learning—never Round text, responses, or learner identifiers.",
   "reportRound.editor.reuseLimit":
     "Select fewer questions so this Round stays within the 200-question limit.",
   "reportRound.editor.history.questionAdded": "Question added.",

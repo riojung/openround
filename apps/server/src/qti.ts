@@ -373,7 +373,7 @@ export async function exportQtiPackage(
         issue(
           "error",
           "UNSUPPORTED_QTI_CHECKPOINT",
-          `${question.type.replaceAll("_", " ")} checkpoints are outside the OpenRound QTI 3 profile.`,
+          `${question.type.replaceAll("_", " ")} checkpoints are outside the Polling Pops QTI 3 profile.`,
           { row: index + 1, field: "type" },
         ),
       );
@@ -724,9 +724,14 @@ function parseQtiItem(content: Buffer, fileName: string, row: number, issues: Im
   const metadata = parseMetadata(item);
   if (outcomeValue(item, "OPENROUND_METADATA") && !metadata) {
     issues.push(
-      issue("warning", "INVALID_OPENROUND_QTI_METADATA", "OpenRound metadata could not be read.", {
-        row,
-      }),
+      issue(
+        "warning",
+        "INVALID_OPENROUND_QTI_METADATA",
+        "Polling Pops metadata could not be read.",
+        {
+          row,
+        },
+      ),
     );
   }
   if (/<(?:img|object|audio|video)\b/i.test(source)) {
@@ -811,7 +816,7 @@ function parseQtiItem(content: Buffer, fileName: string, row: number, issues: Im
       ((type === "multi_select" && cardinality !== "multiple") ||
         (type !== "multi_select" && cardinality !== "single"))
     ) {
-      throw new Error("OpenRound checkpoint type does not match the QTI response cardinality");
+      throw new Error("Polling Pops checkpoint type does not match the QTI response cardinality");
     }
     checkpoint = {
       ...common,
@@ -841,7 +846,7 @@ function parseQtiItem(content: Buffer, fileName: string, row: number, issues: Im
       throw new Error("Numeric text entry response must use float or integer base type");
     }
     if (metadata && metadata.type !== "numeric") {
-      throw new Error("OpenRound checkpoint type does not match the QTI numeric interaction");
+      throw new Error("Polling Pops checkpoint type does not match the QTI numeric interaction");
     }
     const correctValue = textContent(findByKey(response["qti-correct-response"], "qti-value"));
     if (!correctValue) throw new Error("Numeric QTI item has no static correct response");
@@ -858,7 +863,7 @@ function parseQtiItem(content: Buffer, fileName: string, row: number, issues: Im
         issue(
           "warning",
           "QTI_NUMERIC_TOLERANCE_DEFAULTED",
-          "No OpenRound tolerance metadata was present; tolerance was set to zero.",
+          "No Polling Pops tolerance metadata was present; tolerance was set to zero.",
           { row, field: "tolerance" },
         ),
       );
@@ -890,7 +895,7 @@ export async function importQtiPackage(data: string, title?: string): Promise<Qt
     issue(
       "warning",
       "PRESENTATION_DEFAULTED",
-      "The QTI profile does not carry OpenRound presentation metadata; General with the Focus preset was selected.",
+      "The QTI profile does not carry Polling Pops presentation metadata; General with the Focus preset was selected.",
     ),
   ];
   let files: Map<string, Buffer>;

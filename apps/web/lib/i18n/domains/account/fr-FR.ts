@@ -9,7 +9,7 @@ const messages = {
   "account.feedback.themeSaved":
     "Votre thème a été enregistré pour les nouvelles sessions en direct.",
   "account.feedback.themeRemoved":
-    "Le thème a été supprimé. Les nouvelles sessions utiliseront le style OpenRound.",
+    "Le thème a été supprimé. Les nouvelles sessions utiliseront le style Polling Pops.",
   "account.feedback.embedSaved": "Les origines sécurisées d’intégration ont été enregistrées.",
   "account.feedback.identityRemoved":
     "La connexion institutionnelle a été supprimée. La connexion par e-mail reste disponible.",
@@ -47,7 +47,7 @@ const messages = {
   "account.institution.k12Mode": "Mode institutionnel primaire-secondaire",
   "account.institution.loading": "Chargement de la politique institutionnelle…",
   "account.institution.linkGuidance":
-    "Associez uniquement une identité que vous contrôlez. OpenRound utilise l’émetteur et le sujet institutionnels et ne relie jamais les comptes par correspondance d’adresse e-mail.",
+    "Associez uniquement une identité que vous contrôlez. Polling Pops utilise l’émetteur et le sujet institutionnels et ne relie jamais les comptes par correspondance d’adresse e-mail.",
   "account.institution.linked": "Associée le {date}",
   "account.institution.unlink": "Dissocier",
   "account.institution.openingSignIn": "Ouverture de la connexion institutionnelle…",
@@ -57,7 +57,7 @@ const messages = {
     "La connexion institutionnelle n’est pas activée pour cet espace. Les propriétaires ne peuvent pas activer eux-mêmes les contrôles d’identité soumis à contrat.",
   "account.institution.ltiTitle": "Inscriptions LTI 1.3",
   "account.institution.ltiEmpty":
-    "LTI est approuvé, mais aucune plateforme n’est enregistrée. Votre opérateur OpenRound doit ajouter l’émetteur LMS, le client, le déploiement, JWKS et les origines de retour.",
+    "LTI est approuvé, mais aucune plateforme n’est enregistrée. Votre opérateur Polling Pops doit ajouter l’émetteur LMS, le client, le déploiement, JWKS et les origines de retour.",
   "account.institution.auditTitle": "Exportation d’audit institutionnel",
   "account.institution.auditDescription":
     "Téléchargez jusqu’à 10 000 événements administratifs et d’animation ordonnés avec l’acteur, la requête, la cible, l’horodatage et la région. Les grandes exportations sont clairement signalées comme tronquées.",
@@ -117,7 +117,7 @@ const messages = {
   "account.theme.contrastHelp":
     "Les deux couleurs doivent conserver un contraste d’au moins 4,5:1 avec le texte blanc. Les modifications s’appliquent aux sessions créées après l’enregistrement, pas aux salles déjà actives.",
   "account.theme.save": "Enregistrer le thème",
-  "account.theme.useOpenRound": "Utiliser le thème OpenRound",
+  "account.theme.useOpenRound": "Utiliser le thème Polling Pops",
   "account.export.eyebrow": "Données portables",
   "account.export.title": "Exporter votre compte",
   "account.export.description":

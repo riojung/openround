@@ -1557,7 +1557,13 @@ export async function registerRoutes(
       title: cleanPlainText(input.title, 160),
       description: cleanPlainText(input.description, 1_000),
       status: "draft",
-      draft: { title: input.title, description: input.description, questions: [] },
+      draft: {
+        title: input.title,
+        description: input.description,
+        questions: [],
+        category: "general",
+        experiencePreset: { id: "pops", version: 1 },
+      },
       draftSchemaVersion: 1,
       lastEditedBy: creator.userId,
       currentVersionId: null,
@@ -1704,7 +1710,10 @@ export async function registerRoutes(
     }
     return reply
       .header("content-type", "application/json; charset=utf-8")
-      .header("content-disposition", `attachment; filename="openround-checkpoint-set-${id}.json"`)
+      .header(
+        "content-disposition",
+        `attachment; filename="polling-pops-checkpoint-set-${id}.json"`,
+      )
       .send(openRoundJson(quiz.draft));
   });
 
@@ -1725,7 +1734,7 @@ export async function registerRoutes(
     }
     return reply
       .header("content-type", "text/csv; charset=utf-8")
-      .header("content-disposition", `attachment; filename="openround-checkpoint-set-${id}.csv"`)
+      .header("content-disposition", `attachment; filename="polling-pops-checkpoint-set-${id}.csv"`)
       .send(checkpointSetCsv(quiz.draft));
   });
 
@@ -1761,7 +1770,7 @@ export async function registerRoutes(
       .header("x-openround-export-warnings", String(result.validation.warnings.length))
       .header(
         "content-disposition",
-        `attachment; filename="openround-checkpoint-set-${id}.qti.zip"`,
+        `attachment; filename="polling-pops-checkpoint-set-${id}.qti.zip"`,
       )
       .send(result.archive);
   });
@@ -2556,7 +2565,7 @@ export async function registerRoutes(
     }
     return reply
       .header("content-type", "text/csv; charset=utf-8")
-      .header("content-disposition", `attachment; filename="openround-interactions-${id}.csv"`)
+      .header("content-disposition", `attachment; filename="polling-pops-interactions-${id}.csv"`)
       .send(transcriptCsv(transcript));
   });
 
@@ -2588,7 +2597,7 @@ export async function registerRoutes(
     }
     return reply
       .header("content-type", "text/csv; charset=utf-8")
-      .header("content-disposition", `attachment; filename="openround-report-${id}.csv"`)
+      .header("content-disposition", `attachment; filename="polling-pops-report-${id}.csv"`)
       .send(reportCsv(report));
   });
 
@@ -2620,7 +2629,7 @@ export async function registerRoutes(
     }
     return reply
       .header("content-type", "application/json; charset=utf-8")
-      .header("content-disposition", `attachment; filename="openround-report-${id}.json"`)
+      .header("content-disposition", `attachment; filename="polling-pops-report-${id}.json"`)
       .send(JSON.stringify(report, null, 2));
   });
 
@@ -3475,7 +3484,7 @@ export async function registerRoutes(
       .header("content-type", "application/json; charset=utf-8")
       .header(
         "content-disposition",
-        `attachment; filename="openround-audit-${creator.workspaceId}.json"`,
+        `attachment; filename="polling-pops-audit-${creator.workspaceId}.json"`,
       )
       .send({
         format: "openround.audit",
@@ -3483,7 +3492,7 @@ export async function registerRoutes(
         exportedAt: new Date().toISOString(),
         workspace: {
           id: creator.workspaceId,
-          name: workspace?.name ?? "OpenRound workspace",
+          name: workspace?.name ?? "Polling Pops workspace",
           homeRegion: workspace?.homeRegion ?? null,
         },
         range: { since: query.since?.toISOString() ?? null, truncated, maximumEvents },

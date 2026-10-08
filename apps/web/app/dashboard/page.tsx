@@ -268,7 +268,7 @@ function LegacyDashboardPage() {
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
       link.href = url;
-      link.download = `openround-checkpoint-set-${quizId}.${format}`;
+      link.download = `polling-pops-checkpoint-set-${quizId}.${format}`;
       document.body.append(link);
       link.click();
       link.remove();
@@ -880,7 +880,7 @@ function BetaDashboard() {
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
       link.href = url;
-      link.download = `openround-round-${quizId}.${format}`;
+      link.download = `polling-pops-round-${quizId}.${format}`;
       document.body.append(link);
       link.click();
       link.remove();

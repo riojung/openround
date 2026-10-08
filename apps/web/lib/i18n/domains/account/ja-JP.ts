@@ -8,7 +8,7 @@ const messages = {
   "account.feedback.invitationSent": "{email}に招待を送信しました。",
   "account.feedback.themeSaved": "新しいライブセッション用にブランドテーマを保存しました。",
   "account.feedback.themeRemoved":
-    "ワークスペースのテーマを削除しました。新しいセッションにはOpenRoundのスタイルが適用されます。",
+    "ワークスペースのテーマを削除しました。新しいセッションにはPolling Popsのスタイルが適用されます。",
   "account.feedback.embedSaved": "安全な埋め込み元を保存しました。",
   "account.feedback.identityRemoved":
     "機関ログインを削除しました。メールでのログインは引き続き利用できます。",
@@ -46,7 +46,7 @@ const messages = {
   "account.institution.k12Mode": "K–12機関モード",
   "account.institution.loading": "機関ポリシーを読み込み中…",
   "account.institution.linkGuidance":
-    "自分で管理しているIDのみを連携してください。OpenRoundは機関の発行者とサブジェクトをキーにし、メールアドレスの一致だけでアカウントを連携することはありません。",
+    "自分で管理しているIDのみを連携してください。Polling Popsは機関の発行者とサブジェクトをキーにし、メールアドレスの一致だけでアカウントを連携することはありません。",
   "account.institution.linked": "{date}に連携",
   "account.institution.unlink": "連携解除",
   "account.institution.openingSignIn": "機関ログインを開いています…",
@@ -56,7 +56,7 @@ const messages = {
     "このワークスペースでは機関ログインが有効ではありません。所有者が契約対象のID制御を自分で有効にすることはできません。",
   "account.institution.ltiTitle": "LTI 1.3登録",
   "account.institution.ltiEmpty":
-    "LTIは承認されていますが、プラットフォームが登録されていません。OpenRoundの運営者がLMS発行者、クライアント、デプロイ、JWKS、戻り元を追加する必要があります。",
+    "LTIは承認されていますが、プラットフォームが登録されていません。Polling Popsの運営者がLMS発行者、クライアント、デプロイ、JWKS、戻り元を追加する必要があります。",
   "account.institution.auditTitle": "機関監査エクスポート",
   "account.institution.auditDescription":
     "実行者、リクエスト、対象、タイムスタンプ、リージョン情報を含む管理・進行イベントを、順序付きで最大10,000件ダウンロードします。大きなエクスポートは切り詰められたことが明示されます。",
@@ -115,7 +115,7 @@ const messages = {
   "account.theme.contrastHelp":
     "どちらの色も白い文字と4.5:1以上のコントラストを保つ必要があります。変更は保存後に作成したセッションに適用され、進行中のルームには適用されません。",
   "account.theme.save": "テーマを保存",
-  "account.theme.useOpenRound": "OpenRoundテーマを使用",
+  "account.theme.useOpenRound": "Polling Popsテーマを使用",
   "account.export.eyebrow": "持ち運び可能なデータ",
   "account.export.title": "アカウントをエクスポート",
   "account.export.description":

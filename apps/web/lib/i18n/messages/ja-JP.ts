@@ -22,7 +22,7 @@ const messages = {
   "delivery.site.signedInAs": "ログイン中",
   "delivery.site.plans": "プラン",
   "delivery.site.signInToCreate": "ログインしてRoundを作成・管理",
-  "delivery.site.project": "© {year} OpenRoundコミュニティプロジェクト",
+  "delivery.site.project": "© {year} Polling Popsコミュニティプロジェクト",
   "delivery.site.legalLinks": "法的情報",
   "delivery.site.terms": "利用規約",
   "delivery.site.status": "稼働状況",
@@ -96,7 +96,7 @@ const messages = {
     "信頼できるテキスト、PDF、Word、PowerPointを確認用の下書きに変換します。",
   "create.round.method.import.title": "既存の内容をインポート",
   "create.round.method.import.description":
-    "OpenRound JSON、CSV、一括テキスト、QTI 3パッケージを検証します。",
+    "Polling Pops JSON、CSV、一括テキスト、QTI 3パッケージを検証します。",
   "create.round.method.import.badge": "持ち運び可能",
   "create.round.method.blank.title": "白紙から始める",
   "create.round.method.blank.description":
@@ -146,7 +146,7 @@ const messages = {
   "create.presentation.source.eyebrow": "資料に基づく変換",
   "create.presentation.source.title": "信頼できる資料から作成",
   "create.presentation.source.description":
-    "PDF、DOCX、PPTX、貼り付けたテキストを構造化されたOpenRoundブロックに変換します。結果は確認しやすく画面に適応しますが、元のスライドを完全に再現するものではありません。",
+    "PDF、DOCX、PPTX、貼り付けたテキストを構造化されたPolling Popsブロックに変換します。結果は確認しやすく画面に適応しますが、元のスライドを完全に再現するものではありません。",
   "create.presentation.templates.eyebrow": "構造化テンプレート",
   "create.presentation.templates.title": "進行パターンを選ぶ",
   "create.presentation.templates.use": "テンプレートを使用 →",
@@ -218,10 +218,10 @@ const messages = {
   "page.results.title": "結果",
   "page.results.description":
     "リカバリーの成果を確認し、割り当て済みまたはレポートに基づく練習を追跡します。",
-  "page.discover.eyebrow": "OpenRound 厳選",
+  "page.discover.eyebrow": "Polling Pops 厳選",
   "page.discover.title": "探す",
   "page.discover.description":
-    "信頼できる OpenRound のパターンを選び、対象者に合わせて調整できます。",
+    "信頼できる Polling Pops のパターンを選び、対象者に合わせて調整できます。",
   "page.groups.eyebrow": "ファシリテーターの共同作業",
   "page.groups.title": "グループ",
   "page.groups.description":

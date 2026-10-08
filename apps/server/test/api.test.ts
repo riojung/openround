@@ -786,7 +786,7 @@ describe("creator to report journey", () => {
 
     const presets = await app.inject({ method: "GET", url: "/v1/experience-presets" });
     expect(presets.statusCode).toBe(200);
-    expect(presets.json<{ presets: unknown[] }>().presets).toHaveLength(6);
+    expect(presets.json<{ presets: unknown[] }>().presets).toHaveLength(7);
     const defaultInteractions = await app.inject({
       method: "GET",
       url: `/v1/sessions/${session.sessionId}/interactions/settings`,

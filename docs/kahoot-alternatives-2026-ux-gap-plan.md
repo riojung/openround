@@ -1,4 +1,4 @@
-# OpenRound 2026 Kahoot-alternatives benchmark and UX implementation plan
+# Polling Pops 2026 Kahoot-alternatives benchmark and UX implementation plan
 
 Research date: 2026-09-18
 
@@ -11,7 +11,7 @@ Research date: 2026-09-18
 > workflows. See the [2026 market research and development plan](market-research-and-development-plan-2026-09.md).
 
 This document benchmarks the products named in StudyGlen's “10 Best Free Kahoot Alternatives in
-2026” guide against current first-party product material and the OpenRound implementation. It
+2026” guide against current first-party product material and the Polling Pops implementation. It
 combines a repository audit, a local end-to-end product walkthrough, current vendor documentation,
 and product-strategy judgment.
 
@@ -69,7 +69,7 @@ pre-beta walkthrough below. Research observations and competitor claims keep the
 
 ## Executive decision
 
-OpenRound should **not** copy Kahoot, Blooket, Gimkit, or StudyGlen screen-for-screen, and it should
+Polling Pops should **not** copy Kahoot, Blooket, Gimkit, or StudyGlen screen-for-screen, and it should
 not enter a game-mode arms race. It should match the category on **speed, clarity, reuse, and
 delivery choice**, then make its existing Recovery Loop unmistakable:
 
@@ -80,7 +80,7 @@ The following strategy points record the original UX direction. The implementati
 supersedes their build language where the workflow has since shipped; remaining work is framed as
 validation or evidence.
 
-1. **Expose what already exists.** OpenRound already has six response types, source-grounded
+1. **Expose what already exists.** Polling Pops already has six response types, source-grounded
    authoring, guest joining, presenter/cohost roles, Pulse, chat, Q&A, deterministic insights,
    interventions, linked rechecks, reports, and accountless follow-ups. The current information
    architecture makes this depth difficult to discover.
@@ -127,26 +127,26 @@ Material issues found during verification:
   documented a ChatGPT integration for creating and saving a limited number of questions.
 
 Decision: preserve the shortlist, but base product and pricing choices on first-party sources,
-observed workflows, and OpenRound customer research.
+observed workflows, and Polling Pops customer research.
 
 ## Current market benchmark
 
 The table emphasizes the buying or usage advantage that matters, not every feature in every plan.
 
-| Product        | Current free entry                                                                                                                           | Experience advantage                                                                                                                                                                                             | OpenRound implication                                                                                                                                                                  |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Kahoot**     | Usually 10–40 participants depending on account category; free/basic capabilities vary                                                       | Category-leading polish, ready-made content, familiar live/assignment workflow, broad paid question types                                                                                                        | Match the clarity of `Host` and `Assign`, not its branding, shapes, sounds, or game-show identity                                                                                      |
-| **StudyGlen**  | One AI quiz/flashcard generation daily; unlimited live sessions; its live FAQ says 50 participants, while another official page says 100     | Extremely short PDF/image/text/YouTube/Anki-to-live-game path, explanations, generated diagrams, 41 languages                                                                                                    | Put source creation in the primary Create flow and measure source-to-room time                                                                                                         |
-| **Wayground**  | Up to 100 participants, limited storage, live and asynchronous delivery, accommodations, and AI                                              | Broad instructional formats, differentiation, anti-cheating, assignments, and institutional integrations                                                                                                         | Make delivery choice and accessibility visible; do not attempt its full suite immediately                                                                                              |
-| **Blooket**    | Unlimited sets, 60 players, 14-day homework, public library, and many modes                                                                  | Strong student pull, content reuse, collectibles, and 25+ documented modes                                                                                                                                       | Add starter content and one restrained team mode; do not build an arcade economy                                                                                                       |
-| **Gimkit**     | Rotating free modes; standard games up to 500, all 2D modes up to 60; assignments require Pro                                                | Deep cooperative/competitive 2D play with configurable game/learning balance                                                                                                                                     | Separate content from delivery mode; defer world-building and cosmetics                                                                                                                |
-| **Slido**      | 100 participants, three polls and one quiz per Slido, audience Q&A                                                                           | Best-in-class anonymous/upvoted Q&A, moderation, cohosting, and presentation integrations                                                                                                                        | Consolidate OpenRound audience tools and add a persistent host control bar                                                                                                             |
-| **AhaSlides**  | 50 participants, five quiz plus three unscored slides, five PDF/PPT AI queries monthly                                                       | Presentation-first creation, broad interaction types, self-paced delivery, and visible import                                                                                                                    | Bounded text-box editing exists; consider a slide companion only after its evidence gate                                                                                               |
-| **Mentimeter** | 50 cumulative participants per month plus one session that may exceed the threshold                                                          | Highly polished result visuals, 23 slide types, AI, and an excellent presenter workflow                                                                                                                          | Improve result visualization and hierarchy; breadth is not the near-term moat                                                                                                          |
-| **Socrative**  | 50 students, five quizzes, one room, 30-day history, and bounded AI generation/import/analysis                                               | Strong assessment, exit-ticket, room, and question/participant reporting workflows                                                                                                                               | Preserve OpenRound's stronger recovery story while adding history and drill-down clarity                                                                                               |
-| **Baamboozle** | Free core play; current official material does not publish a simple participant ceiling                                                      | One shared screen can run teacher-led team play without participant devices                                                                                                                                      | Consider a later facilitated team mode only if target customers ask for it                                                                                                             |
-| **Wordwall**   | Three created activities and 12 templates                                                                                                    | One content set switches among 34 interactive templates; assignments, printables, and a large library                                                                                                            | Build content reuse and a few delivery modes before adding more visual themes                                                                                                          |
-| **OpenRound**  | Hosted Free: 20 participants, five published sets, 30-day aggregate reports, three AI jobs when configured; Community is operator-configured | Accountless Recovery Loop, confidence, misconceptions, interventions, linked rechecks, private snapshot reuse, live and self-paced delivery, privacy, accessibility, durability, Q&A/Pulse/chat, and portability | Gated whole-room flex, Question Health, Report V4 replay, bounded slide text geometry, and owner deletion are implemented; validation, rollout, delivery breadth, and packaging remain |
+| Product          | Current free entry                                                                                                                           | Experience advantage                                                                                                                                                                                             | Polling Pops implication                                                                                                                                                               |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Kahoot**       | Usually 10–40 participants depending on account category; free/basic capabilities vary                                                       | Category-leading polish, ready-made content, familiar live/assignment workflow, broad paid question types                                                                                                        | Match the clarity of `Host` and `Assign`, not its branding, shapes, sounds, or game-show identity                                                                                      |
+| **StudyGlen**    | One AI quiz/flashcard generation daily; unlimited live sessions; its live FAQ says 50 participants, while another official page says 100     | Extremely short PDF/image/text/YouTube/Anki-to-live-game path, explanations, generated diagrams, 41 languages                                                                                                    | Put source creation in the primary Create flow and measure source-to-room time                                                                                                         |
+| **Wayground**    | Up to 100 participants, limited storage, live and asynchronous delivery, accommodations, and AI                                              | Broad instructional formats, differentiation, anti-cheating, assignments, and institutional integrations                                                                                                         | Make delivery choice and accessibility visible; do not attempt its full suite immediately                                                                                              |
+| **Blooket**      | Unlimited sets, 60 players, 14-day homework, public library, and many modes                                                                  | Strong student pull, content reuse, collectibles, and 25+ documented modes                                                                                                                                       | Add starter content and one restrained team mode; do not build an arcade economy                                                                                                       |
+| **Gimkit**       | Rotating free modes; standard games up to 500, all 2D modes up to 60; assignments require Pro                                                | Deep cooperative/competitive 2D play with configurable game/learning balance                                                                                                                                     | Separate content from delivery mode; defer world-building and cosmetics                                                                                                                |
+| **Slido**        | 100 participants, three polls and one quiz per Slido, audience Q&A                                                                           | Best-in-class anonymous/upvoted Q&A, moderation, cohosting, and presentation integrations                                                                                                                        | Consolidate Polling Pops audience tools and add a persistent host control bar                                                                                                          |
+| **AhaSlides**    | 50 participants, five quiz plus three unscored slides, five PDF/PPT AI queries monthly                                                       | Presentation-first creation, broad interaction types, self-paced delivery, and visible import                                                                                                                    | Bounded text-box editing exists; consider a slide companion only after its evidence gate                                                                                               |
+| **Mentimeter**   | 50 cumulative participants per month plus one session that may exceed the threshold                                                          | Highly polished result visuals, 23 slide types, AI, and an excellent presenter workflow                                                                                                                          | Improve result visualization and hierarchy; breadth is not the near-term moat                                                                                                          |
+| **Socrative**    | 50 students, five quizzes, one room, 30-day history, and bounded AI generation/import/analysis                                               | Strong assessment, exit-ticket, room, and question/participant reporting workflows                                                                                                                               | Preserve Polling Pops’ stronger recovery story while adding history and drill-down clarity                                                                                             |
+| **Baamboozle**   | Free core play; current official material does not publish a simple participant ceiling                                                      | One shared screen can run teacher-led team play without participant devices                                                                                                                                      | Consider a later facilitated team mode only if target customers ask for it                                                                                                             |
+| **Wordwall**     | Three created activities and 12 templates                                                                                                    | One content set switches among 34 interactive templates; assignments, printables, and a large library                                                                                                            | Build content reuse and a few delivery modes before adding more visual themes                                                                                                          |
+| **Polling Pops** | Hosted Free: 20 participants, five published sets, 30-day aggregate reports, three AI jobs when configured; Community is operator-configured | Accountless Recovery Loop, confidence, misconceptions, interventions, linked rechecks, private snapshot reuse, live and self-paced delivery, privacy, accessibility, durability, Q&A/Pulse/chat, and portability | Gated whole-room flex, Question Health, Report V4 replay, bounded slide text geometry, and owner deletion are implemented; validation, rollout, delivery breadth, and packaging remain |
 
 ### Market baseline that users now expect
 
@@ -161,11 +161,11 @@ A credible 2026 live-learning product combines eight systems:
 7. Live insight, question-level reports, export, and a retrievable history.
 8. An engagement layer appropriate to the audience.
 
-OpenRound is strong on 1, 2, much of 5, and the depth of 7. It now has credible live and self-paced
+Polling Pops is strong on 1, 2, much of 5, and the depth of 7. It now has credible live and self-paced
 delivery plus source/import creation. It remains partial on team/cooperative delivery, URL/video
 creation, and cross-Round content reuse, and intentionally restrained on 8.
 
-## Verified OpenRound baseline
+## Verified Polling Pops baseline
 
 This plan is based on implemented code, not only roadmap claims. On the audited branch:
 
@@ -178,7 +178,7 @@ This plan is based on implemented code, not only roadmap claims. On the audited 
 - PostgreSQL, Redis coordination/replay, durable answer acknowledgement, command idempotency,
   reconnect snapshots, role filtering, and report reconciliation are already implemented.
 
-The older competitive roadmap remains strategically useful, but its statement that OpenRound has
+The older competitive roadmap remains strategically useful, but its statement that Polling Pops has
 only two response types and lacks confidence, remediation, follow-up, and portability is now stale.
 Those capabilities are present in the current implementation.
 
@@ -300,7 +300,7 @@ Offer four mutually clear starts in one dialog/page:
 
 - **Use a starter** — curated, first-party Recovery Loop examples.
 - **Create from a source** — paste or upload, show supported inputs and provider/privacy state.
-- **Import existing work** — CSV, QTI, OpenRound JSON, and bulk paste.
+- **Import existing work** — CSV, QTI, Polling Pops JSON, and bulk paste.
 - **Start blank** — choose the first response type immediately; ask for title later or generate one.
 
 Source creation should show a small staged flow: `source → review proposal → edit → publish`. It
@@ -698,7 +698,7 @@ Primary product and plan material reviewed on 2026-09-18:
 - [Wordwall pricing](https://wordwall.net/price-plans) and
   [features](https://wordwall.net/features)
 
-OpenRound evidence:
+Polling Pops evidence:
 
 - [Current implementation](../README.md)
 - [Product and experience design](design.md)

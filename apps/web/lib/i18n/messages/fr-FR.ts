@@ -22,7 +22,7 @@ const messages = {
   "delivery.site.signedInAs": "Connecté en tant que",
   "delivery.site.plans": "Offres",
   "delivery.site.signInToCreate": "Connectez-vous pour créer et gérer des Rounds",
-  "delivery.site.project": "© {year} Projet communautaire OpenRound",
+  "delivery.site.project": "© {year} Projet communautaire Polling Pops",
   "delivery.site.legalLinks": "Liens juridiques",
   "delivery.site.terms": "Conditions",
   "delivery.site.status": "État",
@@ -97,7 +97,7 @@ const messages = {
     "Transformez un texte fiable, un PDF, un document Word ou PowerPoint en brouillon à vérifier.",
   "create.round.method.import.title": "Importer un travail existant",
   "create.round.method.import.description":
-    "Validez un fichier OpenRound JSON, CSV, un texte en bloc ou un paquet QTI 3.",
+    "Validez un fichier Polling Pops JSON, CSV, un texte en bloc ou un paquet QTI 3.",
   "create.round.method.import.badge": "Portable",
   "create.round.method.blank.title": "Partir de zéro",
   "create.round.method.blank.description":
@@ -148,7 +148,7 @@ const messages = {
   "create.presentation.source.eyebrow": "Conversion fondée sur une source",
   "create.presentation.source.title": "Créer à partir de contenu fiable",
   "create.presentation.source.description":
-    "Les PDF, DOCX, PPTX et textes collés deviennent des blocs OpenRound structurés. Le résultat est adaptable et vérifiable, sans promettre une reproduction parfaite des diapositives.",
+    "Les PDF, DOCX, PPTX et textes collés deviennent des blocs Polling Pops structurés. Le résultat est adaptable et vérifiable, sans promettre une reproduction parfaite des diapositives.",
   "create.presentation.templates.eyebrow": "Modèles structurés",
   "create.presentation.templates.title": "Choisissez un scénario d’animation",
   "create.presentation.templates.use": "Utiliser le modèle →",
@@ -226,9 +226,10 @@ const messages = {
   "page.results.title": "Résultats",
   "page.results.description":
     "Analysez les données de récupération et suivez les exercices attribués ou issus de rapports.",
-  "page.discover.eyebrow": "Sélection OpenRound",
+  "page.discover.eyebrow": "Sélection Polling Pops",
   "page.discover.title": "Découvrir",
-  "page.discover.description": "Partez de modèles OpenRound fiables et adaptez-les à votre public.",
+  "page.discover.description":
+    "Partez de modèles Polling Pops fiables et adaptez-les à votre public.",
   "page.groups.eyebrow": "Collaboration entre animateurs",
   "page.groups.title": "Groupes",
   "page.groups.description":

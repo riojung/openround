@@ -157,7 +157,7 @@ describe("checkpoint-set portability", () => {
     expect(updatedInsertion.diagnosticQuestionId).toBe(updatedImport.draft!.questions[0]!.id);
     expect(updatedInsertion.id).not.toBe(source.recoveryPackInsertions[0]!.id);
   });
-  it("round-trips OpenRound JSON with fresh IDs and an explicit media warning", () => {
+  it("round-trips Polling Pops JSON with fresh IDs and an explicit media warning", () => {
     const source = linkedDraft();
     const imported = importCheckpointSet("openround_json", openRoundJson(source));
 

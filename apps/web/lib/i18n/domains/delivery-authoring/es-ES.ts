@@ -1,6 +1,10 @@
 import type { DeliveryAuthoringMessages } from "./en-CA";
 
 export default {
+  "delivery.landing.polls": "Encuestas en directo",
+  "delivery.landing.presentations": "Presentaciones interactivas",
+  "delivery.landing.learning": "Rondas de aprendizaje",
+  "delivery.landing.featuresLabel": "Usos de Polling Pops",
   "delivery.common.home": "Inicio",
   "delivery.common.loading": "Cargando…",
   "delivery.common.retry": "Intentar de nuevo",
@@ -17,10 +21,10 @@ export default {
   "delivery.common.preview": "Vista previa",
   "delivery.common.publish": "Publicar",
   "delivery.common.exit": "Salir",
-  "delivery.landing.eyebrow": "Comprensión en directo sin distracciones",
-  "delivery.landing.title": "Descubre qué se entendió mientras aún importa.",
+  "delivery.landing.eyebrow": "Grandes ideas. Conversaciones vivas.",
+  "delivery.landing.title": "Haz que cada voz destaque.",
   "delivery.landing.description":
-    "Pregunta, diagnostica, interviene y vuelve a comprobar la comprensión, sin cuentas de participantes.",
+    "Da vida a tu grupo con encuestas en directo, presentaciones interactivas y rondas de aprendizaje. Escucha cada voz, aclara las dudas y comprueba qué se entiende, sin cuentas de participantes.",
   "delivery.landing.participantEntry": "Acceso de participante",
   "delivery.landing.joinTitle": "Unirse a un Round en directo",
   "delivery.landing.joinDescription": "No necesitas cuenta. Introduce el código del facilitador.",
@@ -244,11 +248,11 @@ export default {
   "delivery.assistant.draftQuestions": "Crear preguntas desde una fuente de confianza",
   "delivery.assistant.draftCheckpoints": "Crear puntos de control desde una fuente de confianza",
   "delivery.assistant.presentationDescription":
-    "OpenRound puede proponer diapositivas con citas y un par de preguntas de recuperación enlazadas.",
+    "Polling Pops puede proponer diapositivas con citas y un par de preguntas de recuperación enlazadas.",
   "delivery.assistant.roundDescription":
-    "OpenRound puede proponer una pregunta principal y una comprobación enlazada.",
+    "Polling Pops puede proponer una pregunta principal y una comprobación enlazada.",
   "delivery.assistant.checkpointDescription":
-    "OpenRound puede proponer un punto de control principal y una comprobación enlazada.",
+    "Polling Pops puede proponer un punto de control principal y una comprobación enlazada.",
   "delivery.assistant.securityDescription":
     "Las fuentes pueden ser texto pegado o un archivo privado PDF, Word o PowerPoint. Los archivos se analizan antes de conservarlos. Cada propuesta incluye citas y permanece como borrador sin publicar hasta que la revises.",
   "delivery.assistant.allowanceUnlimited.one":

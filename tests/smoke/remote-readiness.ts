@@ -656,7 +656,7 @@ async function main() {
     }
     const smtpObserver = boundObserverPayload("smtp", {
       recipient: smtpProbeEmail,
-      subject: "Join an OpenRound workspace",
+      subject: "Join a Polling Pops workspace",
       sentAfter: smtpSentAfter.toISOString(),
     });
 

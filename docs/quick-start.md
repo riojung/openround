@@ -1,4 +1,4 @@
-# OpenRound quick start
+# Polling Pops quick start
 
 This guide starts the complete community stack and walks through one live checkpoint round. The
 normal path takes about ten minutes after container images are available.
@@ -38,7 +38,7 @@ Open:
 2. Choose **Workplace learning** or **Education**. This sets the session defaults described in the [user guide](user-guide.md#roles-and-screens).
 3. Enter any valid development email address.
 4. Accept the draft Terms and Privacy notice, then select **Send sign-in link**.
-5. Select **Open local email inbox** in the confirmation, choose the newest OpenRound message, and
+5. Select **Open local email inbox** in the confirmation, choose the newest Polling Pops message, and
    open its sign-in link. You can also open Mailpit directly at <http://localhost:8025>.
 
 Mailpit keeps local messages inside the development stack; it does not send external email. The
@@ -74,7 +74,8 @@ default by running the normal `docker compose up -d` command again.
    give the Round a title. In the classic view, enter a title under **Your checkpoint sets** and
    select **Create checkpoint set**.
 2. Add a single-select, true/false, multiple-select, numeric, rating, or poll checkpoint.
-3. Choose a topic category and one of the six Round Experience presets. The category recommends a
+3. Choose a topic category and one of the seven Round Experience presets. New blank work starts
+   with Candy Pop, the Polling Pops signature. The category recommends a
    preset but does not replace an explicit selection. Preview the host, presenter, and phone
    treatment.
 4. Enter the prompt and complete the response-specific answer settings.
@@ -140,7 +141,7 @@ One seven-digit code identifies one live session; it is intentionally shared by 
 3. Keep the facilitator on `localhost`, then expand **Change join address** in the host's **Scan to join** panel and enter the reachable network address.
 4. The host and presenter screens now show a QR and copyable link with the code prefilled. Scan it from each participant device.
 
-OpenRound uses same-origin API and realtime routes in the Compose profile, so participants need only reach port `8080`. If access fails, allow Docker/Caddy through the host firewall and check that the Wi-Fi does not use client isolation. A LAN address works only on that network; internet-wide access requires a deployed HTTPS domain.
+Polling Pops uses same-origin API and realtime routes in the Compose profile, so participants need only reach port `8080`. If access fails, allow Docker/Caddy through the host firewall and check that the Wi-Fi does not use client isolation. A LAN address works only on that network; internet-wide access requires a deployed HTTPS domain.
 
 To make the LAN address canonical for sign-in links, redirects, and QR codes, start or rebuild the stack with it:
 
@@ -291,10 +292,10 @@ docker compose up -d
 
 For Docker disk pressure or a clean rebuild of core, media, and observability services, follow the
 canonical [cleanup and rebuild procedure](runbooks/deployment.md#reclaim-local-docker-disk-space-and-rebuild).
-It distinguishes OpenRound-only cleanup from host-wide pruning and preserves named data volumes.
+It distinguishes Polling Pops-only cleanup from host-wide pruning and preserves named data volumes.
 
 Only for an intentional local data reset after creating and verifying any required PostgreSQL and
-MinIO backups, delete the core profile's local OpenRound database, cache, and object-storage
+MinIO backups, delete the core profile's local Polling Pops database, cache, and object-storage
 volumes:
 
 ```bash

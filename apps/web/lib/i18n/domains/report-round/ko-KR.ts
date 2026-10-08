@@ -42,7 +42,7 @@ const messages = {
   "reportRound.assign.ready": "연습 준비",
   "reportRound.assign.saveLinks": "지금 이 링크를 저장하고 공유하세요",
   "reportRound.assign.hashNotice":
-    "OpenRound는 토큰 해시만 저장합니다. 이 페이지를 떠난 후에는 이러한 정확한 링크를 다시 표시할 수 없습니다.",
+    "Polling Pops는 토큰 해시만 저장합니다. 이 페이지를 떠난 후에는 이러한 정확한 링크를 다시 표시할 수 없습니다.",
   "reportRound.assign.genericLink": "일반 익명 링크",
   "reportRound.assign.genericPracticeLink": "일반 실습 링크",
   "reportRound.assign.copy": "복사",
@@ -82,7 +82,7 @@ const messages = {
   "reportRound.assign.oneLabelPerLine": "한 줄에 하나의 라벨",
   "reportRound.assign.labelsPlaceholder": "학습자 1\n학습자 2",
   "reportRound.assign.labelsHelp":
-    "라벨은 진행자에 대한 링크만 식별합니다. OpenRound는 누구에게도 이메일을 보내거나 학습자 계정을 생성하지 않습니다. 이 계획에서는 최대 {maximum} 라벨을 사용할 수 있습니다. {count} 개인 링크가 생성됩니다.",
+    "라벨은 진행자에 대한 링크만 식별합니다. Polling Pops는 누구에게도 이메일을 보내거나 학습자 계정을 생성하지 않습니다. 이 계획에서는 최대 {maximum} 라벨을 사용할 수 있습니다. {count} 개인 링크가 생성됩니다.",
   "reportRound.assign.creating": "연습을 만드는 중…",
   "reportRound.assign.create": "과제 만들기",
   "reportRound.import.eyebrow": "이식성",
@@ -109,10 +109,11 @@ const messages = {
     "가장 안전한 조치는 무엇입니까?\n* 전체 절차를 따르세요\n- 지름길을 택하라",
   "reportRound.import.pasteContent": "여기에 {format} 콘텐츠를 붙여넣으세요.",
   "reportRound.import.jsonHelpRound":
-    "OpenRound JSON 내보내기를 붙여넣거나 해당 .json 파일을 선택합니다.",
+    "Polling Pops JSON 내보내기를 붙여넣거나 해당 .json 파일을 선택합니다.",
   "reportRound.import.jsonHelpLegacy":
-    "OpenRound 체크포인트 세트 내보내기를 붙여넣거나 해당 .json 파일을 선택하세요.",
-  "reportRound.import.csvHelp": "OpenRound CSV 내보내기를 붙여넣거나 해당 .csv 파일을 선택하세요.",
+    "Polling Pops 체크포인트 세트 내보내기를 붙여넣거나 해당 .json 파일을 선택하세요.",
+  "reportRound.import.csvHelp":
+    "Polling Pops CSV 내보내기를 붙여넣거나 해당 .csv 파일을 선택하세요.",
   "reportRound.import.bulkHelpRound":
     "질문을 빈 줄로 구분하세요. 올바른 경우 '*'로 선택을 시작하고, 잘못된 경우 '-'로 선택을 시작합니다.",
   "reportRound.import.bulkHelpLegacy":
@@ -264,7 +265,7 @@ const messages = {
   "reportRound.rehearsal.scenario.split_room.title": "분할 응답 패턴",
   "reportRound.rehearsal.scenario.split_room.short": "5개 정답 · 5개 틀린 항목 1개 선택",
   "reportRound.rehearsal.scenario.split_room.description":
-    "OpenRound의 생산 통찰력 우선순위를 바꾸지 않고 짝수 분할 읽기를 연습하세요.",
+    "Polling Pops의 생산 통찰력 우선순위를 바꾸지 않고 짝수 분할 읽기를 연습하세요.",
   "reportRound.rehearsal.scenario.confident_misconception.title": "자신감 넘치는 오해",
   "reportRound.rehearsal.scenario.confident_misconception.short": "매우 틀림없음 4개 · 맞음 6개",
   "reportRound.rehearsal.scenario.confident_misconception.description":
@@ -407,7 +408,7 @@ const messages = {
   "reportRound.rehearsal.everyRoleDescription":
     "이 흐름은 학습자 기록을 게시, 호스팅, 편집 또는 생성할 수 없으므로 소유자, 편집자 및 뷰어는 연습을 할 수 있습니다.",
   "reportRound.rehearsal.telemetry":
-    "OpenRound는 선택한 시나리오, 시작/완료 및 제품 학습을 위한 대략적인 기간 버킷만 기록하며 라운드 텍스트, 응답 또는 학습자 식별자는 기록하지 않습니다.",
+    "Polling Pops는 선택한 시나리오, 시작/완료 및 제품 학습을 위한 대략적인 기간 버킷만 기록하며 라운드 텍스트, 응답 또는 학습자 식별자는 기록하지 않습니다.",
   "reportRound.editor.reuseLimit":
     "이 라운드가 질문 200개 제한을 넘지 않도록 선택한 질문 수를 줄이세요.",
   "reportRound.editor.history.questionAdded": "질문을 추가했습니다.",

@@ -125,6 +125,9 @@ const messages = {
   "live.experience.preset.campus.name": "Campus",
   "live.experience.preset.focus.description":
     "Uma tela quente e calma que mantém a atenção no ponto de controlo.",
+  "live.experience.preset.pops.name": "Candy Pop",
+  "live.experience.preset.pops.description":
+    "Frutos vermelhos, creme e menta: um visual alegre com interações calmas e legíveis.",
   "live.experience.preset.focus.name": "Focus",
   "live.experience.preset.signal.description":
     "Um tratamento de alto contraste e baixo movimento para contextos de segurança e conformidade.",
@@ -460,7 +463,7 @@ const messages = {
   "live.roundPlay.progressAria": "Progresso do Round",
   "live.roundPlay.responseRejected": "Essa resposta não foi aceite.",
   "live.roundPlay.responseUnconfirmed":
-    "A OpenRound não pôde confirmar essa resposta antes do encerramento da pergunta.",
+    "A Polling Pops não pôde confirmar essa resposta antes do encerramento da pergunta.",
   "live.roundPlay.retry": "Repetir a resposta de salvamento",
   "live.roundPlay.reviewItem": "Revisão deste {item}",
   "live.roundPlay.saveStatusAria": "Resposta salvar status",

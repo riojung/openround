@@ -8,7 +8,7 @@ const messages = {
   "account.feedback.invitationSent": "{email}님에게 초대장을 보냈습니다.",
   "account.feedback.themeSaved": "새 라이브 세션에 사용할 브랜드 테마를 저장했습니다.",
   "account.feedback.themeRemoved":
-    "워크스페이스 테마를 삭제했습니다. 새 세션에는 OpenRound 스타일이 적용됩니다.",
+    "워크스페이스 테마를 삭제했습니다. 새 세션에는 Polling Pops 스타일이 적용됩니다.",
   "account.feedback.embedSaved": "안전한 발표자 임베드 출처를 저장했습니다.",
   "account.feedback.identityRemoved":
     "기관 로그인을 삭제했습니다. 이메일 로그인은 계속 사용할 수 있습니다.",
@@ -46,7 +46,7 @@ const messages = {
   "account.institution.k12Mode": "K–12 기관 모드",
   "account.institution.loading": "기관 정책을 불러오는 중…",
   "account.institution.linkGuidance":
-    "본인이 관리하는 ID만 연결하세요. OpenRound는 기관 발급자와 주체를 기준으로 연결하며 이메일 주소 일치만으로 계정을 연결하지 않습니다.",
+    "본인이 관리하는 ID만 연결하세요. Polling Pops는 기관 발급자와 주체를 기준으로 연결하며 이메일 주소 일치만으로 계정을 연결하지 않습니다.",
   "account.institution.linked": "{date}에 연결됨",
   "account.institution.unlink": "연결 해제",
   "account.institution.openingSignIn": "기관 로그인 여는 중…",
@@ -56,7 +56,7 @@ const messages = {
     "이 워크스페이스에는 기관 로그인이 활성화되어 있지 않습니다. 워크스페이스 소유자가 계약 기반 ID 제어를 직접 활성화할 수는 없습니다.",
   "account.institution.ltiTitle": "LTI 1.3 등록",
   "account.institution.ltiEmpty":
-    "LTI가 승인되었지만 등록된 플랫폼이 없습니다. OpenRound 운영자가 LMS 발급자, 클라이언트, 배포, JWKS 및 반환 출처 값을 추가해야 합니다.",
+    "LTI가 승인되었지만 등록된 플랫폼이 없습니다. Polling Pops 운영자가 LMS 발급자, 클라이언트, 배포, JWKS 및 반환 출처 값을 추가해야 합니다.",
   "account.institution.auditTitle": "기관 감사 내보내기",
   "account.institution.auditDescription":
     "행위자, 요청, 대상, 타임스탬프 및 리전 정보가 포함된 관리자 및 진행자 이벤트를 최대 10,000개까지 순서대로 다운로드합니다. 큰 내보내기 파일은 잘림 여부가 명확하게 표시됩니다.",
@@ -115,7 +115,7 @@ const messages = {
   "account.theme.contrastHelp":
     "두 색상 모두 흰색 텍스트와 최소 4.5:1 대비를 유지해야 합니다. 변경 사항은 저장 후 생성된 세션에 적용되며 이미 진행 중인 룸에는 적용되지 않습니다.",
   "account.theme.save": "테마 저장",
-  "account.theme.useOpenRound": "OpenRound 테마 사용",
+  "account.theme.useOpenRound": "Polling Pops 테마 사용",
   "account.export.eyebrow": "이동 가능한 데이터",
   "account.export.title": "계정 내보내기",
   "account.export.description":

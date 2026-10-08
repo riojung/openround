@@ -50,7 +50,7 @@ const TAB_LABELS: Record<PrototypeTab, string> = {
   "delayed-probe": "Delayed probe",
 };
 
-export const PROTOTYPE_EVIDENCE_DOWNLOAD_NAME = "openround-phase0-prototype-evidence.json";
+export const PROTOTYPE_EVIDENCE_DOWNLOAD_NAME = "polling-pops-phase0-prototype-evidence.json";
 
 export interface PrototypeTimingState {
   activeTab: PrototypeTab;

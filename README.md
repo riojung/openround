@@ -1,4 +1,13 @@
-# OpenRound
+# Polling Pops
+
+**Make every voice pop.** Live polls, interactive presentations, learning rounds, and
+audience conversation in one privacy-preserving workspace. Formerly OpenRound; existing
+self-hosted configuration and stored content remain compatible.
+
+![Polling Pops](apps/web/public/brand/polling-pops-logo.svg)
+
+The [brand guide](docs/brand.md) covers the original lollipop logo, berry/cream/mint theme,
+dark mode, and downloadable assets. New blank Rounds and Presentations use **Candy Pop**.
 
 **Accountless, server-authoritative comprehension recovery for live learning.**
 
@@ -6,26 +15,26 @@
 [![Security](https://github.com/riojung/openround/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/riojung/openround/actions/workflows/security.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-OpenRound helps higher-education and workplace facilitators identify confusion, make an
+Polling Pops helps higher-education and workplace facilitators identify confusion, make an
 explainable intervention, recheck understanding, and review bounded evidence. Participants join
 live sessions without creating accounts.
 
 > [!IMPORTANT]
-> OpenRound is pre-1.0 software with no published release yet. The repository contains a working
+> Polling Pops is pre-1.0 software with no published release yet. The repository contains a working
 > local Community stack, but public production, institutional, legal, accessibility, security,
 > capacity, and design-partner gates remain open. Do not expose the example configuration or use it
 > with sensitive learner data. See [project status](docs/implementation-status.md) and the
 > [release-readiness ledger](docs/release-readiness.json).
 
-## Why OpenRound
+## Why Polling Pops
 
-Most audience-response tools stop after showing whether an answer was right. OpenRound is built
+Most audience-response tools stop after showing whether an answer was right. Polling Pops is built
 around a recovery loop:
 
 **Ask → diagnose → intervene → recheck → review**
 
 - **Accountless participation:** people join with a seven-digit code or direct link and use a
-  session-scoped alias; OpenRound does not create a persistent learner profile in Learning mode.
+  session-scoped alias; Polling Pops does not create a persistent learner profile in Learning mode.
 - **Explainable recovery:** facilitators can act on deterministic aggregate insights, deliver an
   intervention, and open a linked recheck or revote.
 - **Reliable live state:** the server owns deadlines, scoring, revisions, and accepted answers;
@@ -69,7 +78,7 @@ curl -fsS http://localhost:8080/health/ready
 
 Then open:
 
-- OpenRound: <http://localhost:8080>
+- Polling Pops: <http://localhost:8080>
 - Development email inbox: <http://localhost:8025>
 
 Use any valid development email address to request a sign-in link, then open the captured message
@@ -89,7 +98,7 @@ and safe Docker disk cleanup, use the [operations runbook](docs/runbooks/deploym
 
 ## Architecture
 
-OpenRound is a TypeScript monorepo organized as a modular monolith. Runtime-validated contracts and
+Polling Pops is a TypeScript monorepo organized as a modular monolith. Runtime-validated contracts and
 pure domain packages are shared by the browser and server, while live state remains
 server-authoritative.
 
@@ -151,24 +160,24 @@ the Compose-oriented `.env.example` unchanged.
 
 ## Contributing
 
-Contributions are welcome when they preserve OpenRound's accessibility, privacy, clean-room, and
+Contributions are welcome when they preserve Polling Pops’ accessibility, privacy, clean-room, and
 server-authoritative correctness boundaries. Read [CONTRIBUTING.md](CONTRIBUTING.md), open an
 [issue](https://github.com/riojung/openround/issues) for substantial changes, and run `pnpm check`
 before submitting a pull request.
 
-OpenRound is an independent project. Do not contribute copied content, branding, code, sounds,
+Polling Pops is an independent project. Do not contribute copied content, branding, code, sounds,
 screenshots, or other expressive assets from another product; see [NOTICE](NOTICE).
 
 ## Security
 
 Do not report vulnerabilities in public issues. Use
 [GitHub private vulnerability reporting](https://github.com/riojung/openround/security/advisories/new)
-and review the [security policy](SECURITY.md) before deploying OpenRound. The included policy pages,
+and review the [security policy](SECURITY.md) before deploying Polling Pops. The included policy pages,
 credentials, and infrastructure settings are development defaults, not production approval.
 
 ## License
 
-OpenRound source and original bundled assets are licensed under the
+Polling Pops source and original bundled assets are licensed under the
 [Apache License 2.0](LICENSE). Third-party dependencies and container images retain their own
 licenses; see [third-party notices](THIRD_PARTY_NOTICES.md) and the
 [asset register](docs/asset-register.md).

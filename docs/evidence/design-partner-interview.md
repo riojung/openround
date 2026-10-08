@@ -10,7 +10,7 @@ partner ID here.
 - Facilitator and observer:
 - Consent recorded at:
 - Workflow or prototype tested:
-- Prior OpenRound sessions and evidence references:
+- Prior Polling Pops sessions and evidence references:
 
 ## Findings
 

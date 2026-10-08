@@ -607,7 +607,7 @@ async function main() {
     explanation: "The server commits the response before it acknowledges acceptance.",
     sourceCitations: [
       {
-        sourceName: "OpenRound reliability contract",
+        sourceName: "Polling Pops reliability contract",
         sourceDigest: "a".repeat(64),
         locator: "Presentation response acknowledgement",
         excerpt: "Acceptance follows the durable write.",

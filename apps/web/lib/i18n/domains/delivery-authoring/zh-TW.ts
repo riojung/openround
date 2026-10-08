@@ -1,6 +1,10 @@
 import type { DeliveryAuthoringMessages } from "./en-CA";
 
 export default {
+  "delivery.landing.polls": "即時投票",
+  "delivery.landing.presentations": "互動簡報",
+  "delivery.landing.learning": "學習回合",
+  "delivery.landing.featuresLabel": "Polling Pops 的使用方式",
   "delivery.common.home": "首頁",
   "delivery.common.loading": "載入中…",
   "delivery.common.retry": "再試一次",
@@ -17,10 +21,10 @@ export default {
   "delivery.common.preview": "預覽",
   "delivery.common.publish": "發佈",
   "delivery.common.exit": "離開",
-  "delivery.landing.eyebrow": "無干擾的即時理解檢查",
-  "delivery.landing.title": "趁現在仍重要，看見真正掌握的內容。",
+  "delivery.landing.eyebrow": "大想法。鮮活的對話。",
+  "delivery.landing.title": "讓每個聲音都閃耀。",
   "delivery.landing.description":
-    "向所有人提問、診斷、介入並重新檢查理解是否恢復，不需要參與者帳戶。",
+    "用即時投票、互動簡報和學習回合活化課堂與團隊。聽見每個人的聲音，釐清疑惑，確認理解，無需參與者帳號。",
   "delivery.landing.participantEntry": "參與者入口",
   "delivery.landing.joinTitle": "加入即時 Round",
   "delivery.landing.joinDescription": "不需帳戶。輸入引導者顯示的代碼。",
@@ -236,9 +240,9 @@ export default {
   "delivery.assistant.draftQuestions": "根據可信來源建立問題草稿",
   "delivery.assistant.draftCheckpoints": "根據可信來源建立檢查點草稿",
   "delivery.assistant.presentationDescription":
-    "OpenRound 可以建議附有引文的內容投影片，以及一對相連的恢復問題。",
-  "delivery.assistant.roundDescription": "OpenRound 可以建議一個主要問題和相連的複查問題。",
-  "delivery.assistant.checkpointDescription": "OpenRound 可以建議一個主要檢查點和相連的複查。",
+    "Polling Pops 可以建議附有引文的內容投影片，以及一對相連的恢復問題。",
+  "delivery.assistant.roundDescription": "Polling Pops 可以建議一個主要問題和相連的複查問題。",
+  "delivery.assistant.checkpointDescription": "Polling Pops 可以建議一個主要檢查點和相連的複查。",
   "delivery.assistant.securityDescription":
     "來源可以是貼上的文字或私人 PDF、Word、PowerPoint 檔案。檔案會在保留前接受安全掃描。每項建議都包含引文，並在您審核前保持為未發佈草稿。",
   "delivery.assistant.allowanceUnlimited.one": "本月已建立 {used} 個工作；配額由營運者設定",

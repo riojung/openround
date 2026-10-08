@@ -1,6 +1,6 @@
 # Phase 0 evidence campaign
 
-Use this runbook to collect the reviewed evidence required to select OpenRound's primary
+Use this runbook to collect the reviewed evidence required to select Polling Pops’ primary
 acquisition segment and exactly one Phase 1 branch. Product telemetry can corroborate a session,
 but it cannot replace consented observation, recheck-validity review, or independent coding.
 

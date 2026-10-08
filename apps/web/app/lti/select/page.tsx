@@ -88,7 +88,7 @@ export default function LtiSelectPage() {
             <p className="eyebrow">LTI deep linking</p>
             <h1>Add a checkpoint set to your LMS</h1>
             <p className="muted">
-              Only published checkpoint sets can be returned. OpenRound sends one signed LTI
+              Only published checkpoint sets can be returned. Polling Pops sends one signed LTI
               resource link to the registered LMS return origin.
             </p>
           </div>

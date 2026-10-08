@@ -257,7 +257,7 @@ export function upgradeGameState(input: GameState): GameState {
     };
   }
   const category = legacy.quiz.category ?? "general";
-  const presetId = legacy.quiz.experiencePreset?.id;
+  const presetId = legacy.quiz.experiencePreset?.id ?? "focus";
   return {
     ...legacy,
     stateSchemaVersion: BASE_GAME_STATE_SCHEMA_VERSION,

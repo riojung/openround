@@ -68,7 +68,7 @@ function fixture() {
     html_url: binding.githubRelease.htmlUrl,
     tag_name: tag,
     target_commitish: buildId,
-    name: `OpenRound ${tag}`,
+    name: `Polling Pops ${tag}`,
     body: "content:release-notes.md\n",
     draft: true,
     prerelease: false,
@@ -135,6 +135,15 @@ describe("signed release acceptance binding", () => {
     expect(validateReleasePreflightEvidence(preflight, binding, evidenceCandidateBuildId)).toBe(
       preflight,
     );
+  });
+
+  it("continues to verify historical OpenRound release names after the rebrand", () => {
+    const { binding, release } = fixture();
+    const historical = { ...release, name: `OpenRound ${binding.tag}` };
+    expect(validateDraftGithubRelease(historical, binding)).toBe(historical);
+    expect(() =>
+      validateDraftGithubRelease({ ...release, name: "Unrelated release" }, binding),
+    ).toThrow(/release title/);
   });
 
   it("rejects missing, extra, or substituted GitHub release assets", () => {

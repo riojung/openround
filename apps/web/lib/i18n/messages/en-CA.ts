@@ -20,7 +20,7 @@ export const englishMessages = {
   "delivery.site.signedInAs": "Signed in as",
   "delivery.site.plans": "Plans",
   "delivery.site.signInToCreate": "Sign in to create and manage Rounds",
-  "delivery.site.project": "© {year} OpenRound community project",
+  "delivery.site.project": "© {year} Polling Pops community project",
   "delivery.site.legalLinks": "Legal links",
   "delivery.site.terms": "Terms",
   "delivery.site.status": "Status",
@@ -94,7 +94,7 @@ export const englishMessages = {
     "Turn trusted text, PDF, Word, or PowerPoint material into a review draft.",
   "create.round.method.import.title": "Import existing work",
   "create.round.method.import.description":
-    "Validate OpenRound JSON, CSV, bulk text, or a QTI 3 package.",
+    "Validate Polling Pops JSON, CSV, bulk text, or a QTI 3 package.",
   "create.round.method.import.badge": "Portable",
   "create.round.method.blank.title": "Start blank",
   "create.round.method.blank.description":
@@ -145,7 +145,7 @@ export const englishMessages = {
   "create.presentation.source.eyebrow": "Grounded conversion",
   "create.presentation.source.title": "Create from trusted material",
   "create.presentation.source.description":
-    "PDF, DOCX, PPTX, and pasted text become structured OpenRound blocks. The result is reviewable and responsive—not a promise of pixel-perfect slide reproduction.",
+    "PDF, DOCX, PPTX, and pasted text become structured Polling Pops blocks. The result is reviewable and responsive—not a promise of pixel-perfect slide reproduction.",
   "create.presentation.templates.eyebrow": "Structured templates",
   "create.presentation.templates.title": "Choose a facilitation pattern",
   "create.presentation.templates.use": "Use template →",
@@ -218,10 +218,10 @@ export const englishMessages = {
   "page.results.title": "Results",
   "page.results.description":
     "Review Recovery evidence and track assigned or report-based practice.",
-  "page.discover.eyebrow": "Curated by OpenRound",
+  "page.discover.eyebrow": "Curated by Polling Pops",
   "page.discover.title": "Discover",
   "page.discover.description":
-    "Start with trusted OpenRound patterns and adapt them to your audience.",
+    "Start with trusted Polling Pops patterns and adapt them to your audience.",
   "page.groups.eyebrow": "Facilitator collaboration",
   "page.groups.title": "Groups",
   "page.groups.description":

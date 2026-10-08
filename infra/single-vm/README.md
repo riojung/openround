@@ -1,6 +1,6 @@
 # Single-VM hosted profile
 
-This profile runs one OpenRound environment on one Linux VM with Docker Compose. The web app,
+This profile runs one Polling Pops environment on one Linux VM with Docker Compose. The web app,
 API/realtime service, PostgreSQL, Valkey, MinIO, ClamAV, Caddy, OpenTelemetry Collector,
 Prometheus, and Alertmanager remain separate containers, but share one host. Only Caddy publishes
 public host ports (`80/tcp`, `443/tcp`, and `443/udp`). Observability administration and health
@@ -97,7 +97,7 @@ configured HTTPS OTLP/HTTP backend using `OPENROUND_OTLP_BACKEND_TOKEN`. Set
 query, fragment, or embedded credential. Select and review the backend's retention, residency,
 ownership, and outage behavior before deploying; the checked-in template intentionally does not
 invent a provider URL. Alertmanager similarly requires reviewed HTTPS page, warning, and ticket
-receiver URLs. OpenRound stamps spans with the deployment environment and immutable build ID.
+receiver URLs. Polling Pops stamps spans with the deployment environment and immutable build ID.
 The deployment receipt records the log-shipping mode, but only an end-to-end lookup of the
 readiness probe's exact `x-request-id` proves the external agent and log backend path.
 

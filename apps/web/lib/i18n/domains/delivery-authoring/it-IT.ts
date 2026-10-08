@@ -1,6 +1,10 @@
 import type { DeliveryAuthoringMessages } from "./en-CA";
 
 export default {
+  "delivery.landing.polls": "Sondaggi dal vivo",
+  "delivery.landing.presentations": "Presentazioni interattive",
+  "delivery.landing.learning": "Attività di apprendimento",
+  "delivery.landing.featuresLabel": "Usare Polling Pops",
   "delivery.common.home": "Home",
   "delivery.common.loading": "Caricamento…",
   "delivery.common.retry": "Riprova",
@@ -17,10 +21,10 @@ export default {
   "delivery.common.preview": "Anteprima",
   "delivery.common.publish": "Pubblica",
   "delivery.common.exit": "Esci",
-  "delivery.landing.eyebrow": "Comprensione dal vivo senza rumore",
-  "delivery.landing.title": "Scopri cosa è stato compreso finché conta.",
+  "delivery.landing.eyebrow": "Grandi idee. Conversazioni vivaci.",
+  "delivery.landing.title": "Dai risalto a ogni voce.",
   "delivery.landing.description":
-    "Chiedi, diagnostica, intervieni e ricontrolla la comprensione, senza account partecipante.",
+    "Anima il gruppo con sondaggi dal vivo, presentazioni interattive e attività di apprendimento. Ascolta ogni voce, chiarisci i dubbi e verifica la comprensione, senza account per i partecipanti.",
   "delivery.landing.participantEntry": "Accesso partecipante",
   "delivery.landing.joinTitle": "Partecipa a un Round dal vivo",
   "delivery.landing.joinDescription":
@@ -244,11 +248,11 @@ export default {
   "delivery.assistant.draftQuestions": "Crea domande da una fonte attendibile",
   "delivery.assistant.draftCheckpoints": "Crea checkpoint da una fonte attendibile",
   "delivery.assistant.presentationDescription":
-    "OpenRound può proporre diapositive con citazioni e una coppia collegata di domande di recupero.",
+    "Polling Pops può proporre diapositive con citazioni e una coppia collegata di domande di recupero.",
   "delivery.assistant.roundDescription":
-    "OpenRound può proporre una domanda principale e una verifica collegata.",
+    "Polling Pops può proporre una domanda principale e una verifica collegata.",
   "delivery.assistant.checkpointDescription":
-    "OpenRound può proporre un checkpoint principale e una verifica collegata.",
+    "Polling Pops può proporre un checkpoint principale e una verifica collegata.",
   "delivery.assistant.securityDescription":
     "Le fonti possono essere testo incollato o un file privato PDF, Word o PowerPoint. I file vengono sottoposti a scansione di sicurezza prima della conservazione. Ogni proposta include citazioni e resta una bozza non pubblicata finché non la verifichi.",
   "delivery.assistant.allowanceUnlimited.one":

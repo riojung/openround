@@ -18,7 +18,7 @@ function TemplatesWorkspace() {
           </Link>
         ) : null
       }
-      description="Start from an OpenRound pattern, then make every prompt, response, and recheck your own."
+      description="Start from a Polling Pops pattern, then make every prompt, response, and recheck your own."
       eyebrow="First-party library"
       title="Templates"
     >

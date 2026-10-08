@@ -22,7 +22,7 @@ const messages = {
   "delivery.site.signedInAs": "로그인 계정",
   "delivery.site.plans": "요금제",
   "delivery.site.signInToCreate": "로그인하여 Round 만들기 및 관리",
-  "delivery.site.project": "© {year} OpenRound 커뮤니티 프로젝트",
+  "delivery.site.project": "© {year} Polling Pops 커뮤니티 프로젝트",
   "delivery.site.legalLinks": "법적 링크",
   "delivery.site.terms": "이용약관",
   "delivery.site.status": "상태",
@@ -96,7 +96,7 @@ const messages = {
     "신뢰할 수 있는 텍스트, PDF, Word 또는 PowerPoint 자료를 검토용 초안으로 만드세요.",
   "create.round.method.import.title": "기존 작업 가져오기",
   "create.round.method.import.description":
-    "OpenRound JSON, CSV, 일괄 텍스트 또는 QTI 3 패키지를 검증하세요.",
+    "Polling Pops JSON, CSV, 일괄 텍스트 또는 QTI 3 패키지를 검증하세요.",
   "create.round.method.import.badge": "이동 가능",
   "create.round.method.blank.title": "빈 상태로 시작",
   "create.round.method.blank.description":
@@ -147,7 +147,7 @@ const messages = {
   "create.presentation.source.eyebrow": "자료 기반 변환",
   "create.presentation.source.title": "신뢰할 수 있는 자료에서 만들기",
   "create.presentation.source.description":
-    "PDF, DOCX, PPTX 및 붙여 넣은 텍스트가 구조화된 OpenRound 블록으로 변환됩니다. 결과는 검토 가능하고 화면에 맞게 조정되지만 원본 슬라이드를 그대로 복제하지는 않습니다.",
+    "PDF, DOCX, PPTX 및 붙여 넣은 텍스트가 구조화된 Polling Pops 블록으로 변환됩니다. 결과는 검토 가능하고 화면에 맞게 조정되지만 원본 슬라이드를 그대로 복제하지는 않습니다.",
   "create.presentation.templates.eyebrow": "구조화된 템플릿",
   "create.presentation.templates.title": "진행 패턴 선택",
   "create.presentation.templates.use": "템플릿 사용 →",
@@ -218,10 +218,10 @@ const messages = {
   "page.results.title": "결과",
   "page.results.description":
     "회복 학습 근거를 검토하고 배정된 연습이나 보고서 기반 연습을 추적하세요.",
-  "page.discover.eyebrow": "OpenRound 추천",
+  "page.discover.eyebrow": "Polling Pops 추천",
   "page.discover.title": "둘러보기",
   "page.discover.description":
-    "신뢰할 수 있는 OpenRound 패턴으로 시작해 참여자에게 맞게 조정하세요.",
+    "신뢰할 수 있는 Polling Pops 패턴으로 시작해 참여자에게 맞게 조정하세요.",
   "page.groups.eyebrow": "진행자 협업",
   "page.groups.title": "그룹",
   "page.groups.description":

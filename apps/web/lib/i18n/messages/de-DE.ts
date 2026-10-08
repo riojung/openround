@@ -22,7 +22,7 @@ const messages = {
   "delivery.site.signedInAs": "Angemeldet als",
   "delivery.site.plans": "Tarife",
   "delivery.site.signInToCreate": "Anmelden, um Rounds zu erstellen und zu verwalten",
-  "delivery.site.project": "© {year} OpenRound Community-Projekt",
+  "delivery.site.project": "© {year} Polling Pops Community-Projekt",
   "delivery.site.legalLinks": "Rechtliche Links",
   "delivery.site.terms": "Bedingungen",
   "delivery.site.status": "Status",
@@ -99,7 +99,7 @@ const messages = {
     "Erstellen Sie aus vertrauenswürdigem Text, PDF-, Word- oder PowerPoint-Material einen Prüfpentwurf.",
   "create.round.method.import.title": "Vorhandene Arbeit importieren",
   "create.round.method.import.description":
-    "Prüfen Sie OpenRound-JSON, CSV, Mengentext oder ein QTI-3-Paket.",
+    "Prüfen Sie Polling Pops-JSON, CSV, Mengentext oder ein QTI-3-Paket.",
   "create.round.method.import.badge": "Übertragbar",
   "create.round.method.blank.title": "Leer beginnen",
   "create.round.method.blank.description":
@@ -150,7 +150,7 @@ const messages = {
   "create.presentation.source.eyebrow": "Quellenbasierte Konvertierung",
   "create.presentation.source.title": "Aus vertrauenswürdigem Material erstellen",
   "create.presentation.source.description":
-    "PDF-, DOCX- und PPTX-Dateien sowie eingefügter Text werden zu strukturierten OpenRound-Blöcken. Das Ergebnis ist prüfbar und responsiv, aber keine pixelgenaue Kopie der Folien.",
+    "PDF-, DOCX- und PPTX-Dateien sowie eingefügter Text werden zu strukturierten Polling Pops-Blöcken. Das Ergebnis ist prüfbar und responsiv, aber keine pixelgenaue Kopie der Folien.",
   "create.presentation.templates.eyebrow": "Strukturierte Vorlagen",
   "create.presentation.templates.title": "Moderationsmuster auswählen",
   "create.presentation.templates.use": "Vorlage verwenden →",
@@ -227,10 +227,10 @@ const messages = {
   "page.results.title": "Ergebnisse",
   "page.results.description":
     "Prüfen Sie Erkenntnisse zur Lernentwicklung und verfolgen Sie zugewiesene oder berichtsbasierte Übungen.",
-  "page.discover.eyebrow": "Von OpenRound ausgewählt",
+  "page.discover.eyebrow": "Von Polling Pops ausgewählt",
   "page.discover.title": "Entdecken",
   "page.discover.description":
-    "Beginnen Sie mit bewährten OpenRound-Vorlagen und passen Sie sie an Ihr Publikum an.",
+    "Beginnen Sie mit bewährten Polling Pops-Vorlagen und passen Sie sie an Ihr Publikum an.",
   "page.groups.eyebrow": "Zusammenarbeit von Moderatoren",
   "page.groups.title": "Gruppen",
   "page.groups.description":

@@ -1,4 +1,4 @@
-# OpenRound market research and evidence-led development plan
+# Polling Pops market research and evidence-led development plan
 
 Research date: 2026-09-23
 Committed horizon: 24 weeks with one full-time engineer plus fractional product, design,
@@ -12,11 +12,11 @@ or packaging decision.
 
 ## Executive decision
 
-OpenRound should not enter a quiz-feature, game-mode, AI-generation, or slide-editor arms race. The
+Polling Pops should not enter a quiz-feature, game-mode, AI-generation, or slide-editor arms race. The
 reviewed market is already crowded with polished products that are broader, better known, and more
 deeply integrated than a small team can quickly match.
 
-OpenRound should instead own a narrower and more valuable job:
+Polling Pops should instead own a narrower and more valuable job:
 
 > **Turn visible confusion into an explainable action, verify whether understanding changed on a
 > different question, and preserve honest evidence of what happened—without requiring participant
@@ -46,7 +46,7 @@ With one full-time engineer, these are not two simultaneous feature trains. The 
 is release readiness plus **one observed table-stakes blocker** and **one differentiated bet**. The
 remaining items are gated options, not promises disguised as a roadmap.
 
-Before either lane expands, the team must finish the current beta evidence. OpenRound's largest
+Before either lane expands, the team must finish the current beta evidence. Polling Pops’ largest
 known gap is not another feature epic: it is the absence of observed design-partner, accessibility,
 security, hosted-capacity, operational, and willingness-to-pay evidence.
 
@@ -61,29 +61,29 @@ combined:
 - current first-party product, help, integration, and pricing material;
 - current review-aggregator and practitioner discussions for recurring pain patterns;
 - learning-science and training-evaluation research; and
-- the earlier OpenRound competitive and UX research.
+- the earlier Polling Pops competitive and UX research.
 
 Evidence is used at three confidence levels:
 
-| Level | Meaning                                                                            |
-| ----- | ---------------------------------------------------------------------------------- |
-| A     | Implemented repository behavior or current first-party product documentation       |
-| B     | Repeated review/community pattern or peer-reviewed research                        |
-| C     | Product inference or hypothesis that still requires OpenRound customer observation |
+| Level | Meaning                                                                               |
+| ----- | ------------------------------------------------------------------------------------- |
+| A     | Implemented repository behavior or current first-party product documentation          |
+| B     | Repeated review/community pattern or peer-reviewed research                           |
+| C     | Product inference or hypothesis that still requires Polling Pops customer observation |
 
-This work did **not** conduct new customer interviews, observe a production OpenRound session, or
+This work did **not** conduct new customer interviews, observe a production Polling Pops session, or
 establish willingness to pay. Review sites have selection bias, vendor pages are marketing
 material, and learning studies do not prove a particular product implementation will work. The
 roadmap treats those limits as gates rather than footnotes.
 
-## Current OpenRound baseline
+## Current Polling Pops baseline
 
 **Implementation snapshot reconciled 2026-10-07:** the repository status below is aligned with
 `main` at `fc48d89` (merged PR #88), plus the Pack QTI/CSV portability increment on this implementation branch.
 The research date at the top of this document describes the
 market-source review and has not been refreshed; it is not the date of this implementation audit.
 
-OpenRound is already much more than a happy-path quiz application. The audited repository includes:
+Polling Pops is already much more than a happy-path quiz application. The audited repository includes:
 
 - six response types, confidence, concepts, misconception labels, private feedback, linked
   rechecks, deterministic insights, and intervention tracking;
@@ -143,16 +143,16 @@ Recovery Trail, and Concept Health remain separate deferred or evidence-gated wo
 
 ### Product archetypes
 
-| Archetype                       | Representative products                                                                                                                                                                                                                                                                  | What they make normal                                                                                                                       | OpenRound implication                                                                           |
+| Archetype                       | Representative products                                                                                                                                                                                                                                                                  | What they make normal                                                                                                                       | Polling Pops implication                                                                        |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Higher-education response       | [iClicker](https://www.iclicker.com/), [Learning Catalytics](https://www.pearson.com/en-us/higher-education/products-services/learning-catalytics.html), [Top Hat](https://tophat.com/features/), PointSolutions/EchoPoll                                                                | Confidence, attendance, broad response formats, PowerPoint, roster/grade sync, peer grouping, institutional support                         | Accountless/privacy-first use is an opening, but confidence and peer instruction are not unique |
-| Learning-oriented interaction   | [Wooclap](https://www.wooclap.com/en/features/), [Wayground](https://help.wayground.com/support/solutions/articles/158000403874-understanding-wayground-plans), [Socrative](https://www.socrative.com/pricing/), Classtime                                                               | Live and self-paced delivery, many activity types, AI authoring, accommodations, analytics, libraries, and LMS workflows                    | OpenRound must win on a clearer evidence loop, not generic “active learning”                    |
+| Learning-oriented interaction   | [Wooclap](https://www.wooclap.com/en/features/), [Wayground](https://help.wayground.com/support/solutions/articles/158000403874-understanding-wayground-plans), [Socrative](https://www.socrative.com/pricing/), Classtime                                                               | Live and self-paced delivery, many activity types, AI authoring, accommodations, analytics, libraries, and LMS workflows                    | Polling Pops must win on a clearer evidence loop, not generic “active learning”                 |
 | Interactive lesson/assessment   | [Nearpod](https://nearpod.com/how-nearpod-works/), [Pear Deck](https://www.peardeck.com/pricing), [Formative](https://www.formative.com/teachers), Quizalize                                                                                                                             | Full lessons, interactive video, real-time feedback, differentiated follow-up, standards/mastery views, shared content, and admin reporting | Do not build a whole-course or K–12 curriculum platform                                         |
 | Presentation and audience voice | [Mentimeter](https://www.mentimeter.com/features), [Slido](https://www.slido.com/product), [Vevox](https://www.vevox.com/features), [Poll Everywhere](https://www.polleverywhere.com/plans), [AhaSlides](https://ahaslides.com/features/), [ClassPoint](https://classpoint.io/)          | Polished result visuals, PowerPoint/Google Slides/Teams integrations, Q&A, word clouds, open response, large rooms, and easy joining        | A reliable companion/overlay is more strategic than replacing users' decks                      |
 | Game and content ecosystems     | [Kahoot!](https://kahoot.com/schools/how-it-works/), [Blooket](https://help.blooket.com/hc/en-us/articles/21408591795351-Blooket-Game-Mode-Previews), [Gimkit](https://help.gimkit.com/en/article/game-options-explained-16312ua/), [Wordwall](https://wordwall.net/features), StudyGlen | Familiarity, huge libraries, fast source-to-game creation, public discovery, many modes, collectibles, and strong learner pull              | Do not pursue public-marketplace scale, arcade economies, or many modes                         |
 | Open/private/low-connectivity   | [Particify](https://www.particify.de/en/help/), [ClassQuiz](https://github.com/mawoka-myblock/ClassQuiz), [Plickers](https://help.plickers.com/hc/en-us/articles/360009395854-What-is-Plickers)                                                                                          | Self-hosting, privacy, guest access, or device-free/offline participation                                                                   | Open source and privacy need a concrete outcome wedge; resilience remains a meaningful need     |
 
-### Capability comparison around OpenRound's wedge
+### Capability comparison around Polling Pops’ wedge
 
 Legend: **Strong** means prominent in current first-party material; **Partial** means present but
 limited, plan-dependent, or not the product's primary workflow. An empty cell does not prove a
@@ -160,7 +160,7 @@ capability is absent.
 
 | Product             | Live + async | Confidence | Intervention / peer recheck | Before/after evidence | Source/AI authoring | Slides/LMS | Guest/private/open |
 | ------------------- | ------------ | ---------- | --------------------------- | --------------------- | ------------------- | ---------- | ------------------ |
-| OpenRound           | Strong       | Strong     | Strong                      | Strong                | Strong              | Partial    | Strong             |
+| Polling Pops        | Strong       | Strong     | Strong                      | Strong                | Strong              | Partial    | Strong             |
 | Wooclap             | Strong       |            | Strong                      | Partial               | Strong              | Strong     | Partial            |
 | Learning Catalytics | Strong       | Strong     | Strong                      | Partial               |                     | Partial    |                    |
 | iClicker            | Strong       | Strong     | Partial                     | Partial               | Partial             | Strong     | Partial            |
@@ -172,7 +172,7 @@ capability is absent.
 
 ### The competitive claim that must change
 
-OpenRound must not claim that confidence, peer discussion, re-voting, follow-up questions, or
+Polling Pops must not claim that confidence, peer discussion, re-voting, follow-up questions, or
 before/after comparison are unique:
 
 - [iClicker](https://www.iclicker.com/) now prominently markets confidence ratings, multiple
@@ -189,7 +189,7 @@ before/after comparison are unique:
   [Quizalize](https://www.quizalize.com/) increasingly turn results into recommended or assigned
   follow-up work.
 
-The stronger claim is that OpenRound deliberately connects a diagnosed misconception, a recorded
+The stronger claim is that Polling Pops deliberately connects a diagnosed misconception, a recorded
 human action, a linked different question, immediate and delayed evidence, explicit sample limits,
 and guest-first privacy. This is a position to prove, not an assertion that no competitor can
 assemble a similar workflow.
@@ -204,7 +204,7 @@ presentation-integration and import friction, while ClassPoint's entire proposit
 inside PowerPoint. The product response should be a lightweight browser companion first, not a
 second full slide editor or immediate native add-in program.
 
-**OpenRound decision:** build a reliable companion/remote that sits beside any deck, can insert a
+**Polling Pops decision:** build a reliable companion/remote that sits beside any deck, can insert a
 prepared Recovery Pack or quick check, shows join/result overlays, and returns focus to the deck in
 one action. Require three paying design partners before native PowerPoint or Google Slides add-ins.
 
@@ -212,10 +212,10 @@ one action. Require three paying design partners before native PowerPoint or Goo
 
 The 2024–25 Jisc higher-education student survey reports widespread Wi-Fi and device problems, and
 current reviews of several polling products mention disconnections, lost answers, QR trouble, or
-live integration failures. OpenRound's durable receipt and reconnect design are valuable only when
+live integration failures. Polling Pops’ durable receipt and reconnect design are valuable only when
 users can see and trust them.
 
-**OpenRound decision:** make room health, durable save state, reconnect, and low-bandwidth behavior
+**Polling Pops decision:** make room health, durable save state, reconnect, and low-bandwidth behavior
 visible. Harden the Presentation live path on the mature realtime/session foundation before adding
 more Presentation breadth. Research shared-device and facilitator-tally fallbacks; do not commit to
 physical cards or SMS without target-segment demand.
@@ -223,11 +223,11 @@ physical cards or SMS without target-segment demand.
 ### 3. Participation must feel safe
 
 Anonymous contribution makes it easier for quieter participants to respond, while timers, public
-rankings, and identity-linked grading can add pressure or distort the learning job. OpenRound is
+rankings, and identity-linked grading can add pressure or distort the learning job. Polling Pops is
 already well positioned with accountless entry, private-result defaults, Q&A moderation, and
 accuracy-first modes.
 
-**OpenRound decision:** keep **Learning mode** private and guest-first. Treat a future identified,
+**Polling Pops decision:** keep **Learning mode** private and guest-first. Treat a future identified,
 rostered **Verified mode** as a separate, disclosed, institution-controlled product boundary. A
 session must never silently switch identity semantics or retroactively deanonymize participation.
 
@@ -235,10 +235,10 @@ session must never silently switch identity semantics or retroactively deanonymi
 
 Raw charts and AI summaries are easy to produce; acting during a live session is harder. Learning
 analytics research repeatedly finds that trust and use depend on mapping signals to a comprehensible
-decision. OpenRound's deterministic Recovery Compass is strategically stronger than a generic
+decision. Polling Pops’ deterministic Recovery Compass is strategically stronger than a generic
 dashboard, provided real facilitators can understand it quickly.
 
-**OpenRound decision:** preserve one phase-aware recommended action, always show the rule and sample,
+**Polling Pops decision:** preserve one phase-aware recommended action, always show the rule and sample,
 and record the facilitator's choice. AI may help author or organize material, but it should not
 silently decide the live intervention.
 
@@ -248,7 +248,7 @@ AI question generation is now common. Recent evaluation work still finds frequen
 multiple-choice quality guidelines and substantial need for human review. Good distractors and
 concept checks improve through learner-response evidence, not prompt speed alone.
 
-**OpenRound decision:** evaluate the implemented **Question Health** slice instead of starting
+**Polling Pops decision:** evaluate the implemented **Question Health** slice instead of starting
 another generic authoring chatbot. Deterministic advice, facilitator-approved draft edits with
 same-revision undo, immutable published-version analysis, and aggregate post-use observations are
 behind rollout gates. Measure usefulness and whether revisions are retained; only then decide
@@ -262,7 +262,7 @@ gain is not durable learning. Workplace evaluators similarly need evidence beyon
 completion. The [CDC training evaluation guidance](https://www.cdc.gov/training-development/php/about/evaluate-training-measuring-effectiveness.html)
 distinguishes learning from later transfer.
 
-**OpenRound decision:** add an optional **Delayed Recovery Trail** using a concept-matched but
+**Polling Pops decision:** add an optional **Delayed Recovery Trail** using a concept-matched but
 different question at 24 hours, seven days, or a facilitator-selected interval. Label immediate
 recovery, delayed retention, and workplace application as different evidence types, with attrition
 and denominator warnings.
@@ -275,7 +275,7 @@ and reading controls. iClicker publishes current accessibility-conformance mater
 technology acquisition increasingly asks for accessibility and security documentation, not just a
 feature list.
 
-**OpenRound decision:** validate the implemented whole-room live time-flex mode, which has no
+**Polling Pops decision:** validate the implemented whole-room live time-flex mode, which has no
 countdown and leaves window closure to the facilitator. Private participant-specific extra-time
 passes remain deferred until fairness, privacy, and shared-reveal behavior are understood. Complete
 manual assistive-technology evidence and an accessibility-conformance report before claiming
@@ -285,10 +285,10 @@ browser and OS assistive technology.
 ### 8. Live plus self-paced, reuse, and interoperability are table stakes
 
 The market expects the same material to work live and asynchronously, be reusable, and connect to
-existing systems. OpenRound now covers live Rounds, practice, imports/exports, and snapshot reuse,
+existing systems. Polling Pops now covers live Rounds, practice, imports/exports, and snapshot reuse,
 but self-paced Presentations and version-aware reusable content are incomplete.
 
-**OpenRound decision:** make the Recovery Pack the reusable unit, with explicit version snapshots
+**Polling Pops decision:** make the Recovery Pack the reusable unit, with explicit version snapshots
 and “update available” review rather than hidden synchronization. Add self-paced Presentation
 delivery only after live Presentation reliability is proven.
 
@@ -296,9 +296,9 @@ delivery only after live Presentation reliability is proven.
 
 Current official free live limits commonly cluster around 40–100 participants: Kahoot! 40,
 Wayground 100, Socrative 50, Nearpod 40, Slido 100, Vevox 100, Poll Everywhere 40, AhaSlides 50,
-and Blooket 60. OpenRound Hosted Free at 20 is visibly below this range.
+and Blooket 60. Polling Pops Hosted Free at 20 is visibly below this range.
 
-**OpenRound decision:** target 50 for Hosted Free and 250 for Pro, but change neither public promise
+**Polling Pops decision:** target 50 for Hosted Free and 250 for Pro, but change neither public promise
 until target-region cost, abuse, support, soak, restart, and report-reconciliation evidence passes.
 
 ## Product strategy
@@ -418,7 +418,7 @@ privacy-safe aggregate view across eligible sessions.
 |   13 | Moderated open response/word cloud            | High            | Low/medium    | Low             | High safety cost      | Later, after moderation evaluation                                                                                                      |
 
 The ordering is deliberately not pure competitor parity. Recovery Pack and evidence validation for
-Question Health rank above several common formats because they strengthen the outcome OpenRound is
+Question Health rank above several common formats because they strengthen the outcome Polling Pops is
 trying to own. Rank describes strategic importance, not an unfinished implementation queue.
 
 ## Development roadmap
@@ -564,14 +564,14 @@ Engineering and release work:
 Exit gates:
 
 - At least eight of twelve interviewees describe a recurring post-result decision problem.
-- At least six agree to a real pilot and at least three in each segment run OpenRound twice.
+- At least six agree to a real pilot and at least three in each segment run Polling Pops twice.
 - At least half of eligible observed checkpoints complete diagnose → intervention → valid recheck.
 - Existing beta usability thresholds pass, including unassisted first value, next-action finding,
   first response, durable receipt, result retrieval, and report comprehension.
 - No critical/serious accessibility defect, answer-key leak, unreconciled response, or identity-
   mode ambiguity remains in a critical flow.
 
-**Stop/reframe rule:** if users consistently use OpenRound only as a generic poll and do not act on
+**Stop/reframe rule:** if users consistently use Polling Pops only as a generic poll and do not act on
 the Recovery Compass, narrow the target segment or revise the workflow before adding breadth.
 
 **Historical implementation checkpoint (2026-10-01):** whole-room timed/flex mode is implemented for Rounds
@@ -581,7 +581,7 @@ or authorize a public capacity/accessibility claim.
 
 ### Phase 1 — remove the highest observed workflow blocker (weeks 11–14)
 
-**Outcome:** OpenRound works beside the user's existing material and supports a calmer, more
+**Outcome:** Polling Pops works beside the user's existing material and supports a calmer, more
 inclusive live session.
 
 Select exactly **one** implementation from observed sessions, in this order:
@@ -657,7 +657,7 @@ Exit gates:
   approved representative corpus; no hosted enablement occurs without agreed thresholds.
 - At least 70% of facilitator-reviewed Question Health flags are judged useful; false positives and
   dismissals are recorded by rule.
-- Any shipped pack structure round-trips losslessly in OpenRound JSON and produces explicit loss
+- Any shipped pack structure round-trips losslessly in Polling Pops JSON and produces explicit loss
   reports in constrained formats.
 - Old published versions and completed reports remain byte/logically reproducible.
 
@@ -788,7 +788,7 @@ MVP acceptance:
 - versioned diagnostic, intervention card, linked recheck, concepts, misconceptions, and citations;
 - reusable immutable snapshot with source/version attribution and an explicit update review;
 - insertion into Round, Presentation, practice, and companion surfaces;
-- lossless OpenRound JSON and explicit QTI/CSV limitations;
+- lossless Polling Pops JSON and explicit QTI/CSV limitations;
 - no automatic mutation of existing drafts or published versions.
 
 ### Epic D — Question Health Lab
@@ -873,7 +873,7 @@ Ask each facilitator to bring the most recent session artifact and complete thes
 3. Respond to a deliberately split or confidently wrong room.
 4. Find what remains unresolved in the report.
 5. Create and distribute an accountless delayed probe.
-6. Decide whether they would replace their current tool, add OpenRound beside it, or not use it.
+6. Decide whether they would replace their current tool, add Polling Pops beside it, or not use it.
 
 Measure preparation time, context switches, join/save/reconnect failures, time from lock to action,
 intervention-to-recheck completion, report retrieval, delayed-probe completion, second-session use,
@@ -972,7 +972,7 @@ Do not schedule these without new evidence:
 
 ## Sources
 
-### OpenRound evidence
+### Polling Pops evidence
 
 - [Current implementation](../README.md)
 - [Product and experience design](design.md)

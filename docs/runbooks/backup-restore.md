@@ -44,7 +44,7 @@ one-shot operation and store their credentials outside the repository, Compose e
 VM, and backup payload:
 
 - PostgreSQL: a dedicated non-owner, non-superuser role with only `CONNECT`, schema `USAGE`, and
-  `SELECT` on every durable table and sequence (including future relations). Because OpenRound
+  `SELECT` on every durable table and sequence (including future relations). Because Polling Pops
   forces row-level security, a complete logical dump also needs narrowly controlled `BYPASSRLS`
   during the backup operation. It must not have create-role, create-database, replication, or write
   privileges. Verify the dump's durable table/row inventory against an owner-generated inventory;

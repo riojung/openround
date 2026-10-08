@@ -19,6 +19,7 @@ const definitelyLocalizedKeys = [
 ] as const;
 
 const canonicalPresetNames = [
+  "live.experience.preset.pops.name",
   "live.experience.preset.blueprint.name",
   "live.experience.preset.campus.name",
   "live.experience.preset.focus.name",

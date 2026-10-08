@@ -74,8 +74,8 @@ export default function LtiLinkPage() {
           <p className="eyebrow">Institution connection</p>
           <h1 id="lti-link-title">Link this LMS identity</h1>
           <p className="muted">
-            OpenRound does not match LMS users by email. Sign in to your existing creator account,
-            then explicitly link the issuer-scoped LMS identity that started this launch.
+            Polling Pops does not match LMS users by email. Sign in to your existing creator
+            account, then explicitly link the issuer-scoped LMS identity that started this launch.
           </p>
           {status === "checking" ? <p className="muted">Checking your session…</p> : null}
           {status === "signed-out" ? (

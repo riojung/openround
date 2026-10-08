@@ -1,4 +1,4 @@
-# OpenRound product and experience design
+# Polling Pops product and experience design
 
 This document defines the implemented differentiated experience and the design constraints for
 future work. It does not claim that external demand, legal, security, accessibility, or production
@@ -6,7 +6,14 @@ gates have passed.
 
 ## Product intent
 
-OpenRound is a privacy-preserving comprehension recovery system for higher education and workplace
+The public identity is **Polling Pops**, with the tagline **Make every voice pop.**
+The original lollipop mark joins candy ribbons with rising poll bars. Berry actions,
+cream canvases, mint and butter-yellow decorations, and plum typography now connect
+the landing page, creator workspace, builders, and live delivery. The interface remains
+calm during questions and evidence review. See the [brand guide](brand.md) for assets,
+accessible color use, dark mode, and compatibility rules.
+
+Polling Pops is a privacy-preserving comprehension recovery system for higher education and workplace
 learning. Its promise is that a facilitator can see what did not land, take an appropriate action,
 and check whether understanding recovered without requiring participant accounts.
 
@@ -68,8 +75,9 @@ same authoritative round but expose only the information and controls appropriat
 
 ## Round Experiences
 
-Round Experiences provide six accessible, versioned presets: Focus, Campus, Studio, Blueprint,
-Signal, and Spark. A checkpoint-set category recommends one preset, but explicit creator choice
+Round Experiences provide seven accessible, versioned presets: Candy Pop, Focus, Campus, Studio,
+Blueprint, Signal, and Spark. New blank work uses Candy Pop; existing content keeps its selection.
+A checkpoint-set category recommends one preset, but explicit creator choice
 wins. The published version stores that choice. Session setup may override it once, and session
 creation freezes the resolved semantic theme for reconnect and process restoration.
 
@@ -285,7 +293,7 @@ unbounded freeform design canvas remain deferred.
 - Normal pages deny framing. The embed route permits only the workspace's explicit HTTPS
   allowlist, up to ten origins.
 - Direct links and downloadable QR assets remain stable for the round.
-- OpenRound JSON preserves the full native model. CSV, bulk paste, and the constrained QTI 3
+- Polling Pops JSON preserves the full native model. CSV, bulk paste, and the constrained QTI 3
   profile produce visible validation reports and never silently discard unsupported content.
 
 ## Accessibility acceptance

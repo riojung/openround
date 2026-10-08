@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openround.dev/schemas/phase0-research-aggregate.schema.json",
-  "title": "OpenRound Phase 0 research aggregate",
+  "title": "Polling Pops Phase 0 research aggregate",
   "description": "Redaction-safe, independently reviewed inputs for the Phase 0 research gate and ordered Phase 1 decision. Semantic cross-record checks are enforced by scripts/check-phase0-research.mjs.",
   "type": "object",
   "additionalProperties": false,

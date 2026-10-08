@@ -104,7 +104,7 @@ async function main() {
   const dumpPath = `/tmp/${restoredDatabase}.dump`;
   const objectKey = `restore-drill/${suffix}.txt`;
   const backupObjectKey = `restore-drill-backup/${suffix}.txt`;
-  const objectPayload = Buffer.from(`OpenRound restore drill ${suffix}\n`, "utf8");
+  const objectPayload = Buffer.from(`Polling Pops restore drill ${suffix}\n`, "utf8");
   const startedAt = performance.now();
   let databaseCreated = false;
   let storageAliasCreated = false;

@@ -252,7 +252,7 @@ async function portabilityWorkflow(page: Page) {
     await activate("Download export report JSON");
     const savedReport = await reportDownload;
     expect(savedReport.suggestedFilename()).toBe(
-      `openround-recovery-pack-${version.id}-qti3-export-report.json`,
+      `polling-pops-recovery-pack-${version.id}-qti3-export-report.json`,
     );
     const report = JSON.parse(
       (await downloadBytes(savedReport)).toString("utf8"),
@@ -295,7 +295,7 @@ async function portabilityWorkflow(page: Page) {
     ).toBeDisabled();
     releaseArtifact.resolve();
     const savedQti = await qtiDownload;
-    expect(savedQti.suggestedFilename()).toBe(`openround-recovery-pack-${version.id}.qti.zip`);
+    expect(savedQti.suggestedFilename()).toBe(`polling-pops-recovery-pack-${version.id}.qti.zip`);
     const files = qtiFiles(await downloadBytes(savedQti));
     expect(files.size).toBe(5);
     expect(files.has("imsmanifest.xml")).toBe(true);
@@ -344,7 +344,7 @@ async function portabilityWorkflow(page: Page) {
     const csvDownload = page.waitForEvent("download");
     await activate("Download CSV checkpoints");
     const savedCsv = await csvDownload;
-    expect(savedCsv.suggestedFilename()).toBe(`openround-recovery-pack-${version.id}.csv`);
+    expect(savedCsv.suggestedFilename()).toBe(`polling-pops-recovery-pack-${version.id}.csv`);
     const csv = (await downloadBytes(savedCsv)).toString("utf8");
     expect(csv).toContain(version.content.diagnostic.id);
     expect(csv).toContain("Frozen diagnostic: what is half of eight?");
@@ -355,7 +355,7 @@ async function portabilityWorkflow(page: Page) {
       expect(csv).not.toContain(omitted);
 
     const nativeDownload = page.waitForEvent("download");
-    await page.getByRole("button", { name: "Export OpenRound JSON", exact: true }).click();
+    await page.getByRole("button", { name: "Export Polling Pops JSON", exact: true }).click();
     const savedNative = await nativeDownload;
     expect(savedNative.suggestedFilename()).toBe(`${title.replace(/[^a-zA-Z0-9_-]+/g, "-")}.json`);
     const native = JSON.parse((await downloadBytes(savedNative)).toString("utf8")) as {

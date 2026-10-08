@@ -6,8 +6,8 @@ describe("Brand", () => {
   it("keeps the home link named when responsive styles hide the visible name", () => {
     const markup = renderToStaticMarkup(<Brand />);
 
-    expect(markup).toContain('<span class="sr-only">OpenRound</span>');
-    expect(markup).toContain('<span aria-hidden="true">OpenRound</span>');
+    expect(markup).toContain('<span class="sr-only">Polling Pops</span>');
+    expect(markup).toContain('<span aria-hidden="true">Polling Pops</span>');
     expect(markup).toContain('href="/"');
   });
 
@@ -16,6 +16,17 @@ describe("Brand", () => {
 
     expect(markup).toContain('<span class="sr-only">Acme Learning</span>');
     expect(markup).toContain('<span aria-hidden="true">Acme Learning</span>');
+    expect(markup).not.toContain('viewBox="0 0 64 80"');
+    expect(markup).toContain("AL");
+  });
+
+  it("uses an original decorative lollipop and keeps inverted branding readable", () => {
+    const markup = renderToStaticMarkup(<Brand inverted />);
+
+    expect(markup).toContain('viewBox="0 0 64 80"');
+    expect(markup).toContain('data-inverted="true"');
+    expect(markup).toContain('focusable="false"');
+    expect(markup).not.toContain("OpenRound");
   });
 
   it("routes creators only to workspace Home when that rollout is available", () => {

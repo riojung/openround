@@ -218,7 +218,7 @@ export async function registerRecoveryPackRoutes(
     if (!version) return apiError(reply, 404, "NOT_FOUND", "Pack version not found", request.id);
     reply.header(
       "content-disposition",
-      `attachment; filename="openround-recovery-pack-${versionId}.json"`,
+      `attachment; filename="polling-pops-recovery-pack-${versionId}.json"`,
     );
     return RecoveryPackJsonSchema.parse({
       format: "openround-recovery-pack",

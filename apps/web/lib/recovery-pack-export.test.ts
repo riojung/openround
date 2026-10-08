@@ -174,7 +174,7 @@ describe("frozen Pack export review", () => {
     expect(fetchArtifact.mock.calls[1]![0]).toEqual(fetchArtifact.mock.calls[0]![0]);
     expect(download).toHaveBeenCalledTimes(1);
     expect(download.mock.calls[0]![1]).toBe(
-      `openround-recovery-pack-${exportSource.packVersionId}.csv`,
+      `polling-pops-recovery-pack-${exportSource.packVersionId}.csv`,
     );
   });
 
@@ -210,7 +210,7 @@ describe("frozen Pack export review", () => {
     manager.report();
     expect(JSON.parse(await (download.mock.calls[0]![0] as Blob).text())).toEqual(report);
     expect(download.mock.calls[0]![1]).toBe(
-      `openround-recovery-pack-${exportSource.packVersionId}-qti3-export-report.json`,
+      `polling-pops-recovery-pack-${exportSource.packVersionId}-qti3-export-report.json`,
     );
   });
 });

@@ -213,7 +213,7 @@ services:
       TRACING_ENABLED: "false"
       ALLOW_IN_MEMORY: "false"
       SMTP_URL: smtp://mailpit:1025
-      EMAIL_FROM: OpenRound <noreply@openround.local>
+      EMAIL_FROM: Polling Pops <noreply@openround.local>
       DEVELOPMENT_EMAIL_INBOX_URL: ${DEVELOPMENT_EMAIL_INBOX_URL:-http://localhost:8025}
       AUTH_DEBUG_MAGIC_LINKS: "${AUTH_DEBUG_MAGIC_LINKS:-false}"
       POLICY_VERSION: community-operator-v1
@@ -248,6 +248,7 @@ services:
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_API_URL: "${OPENROUND_API_URL:-}"
+      OPENROUND_PUBLIC_URL: ${OPENROUND_PUBLIC_URL:-http://localhost:8080}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000"]
       interval: 10s

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 450 112" fill="none" role="img" aria-labelledby="title">
+  <title id="title">Polling Pops</title>
+  <g transform="translate(8 6) scale(1.25)">
+    <path d="m32 47 7 27" stroke="#39243C" stroke-linecap="round" stroke-width="10"/>
+    <path d="m32 47 7 27" stroke="#FFF8E9" stroke-linecap="round" stroke-width="5"/>
+    <circle cx="30" cy="29" r="25" fill="#F9688A" stroke="#39243C" stroke-width="3"/>
+    <path d="M9 32C14 12 42 7 51 23" stroke="#FFF8E9" stroke-linecap="round" stroke-width="6"/>
+    <path d="M10 40c12 12 32 12 42-4" stroke="#FFC857" stroke-linecap="round" stroke-width="4"/>
+    <path d="M20 35v5M30 28v12M40 22v18" stroke="#FFF8E9" stroke-linecap="round" stroke-width="5"/>
+    <path d="m57 7 2-4m-2 12 4 1" stroke="#20806A" stroke-linecap="round" stroke-width="3"/>
+  </g>
+  <text x="99" y="68" fill="#39243C" font-family="ui-rounded, Arial Rounded MT Bold, Trebuchet MS, sans-serif" font-size="48" font-weight="900" letter-spacing="-2">Polling <tspan fill="#AC2855">Pops</tspan></text>
+</svg>

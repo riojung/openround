@@ -108,12 +108,12 @@ test("brand navigation returns a signed-in creator to Home", async ({ page }) =>
   await page.goto("/");
   const publicHeaderBrand = page
     .locator("header.site-header")
-    .getByRole("link", { name: "OpenRound", exact: true });
+    .getByRole("link", { name: "Polling Pops", exact: true });
   await expect(publicHeaderBrand).toHaveAttribute("href", "/home");
   await publicHeaderBrand.click();
   await expect(page).toHaveURL(/\/home$/);
 
-  const brand = page.locator("aside").getByRole("link", { name: "OpenRound", exact: true });
+  const brand = page.locator("aside").getByRole("link", { name: "Polling Pops", exact: true });
   await expect(brand).toHaveAttribute("href", "/home");
   await brand.click();
 
@@ -125,7 +125,10 @@ test("brand navigation returns a signed-in creator to Home", async ({ page }) =>
     page.getByText("This LTI launch link is missing or has already been completed."),
   ).toBeVisible();
   const ltiHeader = page.locator("header.topbar");
-  await expect(ltiHeader.getByRole("link", { name: "OpenRound" })).toHaveAttribute("href", "/home");
+  await expect(ltiHeader.getByRole("link", { name: "Polling Pops" })).toHaveAttribute(
+    "href",
+    "/home",
+  );
   await expect(ltiHeader.getByRole("link", { name: "Home", exact: true })).toHaveAttribute(
     "href",
     "/home",
@@ -539,7 +542,7 @@ test("creator assigns immutable practice and manages accountless progress", asyn
   await expect(roundCard).toBeVisible();
   await roundCard.getByRole("link", { name: "Assign practice" }).click();
   await expect(page).toHaveURL(new RegExp(`/quiz/${quizId}/assign$`));
-  await expect(page).toHaveTitle("Assign practice · OpenRound");
+  await expect(page).toHaveTitle("Assign practice · Polling Pops");
   await expect(page.getByRole("heading", { name: publishedTitle, level: 2 })).toBeVisible();
   await expect(page.getByText("Published v1", { exact: true })).toBeVisible();
   await expect(page.getByText("main question(s)", { exact: true }).locator("..")).toContainText(
@@ -598,7 +601,9 @@ test("creator assigns immutable practice and manages accountless progress", asyn
       },
     ],
   });
-  expect(download.suggestedFilename()).toBe(`openround-practice-${creation.followup.id}-links.csv`);
+  expect(download.suggestedFilename()).toBe(
+    `polling-pops-practice-${creation.followup.id}-links.csv`,
+  );
   await download.delete();
 
   const participantContext = await browser.newContext({
@@ -626,7 +631,7 @@ test("creator assigns immutable practice and manages accountless progress", asyn
 
   await page.getByRole("link", { name: "Manage practice" }).click();
   await expect(page).toHaveURL(new RegExp(`/practice/${creation.followup.id}$`));
-  await expect(page).toHaveTitle("Manage practice · OpenRound");
+  await expect(page).toHaveTitle("Manage practice · Polling Pops");
   await expect(page.getByRole("heading", { name: publishedTitle, level: 2 })).toBeVisible();
   await expect(page.getByText("Published v1", { exact: true })).toBeVisible();
   await expect(page.getByText(/already has unlimited response time/i)).toBeVisible();

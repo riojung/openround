@@ -22,7 +22,7 @@ const messages = {
   "delivery.site.signedInAs": "Sessão iniciada como",
   "delivery.site.plans": "Planos",
   "delivery.site.signInToCreate": "Inicie sessão para criar e gerir Rounds",
-  "delivery.site.project": "© {year} Projeto comunitário OpenRound",
+  "delivery.site.project": "© {year} Projeto comunitário Polling Pops",
   "delivery.site.legalLinks": "Ligações legais",
   "delivery.site.terms": "Termos",
   "delivery.site.status": "Estado",
@@ -97,7 +97,7 @@ const messages = {
     "Transforme texto fiável, PDF, Word ou PowerPoint num rascunho para revisão.",
   "create.round.method.import.title": "Importar trabalho existente",
   "create.round.method.import.description":
-    "Valide JSON do OpenRound, CSV, texto em bloco ou um pacote QTI 3.",
+    "Valide JSON do Polling Pops, CSV, texto em bloco ou um pacote QTI 3.",
   "create.round.method.import.badge": "Portátil",
   "create.round.method.blank.title": "Começar do zero",
   "create.round.method.blank.description":
@@ -148,7 +148,7 @@ const messages = {
   "create.presentation.source.eyebrow": "Conversão baseada em fontes",
   "create.presentation.source.title": "Criar a partir de material fiável",
   "create.presentation.source.description":
-    "PDF, DOCX, PPTX e texto colado tornam-se blocos estruturados do OpenRound. O resultado é responsivo e pode ser revisto, sem prometer uma reprodução exata dos diapositivos.",
+    "PDF, DOCX, PPTX e texto colado tornam-se blocos estruturados do Polling Pops. O resultado é responsivo e pode ser revisto, sem prometer uma reprodução exata dos diapositivos.",
   "create.presentation.templates.eyebrow": "Modelos estruturados",
   "create.presentation.templates.title": "Escolha um padrão de facilitação",
   "create.presentation.templates.use": "Utilizar modelo →",
@@ -225,10 +225,10 @@ const messages = {
   "page.results.title": "Resultados",
   "page.results.description":
     "Reveja as evidências de recuperação e acompanhe as práticas atribuídas ou baseadas em relatórios.",
-  "page.discover.eyebrow": "Seleção da OpenRound",
+  "page.discover.eyebrow": "Seleção da Polling Pops",
   "page.discover.title": "Descobrir",
   "page.discover.description":
-    "Comece com modelos fiáveis da OpenRound e adapte-os ao seu público.",
+    "Comece com modelos fiáveis da Polling Pops e adapte-os ao seu público.",
   "page.groups.eyebrow": "Colaboração entre facilitadores",
   "page.groups.title": "Grupos",
   "page.groups.description":

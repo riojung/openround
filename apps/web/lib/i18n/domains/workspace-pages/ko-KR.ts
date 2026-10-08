@@ -220,7 +220,7 @@ const messages = {
   "pages.help.duration": "기간 {duration}",
   "pages.help.enabledBuilder": "활성화된 라운드 빌더 사용",
   "pages.help.guides.currentDescription":
-    "OpenRound는 이 작업 영역에서 활성화된 기능에 대한 지침만 표시합니다.",
+    "Polling Pops는 이 작업 영역에서 활성화된 기능에 대한 지침만 표시합니다.",
   "pages.help.guides.currentTitle": "현재 작업공간에 대한 지침",
   "pages.help.guides.description":
     "1분 둘러보기로 시작한 다음 작성 및 전달에 대해 자세히 알아보세요.",
@@ -240,12 +240,14 @@ const messages = {
   "pages.help.support.openSettings": "설정 열기",
   "pages.help.support.operations": "운영",
   "pages.help.support.privacyDescription":
-    "OpenRound가 세션 범위 학습 데이터를 처리하는 방법을 검토하세요.",
+    "Polling Pops가 세션 범위 학습 데이터를 처리하는 방법을 검토하세요.",
   "pages.help.support.privacyTitle": "개인정보 보호",
   "pages.help.support.readPrivacy": "개인 정보 보호 정보 읽기",
   "pages.help.support.settingsDescription": "역할, 통합, 보존, 청구 및 계정 데이터를 관리합니다.",
   "pages.help.support.settingsTitle": "작업공간 설정",
-  "pages.help.support.statusDescription": "OpenRound 서비스의 현재 이용 가능 여부를 확인하세요.",
+  "pages.help.guides.brandNote":
+    "이 가이드는 Polling Pops로 브랜드를 바꾸기 전에 녹화되었습니다. 사용 방법은 그대로이며 색상과 브랜드 표시가 달라졌습니다.",
+  "pages.help.support.statusDescription": "Polling Pops 서비스의 현재 이용 가능 여부를 확인하세요.",
   "pages.help.support.statusTitle": "서비스 상태",
   "pages.help.support.title": "작업 공간 지원",
   "pages.help.support.trust": "신뢰",

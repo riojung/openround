@@ -1,5 +1,6 @@
 import Link from "next/link";
-import type { WorkspaceProductFeatures } from "@openround/contracts";
+import { PRODUCT_BRAND, type WorkspaceProductFeatures } from "@openround/contracts";
+import { LollipopMark } from "./lollipop-mark";
 
 interface BrandProps {
   href?: string;
@@ -7,7 +8,7 @@ interface BrandProps {
   name?: string;
 }
 
-export function Brand({ href = "/", inverted = false, name = "OpenRound" }: BrandProps) {
+export function Brand({ href = "/", inverted = false, name = PRODUCT_BRAND.name }: BrandProps) {
   const initials = name
     .trim()
     .split(/\s+/)
@@ -16,9 +17,14 @@ export function Brand({ href = "/", inverted = false, name = "OpenRound" }: Bran
     .join("");
 
   return (
-    <Link className="brand" href={href} style={inverted ? { color: "white" } : undefined}>
-      <span className="brand-mark" aria-hidden="true">
-        {initials || "OR"}
+    <Link
+      className="brand"
+      data-inverted={inverted || undefined}
+      href={href}
+      style={inverted ? { color: "white" } : undefined}
+    >
+      <span className={name === PRODUCT_BRAND.name ? "brand-pop" : "brand-mark"} aria-hidden="true">
+        {name === PRODUCT_BRAND.name ? <LollipopMark /> : initials || "PP"}
       </span>
       <span className="sr-only">{name}</span>
       <span aria-hidden="true">{name}</span>

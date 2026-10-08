@@ -40,8 +40,8 @@ export default function AccountPage() {
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [theme, setTheme] = useState<BrandTheme>(() => ({
     organizationName: t("account.theme.defaultOrganizationName"),
-    primaryColor: "#0B2239",
-    accentColor: "#087375",
+    primaryColor: "#39243C",
+    accentColor: "#AC2855",
   }));
   const [savedTheme, setSavedTheme] = useState<BrandTheme | null>(null);
   const [confirmation, setConfirmation] = useState("");
@@ -93,8 +93,8 @@ export default function AccountPage() {
         setTheme(
           branding.theme ?? {
             organizationName: tRef.current("account.theme.defaultOrganizationName"),
-            primaryColor: "#0B2239",
-            accentColor: "#087375",
+            primaryColor: "#39243C",
+            accentColor: "#AC2855",
           },
         );
         setWorkspaces(workspaceList.workspaces);
@@ -246,8 +246,8 @@ export default function AccountPage() {
       setSavedTheme(null);
       setTheme({
         organizationName: t("account.theme.defaultOrganizationName"),
-        primaryColor: "#0B2239",
-        accentColor: "#087375",
+        primaryColor: "#39243C",
+        accentColor: "#AC2855",
       });
       setMessage(t("account.feedback.themeRemoved"));
     } catch (caught) {
@@ -326,7 +326,7 @@ export default function AccountPage() {
       );
       const link = document.createElement("a");
       link.href = url;
-      link.download = "openround-account-export.json";
+      link.download = "polling-pops-account-export.json";
       document.body.append(link);
       link.click();
       link.remove();
@@ -350,7 +350,7 @@ export default function AccountPage() {
       );
       const link = document.createElement("a");
       link.href = url;
-      link.download = `openround-audit-${creator?.workspaceId ?? "workspace"}.json`;
+      link.download = `polling-pops-audit-${creator?.workspaceId ?? "workspace"}.json`;
       document.body.append(link);
       link.click();
       link.remove();

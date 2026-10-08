@@ -201,7 +201,7 @@ export function createPackExportReview({
         if (!current(captured, signal)) return;
         download(
           blob,
-          `openround-recovery-pack-${report.source.packVersionId}.${report.format === "csv" ? "csv" : "qti.zip"}`,
+          `polling-pops-recovery-pack-${report.source.packVersionId}.${report.format === "csv" ? "csv" : "qti.zip"}`,
         );
         publish({
           ...state,
@@ -224,7 +224,7 @@ export function createPackExportReview({
         const report = validatePackExportReport(state.report, frozenSource, state.format);
         download(
           new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }),
-          `openround-recovery-pack-${report.source.packVersionId}-${report.format}-export-report.json`,
+          `polling-pops-recovery-pack-${report.source.packVersionId}-${report.format}-export-report.json`,
         );
         publish({ ...state, error: "", status: "Validated export report download started." });
       } catch (error) {

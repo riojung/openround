@@ -65,32 +65,35 @@ export function HelpGuidance() {
         </div>
 
         {showProfessionalVideos ? (
-          <div className={guideStyles.grid}>
-            <VideoGuide
-              captionsSrc="/guides/openround-quick-start.vtt"
-              description={t("pages.help.quickStart.description")}
-              duration="1:05"
-              id="quick-start"
-              posterSrc="/guides/openround-quick-start-poster.jpg"
-              title={t("pages.help.quickStart.title")}
-              transcript={quickStartTranscript}
-              tryHref={canEdit ? "/create?start=starters" : "/library"}
-              tryLabel={canEdit ? t("pages.help.quickStart.try") : t("pages.common.openLibrary")}
-              videoSrc="/guides/openround-quick-start.mp4"
-            />
-            <VideoGuide
-              captionsSrc="/guides/openround-builder-guide.vtt"
-              description={t("pages.help.builder.description")}
-              duration="2:55"
-              id="round-builder-guide"
-              posterSrc="/guides/openround-builder-guide-poster.jpg"
-              title={t("pages.help.builder.title")}
-              transcript={builderGuideTranscript}
-              tryHref={canEdit ? "/create?start=blank" : "/library"}
-              tryLabel={canEdit ? t("pages.help.builder.try") : t("pages.common.openLibrary")}
-              videoSrc="/guides/openround-builder-guide.mp4"
-            />
-          </div>
+          <>
+            <p className="muted">{t("pages.help.guides.brandNote")}</p>
+            <div className={guideStyles.grid}>
+              <VideoGuide
+                captionsSrc="/guides/openround-quick-start.vtt"
+                description={t("pages.help.quickStart.description")}
+                duration="1:05"
+                id="quick-start"
+                posterSrc="/guides/openround-quick-start-poster.jpg"
+                title={t("pages.help.quickStart.title")}
+                transcript={quickStartTranscript}
+                tryHref={canEdit ? "/create?start=starters" : "/library"}
+                tryLabel={canEdit ? t("pages.help.quickStart.try") : t("pages.common.openLibrary")}
+                videoSrc="/guides/openround-quick-start.mp4"
+              />
+              <VideoGuide
+                captionsSrc="/guides/openround-builder-guide.vtt"
+                description={t("pages.help.builder.description")}
+                duration="2:55"
+                id="round-builder-guide"
+                posterSrc="/guides/openround-builder-guide-poster.jpg"
+                title={t("pages.help.builder.title")}
+                transcript={builderGuideTranscript}
+                tryHref={canEdit ? "/create?start=blank" : "/library"}
+                tryLabel={canEdit ? t("pages.help.builder.try") : t("pages.common.openLibrary")}
+                videoSrc="/guides/openround-builder-guide.mp4"
+              />
+            </div>
+          </>
         ) : (
           <div className={styles.notice}>
             <strong>

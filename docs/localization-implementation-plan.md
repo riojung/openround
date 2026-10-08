@@ -1,13 +1,13 @@
-# OpenRound localization implementation plan
+# Polling Pops localization implementation plan
 
 ## Outcome
 
-OpenRound will provide a localized facilitator workspace without changing the meaning of
+Polling Pops will provide a localized facilitator workspace without changing the meaning of
 user-authored Rounds, Presentations, responses, or evidence. The interface language is a user
 preference, follows BCP 47 locale identifiers, persists across signed-in devices, and falls back
 safely to Canadian English when a translation is unavailable.
 
-The first supported set covers OpenRound's initial North American, European, and Asian markets:
+The first supported set covers Polling Pops’ initial North American, European, and Asian markets:
 
 - English (Canada) — `en-CA`
 - French (France) — `fr-FR`
@@ -37,7 +37,7 @@ locale. User-generated content is never translated automatically.
 4. Runtime catalog merging falls back per key to Canadian English, and a failed catalog chunk
    falls back as a unit. Shipping catalogs must pass full key and placeholder parity in CI, so the
    fallback is defensive rather than a substitute for translation coverage.
-5. OpenRound terminology such as Round, Presentation, Recovery Loop, diagnostic, intervention,
+5. Polling Pops terminology such as Round, Presentation, Recovery Loop, diagnostic, intervention,
    and recheck follows the [localization glossary](./localization-glossary.md).
 6. Layouts must tolerate at least 40% text expansion, CJK line breaking, keyboard-only operation,
    zoom, and reduced motion. No UI meaning may depend on colour or translated text length.

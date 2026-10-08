@@ -238,7 +238,7 @@ export class LtiService {
     if (target.origin !== launchEndpoint.origin || target.pathname !== launchEndpoint.pathname) {
       throw new LtiError(
         "LTI_LAUNCH_INVALID",
-        "LTI target_link_uri is not an OpenRound launch URL",
+        "LTI target_link_uri is not a Polling Pops launch URL",
       );
     }
 
@@ -470,7 +470,7 @@ export class LtiService {
         {
           type: "ltiResourceLink",
           title: quiz.title,
-          text: quiz.description || "OpenRound comprehension checkpoint set",
+          text: quiz.description || "Polling Pops comprehension checkpoint set",
           url: new URL("/v1/lti/launch", this.config.PUBLIC_API_URL).href,
           custom: { openround_quiz_id: quiz.id },
         },

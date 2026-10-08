@@ -185,7 +185,7 @@ function AssignPracticeContent() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `openround-practice-${created.followup.id}-links.csv`;
+    link.download = `polling-pops-practice-${created.followup.id}-links.csv`;
     document.body.append(link);
     link.click();
     link.remove();

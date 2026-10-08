@@ -1216,6 +1216,7 @@ describe("game engine", () => {
     delete legacy.sourceRoundId;
     delete legacy.intervention;
     delete legacy.interventionReturnPhase;
+    delete legacy.experienceTheme;
     legacy.participants = { [participantId]: participant(participantId) };
     legacy.answers = {
       [answerId]: {

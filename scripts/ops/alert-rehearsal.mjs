@@ -70,7 +70,7 @@ function buildAlerts({ buildId, deployment, rehearsalId, startsAt, endsAt }) {
     },
     annotations: {
       build_id: buildId,
-      summary: `OpenRound ${severity} route rehearsal`,
+      summary: `Polling Pops ${severity} route rehearsal`,
       purpose: "phase0-alert-routing-evidence",
     },
     startsAt,

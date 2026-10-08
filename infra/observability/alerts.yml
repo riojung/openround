@@ -7,7 +7,7 @@ groups:
         labels:
           severity: page
         annotations:
-          summary: OpenRound metrics target is unavailable
+          summary: Polling Pops metrics target is unavailable
           runbook: docs/runbooks/observability.md
 
       - alert: OpenRoundHttpServerErrors
@@ -20,7 +20,7 @@ groups:
         labels:
           severity: page
         annotations:
-          summary: OpenRound HTTP 5xx ratio is above 2%
+          summary: Polling Pops HTTP 5xx ratio is above 2%
           runbook: docs/runbooks/observability.md
 
       - alert: OpenRoundBroadcastFailures

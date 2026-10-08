@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { PRODUCT_BRAND } from "@openround/contracts";
 import type { AppConfig } from "./config.js";
 
 export interface Mailer {
@@ -27,9 +28,9 @@ export class SmtpMailer implements Mailer {
     await this.transport.sendMail({
       from: this.config.EMAIL_FROM,
       to: email,
-      subject: "Sign in to OpenRound",
+      subject: `Sign in to ${PRODUCT_BRAND.name}`,
       text: `Use this link to sign in. It expires in 15 minutes.\n\n${verifyUrl}\n\nIf you did not request it, ignore this email.`,
-      html: `<p>Use this link to sign in. It expires in 15 minutes.</p><p><a href="${verifyUrl}">Sign in to OpenRound</a></p><p>If you did not request it, ignore this email.</p>`,
+      html: `<p>Use this link to sign in. It expires in 15 minutes.</p><p><a href="${verifyUrl}">Sign in to ${PRODUCT_BRAND.name}</a></p><p>If you did not request it, ignore this email.</p>`,
     });
   }
 
@@ -37,9 +38,9 @@ export class SmtpMailer implements Mailer {
     await this.transport.sendMail({
       from: this.config.EMAIL_FROM,
       to: email,
-      subject: "Join an OpenRound workspace",
-      text: `You have been invited to collaborate in OpenRound. This link expires in seven days.\n\n${acceptUrl}\n\nIf you did not expect this invitation, ignore this email.`,
-      html: `<p>You have been invited to collaborate in OpenRound. This link expires in seven days.</p><p><a href="${acceptUrl}">Review invitation</a></p><p>If you did not expect this invitation, ignore this email.</p>`,
+      subject: `Join a ${PRODUCT_BRAND.name} workspace`,
+      text: `You have been invited to collaborate in ${PRODUCT_BRAND.name}. This link expires in seven days.\n\n${acceptUrl}\n\nIf you did not expect this invitation, ignore this email.`,
+      html: `<p>You have been invited to collaborate in ${PRODUCT_BRAND.name}. This link expires in seven days.</p><p><a href="${acceptUrl}">Review invitation</a></p><p>If you did not expect this invitation, ignore this email.</p>`,
     });
   }
 }

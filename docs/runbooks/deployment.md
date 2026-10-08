@@ -1,6 +1,6 @@
 # Build, service, and deployment runbook
 
-This runbook defines the supported operator interfaces for building OpenRound and running every
+This runbook defines the supported operator interfaces for building Polling Pops and running every
 environment on one Linux host. It does not claim that a staging or production host, domain, backup,
 monitoring route, or provider account has been provisioned.
 
@@ -142,7 +142,7 @@ docker system df
 docker system df --verbose
 ```
 
-To remove the complete local OpenRound Compose project and every image referenced by its core,
+To remove the complete local Polling Pops Compose project and every image referenced by its core,
 media, and observability services while preserving named data volumes, run from the repository
 root:
 
@@ -171,7 +171,7 @@ docker system prune --all --force
 ```
 
 This second command is global: it removes stopped containers, unused networks, unused images, and
-build cache from every Docker project on the host, not only OpenRound. It does not remove volumes
+build cache from every Docker project on the host, not only Polling Pops. It does not remove volumes
 without an explicit volume option.
 
 **Data-preservation boundary:** do not add `--volumes`, and do not run `docker volume prune` or
@@ -179,7 +179,7 @@ without an explicit volume option.
 MinIO backups have been created and verified. Those operations can permanently remove databases,
 uploaded media, queued state, malware signatures, and monitoring history.
 
-Rebuild the OpenRound application images once, start the complete stack without rebuilding them a
+Rebuild the Polling Pops application images once, start the complete stack without rebuilding them a
 second time, and verify application and observability health:
 
 ```bash
@@ -368,7 +368,7 @@ contain only `docs/release-readiness.json`; only the `signed-release` acceptance
 that ledger; and its owner/independent-reviewer acceptance, tag object, tagged commit,
 downloaded-manifest SHA-256, both image digests, acceptance-time GitHub draft release ID, and exact
 release asset inventory must match. The deployer fetches `origin/main` and the exact release tag from the trusted
-OpenRound GitHub remote, requires `HEAD` to equal the fetched main tip, and verifies the exact
+Polling Pops GitHub remote, requires `HEAD` to equal the fetched main tip, and verifies the exact
 annotated tag object's valid signature and target through the GitHub API. It also requires the bound
 release to remain the exact accepted release and downloads its `SHA256SUMS` and preflight assets to
 verify the accepted bytes, complete checksum inventory, exercised candidate, and successful

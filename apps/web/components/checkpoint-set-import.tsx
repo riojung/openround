@@ -202,8 +202,8 @@ export function CheckpointSetImport({
                 }}
                 value={format}
               >
-                <option value="openround_json">OpenRound JSON</option>
-                <option value="csv">OpenRound CSV</option>
+                <option value="openround_json">Polling Pops JSON</option>
+                <option value="csv">Polling Pops CSV</option>
                 <option value="bulk">{t("reportRound.import.bulkPaste")}</option>
                 <option value="qti3">{t("reportRound.import.qtiPackage")}</option>
               </select>

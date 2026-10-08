@@ -222,7 +222,7 @@ export const workspacePageEnglishMessages = {
   "pages.help.duration": "Duration {duration}",
   "pages.help.enabledBuilder": "Use the enabled Round Builder",
   "pages.help.guides.currentDescription":
-    "OpenRound shows only guidance for capabilities that are enabled in this workspace.",
+    "Polling Pops shows only guidance for capabilities that are enabled in this workspace.",
   "pages.help.guides.currentTitle": "Guidance for your current workspace",
   "pages.help.guides.description":
     "Start with the one-minute tour, then go deeper into authoring and delivery.",
@@ -242,13 +242,16 @@ export const workspacePageEnglishMessages = {
   "pages.help.support.openSettings": "Open settings",
   "pages.help.support.operations": "Operations",
   "pages.help.support.privacyDescription":
-    "Review how OpenRound handles session-scoped learning data.",
+    "Review how Polling Pops handles session-scoped learning data.",
   "pages.help.support.privacyTitle": "Privacy",
   "pages.help.support.readPrivacy": "Read privacy information",
   "pages.help.support.settingsDescription":
     "Manage roles, integrations, retention, billing, and account data.",
   "pages.help.support.settingsTitle": "Workspace settings",
-  "pages.help.support.statusDescription": "Check the current availability of OpenRound services.",
+  "pages.help.guides.brandNote":
+    "These guides were recorded before the Polling Pops rebrand. The workflows still apply; colors and branding have since changed.",
+  "pages.help.support.statusDescription":
+    "Check the current availability of Polling Pops services.",
   "pages.help.support.statusTitle": "Service status",
   "pages.help.support.title": "Workspace support",
   "pages.help.support.trust": "Trust",

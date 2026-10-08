@@ -91,10 +91,10 @@ quick_frames=(
 )
 
 quick_narrations=(
-  "Welcome to OpenRound. Your workspace keeps Rounds, Presentations, Sessions, Assignments, Results, Discover, and Groups together. Use Create whenever you are ready to begin."
+  "Welcome to Polling Pops. Your workspace keeps Rounds, Presentations, Sessions, Assignments, Results, Discover, and Groups together. Use Create whenever you are ready to begin."
   "For a new Round, choose a starter, bring a trusted source, import structured work, or start blank. Every route creates a reviewable draft. Nothing publishes automatically."
   "The Round Builder keeps the question map, direct-edit canvas, and inspector in view. Write the prompt and answers, mark the correct response, then use Diagnose to require confidence and tag the concepts you want to measure."
-  "Use Recover to add a fresh recheck. OpenRound links the diagnostic and recheck so reports can show whether understanding improved after support. Resolve the readiness items and wait for Saved."
+  "Use Recover to add a fresh recheck. Polling Pops links the diagnostic and recheck so reports can show whether understanding improved after support. Resolve the readiness items and wait for Saved."
   "Preview the learner experience, publish the exact saved revision, then return to Library to host live or assign the Round for account-free practice. You are ready to try it."
 )
 
@@ -111,7 +111,7 @@ builder_frames=(
 )
 
 builder_narrations=(
-  "OpenRound is organized around a professional workspace. Home summarizes active work. Library holds Rounds and Presentations. Sessions and Assignments track delivery, Results collects evidence, and Groups supports facilitator collaboration. Universal search and Create stay available from the header."
+  "Polling Pops is organized around a professional workspace. Home summarizes active work. Library holds Rounds and Presentations. Sessions and Assignments track delivery, Results collects evidence, and Groups supports facilitator collaboration. Universal search and Create stay available from the header."
   "Creating a Round begins with one clear choice. Use a Recovery starter for speed, a trusted document for source-grounded proposals, a structural import for existing work, or a blank canvas for full control. Source and import results remain drafts until a person reviews them."
   "The Builder has three working areas. The map on the left shows order, type, readiness, and recovery relationships. The central canvas is where you edit the prompt and responses directly. The inspector on the right holds settings that should not compete with the content. Autosave, undo, preview, and publish remain in the command bar."
   "Build controls timing, points, and the explanation shown after reveal. Diagnose captures purpose, required or optional confidence, concept keys, and misconception feedback. Recover creates a fresh recheck and pairs it with the diagnostic question. The readiness panel links every blocker back to the field that needs attention."

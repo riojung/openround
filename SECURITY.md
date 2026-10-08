@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-OpenRound has not published its first release, so no version is currently supported for production
+Polling Pops has not published its first release, so no version is currently supported for production
 use. Pre-release security fixes land on `main`. After releases begin, only the latest tagged minor
 release will receive fixes during the pre-1.0 period. Operators should pin immutable image digests
 and subscribe to repository security advisories.
@@ -12,7 +12,7 @@ and subscribe to repository security advisories.
 Do not open a public issue for a suspected vulnerability. Report it through
 [GitHub private vulnerability reporting](https://github.com/riojung/openround/security/advisories/new)
 so maintainers can investigate and coordinate a fix before disclosure. Include the affected
-version or commit, reproduction steps, impact, and any suggested remediation. OpenRound is a
+version or commit, reproduction steps, impact, and any suggested remediation. Polling Pops is a
 pre-release project and does not currently promise a response or remediation SLA.
 
 ## Production requirements

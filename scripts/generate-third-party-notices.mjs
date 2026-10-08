@@ -65,7 +65,7 @@ for (const license of Object.keys(licenseGroups).sort((left, right) => left.loca
 lines.push(
   "## Services in the community Compose profile",
   "",
-  "These programs run as separate containers and are not relicensed by OpenRound:",
+  "These programs run as separate containers and are not relicensed by Polling Pops:",
   "",
   "| Service | Compose image | License and source |",
   "|---|---|---|",
@@ -78,7 +78,7 @@ lines.push(
   "",
   "Operators distributing a composed appliance or modified service image are responsible for",
   "the corresponding license obligations. In particular, MinIO's AGPL terms are separate from",
-  "the Apache-2.0 license that applies to OpenRound's own source and original bundled assets.",
+  "the Apache-2.0 license that applies to Polling Pops’ own source and original bundled assets.",
   "",
 );
 

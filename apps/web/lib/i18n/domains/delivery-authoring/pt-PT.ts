@@ -1,6 +1,10 @@
 import type { DeliveryAuthoringMessages } from "./en-CA";
 
 export default {
+  "delivery.landing.polls": "Sondagens em direto",
+  "delivery.landing.presentations": "Apresentações interativas",
+  "delivery.landing.learning": "Rondas de aprendizagem",
+  "delivery.landing.featuresLabel": "Usar Polling Pops",
   "delivery.common.home": "Início",
   "delivery.common.loading": "A carregar…",
   "delivery.common.retry": "Tentar novamente",
@@ -17,10 +21,10 @@ export default {
   "delivery.common.preview": "Pré-visualização",
   "delivery.common.publish": "Publicar",
   "delivery.common.exit": "Sair",
-  "delivery.landing.eyebrow": "Compreensão em direto sem distrações",
-  "delivery.landing.title": "Veja o que foi compreendido enquanto ainda importa.",
+  "delivery.landing.eyebrow": "Grandes ideias. Conversas vivas.",
+  "delivery.landing.title": "Dê destaque a cada voz.",
   "delivery.landing.description":
-    "Pergunte, diagnostique, intervenha e volte a verificar a compreensão, sem contas de participantes.",
+    "Anime o grupo com sondagens em direto, apresentações interativas e rondas de aprendizagem. Ouça cada voz, esclareça dúvidas e verifique a compreensão, sem contas de participantes.",
   "delivery.landing.participantEntry": "Entrada de participante",
   "delivery.landing.joinTitle": "Entrar num Round em direto",
   "delivery.landing.joinDescription": "Não é necessária conta. Introduza o código do facilitador.",
@@ -246,11 +250,11 @@ export default {
   "delivery.assistant.draftCheckpoints":
     "Criar pontos de verificação a partir de uma fonte fidedigna",
   "delivery.assistant.presentationDescription":
-    "O OpenRound pode propor diapositivos com citações e um par ligado de perguntas de recuperação.",
+    "O Polling Pops pode propor diapositivos com citações e um par ligado de perguntas de recuperação.",
   "delivery.assistant.roundDescription":
-    "O OpenRound pode propor uma pergunta principal e uma reverificação ligada.",
+    "O Polling Pops pode propor uma pergunta principal e uma reverificação ligada.",
   "delivery.assistant.checkpointDescription":
-    "O OpenRound pode propor um ponto de verificação principal e uma reverificação ligada.",
+    "O Polling Pops pode propor um ponto de verificação principal e uma reverificação ligada.",
   "delivery.assistant.securityDescription":
     "As fontes podem ser texto colado ou um ficheiro privado PDF, Word ou PowerPoint. Os ficheiros são analisados antes da retenção. Cada proposta inclui citações e permanece um rascunho não publicado até à sua revisão.",
   "delivery.assistant.allowanceUnlimited.one":

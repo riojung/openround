@@ -6,7 +6,7 @@ export const accountEnglishMessages = {
   "account.feedback.invitationSent": "Invitation sent to {email}.",
   "account.feedback.themeSaved": "Your brand theme was saved for new live sessions.",
   "account.feedback.themeRemoved":
-    "The workspace theme was removed. New sessions will use OpenRound styling.",
+    "The workspace theme was removed. New sessions will use Polling Pops styling.",
   "account.feedback.embedSaved": "Secure presenter embed origins were saved.",
   "account.feedback.identityRemoved":
     "Institution sign-in was removed. Email sign-in remains available.",
@@ -44,7 +44,7 @@ export const accountEnglishMessages = {
   "account.institution.k12Mode": "K–12 institutional mode",
   "account.institution.loading": "Loading institution policy…",
   "account.institution.linkGuidance":
-    "Link only an identity you control. OpenRound keys the link by institution issuer and subject; it never links accounts by matching email addresses.",
+    "Link only an identity you control. Polling Pops keys the link by institution issuer and subject; it never links accounts by matching email addresses.",
   "account.institution.linked": "Linked {date}",
   "account.institution.unlink": "Unlink",
   "account.institution.openingSignIn": "Opening institution sign-in…",
@@ -54,7 +54,7 @@ export const accountEnglishMessages = {
     "Institution sign-in is not enabled for this workspace. Workspace owners cannot self-enable contract-gated identity controls.",
   "account.institution.ltiTitle": "LTI 1.3 registrations",
   "account.institution.ltiEmpty":
-    "LTI is approved but no platform is registered. Your OpenRound operator must add the LMS issuer, client, deployment, JWKS, and return-origin values.",
+    "LTI is approved but no platform is registered. Your Polling Pops operator must add the LMS issuer, client, deployment, JWKS, and return-origin values.",
   "account.institution.auditTitle": "Institution audit export",
   "account.institution.auditDescription":
     "Download up to 10,000 ordered administrative and facilitator events with actor, request, target, timestamp, and region context. Large exports are explicitly marked as truncated.",
@@ -113,7 +113,7 @@ export const accountEnglishMessages = {
   "account.theme.contrastHelp":
     "Both colours must maintain at least 4.5:1 contrast with white text. Changes apply to sessions created after saving, not rooms already in progress.",
   "account.theme.save": "Save theme",
-  "account.theme.useOpenRound": "Use OpenRound theme",
+  "account.theme.useOpenRound": "Use Polling Pops theme",
   "account.export.eyebrow": "Portable data",
   "account.export.title": "Export your account",
   "account.export.description":

@@ -7,7 +7,7 @@ const messages = {
   "account.confirm.unlinkIdentity": "要移除此機構登入方式嗎？",
   "account.feedback.invitationSent": "已向 {email} 傳送邀請。",
   "account.feedback.themeSaved": "品牌主題已儲存，將用於新的即時場次。",
-  "account.feedback.themeRemoved": "已移除工作區主題。新場次將使用 OpenRound 樣式。",
+  "account.feedback.themeRemoved": "已移除工作區主題。新場次將使用 Polling Pops 樣式。",
   "account.feedback.embedSaved": "已儲存安全的簡報者嵌入來源。",
   "account.feedback.identityRemoved": "已移除機構登入。仍可使用電子郵件登入。",
   "account.feedback.accountExportDownloaded": "已下載帳戶匯出檔。",
@@ -42,7 +42,7 @@ const messages = {
   "account.institution.k12Mode": "K–12 機構模式",
   "account.institution.loading": "正在載入機構政策…",
   "account.institution.linkGuidance":
-    "請只連結您控制的身分。OpenRound 會依機構簽發者與主體建立連結，絕不會只因電子郵件地址相符而連結帳戶。",
+    "請只連結您控制的身分。Polling Pops 會依機構簽發者與主體建立連結，絕不會只因電子郵件地址相符而連結帳戶。",
   "account.institution.linked": "連結於 {date}",
   "account.institution.unlink": "取消連結",
   "account.institution.openingSignIn": "正在開啟機構登入…",
@@ -52,7 +52,7 @@ const messages = {
     "此工作區未啟用機構登入。工作區擁有者無法自行啟用受合約限制的身分控制。",
   "account.institution.ltiTitle": "LTI 1.3 註冊",
   "account.institution.ltiEmpty":
-    "LTI 已獲核准，但尚未註冊平台。OpenRound 營運者必須新增 LMS 簽發者、用戶端、部署、JWKS 與返回來源值。",
+    "LTI 已獲核准，但尚未註冊平台。Polling Pops 營運者必須新增 LMS 簽發者、用戶端、部署、JWKS 與返回來源值。",
   "account.institution.auditTitle": "機構稽核匯出",
   "account.institution.auditDescription":
     "最多下載 10,000 筆依序排列的管理與引導事件，包括執行者、要求、目標、時間戳記與區域資訊。大型匯出會明確標示為已截斷。",
@@ -111,7 +111,7 @@ const messages = {
   "account.theme.contrastHelp":
     "兩種顏色與白色文字的對比度都必須至少達到 4.5:1。變更只會套用至儲存後建立的場次，不影響進行中的房間。",
   "account.theme.save": "儲存主題",
-  "account.theme.useOpenRound": "使用 OpenRound 主題",
+  "account.theme.useOpenRound": "使用 Polling Pops 主題",
   "account.export.eyebrow": "可攜式資料",
   "account.export.title": "匯出帳戶",
   "account.export.description":

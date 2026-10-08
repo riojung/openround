@@ -1,4 +1,4 @@
-# OpenRound localization glossary
+# Polling Pops localization glossary
 
 This glossary defines product meaning and translator context. It does not prescribe one universal
 translation: reviewers may choose the clearest established term in each market, but the same term
@@ -6,9 +6,9 @@ must remain consistent across navigation, authoring, delivery, reports, help, an
 
 | Source term           | Product meaning and translation guidance                                                                                                                                                                 |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Round                 | An OpenRound question-led live or self-paced activity. Treat it as a named product artifact, not merely one turn of a game.                                                                              |
+| Round                 | An Polling Pops question-led live or self-paced activity. Treat it as a named product artifact, not merely one turn of a game.                                                                           |
 | Presentation          | A live instructional deck containing content slides and interactive question blocks. Do not translate it as a static exported file.                                                                      |
-| Recovery Loop         | The complete OpenRound pattern: diagnose, intervene, and recheck. Treat as a named product concept and preserve the sense of learning recovery.                                                          |
+| Recovery Loop         | The complete Polling Pops pattern: diagnose, intervene, and recheck. Treat as a named product concept and preserve the sense of learning recovery.                                                       |
 | diagnostic question   | A question used to identify current understanding or a misconception before an intervention. It is not a medical diagnosis.                                                                              |
 | intervention          | Facilitator-provided explanation, cue, example, or activity between a diagnostic and its recheck. Avoid punitive meanings.                                                                               |
 | recheck               | A linked follow-up question used to measure change after an intervention. Keep it distinct from retry, retake, and review.                                                                               |
@@ -18,7 +18,7 @@ must remain consistent across navigation, authoring, delivery, reports, help, an
 | workspace             | The facilitator team's private operational space for artifacts, delivery, results, settings, and collaboration.                                                                                          |
 | assignment            | A self-paced delivery of a published Round. Presentation assignments are not supported in the current implementation.                                                                                    |
 | starter               | A first-party, editable starting artifact. Keep it distinct from a locked example or paid marketplace item.                                                                                              |
-| trusted source        | Material supplied or approved by the user and used to ground proposed content. Do not imply that OpenRound independently verified its truth.                                                             |
+| trusted source        | Material supplied or approved by the user and used to ground proposed content. Do not imply that Polling Pops independently verified its truth.                                                          |
 | Question Health       | Deterministic, advisory checks on authored questions. Preserve its distinction from a participant assessment or an automatic quality verdict.                                                            |
 | finding               | A specific Question Health observation with evidence and a suggested action. It need not be a validation error or publication blocker.                                                                   |
 | dismiss / reopen      | Save or reverse a reasoned decision about a matching advisory finding. Distinguish this from dismissing an audience Q&A item or deleting content.                                                        |

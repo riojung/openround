@@ -262,7 +262,8 @@ function validateGithubReleaseContents(release, binding) {
     fail("GitHub release HTML URL does not match releaseBinding or its published tag URL");
   }
   if (release.prerelease !== false) fail("GitHub release must not be marked prerelease");
-  if (release.name !== `OpenRound ${binding.tag}`) {
+  // Historical signed releases remain valid for verification and recovery.
+  if (![`Polling Pops ${binding.tag}`, `OpenRound ${binding.tag}`].includes(release.name)) {
     fail("GitHub release title does not match the accepted release");
   }
   if (!Array.isArray(release.assets)) fail("GitHub release assets must be an array");

@@ -10,7 +10,7 @@ const messages = {
   "account.feedback.themeSaved":
     "El tema de marca se ha guardado para las nuevas sesiones en directo.",
   "account.feedback.themeRemoved":
-    "Se ha quitado el tema del espacio. Las nuevas sesiones usarán el estilo de OpenRound.",
+    "Se ha quitado el tema del espacio. Las nuevas sesiones usarán el estilo de Polling Pops.",
   "account.feedback.embedSaved": "Se han guardado los orígenes seguros de inserción.",
   "account.feedback.identityRemoved":
     "Se ha quitado el inicio de sesión institucional. El acceso por correo sigue disponible.",
@@ -48,7 +48,7 @@ const messages = {
   "account.institution.k12Mode": "Modo institucional K–12",
   "account.institution.loading": "Cargando la política institucional…",
   "account.institution.linkGuidance":
-    "Vincula solo una identidad que controles. OpenRound utiliza el emisor y el sujeto institucionales; nunca vincula cuentas por coincidencia de correo electrónico.",
+    "Vincula solo una identidad que controles. Polling Pops utiliza el emisor y el sujeto institucionales; nunca vincula cuentas por coincidencia de correo electrónico.",
   "account.institution.linked": "Vinculada el {date}",
   "account.institution.unlink": "Desvincular",
   "account.institution.openingSignIn": "Abriendo el inicio de sesión institucional…",
@@ -58,7 +58,7 @@ const messages = {
     "El inicio de sesión institucional no está activado en este espacio. Los propietarios no pueden activar por sí mismos controles de identidad sujetos a contrato.",
   "account.institution.ltiTitle": "Registros LTI 1.3",
   "account.institution.ltiEmpty":
-    "LTI está aprobado, pero no hay ninguna plataforma registrada. Tu operador de OpenRound debe añadir el emisor del LMS, el cliente, el despliegue, JWKS y los orígenes de retorno.",
+    "LTI está aprobado, pero no hay ninguna plataforma registrada. Tu operador de Polling Pops debe añadir el emisor del LMS, el cliente, el despliegue, JWKS y los orígenes de retorno.",
   "account.institution.auditTitle": "Exportación de auditoría institucional",
   "account.institution.auditDescription":
     "Descarga hasta 10.000 eventos administrativos y de facilitación ordenados con actor, solicitud, objetivo, fecha, hora y región. Las exportaciones grandes se marcan claramente como truncadas.",
@@ -117,7 +117,7 @@ const messages = {
   "account.theme.contrastHelp":
     "Ambos colores deben mantener un contraste mínimo de 4,5:1 con texto blanco. Los cambios se aplican a sesiones creadas después de guardar, no a salas ya activas.",
   "account.theme.save": "Guardar tema",
-  "account.theme.useOpenRound": "Usar el tema de OpenRound",
+  "account.theme.useOpenRound": "Usar el tema de Polling Pops",
   "account.export.eyebrow": "Datos portátiles",
   "account.export.title": "Exportar tu cuenta",
   "account.export.description":

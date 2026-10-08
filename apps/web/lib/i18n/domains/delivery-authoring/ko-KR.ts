@@ -1,6 +1,10 @@
 import type { DeliveryAuthoringMessages } from "./en-CA";
 
 export default {
+  "delivery.landing.polls": "실시간 투표",
+  "delivery.landing.presentations": "참여형 프레젠테이션",
+  "delivery.landing.learning": "학습 라운드",
+  "delivery.landing.featuresLabel": "Polling Pops 활용 방법",
   "delivery.common.home": "홈",
   "delivery.common.loading": "불러오는 중…",
   "delivery.common.retry": "다시 시도",
@@ -17,10 +21,10 @@ export default {
   "delivery.common.preview": "미리보기",
   "delivery.common.publish": "게시",
   "delivery.common.exit": "나가기",
-  "delivery.landing.eyebrow": "방해 없는 실시간 이해 확인",
-  "delivery.landing.title": "중요한 순간에 이해도를 확인하세요.",
+  "delivery.landing.eyebrow": "큰 아이디어. 생동감 있는 대화.",
+  "delivery.landing.title": "모든 목소리가 빛나는 순간.",
   "delivery.landing.description":
-    "모두에게 질문하고, 진단하고, 개입하고, 이해가 회복되었는지 다시 확인하세요. 참가자 계정은 필요 없습니다.",
+    "실시간 투표, 참여형 프레젠테이션, 학습 라운드로 모임에 활기를 더하세요. 모두의 목소리를 듣고, 궁금증을 풀고, 이해를 확인하세요. 참가자 계정은 필요 없습니다.",
   "delivery.landing.participantEntry": "참가자 입장",
   "delivery.landing.joinTitle": "실시간 Round 참여",
   "delivery.landing.joinDescription": "계정이 필요 없습니다. 진행자가 보여 주는 코드를 입력하세요.",
@@ -239,11 +243,11 @@ export default {
   "delivery.assistant.draftQuestions": "신뢰할 수 있는 출처에서 질문 초안 만들기",
   "delivery.assistant.draftCheckpoints": "신뢰할 수 있는 출처에서 체크포인트 초안 만들기",
   "delivery.assistant.presentationDescription":
-    "OpenRound가 인용이 포함된 콘텐츠 슬라이드와 연결된 회복 질문 쌍을 제안할 수 있습니다.",
+    "Polling Pops가 인용이 포함된 콘텐츠 슬라이드와 연결된 회복 질문 쌍을 제안할 수 있습니다.",
   "delivery.assistant.roundDescription":
-    "OpenRound가 기본 질문과 연결된 재확인 질문을 제안할 수 있습니다.",
+    "Polling Pops가 기본 질문과 연결된 재확인 질문을 제안할 수 있습니다.",
   "delivery.assistant.checkpointDescription":
-    "OpenRound가 기본 체크포인트와 연결된 재확인을 제안할 수 있습니다.",
+    "Polling Pops가 기본 체크포인트와 연결된 재확인을 제안할 수 있습니다.",
   "delivery.assistant.securityDescription":
     "출처로 붙여 넣은 텍스트 또는 비공개 PDF, Word, PowerPoint 파일을 사용할 수 있습니다. 파일은 보관 전에 보안 검사를 거칩니다. 모든 제안에는 인용이 포함되며 검토하기 전까지 게시되지 않은 초안으로 유지됩니다.",
   "delivery.assistant.allowanceUnlimited.one": "이번 달 작업 {used}개 생성 · 운영자가 설정한 한도",

@@ -227,7 +227,7 @@ const messages = {
   "pages.help.duration": "Dauer {duration}",
   "pages.help.enabledBuilder": "Verwenden Sie den aktivierten Round Builder",
   "pages.help.guides.currentDescription":
-    "OpenRound zeigt nur Anleitungen für Funktionen an, die in diesem Arbeitsbereich aktiviert sind.",
+    "Polling Pops zeigt nur Anleitungen für Funktionen an, die in diesem Arbeitsbereich aktiviert sind.",
   "pages.help.guides.currentTitle": "Anleitung für Ihren aktuellen Arbeitsplatz",
   "pages.help.guides.description":
     "Beginnen Sie mit der einminütigen Tour und gehen Sie dann tiefer in die Erstellung und Bereitstellung ein.",
@@ -247,14 +247,16 @@ const messages = {
   "pages.help.support.openSettings": "Einstellungen öffnen",
   "pages.help.support.operations": "Operationen",
   "pages.help.support.privacyDescription":
-    "Sehen Sie sich an, wie OpenRound sitzungsbezogene Lerndaten verarbeitet.",
+    "Sehen Sie sich an, wie Polling Pops sitzungsbezogene Lerndaten verarbeitet.",
   "pages.help.support.privacyTitle": "Privatsphäre",
   "pages.help.support.readPrivacy": "Lesen Sie die Datenschutzinformationen",
   "pages.help.support.settingsDescription":
     "Verwalten Sie Rollen, Integrationen, Aufbewahrung, Abrechnung und Kontodaten.",
   "pages.help.support.settingsTitle": "Arbeitsbereichseinstellungen",
+  "pages.help.guides.brandNote":
+    "Diese Anleitungen wurden vor der Umbenennung in Polling Pops aufgenommen. Die Abläufe gelten weiterhin; Farben und Branding haben sich geändert.",
   "pages.help.support.statusDescription":
-    "Überprüfen Sie die aktuelle Verfügbarkeit der OpenRound-Dienste.",
+    "Überprüfen Sie die aktuelle Verfügbarkeit der Polling Pops-Dienste.",
   "pages.help.support.statusTitle": "Servicestatus",
   "pages.help.support.title": "Workspace-Unterstützung",
   "pages.help.support.trust": "Vertrauen",

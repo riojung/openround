@@ -1679,7 +1679,7 @@ export default function QuizEditorPage() {
               <strong>A newer server edit prevented this save</strong>
               <p className="muted">
                 Your local work is preserved. Reload the current server draft, download your local
-                copy, or duplicate it as a new Round. OpenRound will not merge changes
+                copy, or duplicate it as a new Round. Polling Pops will not merge changes
                 automatically.
               </p>
             </div>

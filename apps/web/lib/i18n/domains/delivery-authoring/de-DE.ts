@@ -1,6 +1,10 @@
 import type { DeliveryAuthoringMessages } from "./en-CA";
 
 export default {
+  "delivery.landing.polls": "Live-Umfragen",
+  "delivery.landing.presentations": "Interaktive Präsentationen",
+  "delivery.landing.learning": "Lernrunden",
+  "delivery.landing.featuresLabel": "Polling Pops verwenden",
   "delivery.common.home": "Startseite",
   "delivery.common.loading": "Wird geladen…",
   "delivery.common.retry": "Erneut versuchen",
@@ -17,10 +21,10 @@ export default {
   "delivery.common.preview": "Vorschau",
   "delivery.common.publish": "Veröffentlichen",
   "delivery.common.exit": "Beenden",
-  "delivery.landing.eyebrow": "Live-Verständnis ohne Ablenkung",
-  "delivery.landing.title": "Erkennen Sie rechtzeitig, was angekommen ist.",
+  "delivery.landing.eyebrow": "Große Ideen. Lebendige Gespräche.",
+  "delivery.landing.title": "Jede Stimme zählt.",
   "delivery.landing.description":
-    "Fragen, diagnostizieren, eingreifen und das Verständnis erneut prüfen – ohne Teilnehmerkonten.",
+    "Beleben Sie Ihre Gruppe mit Live-Umfragen, interaktiven Präsentationen und Lernrunden. Hören Sie jede Stimme, klären Sie Unsicherheiten und prüfen Sie das Verständnis – ohne Teilnehmerkonten.",
   "delivery.landing.participantEntry": "Teilnehmerzugang",
   "delivery.landing.joinTitle": "Live-Round beitreten",
   "delivery.landing.joinDescription": "Kein Konto nötig. Geben Sie den angezeigten Code ein.",
@@ -247,11 +251,11 @@ export default {
   "delivery.assistant.draftCheckpoints":
     "Checkpoints aus einer vertrauenswürdigen Quelle entwerfen",
   "delivery.assistant.presentationDescription":
-    "OpenRound kann belegte Inhaltsfolien und ein verknüpftes Wiederholungsfragenpaar vorschlagen.",
+    "Polling Pops kann belegte Inhaltsfolien und ein verknüpftes Wiederholungsfragenpaar vorschlagen.",
   "delivery.assistant.roundDescription":
-    "OpenRound kann eine Hauptfrage und eine verknüpfte Wiederholungsfrage vorschlagen.",
+    "Polling Pops kann eine Hauptfrage und eine verknüpfte Wiederholungsfrage vorschlagen.",
   "delivery.assistant.checkpointDescription":
-    "OpenRound kann einen Haupt-Checkpoint und eine verknüpfte Wiederholung vorschlagen.",
+    "Polling Pops kann einen Haupt-Checkpoint und eine verknüpfte Wiederholung vorschlagen.",
   "delivery.assistant.securityDescription":
     "Quellen können eingefügter Text oder eine private PDF-, Word- oder PowerPoint-Datei sein. Dateien werden vor der Speicherung sicherheitsgeprüft. Jeder Vorschlag enthält Quellenangaben und bleibt ein unveröffentlichter Entwurf, bis Sie ihn geprüft haben.",
   "delivery.assistant.allowanceUnlimited.one":

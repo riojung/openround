@@ -54,6 +54,6 @@ export function dashboardMessage(params: URLSearchParams) {
   if (params.get("federated") === "1") return "Institution sign-in connected.";
   if (params.get("lti") === "1") return "Learning-platform connection completed.";
   if (params.get("welcome") === "1")
-    return "Welcome to OpenRound. Create or open a Round to begin.";
+    return "Welcome to Polling Pops. Create or open a Round to begin.";
   return "";
 }

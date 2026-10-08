@@ -329,7 +329,9 @@ function PracticeManagementContent() {
               <h2 id="latest-practice-link-heading" ref={latestLinkHeadingRef} tabIndex={-1}>
                 Save this link now
               </h2>
-              <p>OpenRound stores only its token hash and cannot display this exact link again.</p>
+              <p>
+                Polling Pops stores only its token hash and cannot display this exact link again.
+              </p>
               <div className={styles.linkRow}>
                 <label className="field" htmlFor="latest-practice-link">
                   <span>{latestAccess.label}</span>

@@ -405,6 +405,7 @@ services:
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_API_URL: https://${OPENROUND_APP_DOMAIN:?Set OPENROUND_APP_DOMAIN}
+      OPENROUND_PUBLIC_URL: https://${OPENROUND_APP_DOMAIN:?Set OPENROUND_APP_DOMAIN}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000"]
       interval: 15s

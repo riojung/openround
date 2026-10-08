@@ -2386,7 +2386,7 @@ function PresentationEditor({ presentationId }: { presentationId: string }) {
                       />
                     </label>
                     <p className={styles.helpText} lang="en-CA">
-                      Slide titles remain the primary heading. OpenRound preserves reading order
+                      Slide titles remain the primary heading. Polling Pops preserves reading order
                       across host, participant, tablet, and mobile layouts.
                     </p>
                   </>
@@ -2627,8 +2627,8 @@ function PresentationEditor({ presentationId }: { presentationId: string }) {
               <p className={styles.eyebrow}>Independent question copies</p>
               <h2 id="round-import-title">Insert from a published Round</h2>
               <p className={styles.helpText}>
-                OpenRound creates fresh block, question, and answer IDs. Recovery links are remapped
-                only when both linked questions are selected.
+                Polling Pops creates fresh block, question, and answer IDs. Recovery links are
+                remapped only when both linked questions are selected.
               </p>
             </div>
             <label className={styles.field}>

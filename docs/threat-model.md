@@ -1,4 +1,4 @@
-# OpenRound threat model
+# Polling Pops threat model
 
 - Version: 1.1
 - Engineering inventory updated: 2026-10-04
