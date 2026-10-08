@@ -110,7 +110,7 @@ The current constraints matter more than the feature count:
 | Presentation delivery    | Live Presentations have server-authoritative realtime synchronization, acknowledgement/reconnect handling, role-filtered projections, and report reconciliation. The older polling-only description is obsolete.                                                                                                                                                                                                           |
 | Live accessibility       | Whole-room timed/flex mode is implemented for new Rounds and Presentations behind `FEATURE_LIVE_FLEX_MODE` and a workspace allowlist. It has no countdown; the facilitator closes the window. Private individual extra-time passes remain deferred pending fairness, privacy, and reveal research.                                                                                                                         |
 | Response breadth         | Six response types are implemented. Exact short text and rank/order are not; add them only if the roadmap's observed demand threshold passes. Moderated open response, drawing, and word cloud remain deliberate later decisions.                                                                                                                                                                                          |
-| Existing-deck workflow   | A structured Presentation builder exists. Companion mode is a research prototype, not a production sidecar; native slide add-ins are explicitly out of scope.                                                                                                                                                                                                                                                              |
+| Existing-deck workflow   | The scoped Presentation Companion foundation provides compact controls, aggregate room health, join QR/code, and safe result overlays behind deployment and workspace gates. Prepared Pack insertion and session-only Quick Checks remain pending; native slide add-ins are out of scope.                                                                                                                                  |
 | Reuse                    | Recovery Packs support immutable versions, independent Round/Presentation draft insertion, three-way update review/undo, eligible live cards, delayed-probe and full-sequence practice, and published-checkpoint CSV/QTI exports with source-bound loss reports. Source-assisted drafts now require exact-content/source-hash-bound content and citation approval before publication. Companion insertion remains pending. |
 | Question Health          | Deterministic advice, dismiss/reopen, approved draft edits with same-revision undo, immutable published-version analysis, and exact-version aggregate post-use observations are implemented in a gated slice. Advice usefulness and retained-revision thresholds remain unmeasured.                                                                                                                                        |
 | Session Decision Replay  | New eligible sessions can capture aggregate facilitator-decision events in durable state and show a read-only Report V4 timeline. Older report versions remain readable without replay; rollout and partner-value evidence remain open.                                                                                                                                                                                    |
@@ -131,7 +131,7 @@ The implementation source of truth remains [implementation status](implementatio
 [product design](design.md), [architecture](architecture.md), and the
 [release-readiness ledger](release-readiness.json).
 
-### Current implementation checkpoint — 2026-10-04
+### Historical implementation checkpoint — 2026-10-04
 
 PRs #60–69 added the whole-room flex, bounded Question Health, Session Decision Replay, bounded
 Presentation text geometry, and owner-only archived-content/session-history deletion slices. They
@@ -740,6 +740,21 @@ certification/interop, support, and contracts. Learning mode remains available a
 silently upgraded into identified reporting.
 
 ## Development-ready epic definitions
+
+### Incremental Companion checkpoint — 2026-10-08
+
+The provisional Companion foundation now implements the compact Presentation sidecar, dedicated
+one-hour expiring/revocable pass, primary phase controls, aggregate room health, join QR/code, and
+post-reveal choice-count overlay. Server-authoritative command receipts and existing realtime
+fences are reused; no participant identities, answer keys, host pass, or creator-cookie authority
+are supplied to the sidecar controls. The launch fragment is removed before requests and the
+pass lives in session storage. “Return to deck” closes the overlay, not an arbitrary desktop app.
+
+It remains off by default behind `FEATURE_PRESENTATION_COMPANION`, realtime/professional
+Presentation eligibility, and the workspace allowlist. Partner branch selection remains deferred,
+not passed. The next Companion increments are immutable prepared Pack insertion/playback and
+one session-only unscored Quick Check; neither is part of this foundation. See
+[implementation status](implementation-status.md#presentation-companion-foundation--october-8-2026).
 
 ### Epic A — Companion mode
 

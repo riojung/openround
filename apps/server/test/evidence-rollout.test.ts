@@ -4,6 +4,33 @@ import { ConfigSchema } from "../src/config.js";
 import { evidenceWorkspaceFeatureEnabled } from "../src/workspace-rollout.js";
 
 describe("evidence-gated workspace rollout", () => {
+  it("requires both live synchronization and the dedicated Companion switch and membership", () => {
+    const workspaceId = randomUUID();
+    const config = ConfigSchema.parse({
+      NODE_ENV: "test",
+      ALLOW_IN_MEMORY: "true",
+      FEATURE_PRESENTATION_COMPANION: "true",
+      EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST: workspaceId,
+    });
+    expect(evidenceWorkspaceFeatureEnabled(config, workspaceId, "presentationCompanion")).toBe(
+      false,
+    );
+    const enabled = { ...config, FEATURE_PRESENTATION_REALTIME: true };
+    expect(evidenceWorkspaceFeatureEnabled(enabled, workspaceId, "presentationCompanion")).toBe(
+      true,
+    );
+    expect(evidenceWorkspaceFeatureEnabled(enabled, randomUUID(), "presentationCompanion")).toBe(
+      false,
+    );
+    expect(
+      evidenceWorkspaceFeatureEnabled(
+        { ...enabled, FEATURE_PRESENTATION_COMPANION: false },
+        workspaceId,
+        "presentationCompanion",
+      ),
+    ).toBe(false);
+  });
+
   it("keeps live Pack rollout separate from authoring and requires both switches and membership", () => {
     const workspaceId = randomUUID();
     const authoringOnly = ConfigSchema.parse({

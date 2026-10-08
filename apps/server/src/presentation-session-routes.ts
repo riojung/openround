@@ -27,6 +27,7 @@ import type {
 import type { AuthService } from "./auth.js";
 import type { AppConfig } from "./config.js";
 import type { MetricsService } from "./metrics.js";
+import { registerPresentationCompanionRoutes } from "./presentation-companion-routes.js";
 import {
   PresentationSessionService,
   PresentationSessionServiceError,
@@ -402,6 +403,19 @@ export async function registerPresentationSessionRoutes(
       }
     },
   );
+
+  registerPresentationCompanionRoutes(app, {
+    auth,
+    config: dependencies.config,
+    service,
+    requirePresentationWorkspace,
+    enforceSharedAdmission,
+    requireEditor,
+    noStore,
+    bearerToken,
+    apiError,
+    sendServiceError,
+  });
 
   app.post("/v1/presentation-sessions/:id/control-pass", async (request, reply) => {
     const creator = await auth.requireCreator(request, reply);

@@ -1,0 +1,114 @@
+.page {
+  min-height: 100dvh;
+  padding: 1rem;
+  background: var(--ui-canvas);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+.sidecar {
+  width: 100%;
+  max-width: 25rem;
+  padding: 1.4rem;
+  border: 1px solid var(--ui-border);
+  border-radius: 1.2rem;
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
+}
+.sidecar h1 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+.sidecar header p {
+  margin-bottom: 1.5rem;
+}
+.current h2 {
+  font-size: 1.3rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.phase {
+  display: inline-block;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.6rem;
+  background: var(--ui-surface-soft);
+  border-radius: 2rem;
+}
+.metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  padding: 1rem 0;
+  margin: 0;
+}
+.metrics dt {
+  font-size: 0.85rem;
+  color: var(--ui-text-muted);
+}
+.metrics dd {
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin: 0.1rem 0 0;
+}
+.acknowledgement {
+  font-size: 0.85rem;
+  min-height: 2.5em;
+}
+.secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.overlay {
+  width: min(34rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+  border: 1px solid var(--ui-border);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  color: var(--ui-text);
+  background: var(--ui-surface);
+}
+.overlay::backdrop {
+  background: var(--ui-overlay);
+}
+.overlay h2 {
+  margin-top: 0;
+}
+.overlay button {
+  margin-top: 1.25rem;
+}
+.joinCode {
+  font-size: clamp(2rem, 10vw, 4rem);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  margin: 1rem 0;
+}
+.joinLink {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.results {
+  display: grid;
+  gap: 0.75rem;
+}
+.results div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--ui-border);
+}
+.results dd {
+  margin: 0;
+  font-weight: 700;
+}
+@media (max-width: 380px) {
+  .page {
+    padding: 0.5rem;
+  }
+  .sidecar {
+    padding: 1rem;
+  }
+}

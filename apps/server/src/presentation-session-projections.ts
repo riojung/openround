@@ -432,6 +432,22 @@ export function buildPresentationCompanionSnapshot(
   connectedParticipantIds: ReadonlySet<string> = new Set(),
 ): PresentationCompanionSnapshot {
   const host = buildPresentationHostSnapshot(session, data, connectedParticipantIds);
+  const block = presentationCurrentBlock(session);
+  const resultVisible =
+    session.phase === "question_reveal" ||
+    session.phase === "intervention" ||
+    session.phase === "finished";
+  const currentResponses =
+    resultVisible && block?.kind === "question"
+      ? data.responses.filter((response) => response.blockId === block.id)
+      : [];
+  const choiceCounts =
+    block?.kind === "question" && "choices" in block.question
+      ? block.question.choices.map(({ id }) => ({
+          choiceId: id,
+          count: currentResponses.filter(({ response }) => response.choiceIds?.includes(id)).length,
+        }))
+      : [];
   return PresentationCompanionSnapshotSchema.parse({
     sessionId: host.sessionId,
     artifactType: host.artifactType,
@@ -454,8 +470,12 @@ export function buildPresentationCompanionSnapshot(
       ? { recoveryPackIntervention: host.recoveryPackIntervention }
       : {}),
     projection: "companion",
-    currentBlock: presentationRealtimeBlock(presentationCurrentBlock(session), false),
+    currentBlock: presentationRealtimeBlock(block, false),
     roomStatus: host.roomStatus,
+    resultSummary:
+      resultVisible && block?.kind === "question"
+        ? { blockId: block.id, responseCount: currentResponses.length, choiceCounts }
+        : null,
     primaryAction: session.status === "active" ? "advance" : "none",
     finishedAt: host.finishedAt,
   });

@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   PresentationParticipantSnapshotSchema,
+  PresentationCompanionCommandSchema,
   type PresentationCommand,
+  type PresentationCompanionCommand,
+  type PresentationCompanionSnapshot,
+  type PresentationControlCommand,
   type PresentationHostSnapshot,
   type PresentationResponseAck,
   type PresentationResponseSubmit,
@@ -97,7 +101,14 @@ interface PresentationLiveMutationDependencies {
   participantTokenHash(token: string): string;
   sessionExpired(session: PresentationSessionRecord, now?: Date): boolean;
   authorizeHostCredential(sessionId: string, token: string): Promise<PresentationSessionRecord>;
+  authorizeCompanionCredential(
+    sessionId: string,
+    token: string,
+  ): Promise<PresentationSessionRecord>;
   realtimeHostSnapshot(session: PresentationSessionRecord): Promise<PresentationHostSnapshot>;
+  realtimeCompanionSnapshot(
+    session: PresentationSessionRecord,
+  ): Promise<PresentationCompanionSnapshot>;
   restHostSnapshot(session: PresentationSessionRecord): Promise<PresentationRestHostSnapshot>;
   recordProductEvents(workspaceId: string, events: ProductEventInput[]): void;
 }
@@ -296,6 +307,25 @@ export class PresentationLiveMutationService {
       input.sessionId,
       input.controlToken,
     );
+    return this.acceptCommand(input, session, this.dependencies.realtimeHostSnapshot);
+  }
+
+  async companionCommand(
+    input: PresentationCompanionCommand,
+  ): Promise<PresentationCompanionSnapshot> {
+    const command = PresentationCompanionCommandSchema.parse(input);
+    const session = await this.dependencies.authorizeCompanionCredential(
+      command.sessionId,
+      command.companionToken,
+    );
+    return this.acceptCommand(command, session, this.dependencies.realtimeCompanionSnapshot);
+  }
+
+  private async acceptCommand<T extends PresentationHostSnapshot | PresentationCompanionSnapshot>(
+    input: PresentationControlCommand,
+    session: PresentationSessionRecord,
+    snapshot: (session: PresentationSessionRecord) => Promise<T>,
+  ): Promise<T> {
     const requestHash = presentationCommandRequestHash(input);
     // Recover an exact durable command before inspecting the current phase, revision or card.
     // An acknowledgement can be lost and retried after another host has advanced or finished.
@@ -326,14 +356,14 @@ export class PresentationLiveMutationService {
           "Presentation session not found",
         );
       }
-      return this.dependencies.realtimeHostSnapshot(current);
+      return snapshot(current);
     }
     if (input.expectedRevision !== session.revision) {
       throw this.staleSession(input.expectedRevision, session.revision);
     }
     const transition =
       input.action === "advance" ? nextTransition(session) : recoveryCardTransition(session, input);
-    if (!transition) return this.dependencies.realtimeHostSnapshot(session);
+    if (!transition) return snapshot(session);
     try {
       const transitionRetentionExpiresAt = await this.transitionRetentionExpiry(
         session.workspaceId,
@@ -390,7 +420,7 @@ export class PresentationLiveMutationService {
             .catch(() => undefined);
         }
       }
-      return this.dependencies.realtimeHostSnapshot(accepted.session);
+      return snapshot(accepted.session);
     } catch (error) {
       if (error instanceof PresentationSessionConflictError) {
         throw this.staleSession(error.expectedRevision, error.currentRevision);

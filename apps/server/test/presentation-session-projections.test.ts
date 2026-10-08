@@ -267,6 +267,109 @@ function fixture() {
 }
 
 describe("Presentation session projections", () => {
+  it("shows only current-question choice aggregates after reveal with zero defaults", () => {
+    const { session, participants, currentResponse, previousResponse } = fixture();
+    const data = buildPresentationProjectionData(session, participants, [
+      currentResponse,
+      previousResponse,
+    ]);
+    expect(buildPresentationCompanionSnapshot(session, data).resultSummary).toBeNull();
+    const block = session.content.blocks[0]!;
+    if (block.kind !== "question" || !("choices" in block.question))
+      throw new Error("Choice fixture required");
+    for (const phase of ["question_reveal", "intervention", "finished"] as const) {
+      const revealed = {
+        ...session,
+        phase,
+        status: phase === "finished" ? ("finished" as const) : ("active" as const),
+        finishedAt: phase === "finished" ? NOW : null,
+        questionClosesAt: null,
+      };
+      expect(buildPresentationCompanionSnapshot(revealed, data).resultSummary).toEqual({
+        blockId: block.id,
+        responseCount: 1,
+        choiceCounts: block.question.choices.map(({ id }) => ({
+          choiceId: id,
+          count: id === currentResponse.response.choiceIds?.[0] ? 1 : 0,
+        })),
+      });
+      expect(
+        buildPresentationCompanionSnapshot(
+          revealed,
+          buildPresentationProjectionData(revealed, participants, []),
+        ).resultSummary,
+      ).toEqual({
+        blockId: block.id,
+        responseCount: 0,
+        choiceCounts: block.question.choices.map(({ id }) => ({ choiceId: id, count: 0 })),
+      });
+    }
+  });
+
+  it.each(["numeric", "rating"] as const)(
+    "exposes only a response count for %s results",
+    (type) => {
+      const { session, participants, currentResponse } = fixture();
+      const original = session.content.blocks[0]!;
+      if (original.kind !== "question") throw new Error("Question fixture required");
+      const question = Object.fromEntries(
+        Object.entries(original.question).filter(([key]) => key !== "choices"),
+      );
+      const content = PresentationContentSchema.parse({
+        ...session.content,
+        blocks: [
+          {
+            ...original,
+            question: {
+              ...question,
+              type,
+              ...(type === "numeric"
+                ? { correctValue: "42", tolerance: "0", unit: "private-units" }
+                : {
+                    min: 1,
+                    max: 5,
+                    minLabel: "Low",
+                    maxLabel: "High",
+                    purpose: "opinion",
+                    confidence: "off",
+                    basePoints: 0,
+                  }),
+            },
+          },
+        ],
+      });
+      const revealed = {
+        ...session,
+        content,
+        phase: "question_reveal" as const,
+        questionClosesAt: null,
+      };
+      const response = {
+        ...currentResponse,
+        response: type === "numeric" ? { numericValue: "42" } : { ratingValue: 5 },
+      };
+      const snapshot = buildPresentationCompanionSnapshot(
+        revealed,
+        buildPresentationProjectionData(revealed, participants, [response]),
+      );
+      expect(snapshot.resultSummary).toEqual({
+        blockId: original.id,
+        responseCount: 1,
+        choiceCounts: [],
+      });
+      for (const key of [
+        "numericValue",
+        "ratingValue",
+        "correctValue",
+        "correct",
+        "score",
+        "responseMs",
+        "revealedAnswer",
+      ])
+        expect(JSON.stringify(snapshot)).not.toContain(`"${key}"`);
+    },
+  );
+
   it("keeps participant and companion blocks on explicit allowlists before and after reveal", () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);

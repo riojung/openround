@@ -1,9 +1,12 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import {
+  PresentationCompanionSnapshotSchema,
   PresentationReportEnvelopeSchema,
   PresentationReportSchema,
   PresentationReportWithSessionContextEnvelopeSchema,
   type PresentationCommand,
+  type PresentationCompanionCommand,
+  type PresentationCompanionSnapshot,
   type PresentationHostSnapshot,
   type PresentationParticipantSnapshot,
   type PresentationResponseAck,
@@ -46,6 +49,7 @@ import {
 import type { StorageService } from "./storage.js";
 
 const PRESENTATION_SESSION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
+const PRESENTATION_COMPANION_PASS_LIFETIME_MS = 60 * 60 * 1_000;
 
 export {
   presentationCurrentBlock,
@@ -129,7 +133,10 @@ export class PresentationSessionService {
       sessionExpired: presentationLiveSessionExpired,
       authorizeHostCredential: (sessionId, token) =>
         this.authorizeCredential(sessionId, token, "host"),
+      authorizeCompanionCredential: (sessionId, token) =>
+        this.authorizeCredential(sessionId, token, "companion"),
       realtimeHostSnapshot: (session) => this.realtimeHostSnapshot(session),
+      realtimeCompanionSnapshot: (session) => this.realtimeCompanionSnapshot(session),
       restHostSnapshot: (session) => this.restHostSnapshot(session),
       recordProductEvents: (workspaceId, events) => this.recordProductEvents(workspaceId, events),
     });
@@ -162,7 +169,7 @@ export class PresentationSessionService {
     this.sessionDeletedHandler = handler;
   }
 
-  /** Notify the live transport after accepted host mutations, including REST fallback commands. */
+  /** Notify the live transport after commands or credential changes, including REST requests. */
   setSessionUpdatedHandler(handler: ((sessionId: string) => void) | null) {
     this.sessionUpdatedHandler = handler;
   }
@@ -420,6 +427,98 @@ export class PresentationSessionService {
       requestId: input.requestId,
       metadata: { credentialId: credential.id },
     });
+  }
+
+  async createCompanionPass(input: {
+    workspaceId: string;
+    userId: string;
+    sessionId: string;
+    requestId: string;
+  }) {
+    const session = await this.sessions.getSessionForWorkspace(input.workspaceId, input.sessionId);
+    if (!session) {
+      throw new PresentationSessionServiceError(404, "NOT_FOUND", "Presentation session not found");
+    }
+    const now = new Date();
+    if (session.status === "finished" || presentationLiveSessionExpired(session, now)) {
+      throw new PresentationSessionServiceError(
+        409,
+        "PHASE_CLOSED",
+        "This Presentation session is no longer accepting companion passes",
+      );
+    }
+    const companionToken = presentationCredentialToken();
+    const credential = await this.sessions.rotateCredential({
+      id: randomUUID(),
+      workspaceId: session.workspaceId,
+      sessionId: session.id,
+      role: "companion",
+      tokenHash: presentationParticipantTokenHash(companionToken),
+      createdAt: now,
+      expiresAt: new Date(
+        Math.min(
+          now.getTime() + PRESENTATION_COMPANION_PASS_LIFETIME_MS,
+          session.liveExpiresAt.getTime(),
+        ),
+      ),
+      revokedAt: null,
+    });
+    this.sessionUpdatedHandler?.(session.id);
+    await this.dependencies.repository.recordAudit({
+      workspaceId: input.workspaceId,
+      actorId: input.userId,
+      action: "presentation.session.companion_pass.create",
+      targetType: "presentation_live_session",
+      targetId: session.id,
+      requestId: input.requestId,
+      metadata: { credentialId: credential.id },
+    });
+    return {
+      credentialId: credential.id,
+      companionToken,
+      expiresAt: credential.expiresAt.toISOString(),
+    };
+  }
+
+  async revokeCompanionPass(input: {
+    workspaceId: string;
+    userId: string;
+    sessionId: string;
+    credentialId: string;
+    requestId: string;
+  }) {
+    const session = await this.sessions.getSessionForWorkspace(input.workspaceId, input.sessionId);
+    if (!session) {
+      throw new PresentationSessionServiceError(404, "NOT_FOUND", "Presentation session not found");
+    }
+    const credential = await this.sessions.revokeCredential(
+      input.workspaceId,
+      input.sessionId,
+      input.credentialId,
+      new Date(),
+      "companion",
+    );
+    if (!credential) {
+      throw new PresentationSessionServiceError(404, "NOT_FOUND", "Companion pass not found");
+    }
+    this.sessionUpdatedHandler?.(input.sessionId);
+    await this.dependencies.repository.recordAudit({
+      workspaceId: input.workspaceId,
+      actorId: input.userId,
+      action: "presentation.session.companion_pass.revoke",
+      targetType: "presentation_live_session",
+      targetId: input.sessionId,
+      requestId: input.requestId,
+      metadata: { credentialId: credential.id },
+    });
+  }
+
+  async getCompanionSnapshot(
+    sessionId: string,
+    companionToken: string,
+  ): Promise<PresentationCompanionSnapshot> {
+    const synchronized = await this.sync({ sessionId, projection: "companion", companionToken });
+    return PresentationCompanionSnapshotSchema.parse(synchronized.snapshot);
   }
 
   async getHostSnapshot(workspaceId: string, sessionId: string) {
@@ -685,6 +784,14 @@ export class PresentationSessionService {
     return snapshot;
   }
 
+  async companionCommand(
+    input: PresentationCompanionCommand,
+  ): Promise<PresentationCompanionSnapshot> {
+    const snapshot = await this.liveMutations.companionCommand(input);
+    this.sessionUpdatedHandler?.(input.sessionId);
+    return snapshot;
+  }
+
   async submitResponse(
     input: SubmitPresentationResponseInput | (PresentationResponseSubmit & { receivedAt?: Date }),
   ): Promise<PresentationResponseAck> {
@@ -848,7 +955,7 @@ export class PresentationSessionService {
     session: PresentationSessionRecord,
     projectionData?: PresentationProjectionData,
     connectedParticipantIds: ReadonlySet<string> = new Set(),
-  ) {
+  ): Promise<PresentationCompanionSnapshot> {
     const data = projectionData ?? (await this.projectionData(session));
     return buildPresentationCompanionSnapshot(session, data, connectedParticipantIds);
   }

@@ -8,6 +8,41 @@ trademark review.
 
 ## Staged implementation plan checkpoint
 
+### Presentation Companion foundation — October 8, 2026
+
+The first provisional Companion slice adds a compact live Presentation sidecar, owner/editor
+launch and revocation, dedicated hashed one-hour passes, aggregate joined/connected/disconnected/
+answered counts, and one phase-aware advance action. It reuses the authoritative Presentation
+engine, durable receipts, Socket.IO sequence/revision fences, lost-acknowledgement recovery,
+and temporary REST polling; no parallel runner or host pass is shared. Pass capture removes the
+launch fragment before requests, uses tab-scoped storage, and clears the popup's inherited host
+storage. Companion API requests omit creator cookies.
+
+Join QR/code and post-reveal aggregate-result overlays support keyboard dismissal and focus
+return. Results omit learner identities, correctness/keys, explanations, citations, notes,
+and raw numeric/rating responses. “Return to deck” returns to the sidecar only. The dedicated
+`FEATURE_PRESENTATION_COMPANION` flag defaults off; new passes also require realtime and
+professional Presentation eligibility plus the evidence workspace allowlist. Flag rollback
+preserves existing valid passes, reads, commands, and revocation. Existing credential tables,
+forced RLS, export/delete, and retention cascades are reused; no new migration is required.
+
+This is incremental source implementation, not an accepted partner-value or production gate.
+Verification: local `CI=true pnpm check` passes formatting, Docker dependency-context checks,
+lint, type checks, package/support tests, and production builds. Nine selected production-browser
+checks pass on desktop Chromium, Android Chromium, and mobile WebKit: Companion pass-only launch,
+fragment cleanup/reload, lost acknowledgement retry, pre-reveal result fencing, QR/keyboard/focus,
+axe/mobile overflow, revocation, and existing host lost-acknowledgement/rotated-pass recovery.
+Firefox remains unverified locally because its browser process cannot find its temporary profile;
+the existing Firefox CI project is retained. Default local PostgreSQL integration tests remain
+skipped; no new tables or migrations were introduced. Independent read-only code review found
+no remaining actionable issues after repairing popup storage inheritance and cookie omission.
+New Companion labels use explicit English fallbacks until reviewed translations are available;
+manual assistive-technology/device and external security/rollout evidence remain separate gates.
+
+Next: immutable prepared Pack insertion/playback, then session-only unscored Quick Checks.
+Recovery Trails and Concept Health remain later increments; learner formats and institutional
+integrations keep their existing scope and privacy constraints.
+
 ### Polling Pops identity — October 7, 2026
 
 The public UI, translated catalogs, sign-in/invitation email copy, documentation, metadata,

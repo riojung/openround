@@ -1,6 +1,8 @@
 import type { LiveDeliveryMessages } from "./en-CA";
+import { companionEnglishMessages } from "./companion-en-CA";
 
 const messages = {
+  ...companionEnglishMessages,
   "live.audience.aggregatePrivacy":
     "Pulso Aggregate aparece después de cinco personas señal para proteger la privacidad individual.",
   "live.audience.alias": "Alias",

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type {
   PresentationCommand,
+  PresentationCompanionCommand,
+  PresentationCompanionSnapshot,
   PresentationEventEnvelope,
   PresentationHostSnapshot,
   PresentationParticipantSnapshot,
@@ -109,6 +111,37 @@ function hostSnapshot(overrides: Partial<PresentationHostSnapshot> = {}): Presen
   };
 }
 
+function companionSnapshot(
+  overrides: Partial<PresentationCompanionSnapshot> = {},
+): PresentationCompanionSnapshot {
+  const base = participantSnapshot();
+  return {
+    sessionId: base.sessionId,
+    artifactType: base.artifactType,
+    presentationId: base.presentationId,
+    presentationVersionId: base.presentationVersionId,
+    projection: "companion",
+    title: base.title,
+    code: base.code,
+    status: base.status,
+    phase: base.phase,
+    currentBlockIndex: base.currentBlockIndex,
+    blockCount: base.blockCount,
+    revision: base.revision,
+    seq: base.seq,
+    serverTime: base.serverTime,
+    questionOpenedAt: base.questionOpenedAt,
+    questionClosesAt: base.questionClosesAt,
+    acceptingResponses: base.acceptingResponses,
+    settings: base.settings,
+    currentBlock: base.currentBlock,
+    roomStatus: hostSnapshot().roomStatus,
+    primaryAction: "advance",
+    finishedAt: null,
+    ...overrides,
+  };
+}
+
 class FakeSocket {
   connected = false;
   private listeners = new Map<string, Array<(...args: never[]) => void>>();
@@ -161,6 +194,212 @@ function sync(socket: FakeSocket, snapshot: PresentationRoleSnapshot) {
     data: { resetRequired: false, events: [], snapshot } satisfies PresentationSyncResponse,
   });
 }
+
+describe("Presentation companion realtime controls", () => {
+  it("syncs with the scoped companion credential and fences snapshots and room status", async () => {
+    const socket = new FakeSocket();
+    const initial = companionSnapshot();
+    const controller = createPresentationRealtimeController({
+      sessionId: initial.sessionId,
+      credential: { projection: "companion", companionToken: "c".repeat(32) },
+      fetchSnapshot: async () => initial,
+      onSnapshot: () => undefined,
+      onConnectionState: () => undefined,
+      socketFactory: () => socket as unknown as Socket,
+    });
+    controller.start();
+    expect(socket.last("presentation.sync.request")?.payload).toMatchObject({
+      projection: "companion",
+      companionToken: "c".repeat(32),
+      afterSeq: 0,
+    });
+    sync(socket, initial);
+    await Promise.resolve();
+    expect(controller.canMutate()).toBe(true);
+    expect(controller.applySnapshot(companionSnapshot({ seq: 4 }))).toBe(false);
+    expect(
+      controller.applySnapshot(
+        hostSnapshot({ seq: 99 }) as unknown as PresentationCompanionSnapshot,
+      ),
+    ).toBe(false);
+    const newerStatus = {
+      ...initial.roomStatus,
+      connectedCount: 1,
+      notCurrentlyConnectedCount: 1,
+      sampledAt: "2026-09-23T12:00:05.000Z",
+    };
+    socket.fire("presentation.room-status.updated", { payload: newerStatus });
+    controller.applySnapshot(
+      companionSnapshot({ seq: 6, revision: 4, roomStatus: initial.roomStatus }),
+    );
+    expect(controller.latest()?.roomStatus).toEqual(newerStatus);
+    controller.stop();
+  });
+
+  it("retries exactly the original advance after lost acknowledgement and newer state", async () => {
+    vi.useFakeTimers();
+    const socket = new FakeSocket();
+    const initial = companionSnapshot();
+    const controller = createPresentationRealtimeController({
+      sessionId: initial.sessionId,
+      credential: { projection: "companion", companionToken: "c".repeat(32) },
+      fetchSnapshot: async () => initial,
+      onSnapshot: () => undefined,
+      onConnectionState: () => undefined,
+      socketFactory: () => socket as unknown as Socket,
+      acknowledgementTimeoutMs: 20,
+    });
+    const recovery = createPresentationCommandRecovery<
+      PresentationCompanionSnapshot,
+      PresentationCompanionCommand
+    >({
+      execute: (command) => controller.command(command, async () => initial),
+      onState: () => undefined,
+    });
+    try {
+      controller.start();
+      sync(socket, initial);
+      await Promise.resolve();
+      const original: PresentationCompanionCommand = {
+        sessionId: initial.sessionId,
+        companionToken: "c".repeat(32),
+        commandId: randomUUID(),
+        expectedRevision: initial.revision,
+        action: "advance",
+      };
+      const attempt = recovery.run(original);
+      const rejection = expect(attempt).rejects.toMatchObject({
+        code: "PRESENTATION_COMMAND_UNCONFIRMED",
+      });
+      const emitted = socket.last("presentation.command")!;
+      const revealed = companionSnapshot({
+        phase: "question_reveal",
+        acceptingResponses: false,
+        seq: 6,
+        revision: 4,
+      });
+      socket.fire("presentation.session.updated", { payload: revealed });
+      await recovery.run({ ...original, commandId: randomUUID() });
+      expect(socket.emitted.filter(({ event }) => event === "presentation.command")).toHaveLength(
+        1,
+      );
+      await vi.advanceTimersByTimeAsync(20);
+      await rejection;
+      await expect(recovery.retry()).rejects.toMatchObject({
+        code: "PRESENTATION_RECONNECT_REQUIRED",
+      });
+      expect(recovery.state().pendingCommand).toEqual(original);
+      sync(socket, revealed);
+      await Promise.resolve();
+      const retry = recovery.retry();
+      expect(socket.last("presentation.command")?.payload).toBe(emitted.payload);
+      socket.last("presentation.command")!.ack?.({ data: { snapshot: revealed } });
+      await expect(retry).resolves.toEqual(revealed);
+      expect(controller.latest()?.phase).toBe("question_reveal");
+      expect(recovery.state().pendingCommand).toBeNull();
+    } finally {
+      controller.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a host acknowledgement for a companion command and accepts a companion REST fallback", async () => {
+    const initial = companionSnapshot();
+    const controller = createPresentationRealtimeController({
+      sessionId: initial.sessionId,
+      credential: null,
+      fetchSnapshot: async () => initial,
+      onSnapshot: () => undefined,
+      onConnectionState: () => undefined,
+    });
+    const command: PresentationCompanionCommand = {
+      sessionId: initial.sessionId,
+      companionToken: "c".repeat(32),
+      commandId: randomUUID(),
+      expectedRevision: 3,
+      action: "advance",
+    };
+    await expect(
+      controller.command(
+        command,
+        async () => hostSnapshot() as unknown as PresentationCompanionSnapshot,
+      ),
+    ).rejects.toMatchObject({ code: "PRESENTATION_COMMAND_UNCONFIRMED" });
+    expect(controller.latest()).toBeNull();
+    await expect(controller.command(command, async () => initial)).resolves.toEqual(initial);
+  });
+
+  it("stops companion mutation and polling after socket credential rejection", async () => {
+    const initial = companionSnapshot();
+    const socket = new FakeSocket();
+    const rejected = vi.fn();
+    const fetchSnapshot = vi.fn(async () => initial);
+    const controller = createPresentationRealtimeController({
+      sessionId: initial.sessionId,
+      credential: { projection: "companion", companionToken: "revoked-pass" },
+      fetchSnapshot,
+      onSnapshot: () => undefined,
+      onConnectionState: () => undefined,
+      onCredentialRejected: rejected,
+      socketFactory: () => socket as unknown as Socket,
+    });
+    controller.start();
+    socket
+      .last("presentation.sync.request")!
+      .ack?.({ error: { code: "UNAUTHORIZED", message: "Pass revoked" } });
+    await controller.reconcile();
+    expect(rejected).toHaveBeenCalledExactlyOnceWith("revoked-pass");
+    expect(controller.canMutate()).toBe(false);
+    expect(controller.needsFallbackPolling()).toBe(false);
+    expect(controller.applySnapshot(companionSnapshot({ seq: 99 }))).toBe(false);
+    const rest = vi.fn(async () => initial);
+    await expect(
+      controller.command(
+        {
+          sessionId: initial.sessionId,
+          companionToken: "revoked-pass",
+          commandId: randomUUID(),
+          expectedRevision: 3,
+          action: "advance",
+        },
+        rest,
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(rest).not.toHaveBeenCalled();
+    await controller.reconcile();
+    expect(fetchSnapshot).toHaveBeenCalledTimes(1);
+    controller.stop();
+  });
+
+  it("rejects expired companion credentials on REST reconciliation after disconnect", async () => {
+    const initial = companionSnapshot();
+    const socket = new FakeSocket();
+    const rejected = vi.fn();
+    const fetchSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce(initial)
+      .mockRejectedValue(new ApiClientError("Expired", "UNAUTHORIZED", 401));
+    const controller = createPresentationRealtimeController<PresentationCompanionSnapshot>({
+      sessionId: initial.sessionId,
+      credential: { projection: "companion", companionToken: "expired-pass" },
+      fetchSnapshot,
+      onSnapshot: () => undefined,
+      onConnectionState: () => undefined,
+      onCredentialRejected: rejected,
+      socketFactory: () => socket as unknown as Socket,
+    });
+    controller.start();
+    sync(socket, initial);
+    await Promise.resolve();
+    socket.connected = false;
+    socket.fire("disconnect", "io server disconnect");
+    await controller.reconcile();
+    expect(rejected).toHaveBeenCalledExactlyOnceWith("expired-pass");
+    expect(controller.canMutate()).toBe(false);
+    expect(controller.needsFallbackPolling()).toBe(false);
+    controller.stop();
+  });
+});
 
 describe("Presentation card command acknowledgements", () => {
   it("replays the exact card command after an intervention update and lost acknowledgement", async () => {

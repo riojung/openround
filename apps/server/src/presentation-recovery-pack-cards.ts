@@ -3,7 +3,7 @@ import {
   RecoveryPackLiveCardSchema,
   questionDelivery,
   questionPurpose,
-  type PresentationCommand,
+  type PresentationControlCommand,
   type RecoveryPackLiveCard,
 } from "@openround/contracts";
 import type { PresentationSessionRecord } from "@openround/db";
@@ -73,7 +73,7 @@ export function presentationRecoveryPackPlayback(session: PresentationSessionRec
 }
 
 /** Credentials may rotate; canonical intent and revision must not change on a receipt retry. */
-export function presentationCommandRequestHash(command: PresentationCommand) {
+export function presentationCommandRequestHash(command: PresentationControlCommand) {
   return createHash("sha256")
     .update(
       JSON.stringify({

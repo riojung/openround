@@ -1628,6 +1628,18 @@ describe("deployment configuration and manifest validation", () => {
       ),
     ).toThrow("OPENROUND_PUBLIC_URL");
     expect(serverEnvironment.FEATURE_RECOVERY_PACK_LIVE_CARDS).toBe("false");
+    expect(serverEnvironment.FEATURE_PRESENTATION_COMPANION).toBe("false");
+    expect(() =>
+      validateFlyRuntimeEnvironment(
+        { ...serverEnvironment, FEATURE_PRESENTATION_COMPANION: "true" },
+        checkedConfig,
+      ),
+    ).toThrow("Fly [env] FEATURE_PRESENTATION_COMPANION must be false");
+    const missingCompanionFlag = { ...serverEnvironment };
+    Reflect.deleteProperty(missingCompanionFlag, "FEATURE_PRESENTATION_COMPANION");
+    expect(() => validateFlyRuntimeEnvironment(missingCompanionFlag, checkedConfig)).toThrow(
+      "Fly [env] FEATURE_PRESENTATION_COMPANION must be false",
+    );
     expect(() =>
       validateFlyRuntimeEnvironment(
         { ...serverEnvironment, FEATURE_RECOVERY_PACK_LIVE_CARDS: "true" },
@@ -1973,6 +1985,7 @@ describe("deployment configuration and manifest validation", () => {
     expect(JSON.stringify(oldSummary)).toBe(original);
     expect(oldSummary.featureFlags).not.toHaveProperty("liveFlexMode");
     expect(oldSummary.featureFlags).not.toHaveProperty("recoveryPackLiveCards");
+    expect(oldSummary.featureFlags).not.toHaveProperty("presentationCompanion");
     expect(() =>
       validateReceiptConfigCheckSummary(
         {
@@ -1988,7 +2001,7 @@ describe("deployment configuration and manifest validation", () => {
         buildId,
       ),
     ).toThrow("feature flags contains an unexpected field set");
-    for (const flag of ["liveFlexMode", "recoveryPackLiveCards"]) {
+    for (const flag of ["liveFlexMode", "recoveryPackLiveCards", "presentationCompanion"]) {
       for (const value of [false, true]) {
         const summary = {
           ...oldSummary,
@@ -2030,11 +2043,13 @@ describe("deployment configuration and manifest validation", () => {
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://collector.test:4318/v1/traces",
       FEATURE_LIVE_FLEX_MODE: "true",
       FEATURE_RECOVERY_PACK_LIVE_CARDS: "true",
+      FEATURE_PRESENTATION_COMPANION: "true",
     });
     const summary = createConfigCheckSummary({ ...serverConfig, NODE_ENV: "production" });
 
     expect(summary.featureFlags.liveFlexMode).toBe(true);
     expect(summary.featureFlags.recoveryPackLiveCards).toBe(true);
+    expect(summary.featureFlags.presentationCompanion).toBe(true);
     expect(validateReceiptConfigCheckSummary(summary, config, buildId)).toBe(summary);
   });
 
@@ -2071,6 +2086,15 @@ describe("deployment configuration and manifest validation", () => {
           buildId,
         ),
       ).toThrow("left feature flag recoveryPackLiveCards enabled");
+    }
+    for (const presentationCompanion of [true, "false", null, undefined]) {
+      expect(() =>
+        assertConfigCheckSummary(
+          { ...flySummary, featureFlags: { ...flySummary.featureFlags, presentationCompanion } },
+          config,
+          buildId,
+        ),
+      ).toThrow("left feature flag presentationCompanion enabled");
     }
   });
 

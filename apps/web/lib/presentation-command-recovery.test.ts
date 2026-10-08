@@ -1,4 +1,4 @@
-import type { PresentationCommand } from "@openround/contracts";
+import type { PresentationCommand, PresentationCompanionCommand } from "@openround/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { ApiClientError } from "./api";
 import { createPresentationCommandRecovery } from "./presentation-command-recovery";
@@ -173,5 +173,42 @@ describe("Presentation host command recovery", () => {
     reject(new ApiClientError("Host pass revoked", "UNAUTHORIZED", 401));
     await expect(pending).rejects.toThrow("Host pass revoked");
     expect(recovery.state().pendingCommand).toBeNull();
+  });
+});
+
+describe("Presentation companion command recovery", () => {
+  it("keeps the scoped advance identity through reconciliation and cannot attach a host token", async () => {
+    const execute = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Acknowledgement lost"))
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Reconciling"), { code: "PRESENTATION_RECONNECT_REQUIRED" }),
+      )
+      .mockResolvedValueOnce({ revision: 9 });
+    const recovery = createPresentationCommandRecovery<
+      { revision: number },
+      PresentationCompanionCommand
+    >({ execute, onState: () => undefined });
+    const command: PresentationCompanionCommand = {
+      sessionId: "session",
+      companionToken: "companion-pass",
+      commandId: "original-command",
+      expectedRevision: 8,
+      action: "advance",
+    };
+    await expect(recovery.run(command)).rejects.toThrow("Acknowledgement lost");
+    const pending = recovery.state().pendingCommand;
+    expect(recovery.rebindControlToken("host-pass")).toBe(false);
+    command.expectedRevision = 9;
+    await expect(recovery.retry()).rejects.toThrow("Reconciling");
+    expect(recovery.state().pendingCommand).toBe(pending);
+    await expect(recovery.retry()).resolves.toEqual({ revision: 9 });
+    expect(execute.mock.calls.every(([request]) => request === pending)).toBe(true);
+    expect(pending).toMatchObject({
+      expectedRevision: 8,
+      commandId: "original-command",
+      companionToken: "companion-pass",
+    });
+    expect(pending).not.toHaveProperty("controlToken");
   });
 });

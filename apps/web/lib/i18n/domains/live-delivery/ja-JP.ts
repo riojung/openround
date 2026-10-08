@@ -1,6 +1,8 @@
 import type { LiveDeliveryMessages } from "./en-CA";
+import { companionEnglishMessages } from "./companion-en-CA";
 
 const messages = {
+  ...companionEnglishMessages,
   "live.audience.aggregatePrivacy":
     "個人のプライバシーを守るため、5人以上がシグナルを送ると集計されたPulseが表示されます。",
   "live.audience.alias": "表示名",

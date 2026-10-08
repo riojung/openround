@@ -1,4 +1,7 @@
+import { companionEnglishMessages } from "./companion-en-CA";
+
 const liveDeliveryEnglishMessages = {
+  ...companionEnglishMessages,
   "live.audience.aggregatePrivacy":
     "Aggregate Pulse appears after five people signal to protect individual privacy.",
   "live.audience.alias": "Alias",

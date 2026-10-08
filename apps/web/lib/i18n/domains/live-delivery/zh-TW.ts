@@ -1,6 +1,8 @@
 import type { LiveDeliveryMessages } from "./en-CA";
+import { companionEnglishMessages } from "./companion-en-CA";
 
 const messages = {
+  ...companionEnglishMessages,
   "live.audience.aggregatePrivacy": "綜合脈衝出現於5人發出信號後,以保護個人隱私.",
   "live.audience.alias": "別名",
   "live.audience.anonymousRoom": "匿名進入房間",

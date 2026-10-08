@@ -224,6 +224,7 @@ export const ConfigSchema = z
     FEATURE_GROUPS: booleanString,
     FEATURE_DISCOVER: booleanString,
     FEATURE_PRESENTATION_REALTIME: booleanString,
+    FEATURE_PRESENTATION_COMPANION: booleanString,
     FEATURE_LIVE_FLEX_MODE: booleanString,
     FEATURE_RECOVERY_PACKS: booleanString,
     FEATURE_RECOVERY_PACK_LIVE_CARDS: booleanString,
