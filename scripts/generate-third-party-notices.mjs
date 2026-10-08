@@ -78,7 +78,7 @@ lines.push(
   "",
   "Operators distributing a composed appliance or modified service image are responsible for",
   "the corresponding license obligations. In particular, MinIO's AGPL terms are separate from",
-  "the Apache-2.0 license that applies to Polling Pops's own source and original bundled assets.",
+  "the Apache-2.0 license that applies to Polling Pops’ own source and original bundled assets.",
   "",
 );
 

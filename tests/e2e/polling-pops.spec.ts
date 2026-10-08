@@ -31,7 +31,6 @@ for (const colorScheme of ["light", "dark"] as const) {
   test(`classic-editor checkpoint tabs remain readable in ${colorScheme} mode`, async ({
     page,
   }, testInfo) => {
-    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
     await page.goto("/signin");
     await page.getByLabel("Email address").fill(testEmail("pops-classic-tabs", testInfo));
     await page.getByLabel(/I accept the Terms/).check();
@@ -47,6 +46,9 @@ for (const colorScheme of ["light", "dark"] as const) {
       await expect(page.getByRole("status")).toContainText("Saved");
     }
 
+    // Firefox resets the media override during sign-in navigation. Apply it to
+    // the final editor document, as in the workspace appearance regression.
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", colorScheme);
     const tabs = page.locator(".question-list .question-tab");
     await expect(tabs).toHaveCount(2);
