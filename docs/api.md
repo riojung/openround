@@ -35,14 +35,14 @@ embed, and follow-up routes use their own scoped credentials as documented by th
 
 `FEATURE_UX_BETA`, `FEATURE_RECOVERY_REHEARSAL`, `FEATURE_PRACTICE_ASSIGNMENTS`,
 `FEATURE_WORKSPACE_SHELL`, `FEATURE_BUILDER_V2`, `FEATURE_PRESENTATIONS`,
-`FEATURE_PRESENTATION_REALTIME`, `FEATURE_LIVE_FLEX_MODE`, `FEATURE_QUESTION_HEALTH`,
+`FEATURE_PRESENTATION_REALTIME`, `FEATURE_PRESENTATION_COMPANION`, `FEATURE_LIVE_FLEX_MODE`, `FEATURE_QUESTION_HEALTH`,
 `FEATURE_DECISION_REPLAY`, `FEATURE_GROUPS`, and `FEATURE_DISCOVER` default off. These
 opt-in switches are independent rollback ceilings. Disabling Presentations blocks
 new Presentation authoring; disabling Presentation realtime, or removing its workspace allowlist,
 blocks new live-session creation. Existing live sessions, scoped credentials, reports, joins,
 commands, responses, and recovery reads remain registered and usable so a rollback cannot strand
 an active room or make its evidence unreadable. Disabling Groups removes its collaboration routes.
-`FEATURE_PRESENTATION_REALTIME`, `FEATURE_LIVE_FLEX_MODE`, `FEATURE_QUESTION_HEALTH`, and
+`FEATURE_PRESENTATION_REALTIME`, `FEATURE_PRESENTATION_COMPANION`, `FEATURE_LIVE_FLEX_MODE`, `FEATURE_QUESTION_HEALTH`, and
 `FEATURE_DECISION_REPLAY` require explicit `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST` membership.
 Disabling `FEATURE_LIVE_FLEX_MODE` prevents new flex Rounds or Presentations, but never disables
 control, joining, answering, or reporting for an existing flex room. Decision replay eligibility
@@ -603,6 +603,33 @@ an authoritative role snapshot. Honor the revision and stream sequence independe
 snapshot when a reset is required. An advance command includes `commandId`, `expectedRevision`,
 and `action: "advance"`; response submission uses an idempotency key. Credential scope and phase
 projection prevent participants/companions from receiving unrevealed answers or authoring notes.
+
+### Presentation Companion foundation
+
+- `POST /v1/presentation-sessions/{id}/companion-pass` — owner/editor issuance, returning
+  `{ credentialId, companionToken, expiresAt }`. Requires professional Presentation eligibility,
+  both `FEATURE_PRESENTATION_REALTIME` and `FEATURE_PRESENTATION_COMPANION`, and explicit evidence
+  workspace membership. Rotates only the companion role; the host control pass is unchanged.
+- `DELETE /v1/presentation-sessions/{id}/companion-passes/{credentialId}` — owner/editor revocation,
+  restricted to the companion role. Available even when new issuance is paused.
+- `GET /v1/presentation-sessions/{id}/companion` — bearer companion pass, returning `{ snapshot }`.
+- `POST /v1/presentation-sessions/{id}/companion-command` — strict
+  `{ sessionId, companionToken, commandId, expectedRevision, action: "advance" }`, returning
+  `{ snapshot }`. The same command is accepted by `presentation.command` over Socket.IO.
+
+Passes expire after at most one hour and never outlive the live session. Tokens are hashed in the
+existing tenant-scoped credential store; responses are private/no-store and admission controls
+are session/credential-scoped. Read, command, synchronization, and revocation paths remain usable
+after flag/allowlist rollback for existing valid passes. A companion cannot use a host-only
+credential, select an intervention card, change settings, kick participants, or retrieve identities.
+
+Companion snapshots contain a participant-safe current block and aggregate room counts. Optional
+`resultSummary` contains only `{ blockId, responseCount, choiceCounts: [{ choiceId, count }] }` for
+the current question after reveal. It contains no correctness, keys, explanations, citations,
+participant responses, raw numeric/rating values, or leaderboard. Before reveal it is `null`.
+The browser consumes `#pass=...`, removes it from URL history before requests, and keeps the pass
+in session storage, with no inherited host passes or creator cookies on companion API fetches.
+Pack insertion and session-only Quick Checks are separate, not yet implemented Companion slices.
 
 ## Stable errors
 

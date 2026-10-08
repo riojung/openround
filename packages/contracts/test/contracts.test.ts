@@ -354,7 +354,12 @@ describe("public contracts", () => {
         groups: true,
         discover: false,
       }),
-    ).toMatchObject({ workspaceShell: true, presentations: false, groups: true });
+    ).toMatchObject({
+      workspaceShell: true,
+      presentations: false,
+      presentationCompanion: false,
+      groups: true,
+    });
     expect(
       WorkspaceProductFeaturesSchema.parse({
         roundExperiences: true,

@@ -16,6 +16,7 @@ const enabledFeatures: WorkspaceProductFeatures = {
   builderV2: true,
   presentations: true,
   presentationRealtime: true,
+  presentationCompanion: false,
   liveFlexMode: true,
   questionHealth: false,
   recoveryPacks: false,

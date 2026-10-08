@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   PresentationCommandSchema,
+  PresentationCompanionCommandSchema,
+  PresentationCompanionPassResponseSchema,
+  PresentationControlCommandSchema,
   PresentationCompanionSnapshotSchema,
   PresentationHostSnapshotSchema,
   PresentationParticipantCurrentBlockSchema,
@@ -59,6 +62,105 @@ function snapshotBase() {
 }
 
 describe("Presentation realtime contracts", () => {
+  it("keeps companion commands strict, separately credentialed, and advance-only", () => {
+    const command = {
+      sessionId: randomUUID(),
+      companionToken: "c".repeat(32),
+      commandId: randomUUID(),
+      expectedRevision: 2,
+      action: "advance",
+    };
+    expect(PresentationCompanionCommandSchema.parse(command)).toEqual(command);
+    expect(PresentationControlCommandSchema.parse(command)).toEqual(command);
+    expect(PresentationCommandSchema.safeParse(command).success).toBe(false);
+    for (const extra of [
+      { controlToken: "h".repeat(32) },
+      { action: "start_recovery_card", recoveryPackCard: { cardId: randomUUID() } },
+      { action: "kick", participantId: randomUUID() },
+      { settings: { timeMode: "flex" } },
+    ]) {
+      expect(PresentationControlCommandSchema.safeParse({ ...command, ...extra }).success).toBe(
+        false,
+      );
+    }
+    expect(
+      PresentationCompanionPassResponseSchema.parse({
+        credentialId: randomUUID(),
+        companionToken: command.companionToken,
+        expiresAt: NOW,
+      }).companionToken,
+    ).toBe(command.companionToken);
+    expect(
+      PresentationCompanionPassResponseSchema.safeParse({
+        credentialId: randomUUID(),
+        companionToken: command.companionToken,
+        expiresAt: NOW,
+        controlToken: "h".repeat(32),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("only accepts current-block aggregate companion results after reveal", () => {
+    const base = snapshotBase();
+    const choiceId = randomUUID();
+    const blockId = randomUUID();
+    const snapshot = {
+      ...base,
+      projection: "companion",
+      currentBlock: {
+        id: blockId,
+        kind: "question",
+        question: {
+          id: randomUUID(),
+          type: "single_select",
+          prompt: "Synthetic choice",
+          confidence: "off",
+          choices: [{ id: choiceId, label: "Option" }],
+          timeLimitSeconds: 30,
+          basePoints: 100,
+          mediaId: null,
+          mediaAlt: null,
+        },
+      },
+      roomStatus: roomStatus(base.sessionId),
+      primaryAction: "advance",
+      finishedAt: null,
+      resultSummary: { blockId, responseCount: 1, choiceCounts: [{ choiceId, count: 1 }] },
+    };
+    expect(PresentationCompanionSnapshotSchema.safeParse(snapshot).success).toBe(false);
+    const revealed = { ...snapshot, phase: "question_reveal", acceptingResponses: false };
+    expect(PresentationCompanionSnapshotSchema.parse(revealed).resultSummary).toEqual(
+      snapshot.resultSummary,
+    );
+    for (const extra of [
+      { blockId: randomUUID() },
+      { choiceCounts: [{ choiceId: randomUUID(), count: 1 }] },
+      { choiceCounts: [{ choiceId, count: 2 }] },
+      {
+        choiceCounts: [
+          { choiceId, count: 1 },
+          { choiceId, count: 0 },
+        ],
+      },
+      { correctCount: 1 },
+      { participantResponses: [{ participantId: randomUUID(), choiceIds: [choiceId] }] },
+    ]) {
+      expect(
+        PresentationCompanionSnapshotSchema.safeParse({
+          ...revealed,
+          resultSummary: { ...snapshot.resultSummary, ...extra },
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      PresentationCompanionSnapshotSchema.safeParse({ ...revealed, acceptingResponses: true })
+        .success,
+    ).toBe(false);
+    expect(
+      PresentationCompanionSnapshotSchema.safeParse({ ...revealed, participants: [] }).success,
+    ).toBe(false);
+  });
+
   it("defaults accountless session settings to Learning mode", () => {
     expect(TrustModeSchema.options).toEqual(["learning", "verified"]);
     expect(

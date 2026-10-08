@@ -1,6 +1,8 @@
 import type { LiveDeliveryMessages } from "./en-CA";
+import { companionEnglishMessages } from "./companion-en-CA";
 
 const messages = {
+  ...companionEnglishMessages,
   "live.audience.aggregatePrivacy": "综合脉冲出现于5人发出信号后,以保护个人隐私.",
   "live.audience.alias": "别名",
   "live.audience.anonymousRoom": "匿名进入房间",

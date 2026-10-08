@@ -11,6 +11,7 @@ import type {
 import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
 import { PresentationMedia } from "../../../../components/presentation-live/presentation-media";
+import { PresentationCompanionLauncher } from "../../../../components/presentation-live/companion-launcher";
 import { ContentSlideView } from "../../../../components/presentation/content-slide-view";
 import {
   RecoveryPackCardPicker,
@@ -70,7 +71,7 @@ function advanceMessageKey(
 
 function PresentationHostContent() {
   const { locale, t } = useLocale();
-  const { productFeatures } = useWorkspace();
+  const { productFeatures, canEdit } = useWorkspace();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [snapshot, setSnapshot] = useState<PresentationHostSnapshot | null>(null);
@@ -612,6 +613,11 @@ function PresentationHostContent() {
               >
                 {t("live.presentationSession.copyJoinLink")}
               </button>
+              <PresentationCompanionLauncher
+                sessionId={id}
+                enabled={productFeatures?.presentationCompanion === true}
+                canEdit={canEdit}
+              />
               {snapshot.participants.length ? (
                 <details>
                   <summary>

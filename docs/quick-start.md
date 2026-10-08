@@ -232,6 +232,7 @@ roles and entitlements; flags do not complete production or institutional readin
 | Professional workspace and Round builder          | `FEATURE_UX_BETA=true`, `FEATURE_WORKSPACE_SHELL=true`, `FEATURE_BUILDER_V2=true`, and the workspace UUID in `UX_BETA_WORKSPACE_ALLOWLIST` |
 | Presentation authoring                            | Professional workspace configuration plus `FEATURE_PRESENTATIONS=true`                                                                     |
 | Live Presentation creation                        | Presentation configuration plus `FEATURE_PRESENTATION_REALTIME=true` and the workspace UUID in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`     |
+| Presentation Companion foundation                 | Live Presentation configuration plus `FEATURE_PRESENTATION_COMPANION=true`; issuance remains owner/editor-only                             |
 | Whole-room live flex timing                       | `FEATURE_LIVE_FLEX_MODE=true` and the workspace UUID in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`                                            |
 | Question Health in the professional Round builder | Professional builder configuration plus `FEATURE_QUESTION_HEALTH=true` and the workspace UUID in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`   |
 | Decision replay capture for new Round sessions    | `FEATURE_DECISION_REPLAY=true` and the workspace UUID in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`                                           |
@@ -242,6 +243,15 @@ content slides and question blocks, save, preview, and publish. Content slides s
 and eight text elements total, including one title, with bounded move/resize controls, keyboard
 adjustment, layout guides, and image-area reservation. The preview and live views share the
 arrangement. See [the Presentation walkthrough](user-guide.md#create-and-host-a-presentation).
+
+In an eligible live Presentation host, select **Launch companion** to open the compact sidecar.
+Its dedicated pass expires within one hour; launching a replacement revokes the old companion
+pass without rotating host controls. The host can also select **Revoke companion pass**. The
+sidecar shows aggregate room health and one phase action, with the same server acknowledgement
+and retry fencing as the host. Join details include the canonical join link, QR, and room code;
+results show aggregate choice counts only after reveal. **Return to deck** closes the overlay
+back to the sidecar; it does not focus a desktop slide application. Existing valid passes continue
+working if new issuance is disabled. Pack insertion and Quick Checks will follow in later slices.
 
 In the professional **Library** and **Sessions** screens, workspace owners can also permanently
 delete archived content and finished or expired session history. Confirmation is required;

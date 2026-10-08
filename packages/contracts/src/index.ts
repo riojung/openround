@@ -143,6 +143,7 @@ export const WorkspaceProductFeaturesSchema = z.object({
   builderV2: z.boolean(),
   presentations: z.boolean(),
   presentationRealtime: z.boolean(),
+  presentationCompanion: z.boolean().default(false),
   liveFlexMode: z.boolean().default(false),
   questionHealth: z.boolean().default(false),
   recoveryPacks: z.boolean().default(false),
@@ -4740,6 +4741,35 @@ export const PresentationRestV1SessionListResponseSchema = z
   .object({ sessions: z.array(PresentationRestV1SessionListItemSchema) })
   .strict();
 
+/** Shareable counts only: never includes an answer key or a learner's response/identity. */
+export const PresentationCompanionResultSummarySchema = z
+  .object({
+    blockId: z.string().uuid(),
+    responseCount: z.number().int().nonnegative(),
+    choiceCounts: z
+      .array(
+        z.object({ choiceId: z.string().uuid(), count: z.number().int().nonnegative() }).strict(),
+      )
+      .max(10),
+  })
+  .strict()
+  .superRefine((summary, ctx) => {
+    const choiceIds = new Set<string>();
+    summary.choiceCounts.forEach((choice, index) => {
+      if (choiceIds.has(choice.choiceId) || choice.count > summary.responseCount) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Choice counts must be unique and cannot exceed the response count",
+          path: ["choiceCounts", index],
+        });
+      }
+      choiceIds.add(choice.choiceId);
+    });
+  });
+export type PresentationCompanionResultSummary = z.infer<
+  typeof PresentationCompanionResultSummarySchema
+>;
+
 export const PresentationCompanionSnapshotSchema = z
   .object({
     ...PresentationSnapshotBaseFields,
@@ -4747,10 +4777,38 @@ export const PresentationCompanionSnapshotSchema = z
     currentBlock: PresentationParticipantCurrentBlockSchema.nullable(),
     roomStatus: PresentationRoomStatusSchema,
     primaryAction: z.enum(["advance", "none"]),
+    resultSummary: PresentationCompanionResultSummarySchema.nullable().optional(),
     finishedAt: z.string().datetime().nullable(),
   })
   .strict()
-  .superRefine(validatePresentationRecoveryPackPlayback);
+  .superRefine((snapshot, ctx) => {
+    validatePresentationRecoveryPackPlayback(snapshot, ctx);
+    if (!snapshot.resultSummary) return;
+    const block = snapshot.currentBlock;
+    if (
+      !["question_reveal", "intervention", "finished"].includes(snapshot.phase) ||
+      snapshot.acceptingResponses ||
+      block?.kind !== "question" ||
+      block.id !== snapshot.resultSummary.blockId
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Companion results may only describe the current question after reveal",
+        path: ["resultSummary"],
+      });
+      return;
+    }
+    const choiceIds = new Set(
+      "choices" in block.question ? block.question.choices.map((choice) => choice.id) : [],
+    );
+    if (snapshot.resultSummary.choiceCounts.some((choice) => !choiceIds.has(choice.choiceId))) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Companion result choices must belong to the current question",
+        path: ["resultSummary", "choiceCounts"],
+      });
+    }
+  });
 export type PresentationCompanionSnapshot = z.infer<typeof PresentationCompanionSnapshotSchema>;
 
 export const PresentationRoleSnapshotSchema = z.discriminatedUnion("projection", [
@@ -4791,6 +4849,17 @@ const PresentationSyncFenceFields = {
   afterSeq: z.number().int().nonnegative().default(0),
 };
 const PresentationCredentialSchema = z.string().min(32).max(1_000);
+
+export const PresentationCompanionPassResponseSchema = z
+  .object({
+    credentialId: z.string().uuid(),
+    companionToken: PresentationCredentialSchema,
+    expiresAt: z.string().datetime(),
+  })
+  .strict();
+export type PresentationCompanionPassResponse = z.infer<
+  typeof PresentationCompanionPassResponseSchema
+>;
 
 export const PresentationRestV1CreateSessionResponseSchema = z
   .object({
@@ -4865,6 +4934,23 @@ export const PresentationCommandSchema = z.discriminatedUnion("action", [
     .strict(),
 ]);
 export type PresentationCommand = z.infer<typeof PresentationCommandSchema>;
+
+/** A Companion cannot select interventions or perform other host-only commands. */
+export const PresentationCompanionCommandSchema = z
+  .object({
+    sessionId: z.string().uuid(),
+    companionToken: PresentationCredentialSchema,
+    commandId: z.string().uuid(),
+    expectedRevision: z.number().int().nonnegative(),
+    action: z.literal("advance"),
+  })
+  .strict();
+export type PresentationCompanionCommand = z.infer<typeof PresentationCompanionCommandSchema>;
+export const PresentationControlCommandSchema = z.union([
+  PresentationCommandSchema,
+  PresentationCompanionCommandSchema,
+]);
+export type PresentationControlCommand = z.infer<typeof PresentationControlCommandSchema>;
 
 export const CreatePresentationSessionSchema = z.object({
   presentationId: z.string().uuid(),

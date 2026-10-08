@@ -6,6 +6,7 @@ export type ProfessionalWorkspaceFeature =
 
 export type EvidenceWorkspaceFeature =
   | "presentationRealtime"
+  | "presentationCompanion"
   | "liveFlexMode"
   | "recoveryPacks"
   | "recoveryPackLiveCards"
@@ -80,6 +81,7 @@ export function evidenceWorkspaceFeatureEnabled(
     AppConfig,
     | "EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST"
     | "FEATURE_PRESENTATION_REALTIME"
+    | "FEATURE_PRESENTATION_COMPANION"
     | "FEATURE_LIVE_FLEX_MODE"
     | "FEATURE_RECOVERY_PACKS"
     | "FEATURE_RECOVERY_PACK_LIVE_CARDS"
@@ -97,6 +99,8 @@ export function evidenceWorkspaceFeatureEnabled(
   switch (feature) {
     case "presentationRealtime":
       return config.FEATURE_PRESENTATION_REALTIME;
+    case "presentationCompanion":
+      return config.FEATURE_PRESENTATION_REALTIME && config.FEATURE_PRESENTATION_COMPANION;
     case "liveFlexMode":
       return config.FEATURE_LIVE_FLEX_MODE;
     case "recoveryPacks":

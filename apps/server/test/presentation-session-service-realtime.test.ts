@@ -221,6 +221,257 @@ function expectNoAuthoringSecrets(snapshot: unknown) {
 }
 
 describe("PresentationSessionService realtime integration", () => {
+  it("returns a usable rotated companion pass when its audit fails without revoking the host", async () => {
+    const { repository, service, hosted, ids } = await fixture();
+    const sessionId = hosted.snapshot.sessionId;
+    const input = {
+      workspaceId: ids.workspaceId,
+      userId: ids.userId,
+      sessionId,
+      requestId: randomUUID(),
+    };
+    const previousPass = await service.createCompanionPass(input);
+    const audit = vi
+      .spyOn(repository, "recordAudit")
+      .mockRejectedValueOnce(new Error("audit unavailable"));
+    const rotated = await service.createCompanionPass({ ...input, requestId: randomUUID() });
+
+    expect(rotated.credentialId).not.toBe(previousPass.credentialId);
+    await expect(
+      service.getCompanionSnapshot(sessionId, rotated.companionToken),
+    ).resolves.toMatchObject({ projection: "companion" });
+    await expect(
+      service.getCompanionSnapshot(sessionId, previousPass.companionToken),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      service.companionCommand({
+        sessionId,
+        companionToken: rotated.companionToken,
+        commandId: randomUUID(),
+        expectedRevision: 0,
+        action: "advance",
+      }),
+    ).resolves.toMatchObject({ projection: "companion", revision: 1 });
+    await expect(
+      service.sync({ sessionId, projection: "host", controlToken: hosted.controlToken }),
+    ).resolves.toMatchObject({ snapshot: { projection: "host", revision: 1 } });
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "presentation.session.companion_pass.create",
+        metadata: { credentialId: rotated.credentialId },
+      }),
+    );
+    const auditPayload = JSON.stringify(audit.mock.calls);
+    for (const token of [rotated.companionToken, previousPass.companionToken, hosted.controlToken])
+      expect(auditPayload).not.toContain(token);
+  });
+
+  it("rotates and revokes only companion credentials, with tenant and role fences", async () => {
+    const { repository, sessions, service, hosted, joined, ids } = await fixture();
+    const sessionId = hosted.snapshot.sessionId;
+    const updated = vi.fn();
+    service.setSessionUpdatedHandler(updated);
+    const input = {
+      workspaceId: ids.workspaceId,
+      userId: ids.userId,
+      sessionId,
+      requestId: randomUUID(),
+    };
+    await expect(
+      service.createCompanionPass({ ...input, workspaceId: randomUUID() }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    const pass = await service.createCompanionPass(input);
+    expect(Date.parse(pass.expiresAt) - Date.now()).toBeGreaterThan(59 * 60_000);
+    expect(Date.parse(pass.expiresAt) - Date.now()).toBeLessThanOrEqual(60 * 60_000);
+    expect(
+      await sessions.findValidCredential(sessionId, pass.companionToken, "companion"),
+    ).toBeNull();
+    expect(
+      await sessions.findValidCredential(
+        sessionId,
+        presentationParticipantTokenHash(pass.companionToken),
+        "companion",
+      ),
+    ).toMatchObject({ id: pass.credentialId });
+    await expect(
+      service.getCompanionSnapshot(sessionId, pass.companionToken),
+    ).resolves.toMatchObject({ projection: "companion", resultSummary: null });
+    await expect(
+      service.getCompanionSnapshot(sessionId, hosted.controlToken),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      service.getCompanionSnapshot(sessionId, joined.participantToken),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      service.getCompanionSnapshot(randomUUID(), pass.companionToken),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      service.command({
+        sessionId,
+        controlToken: pass.companionToken,
+        commandId: randomUUID(),
+        expectedRevision: 0,
+        action: "advance",
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      service.revokeCompanionPass({ ...input, credentialId: hosted.controlCredentialId }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    const rotated = await service.createCompanionPass({ ...input, requestId: randomUUID() });
+    await expect(
+      service.getCompanionSnapshot(sessionId, pass.companionToken),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      service.sync({ sessionId, projection: "host", controlToken: hosted.controlToken }),
+    ).resolves.toMatchObject({ snapshot: { projection: "host" } });
+    await expect(
+      service.revokeCompanionPass({
+        ...input,
+        workspaceId: randomUUID(),
+        credentialId: rotated.credentialId,
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    const audit = vi.spyOn(repository, "recordAudit");
+    await service.revokeCompanionPass({ ...input, credentialId: rotated.credentialId });
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "presentation.session.companion_pass.revoke",
+        metadata: { credentialId: rotated.credentialId },
+      }),
+    );
+    expect(updated).toHaveBeenCalledTimes(3);
+    await expect(
+      service.getCompanionSnapshot(sessionId, rotated.companionToken),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      service.sync({ sessionId, projection: "host", controlToken: hosted.controlToken }),
+    ).resolves.toMatchObject({ snapshot: { projection: "host" } });
+  });
+
+  it("expires companion passes at one hour or the live deadline and refuses finished rooms", async () => {
+    const { service, hosted, sessions, ids } = await fixture();
+    const sessionId = hosted.snapshot.sessionId;
+    const input = {
+      workspaceId: ids.workspaceId,
+      userId: ids.userId,
+      sessionId,
+      requestId: randomUUID(),
+    };
+    const pass = await service.createCompanionPass(input);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(Date.parse(pass.expiresAt)));
+      await expect(
+        service.getCompanionSnapshot(sessionId, pass.companionToken),
+      ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      const session = (await sessions.getSessionById(sessionId))!;
+      const nearDeadline = new Date(session.liveExpiresAt.getTime() - 30_000);
+      vi.setSystemTime(nearDeadline);
+      const nearExpiryPass = await service.createCompanionPass(input);
+      expect(nearExpiryPass.expiresAt).toBe(session.liveExpiresAt.toISOString());
+      vi.setSystemTime(session.liveExpiresAt);
+      await expect(service.createCompanionPass(input)).rejects.toMatchObject({
+        code: "PHASE_CLOSED",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    for (let revision = 0; revision < 4; revision += 1) {
+      await service.command({
+        sessionId,
+        controlToken: hosted.controlToken,
+        commandId: randomUUID(),
+        expectedRevision: revision,
+        action: "advance",
+      });
+    }
+    await expect(service.createCompanionPass(input)).rejects.toMatchObject({
+      code: "PHASE_CLOSED",
+    });
+  });
+
+  it("advances with companion receipts after lost acknowledgements and returns safe summaries only after reveal", async () => {
+    const { service, hosted, joined, ids } = await fixture();
+    const sessionId = hosted.snapshot.sessionId;
+    const pass = await service.createCompanionPass({
+      workspaceId: ids.workspaceId,
+      userId: ids.userId,
+      sessionId,
+      requestId: randomUUID(),
+    });
+    const firstCommand = {
+      sessionId,
+      companionToken: pass.companionToken,
+      commandId: randomUUID(),
+      expectedRevision: 0,
+      action: "advance" as const,
+    };
+    await expect(service.companionCommand(firstCommand)).resolves.toMatchObject({
+      projection: "companion",
+      phase: "content",
+      revision: 1,
+    });
+    const opened = await service.command({
+      sessionId,
+      controlToken: hosted.controlToken,
+      commandId: randomUUID(),
+      expectedRevision: 1,
+      action: "advance",
+    });
+    await expect(service.companionCommand(firstCommand)).resolves.toMatchObject({
+      projection: "companion",
+      phase: "question_open",
+      revision: 2,
+    });
+    await expect(
+      service.companionCommand({ ...firstCommand, expectedRevision: 1 }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    await expect(
+      service.companionCommand({ ...firstCommand, commandId: randomUUID() }),
+    ).rejects.toMatchObject({ code: "STALE_SESSION" });
+    await expect(
+      service.companionCommand({ ...firstCommand, action: "start_recovery_card" } as never),
+    ).rejects.toMatchObject({ name: "ZodError" });
+    await expect(
+      service.companionCommand({ ...firstCommand, controlToken: hosted.controlToken } as never),
+    ).rejects.toMatchObject({ name: "ZodError" });
+    await service.submitResponse({
+      sessionId,
+      participantToken: joined.participantToken,
+      blockId: ids.questionBlockId,
+      expectedRevision: opened.revision,
+      idempotencyKey: randomUUID(),
+      response: { choiceIds: [ids.correctChoiceId], confidence: 3 },
+    });
+    const openSnapshot = await service.getCompanionSnapshot(sessionId, pass.companionToken);
+    expect(openSnapshot.resultSummary).toBeNull();
+    expectNoAuthoringSecrets(openSnapshot);
+    const revealed = await service.companionCommand({
+      ...firstCommand,
+      commandId: randomUUID(),
+      expectedRevision: 2,
+    });
+    expect(revealed.resultSummary).toEqual({
+      blockId: ids.questionBlockId,
+      responseCount: 1,
+      choiceCounts: [
+        { choiceId: ids.correctChoiceId, count: 1 },
+        { choiceId: ids.distractorChoiceId, count: 0 },
+      ],
+    });
+    expectNoAuthoringSecrets(revealed);
+    for (const field of [
+      "participants",
+      "participantId",
+      "correct",
+      "score",
+      "revealedAnswer",
+      "choiceIds",
+      "responseMs",
+    ])
+      expect(JSON.stringify(revealed)).not.toContain(`"${field}"`);
+  });
+
   it("deletes finished room data and fences an already claimed report job", async () => {
     const { repository, sessions, service, hosted, joined, ids } = await fixture();
     const sessionId = hosted.snapshot.sessionId;

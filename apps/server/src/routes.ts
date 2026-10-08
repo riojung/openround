@@ -493,6 +493,9 @@ export async function registerRoutes(
       presentationRealtime:
         professionalWorkspaceFeatureEnabled(config, workspaceId, "presentations") &&
         evidenceWorkspaceFeatureEnabled(config, workspaceId, "presentationRealtime"),
+      presentationCompanion:
+        professionalWorkspaceFeatureEnabled(config, workspaceId, "presentations") &&
+        evidenceWorkspaceFeatureEnabled(config, workspaceId, "presentationCompanion"),
       liveFlexMode: evidenceWorkspaceFeatureEnabled(config, workspaceId, "liveFlexMode"),
       questionHealth: evidenceWorkspaceFeatureEnabled(config, workspaceId, "questionHealth"),
       recoveryPacks: evidenceWorkspaceFeatureEnabled(config, workspaceId, "recoveryPacks"),

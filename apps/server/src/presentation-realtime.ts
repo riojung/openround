@@ -3,7 +3,7 @@ import type { Server, Socket } from "socket.io";
 import { ZodError } from "zod";
 import {
   JoinPresentationSessionSchema,
-  PresentationCommandSchema,
+  PresentationControlCommandSchema,
   PresentationCompanionSnapshotSchema,
   PresentationEventEnvelopeSchema,
   PresentationHostSnapshotSchema,
@@ -14,6 +14,8 @@ import {
   PresentationSyncRequestSchema,
   PresentationSyncResponseSchema,
   type PresentationCommand,
+  type PresentationCompanionCommand,
+  type PresentationCompanionSnapshot,
   type PresentationHostSnapshot,
   type PresentationParticipantSnapshot,
   type PresentationResponseAck,
@@ -69,6 +71,7 @@ export interface PresentationRealtimeService {
     connectedParticipantIds?: ReadonlySet<string>,
   ): Promise<Array<PresentationSyncResponse | null>>;
   command(input: PresentationCommand): Promise<PresentationHostSnapshot>;
+  companionCommand(input: PresentationCompanionCommand): Promise<PresentationCompanionSnapshot>;
   submitResponse(
     input: PresentationResponseSubmit & { receivedAt?: Date },
   ): Promise<PresentationResponseAck>;
@@ -775,19 +778,21 @@ export function registerPresentationRealtime(io: Server, options: PresentationRe
         return;
       }
       try {
-        const input = PresentationCommandSchema.parse(raw);
-        const snapshot = PresentationHostSnapshotSchema.parse(await options.service.command(input));
-        await bindPresentationIdentity(socket, {
-          sessionId: input.sessionId,
-          projection: "host",
-          controlToken: input.controlToken,
-        });
+        const input = PresentationControlCommandSchema.parse(raw);
+        const isCompanion = "companionToken" in input;
+        const snapshot = isCompanion
+          ? PresentationCompanionSnapshotSchema.parse(await options.service.companionCommand(input))
+          : PresentationHostSnapshotSchema.parse(await options.service.command(input));
+        const credential: PresentationSocketCredential = isCompanion
+          ? {
+              sessionId: input.sessionId,
+              projection: "companion",
+              companionToken: input.companionToken,
+            }
+          : { sessionId: input.sessionId, projection: "host", controlToken: input.controlToken };
+        await bindPresentationIdentity(socket, credential);
         if (!socket.connected) return;
-        localCredentials.set(socket.id, {
-          sessionId: input.sessionId,
-          projection: "host",
-          controlToken: input.controlToken,
-        });
+        localCredentials.set(socket.id, credential);
         acknowledge({ data: { snapshot } });
         // Real services notify here for every transport; keep support for standalone adapters.
         if (!options.service.setSessionUpdatedHandler) scheduleBroadcast(input.sessionId, true);

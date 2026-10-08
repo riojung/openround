@@ -3,12 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { io as createClient, type Socket } from "socket.io-client";
 import type {
   PresentationCommand,
+  PresentationCompanionCommand,
+  PresentationCompanionSnapshot,
   PresentationContent,
   PresentationEventEnvelope,
   PresentationHostSnapshot,
   PresentationParticipantSnapshot,
   PresentationResponseAck,
   PresentationResponseSubmit,
+  PresentationRoleSnapshot,
   PresentationRoomStatus,
   PresentationSyncRequest,
   PresentationSyncResponse,
@@ -38,6 +41,7 @@ const presentationVersionId = crypto.randomUUID();
 const participantId = crypto.randomUUID();
 const blockId = crypto.randomUUID();
 const controlToken = "host-control-token-that-is-long-enough";
+const companionToken = "companion-token-that-is-long-enough";
 const participantToken = "participant-token-that-is-long-enough";
 
 function roomStatus(responseCount = 0) {
@@ -110,6 +114,17 @@ function participantSnapshot(
   };
 }
 
+function companionSnapshot(revision = 0, responseCount = 0): PresentationCompanionSnapshot {
+  return {
+    ...snapshotBase(revision),
+    projection: "companion",
+    currentBlock: null,
+    roomStatus: roomStatus(responseCount),
+    primaryAction: "advance",
+    resultSummary: null,
+  };
+}
+
 class FakePresentationRealtimeService implements PresentationRealtimeService {
   revision = 0;
   responseId = crypto.randomUUID();
@@ -120,6 +135,7 @@ class FakePresentationRealtimeService implements PresentationRealtimeService {
   maximumActiveSyncs = 0;
   syncCalls = 0;
   deleted = false;
+  companionRevoked = false;
   sessionDeletedHandler: ((sessionId: string) => void) | null = null;
 
   setSessionDeletedHandler(handler: ((sessionId: string) => void) | null) {
@@ -177,6 +193,14 @@ class FakePresentationRealtimeService implements PresentationRealtimeService {
           snapshot: participantSnapshot(this.revision, this.responses.size > 0),
         };
       }
+      if (input.projection === "companion") {
+        if (this.companionRevoked || input.companionToken !== companionToken) this.unauthorized();
+        return {
+          resetRequired: false,
+          events: [],
+          snapshot: companionSnapshot(this.revision, this.responses.size),
+        };
+      }
       this.unauthorized();
     } finally {
       this.activeSyncs -= 1;
@@ -211,6 +235,15 @@ class FakePresentationRealtimeService implements PresentationRealtimeService {
       acceptedAt: new Date().toISOString(),
       snapshot: participantSnapshot(this.revision, true),
     };
+  }
+
+  async companionCommand(input: PresentationCompanionCommand) {
+    if (this.deleted || this.companionRevoked || input.companionToken !== companionToken)
+      this.unauthorized();
+    if (input.expectedRevision !== this.revision)
+      throw Object.assign(new Error("Presentation advanced"), { code: "STALE_SESSION" });
+    this.revision += 1;
+    return companionSnapshot(this.revision, this.responses.size);
   }
 
   private unauthorized(): never {
@@ -508,6 +541,97 @@ describe("Presentation realtime transport", () => {
     });
     expect(JSON.stringify(result)).not.toContain("db.internal");
     expect(JSON.stringify(result)).not.toContain("secret_table");
+  });
+
+  it("dispatches companion commands without promoting their socket or leaking host broadcasts", async () => {
+    const companion = await connect();
+    const host = await connect();
+    await emitAck(companion, "presentation.sync.request", {
+      sessionId,
+      projection: "companion",
+      companionToken,
+    });
+    await emitAck(host, "presentation.sync.request", {
+      sessionId,
+      projection: "host",
+      controlToken,
+    });
+    const waitForProjection = (client: Socket, revision: number) =>
+      new Promise<PresentationRoleSnapshot>((resolve) => {
+        const listener = (
+          event: PresentationEventEnvelope<{ snapshot: PresentationRoleSnapshot }>,
+          acknowledge?: () => void,
+        ) => {
+          acknowledge?.();
+          if (event.payload.snapshot.revision !== revision) return;
+          client.off("presentation.session.updated", listener);
+          resolve(event.payload.snapshot);
+        };
+        client.on("presentation.session.updated", listener);
+      });
+    const companionUpdate = waitForProjection(companion, 1);
+    const hostUpdate = waitForProjection(host, 1);
+    const command = {
+      sessionId,
+      companionToken,
+      commandId: crypto.randomUUID(),
+      expectedRevision: 0,
+      action: "advance",
+    };
+    const accepted = await emitAck<{ data: { snapshot: PresentationCompanionSnapshot } }>(
+      companion,
+      "presentation.command",
+      command,
+    );
+    expect(accepted.data.snapshot).toMatchObject({ projection: "companion", revision: 1 });
+    const companionBroadcast = await companionUpdate;
+    expect(companionBroadcast.projection).toBe("companion");
+    expect(JSON.stringify(companionBroadcast)).not.toContain("Learner");
+    expect(await hostUpdate).toMatchObject({
+      projection: "host",
+      participants: [{ nickname: "Learner" }],
+    });
+    const serverSocket = (await realtime.io.fetchSockets()).find(
+      (candidate) => candidate.id === companion.id,
+    )!;
+    expect(serverSocket.data).toMatchObject({
+      presentationProjection: "companion",
+      presentationCompanionTokenHash: presentationParticipantTokenHash(companionToken),
+    });
+    expect(serverSocket.data.presentationControlTokenHash).toBeUndefined();
+    for (const payload of [
+      { ...command, action: "start_recovery_card" },
+      { ...command, controlToken },
+      {
+        sessionId,
+        controlToken: companionToken,
+        commandId: crypto.randomUUID(),
+        expectedRevision: 1,
+        action: "advance",
+      },
+    ]) {
+      const rejected = await emitAck<{ error: { code: string } }>(
+        companion,
+        "presentation.command",
+        payload,
+      );
+      expect(["VALIDATION_ERROR", "UNAUTHORIZED"]).toContain(rejected.error.code);
+    }
+    expect(service.revision).toBe(1);
+    expect(serverSocket.data.presentationProjection).toBe("companion");
+    service.companionRevoked = true;
+    const disconnected = new Promise<void>((resolve) =>
+      companion.once("disconnect", () => resolve()),
+    );
+    await emitAck(host, "presentation.command", {
+      sessionId,
+      controlToken,
+      commandId: crypto.randomUUID(),
+      expectedRevision: 1,
+      action: "advance",
+    });
+    await disconnected;
+    expect(host.connected).toBe(true);
   });
 
   it("broadcasts only the projection authorized for each socket", async () => {

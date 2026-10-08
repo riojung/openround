@@ -181,7 +181,11 @@ const configCheckFeatureKeys = Object.freeze([
   "verifiedInstitution",
 ]);
 // Older deployed summaries and their receipt hashes remain valid without additive rollout flags.
-const optionalConfigCheckFeatureKeys = Object.freeze(["liveFlexMode", "recoveryPackLiveCards"]);
+const optionalConfigCheckFeatureKeys = Object.freeze([
+  "liveFlexMode",
+  "recoveryPackLiveCards",
+  "presentationCompanion",
+]);
 
 function assertExactObjectKeys(value, expected, label, optional = []) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -1033,13 +1037,10 @@ export function assertConfigCheckSummary(summary, config, buildId) {
   }
   // Keep pre-flag rollback summaries valid; selecting a schema-compatible image is still required.
   // A current image must confirm the exact Fly template keeps live-card playback disabled.
-  if (
-    Object.hasOwn(summary.featureFlags, "recoveryPackLiveCards") &&
-    summary.featureFlags.recoveryPackLiveCards !== false
-  ) {
-    throw new Error(
-      "The exact server image config-check left feature flag recoveryPackLiveCards enabled",
-    );
+  for (const key of ["recoveryPackLiveCards", "presentationCompanion"]) {
+    if (Object.hasOwn(summary.featureFlags, key) && summary.featureFlags[key] !== false) {
+      throw new Error(`The exact server image config-check left feature flag ${key} enabled`);
+    }
   }
 }
 

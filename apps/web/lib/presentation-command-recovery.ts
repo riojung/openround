@@ -1,9 +1,11 @@
-import type { PresentationCommand } from "@openround/contracts";
+import type { PresentationCommand, PresentationControlCommand } from "@openround/contracts";
 import { isPresentationHostPassRejection } from "./presentation-host-pass";
 
-export interface PresentationCommandRecoveryState {
+export interface PresentationCommandRecoveryState<
+  Command extends PresentationControlCommand = PresentationCommand,
+> {
   busy: boolean;
-  pendingCommand: PresentationCommand | null;
+  pendingCommand: Command | null;
 }
 
 function acknowledgementMayBeLost(error: unknown) {
@@ -33,19 +35,22 @@ function retryTemporarilyDenied(error: unknown) {
 }
 
 /** Keep the exact request until its acknowledgement resolves the action, even after a phase update. */
-export function createPresentationCommandRecovery<Snapshot>({
+export function createPresentationCommandRecovery<
+  Snapshot,
+  Command extends PresentationControlCommand = PresentationCommand,
+>({
   execute,
   onState,
 }: {
-  execute: (command: PresentationCommand) => Promise<Snapshot>;
-  onState: (state: PresentationCommandRecoveryState) => void;
+  execute: (command: Command) => Promise<Snapshot>;
+  onState: (state: PresentationCommandRecoveryState<Command>) => void;
 }) {
-  let state: PresentationCommandRecoveryState = { busy: false, pendingCommand: null };
-  const publish = (next: PresentationCommandRecoveryState) => {
+  let state: PresentationCommandRecoveryState<Command> = { busy: false, pendingCommand: null };
+  const publish = (next: PresentationCommandRecoveryState<Command>) => {
     state = next;
     onState(next);
   };
-  const attempt = async (command: PresentationCommand, retrying = false) => {
+  const attempt = async (command: Command, retrying = false) => {
     // This synchronous fence also covers two clicks before React renders the disabled control.
     if (state.busy) return;
     publish({ busy: true, pendingCommand: command });
@@ -67,7 +72,7 @@ export function createPresentationCommandRecovery<Snapshot>({
   };
   return {
     state: () => state,
-    run(command: PresentationCommand) {
+    run(command: Command) {
       if (state.busy || state.pendingCommand) return Promise.resolve(undefined);
       // Freeze a copy so changing picker selection or the received revision cannot alter a retry.
       const frozen = Object.freeze({
@@ -75,7 +80,7 @@ export function createPresentationCommandRecovery<Snapshot>({
         ...(command.action === "start_recovery_card"
           ? { recoveryPackCard: Object.freeze({ ...command.recoveryPackCard }) }
           : {}),
-      }) as PresentationCommand;
+      }) as Command;
       return attempt(frozen);
     },
     retry() {
@@ -85,9 +90,10 @@ export function createPresentationCommandRecovery<Snapshot>({
     rebindControlToken(controlToken: string) {
       if (state.busy) return false;
       if (state.pendingCommand) {
+        if (!("controlToken" in state.pendingCommand)) return false;
         publish({
           ...state,
-          pendingCommand: Object.freeze({ ...state.pendingCommand, controlToken }),
+          pendingCommand: Object.freeze({ ...state.pendingCommand, controlToken }) as Command,
         });
       }
       return true;

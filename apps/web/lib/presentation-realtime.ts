@@ -1,5 +1,6 @@
 import type {
-  PresentationCommand,
+  PresentationCompanionSnapshot,
+  PresentationControlCommand,
   PresentationEventEnvelope,
   PresentationHostSnapshot,
   PresentationParticipantSnapshot,
@@ -15,7 +16,7 @@ import { createRealtimeClient } from "./realtime";
 import { isPresentationHostPassRejection } from "./presentation-host-pass";
 
 export type PresentationRealtimeSnapshot =
-  PresentationHostSnapshot | PresentationParticipantSnapshot;
+  PresentationHostSnapshot | PresentationParticipantSnapshot | PresentationCompanionSnapshot;
 
 export type PresentationConnectionState = "connecting" | "connected" | "reconciling" | "fallback";
 
@@ -92,7 +93,8 @@ export function presentationSnapshotFromEnvelope(
 
 type Credential =
   | { projection: "host"; controlToken: string }
-  | { projection: "participant"; participantToken: string };
+  | { projection: "participant"; participantToken: string }
+  | { projection: "companion"; companionToken: string };
 
 type PendingSubmission = {
   payload: PresentationResponseSubmit;
@@ -113,7 +115,7 @@ export interface PresentationRealtimeControllerOptions<
   onSaveState?: (state: PresentationSaveState, blockId: string) => void;
   onRoomStatus?: (status: PresentationRoomStatus) => void;
   onError?: (error: Error) => void;
-  onCredentialRejected?: (controlToken: string) => void;
+  onCredentialRejected?: (rejectedToken: string) => void;
   socketFactory?: () => Socket;
   acknowledgementTimeoutMs?: number;
 }
@@ -123,7 +125,10 @@ export interface PresentationRealtimeController<Snapshot extends PresentationRea
   stop(): void;
   reconcile(): Promise<Snapshot | null>;
   applySnapshot(snapshot: Snapshot): boolean;
-  command(command: PresentationCommand, restFallback: () => Promise<Snapshot>): Promise<Snapshot>;
+  command(
+    command: PresentationControlCommand,
+    restFallback: () => Promise<Snapshot>,
+  ): Promise<Snapshot>;
   submitResponse(
     submission: PresentationResponseSubmit,
     restFallback: () => Promise<PresentationResponseAck>,
@@ -151,23 +156,31 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
   let started = false;
   let reconciled = false;
   let connectionState: PresentationConnectionState = options.credential ? "connecting" : "fallback";
-  let hostCredentialRejected = false;
+  let credentialRejected = false;
   let pendingSubmission: PendingSubmission | null = null;
   let reconciliation: Promise<Snapshot | null> | null = null;
   let deadlineTimeout: ReturnType<typeof setTimeout> | null = null;
 
   const setConnectionState = (next: PresentationConnectionState) => {
+    if (next === "reconciling") reconciled = false;
     if (connectionState === next) return;
     connectionState = next;
     options.onConnectionState(next);
   };
 
-  const rejectHostCredential = (error: unknown, controlToken: string) => {
+  const rejectControlCredential = (error: unknown, rejectedToken: string) => {
     if (!isPresentationHostPassRejection(error)) return;
-    hostCredentialRejected = true;
+    if (credentialRejected) return;
+    credentialRejected = true;
     reconciled = false;
     setConnectionState("fallback");
-    options.onCredentialRejected?.(controlToken);
+    options.onCredentialRejected?.(rejectedToken);
+  };
+
+  const rejectCompanionFetchCredential = (error: unknown) => {
+    if (options.credential?.projection === "companion") {
+      rejectControlCredential(error, options.credential.companionToken);
+    }
   };
 
   const scheduleDeadlineExpiry = (current: Snapshot) => {
@@ -219,6 +232,7 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
 
   const applySnapshot = (incoming: Snapshot) => {
     if (
+      (credentialRejected && options.credential?.projection === "companion") ||
       incoming.sessionId !== options.sessionId ||
       (options.credential && incoming.projection !== options.credential.projection)
     ) {
@@ -231,7 +245,7 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
     };
     if (!shouldApplyPresentationSnapshot(fence, incomingFence)) return false;
     let projectedIncoming = incoming;
-    if (incoming.projection === "host") {
+    if (incoming.projection === "host" || incoming.projection === "companion") {
       const incomingRoomStatusSampledAt = Date.parse(incoming.roomStatus.sampledAt);
       if (
         latestRoomStatus &&
@@ -258,14 +272,14 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
   };
 
   const acceptCommandAcknowledgement = (
-    command: PresentationCommand,
+    command: PresentationControlCommand,
     incoming: Snapshot | null | undefined,
   ) => {
     if (
       !incoming ||
       incoming.sessionId !== options.sessionId ||
       incoming.sessionId !== command.sessionId ||
-      incoming.projection !== "host"
+      incoming.projection !== ("companionToken" in command ? "companion" : "host")
     ) {
       throw errorFromAck({
         code: "PRESENTATION_COMMAND_UNCONFIRMED",
@@ -412,7 +426,8 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
   };
 
   const performReconcile = async (): Promise<Snapshot | null> => {
-    if (socket?.connected && options.credential && !hostCredentialRejected) {
+    if (credentialRejected && options.credential?.projection === "companion") return null;
+    if (socket?.connected && options.credential && !credentialRejected) {
       setConnectionState("reconciling");
       const request: PresentationSyncRequest = {
         sessionId: options.sessionId,
@@ -432,6 +447,7 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
             reconciliation = null;
             resolve(authoritative);
           } catch (caught) {
+            rejectCompanionFetchCredential(caught);
             options.onError?.(
               caught instanceof Error
                 ? caught
@@ -450,7 +466,15 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
             clearTimeout(timeout);
             if (response.error) {
               if (options.credential?.projection === "host") {
-                rejectHostCredential(response.error, options.credential.controlToken);
+                rejectControlCredential(response.error, options.credential.controlToken);
+              } else if (options.credential?.projection === "companion") {
+                rejectControlCredential(response.error, options.credential.companionToken);
+                if (credentialRejected) {
+                  settled = true;
+                  reconciliation = null;
+                  resolve(null);
+                  return;
+                }
               }
               void useFallback(errorFromAck(response.error));
               return;
@@ -483,9 +507,10 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
       const incoming = await options.fetchSnapshot();
       const authoritative = latestAcceptedSnapshot(incoming);
       if (authoritative) reconcileSubmission(authoritative);
-      if (!options.credential || hostCredentialRejected) setConnectionState("fallback");
+      if (!options.credential || credentialRejected) setConnectionState("fallback");
       return authoritative;
     } catch (caught) {
+      rejectCompanionFetchCredential(caught);
       const error = caught instanceof Error ? caught : new Error("Unable to restore Presentation");
       options.onError?.(error);
       return null;
@@ -534,7 +559,7 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
       return;
     roomStatusSampledAt = sampledAt;
     latestRoomStatus = status;
-    if (snapshot?.projection === "host") {
+    if (snapshot?.projection === "host" || snapshot?.projection === "companion") {
       snapshot = { ...snapshot, roomStatus: status } as Snapshot;
     }
     options.onRoomStatus?.(status);
@@ -550,15 +575,12 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
         return;
       }
       // Preserve the established REST path for the first paint while the socket negotiates.
-      void options
-        .fetchSnapshot()
-        .then(applySnapshot)
-        .catch(() => undefined);
+      void options.fetchSnapshot().then(applySnapshot).catch(rejectCompanionFetchCredential);
       socket.on("connect", () => void reconcile());
       socket.on("disconnect", (reason) => {
         reconciled = false;
         const terminal = reason === "io server disconnect";
-        setConnectionState(terminal || hostCredentialRejected ? "fallback" : "reconciling");
+        setConnectionState(terminal || credentialRejected ? "fallback" : "reconciling");
         if (pendingSubmission)
           options.onSaveState?.("reconnecting_not_saved", pendingSubmission.payload.blockId);
         if (terminal) void reconcile();
@@ -584,11 +606,21 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
     reconcile,
     applySnapshot,
     command(command, restFallback) {
+      const commandToken =
+        "companionToken" in command ? command.companionToken : command.controlToken;
+      if (credentialRejected && "companionToken" in command) {
+        return Promise.reject(
+          errorFromAck({
+            code: "UNAUTHORIZED",
+            message: "This companion pass is no longer valid.",
+          }),
+        );
+      }
       if (!socket || connectionState === "fallback") {
         return restFallback()
           .then((incoming) => acceptCommandAcknowledgement(command, incoming))
           .catch((error) => {
-            rejectHostCredential(error, command.controlToken);
+            rejectControlCredential(error, commandToken);
             throw error;
           });
       }
@@ -616,12 +648,16 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
         socket.emit(
           "presentation.command",
           command,
-          (response: RealtimeAck<{ snapshot: PresentationHostSnapshot }>) => {
+          (
+            response: RealtimeAck<{
+              snapshot: PresentationHostSnapshot | PresentationCompanionSnapshot;
+            }>,
+          ) => {
             if (settled) return;
             settled = true;
             clearTimeout(timeout);
             if (response.error) {
-              rejectHostCredential(response.error, command.controlToken);
+              rejectControlCredential(response.error, commandToken);
               reject(errorFromAck(response.error));
               return;
             }
@@ -703,9 +739,11 @@ export function createPresentationRealtimeController<Snapshot extends Presentati
       });
     },
     canMutate() {
+      if (credentialRejected && options.credential?.projection === "companion") return false;
       return connectionState === "fallback" || (Boolean(socket?.connected) && reconciled);
     },
     needsFallbackPolling() {
+      if (credentialRejected && options.credential?.projection === "companion") return false;
       return !socket || connectionState === "fallback";
     },
     latest() {

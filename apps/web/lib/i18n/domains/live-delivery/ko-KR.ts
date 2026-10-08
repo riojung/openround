@@ -1,6 +1,8 @@
 import type { LiveDeliveryMessages } from "./en-CA";
+import { companionEnglishMessages } from "./companion-en-CA";
 
 const messages = {
+  ...companionEnglishMessages,
   "live.audience.aggregatePrivacy":
     "개인정보 보호를 위해 5명 이상이 신호를 보낸 후 집계된 Pulse가 표시됩니다.",
   "live.audience.alias": "별칭",
