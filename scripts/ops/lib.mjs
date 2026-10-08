@@ -9,6 +9,7 @@ import { URL } from "node:url";
 
 export const ENVIRONMENTS = Object.freeze(["development", "staging", "production"]);
 export const HOSTED_ENVIRONMENTS = Object.freeze(["staging", "production"]);
+// Stable data namespace: renaming this disconnects existing named volumes after the rebrand.
 export const DEV_COMPOSE_PROJECT = "openround";
 export const DEV_COMPOSE_PROFILES = Object.freeze({
   core: Object.freeze(["compose.yaml"]),
@@ -403,6 +404,72 @@ export function composeArgv(action, { follow = false, noBuild = false, profile =
       return [...prefix, "logs", ...(follow ? ["--follow"] : []), "--tail", "200"];
     default:
       throw new Error(`Unsupported service action ${JSON.stringify(action)}`);
+  }
+}
+
+export function dockerContextArgv(context) {
+  if (context === undefined) return [];
+  // Docker's context-name syntax permits "+" and has no name-length cap.
+  // The built-in "default" context is selectable even though its name is reserved for creation.
+  if (
+    typeof context !== "string" ||
+    context.match(/^[A-Za-z0-9][A-Za-z0-9_.+-]+$/)?.[0] !== context
+  ) {
+    throw new Error("--docker-context must be a Docker context name from docker context ls");
+  }
+  return ["--context", context];
+}
+
+export async function assertDockerReady({
+  cwd,
+  dryRun = false,
+  dockerContext,
+  platform = process.platform,
+  runCommand = run,
+} = {}) {
+  const prefix = dockerContextArgv(dockerContext);
+  if (dryRun) return;
+  try {
+    await runCommand("docker", ["--version"], { cwd, capture: true, timeoutMs: 10_000 });
+  } catch (error) {
+    throw new Error(
+      "Polling Pops requires the Docker CLI. Install Docker Desktop or Docker Engine with Compose v2, then retry. No services were changed.",
+      { cause: error },
+    );
+  }
+  try {
+    await runCommand("docker", [...prefix, "compose", "version"], {
+      cwd,
+      capture: true,
+      timeoutMs: 10_000,
+    });
+  } catch (error) {
+    throw new Error(
+      "Polling Pops requires Docker Compose v2. Install or enable the Docker Compose plugin, then retry. No services were changed.",
+      { cause: error },
+    );
+  }
+  try {
+    await runCommand("docker", [...prefix, "info", "--format", "{{.ServerVersion}}"], {
+      cwd,
+      capture: true,
+      timeoutMs: 10_000,
+    });
+  } catch (error) {
+    const infoCommand = ["docker", ...prefix, "info"].join(" ");
+    throw new Error(
+      [
+        "Polling Pops cannot reach the Docker daemon using the selected Docker configuration.",
+        "Source: local Docker runtime preflight, before building or changing services; this is not an application image or branding error.",
+        "Run docker context ls to check the endpoint and inspect DOCKER_HOST / DOCKER_CONTEXT for stale overrides.",
+        platform === "darwin"
+          ? "Start your chosen runtime: open -a Docker for Docker Desktop, or colima start --profile YOUR_EXISTING_PROFILE for Colima."
+          : "Start your Docker Engine service and check that your user has permission to access its socket.",
+        `Verify ${infoCommand} succeeds, then retry. Select an existing context with --docker-context NAME or DOCKER_CONTEXT=NAME.`,
+        "No services, volumes, or Docker contexts were changed. Do not delete volumes or switch to a new runtime to repair a missing socket.",
+      ].join("\n"),
+      { cause: error },
+    );
   }
 }
 
@@ -1178,6 +1245,7 @@ export async function run(command, args, options = {}) {
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
+      timeout: options.timeoutMs ?? 0,
       stdio: [
         options.input === undefined ? "ignore" : "pipe",
         options.capture ? "pipe" : "inherit",

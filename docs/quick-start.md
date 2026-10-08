@@ -11,20 +11,49 @@ normal path takes about ten minutes after container images are available.
 
 ## What you need
 
-- Docker Desktop or Docker Engine with Docker Compose v2
+- A running Docker Desktop, Docker Engine, or Docker-backed Colima profile, with Docker Compose v2
 - At least 2 GB of memory for the core profile; allow at least 4 GB for ClamAV image scanning
 - Local ports `8080`, `8025`, and `9000` available
 - A modern browser; use a second browser or private window to simulate a participant
 
 Run all commands from the repository root, the directory containing `compose.yaml`.
 
+### Check the Docker runtime first
+
+```bash
+docker context ls
+docker info
+```
+
+If `docker info` reports a missing socket such as `/var/run/docker.sock`, the selected Docker
+daemon is stopped or the context points to the wrong runtime. This is not a Polling Pops image
+or branding error. On macOS, start Docker Desktop with `open -a Docker`, or start the **existing**
+Colima profile that contains your data. Replace `YOUR_EXISTING_PROFILE` below with its name:
+
+```bash
+colima start --profile YOUR_EXISTING_PROFILE
+docker context ls
+docker --context colima-YOUR_EXISTING_PROFILE info
+pnpm service development restart --profile core --docker-context colima-YOUR_EXISTING_PROFILE
+```
+
+Use the exact context name shown by `docker context ls` (the default Colima profile usually uses
+`colima`). The service option selects it for this command only, without changing the global
+Docker context. `DOCKER_CONTEXT=NAME pnpm service ...` also works, including for
+`pnpm product:build development`. Check `DOCKER_HOST` and `DOCKER_CONTEXT` for stale overrides if
+the selected endpoint is unexpected. See [Docker contexts](https://docs.docker.com/engine/manage-resources/contexts/).
+
+Do not delete Docker/Colima volumes or create a new runtime to repair a missing socket. Separate
+Colima profiles have separate Docker data. Switching profiles will not migrate your existing
+checkpoint sets, accounts, or uploaded images.
+
 ## 1. Start the core stack
 
 The core profile includes the product, API/realtime server, PostgreSQL, Valkey, private MinIO storage, Mailpit, and Caddy. Untrusted image uploads are disabled because this profile has no malware scanner.
 
 ```bash
-docker compose up --build -d
-docker compose ps
+pnpm service development start --profile core
+pnpm service development status --profile core
 ```
 
 Wait until `server`, `web`, `postgres`, `valkey`, and `minio` are healthy. Confirm the public readiness endpoint:
@@ -32,6 +61,11 @@ Wait until `server`, `web`, `postgres`, `valkey`, and `minio` are healthy. Confi
 ```bash
 curl -fsS http://localhost:8080/health/ready
 ```
+
+Local application images are `polling-pops-server:development` and
+`polling-pops-web:development`. Rebuild once after the rebrand before using `--no-build`.
+The Compose project remains `openround` to reuse existing data volumes; `core`, `media`, and
+`observability` are service bundles, not product names or Colima profile names.
 
 Open:
 

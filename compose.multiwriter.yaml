@@ -10,7 +10,7 @@ services:
     extends:
       file: compose.yaml
       service: server
-    image: openround-server
+    image: polling-pops-server:development
     environment:
       PUBLIC_API_URL: http://localhost:8080
       RUN_MIGRATIONS: "false"
