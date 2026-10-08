@@ -1,5 +1,11 @@
 # Polling Pops quick start
 
+For in-product guidance after sign-in, open **Help**. Watch the quick-start video, then browse
+**Written feature guides**. Use search or a topic filter to open a feature's cover card and follow
+its numbered steps. Guides include success checks and troubleshooting; linked video chapters
+load paused. Written guide URLs under `/help/<guide>` can be shared with other workspace members.
+The guides are currently in English and label optional capabilities that are not enabled.
+
 This guide starts the complete community stack and walks through one live checkpoint round. The
 normal path takes about ten minutes after container images are available.
 
@@ -51,9 +57,16 @@ address after opening the email link.
 
 Once signed in, `/help` is available in the default classic setup as well as the professional
 workspace beta. The page keeps its steps and links aligned with the capabilities enabled for the
-current workspace. Captioned professional-builder videos appear only for an allowlisted workspace
-when their full workflow is enabled; the default Compose profile shows the supported classic Round
-path instead.
+current workspace. The Polling Pops quick-start video appears when the professional Round Builder
+is enabled. The longer user guide also requires the themes, Pulse, chat, Presentation, and practice
+features it demonstrates. Both have English narration, captions, transcripts, and chapter shortcuts;
+the default Compose profile shows the supported classic Round path instead.
+
+The bundled files are served at `/guides/polling-pops-quick-start.mp4` and
+`/guides/polling-pops-user-guide.mp4`. Start with the quick video, then try one question from a second
+browser or phone. A phone needs a reachable LAN or public join address, not `localhost`.
+The recording's **Continue to dashboard** button is an isolated testing shortcut, not the normal
+Compose or production sign-in flow. Rebuild the app after updating this checkout to see new media.
 
 For isolated, one-computer testing only, you can expose **Continue to dashboard** while also binding
 the product to loopback so another LAN client cannot request a token for an existing creator:

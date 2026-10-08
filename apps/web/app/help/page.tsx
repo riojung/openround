@@ -5,6 +5,8 @@ import { useLocale } from "../../components/locale-provider";
 import { WorkspacePage } from "../../components/workspace/workspace-shell";
 import styles from "../../components/workspace/workspace-hub.module.css";
 import { HelpGuidance } from "./help-guidance";
+import { FeatureGuideCatalog } from "./feature-guide-catalog";
+import guideStyles from "./feature-guides.module.css";
 
 export default function HelpPage() {
   const { t } = useLocale();
@@ -16,9 +18,15 @@ export default function HelpPage() {
       title={t("page.help.title")}
       translationLevel="full"
     >
+      <nav aria-label="Help sections" className={guideStyles.quickNav} lang="en-CA">
+        <a href="#video-guides">Videos and quick start</a>
+        <a href="#feature-guides">Written feature guides</a>
+        <a href="#help-support">Support and privacy</a>
+      </nav>
       <HelpGuidance />
+      <FeatureGuideCatalog />
 
-      <section className={styles.section}>
+      <section className={styles.section} id="help-support">
         <div className={styles.sectionHeading}>
           <div>
             <h2>{t("pages.help.support.title")}</h2>

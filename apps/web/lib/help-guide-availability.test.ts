@@ -33,8 +33,9 @@ describe("help guide availability", () => {
       "workspaceShell",
       "builderV2",
       "presentations",
-      "groups",
-      "discover",
+      "roundExperiences",
+      "audiencePulse",
+      "roomChat",
     ] as const) {
       expect(professionalBuilderGuidesAvailable({ ...enabledFeatures, [feature]: false })).toBe(
         false,

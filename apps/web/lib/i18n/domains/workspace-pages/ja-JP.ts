@@ -1,6 +1,7 @@
 import type { WorkspacePageMessages } from "./index";
 
 const messages = {
+  "pages.help.card.readGuide": "ガイドを読む",
   "pages.activity.accuracyValue": "{value}% の精度",
   "pages.activity.assignment": "{status} 割り当て",
   "pages.activity.emptyDescription":
@@ -205,7 +206,7 @@ const messages = {
   "pages.groups.workspaceMember": "ワークスペースメンバー",
   "pages.help.builder.description":
     "ワークスペース、Round Builder、Presentation Builder、プレビュー、配信パスをツアーします。",
-  "pages.help.builder.title": "ワークスペースとビルダーのガイド",
+  "pages.help.builder.title": "ユーザーガイド：対話、理解の回復、フォローアップ",
   "pages.help.builder.try": "空のラウンドを開始する",
   "pages.help.card.classicDescription":
     "ダッシュボードを開き、チェックポイント セットに名前を付け、最初の質問を追加します。",
@@ -229,16 +230,16 @@ const messages = {
     "Polling Pops は、このワークスペースで有効になっている機能のガイダンスのみを示します。",
   "pages.help.guides.currentTitle": "現在のワークスペースに関するガイダンス",
   "pages.help.guides.description":
-    "1 分間のツアーから始めて、オーサリングと配信について詳しく説明します。",
+    "クイックスタートに沿って試し、全体の流れを学びましょう。英語の音声、字幕、文字起こしを用意しています。",
   "pages.help.guides.title": "見てから自分で試してみてください",
   "pages.help.hiddenVideos":
-    "結合されたビデオは、このワークスペースで有効になっていない機能を示しているため、非表示になっています。利用可能なワークフローは引き続き完全にサポートされます。",
+    "完全版ガイドは、紹介する一部機能がこのワークスペースで無効のため非表示です。利用可能な流れは引き続きサポートされます。",
   "pages.help.openDashboard": "オープンラウンドダッシュボード",
   "pages.help.openVideo": "ビデオファイルを開きます",
   "pages.help.quickStart.description":
     "ワークスペースからレビューされ公開されたラウンドまでの最短パスを学びます。",
   "pages.help.quickStart.title": "クイックスタート: 最初のラウンドを作成する",
-  "pages.help.quickStart.try": "スターターラウンドを試してみる",
+  "pages.help.quickStart.try": "最初のラウンドを作成",
   "pages.help.readTranscript": "{title} の記録を読む",
   "pages.help.support.administration": "管理",
   "pages.help.support.description":

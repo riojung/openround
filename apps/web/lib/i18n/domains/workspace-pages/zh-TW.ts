@@ -1,6 +1,7 @@
 import type { WorkspacePageMessages } from "./index";
 
 const messages = {
+  "pages.help.card.readGuide": "閱讀指南",
   "pages.activity.accuracyValue": "{value}% 準確度",
   "pages.activity.assignment": "{status} 賦值",
   "pages.activity.emptyDescription": "新的交付、證據和小組計劃活動將自動出現。",
@@ -189,7 +190,7 @@ const messages = {
   "pages.groups.workspaceGroups": "工作區組",
   "pages.groups.workspaceMember": "工作區成員",
   "pages.help.builder.description": "浏览工作区、回合生成器、演示生成器、预览和交付路径。",
-  "pages.help.builder.title": "工作区和构建器指南",
+  "pages.help.builder.title": "使用者指南：互動、理解恢復與後續練習",
   "pages.help.builder.try": "開始一輪空白",
   "pages.help.card.classicDescription": "打开仪表板，命名检查点集，然后添加第一个问题。",
   "pages.help.card.createDescription": "选择启动器、可信来源、结构导入或空白回合。",
@@ -207,15 +208,15 @@ const messages = {
   "pages.help.enabledBuilder": "使用启用的回合生成器",
   "pages.help.guides.currentDescription": "Polling Pops 仅显示此工作区中启用的功能的指南。",
   "pages.help.guides.currentTitle": "目前工作空間的指南",
-  "pages.help.guides.description": "從一分鐘的導覽開始，然後深入創作和交付。",
+  "pages.help.guides.description": "跟隨快速入門，再探索完整流程。提供英語配音、字幕和文字稿。",
   "pages.help.guides.title": "觀看，然後自己嘗試一下",
   "pages.help.hiddenVideos":
-    "合併的影片被隱藏，因為它們展示了該工作區未全部啟用的功能。您可用的工作流程仍然得到完全支援。",
+    "完整使用者指南已隱藏，因為本工作區尚未啟用其中的部分功能。您可用的流程仍然受到支援。",
   "pages.help.openDashboard": "開放式圓形儀表板",
   "pages.help.openVideo": "開啟影片檔案",
   "pages.help.quickStart.description": "了解從您的工作區到經過審核、發布的輪次的最短路徑。",
   "pages.help.quickStart.title": "快速開始：創建您的第一輪",
-  "pages.help.quickStart.try": "嘗試首發回合",
+  "pages.help.quickStart.try": "建立第一個回合",
   "pages.help.readTranscript": "閱讀 {title} 的文字記錄",
   "pages.help.support.administration": "行政管理",
   "pages.help.support.description": "檢查服務運作狀況或查看控制隱私和存取的設定。",

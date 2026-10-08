@@ -1,6 +1,7 @@
 import type { WorkspacePageMessages } from "./index";
 
 const messages = {
+  "pages.help.card.readGuide": "Anleitung lesen",
   "pages.activity.accuracyValue": "{value}% Genauigkeit",
   "pages.activity.assignment": "{status} Zuweisung",
   "pages.activity.emptyDescription":
@@ -205,7 +206,8 @@ const messages = {
   "pages.groups.workspaceMember": "Workspace-Mitglied",
   "pages.help.builder.description":
     "Besichtigen Sie den Arbeitsbereich, Round Builder, Presentation Builder, Vorschauen und Bereitstellungspfade.",
-  "pages.help.builder.title": "Arbeitsbereich- und Builder-Anleitung",
+  "pages.help.builder.title":
+    "Benutzerhandbuch: interagieren, Verständnis stärken und nachbereiten",
   "pages.help.builder.try": "Beginnen Sie eine leere Runde",
   "pages.help.card.classicDescription":
     "Öffnen Sie das Dashboard, benennen Sie einen Prüfpunktsatz und fügen Sie die erste Frage hinzu.",
@@ -230,16 +232,16 @@ const messages = {
     "Polling Pops zeigt nur Anleitungen für Funktionen an, die in diesem Arbeitsbereich aktiviert sind.",
   "pages.help.guides.currentTitle": "Anleitung für Ihren aktuellen Arbeitsplatz",
   "pages.help.guides.description":
-    "Beginnen Sie mit der einminütigen Tour und gehen Sie dann tiefer in die Erstellung und Bereitstellung ein.",
+    "Folgen Sie dem Schnellstart und erkunden Sie den gesamten Ablauf. Mit englischer Erzählung, Untertiteln und Transkripten.",
   "pages.help.guides.title": "Schauen Sie zu und probieren Sie es dann selbst aus",
   "pages.help.hiddenVideos":
-    "Die kombinierten Videos sind ausgeblendet, da sie Funktionen zeigen, die für diesen Arbeitsbereich nicht alle aktiviert sind. Ihr verfügbarer Workflow wird weiterhin vollständig unterstützt.",
+    "Das vollständige Anleitungsvideo ist ausgeblendet, da einige gezeigte Funktionen hier nicht aktiviert sind. Ihr verfügbarer Ablauf bleibt unterstützt.",
   "pages.help.openDashboard": "Öffnen Sie das runde Dashboard",
   "pages.help.openVideo": "Öffnen Sie die Videodatei",
   "pages.help.quickStart.description":
     "Erfahren Sie den kürzesten Weg von Ihrem Arbeitsbereich zu einer überprüften, veröffentlichten Runde.",
   "pages.help.quickStart.title": "Schnellstart: Erstellen Sie Ihre erste Runde",
-  "pages.help.quickStart.try": "Versuchen Sie es mit einer Starterrunde",
+  "pages.help.quickStart.try": "Erstellen Sie Ihre erste Runde",
   "pages.help.readTranscript": "Transkript für {title} lesen",
   "pages.help.support.administration": "Verwaltung",
   "pages.help.support.description":

@@ -79,6 +79,9 @@ Set `OPENROUND_PUBLIC_URL` on the web process to the public product origin so so
 URLs point to the deployed site. Local Compose supplies this automatically. The fallback
 origin is localhost and is intended only for development, not public sharing.
 
-The existing captioned help videos were recorded before the rebrand. They remain labeled
-as earlier recordings and retain their original, audio-matched captions. New recording
-scripts use Polling Pops; replacing those recordings also requires fresh screen captures.
+Help now uses fresh Polling Pops quick-start and user-guide videos, recorded from isolated
+synthetic workspaces. Each includes conversational English neural narration, matching
+captions, a transcript, and chapter shortcuts. The quick start covers the enabled Round
+Builder; the longer guide is shown only when its advanced capabilities are available.
+Older `openround-*` media URLs remain for compatibility and retain their original captions.
+Recording and rendering commands, provenance, and narration terms are in the asset register.

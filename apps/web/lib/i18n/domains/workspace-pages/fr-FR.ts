@@ -1,6 +1,7 @@
 import type { WorkspacePageMessages } from "./index";
 
 const messages = {
+  "pages.help.card.readGuide": "Lire le guide",
   "pages.activity.accuracyValue": "Précision de {value} %",
   "pages.activity.assignment": "Mission {status}",
   "pages.activity.emptyDescription":
@@ -206,7 +207,7 @@ const messages = {
   "pages.groups.workspaceMember": "Membre de l'espace de travail",
   "pages.help.builder.description":
     "Visitez l'espace de travail, Round Builder, Presentation Builder, les aperçus et les chemins de livraison.",
-  "pages.help.builder.title": "Guide de l'espace de travail et du constructeur",
+  "pages.help.builder.title": "Guide utilisateur : interagir, récupérer et poursuivre",
   "pages.help.builder.try": "Commencer un tour vierge",
   "pages.help.card.classicDescription":
     "Ouvrez le tableau de bord, nommez un ensemble de points de contrôle et ajoutez la première question.",
@@ -231,16 +232,16 @@ const messages = {
     "Polling Pops affiche uniquement des conseils pour les fonctionnalités activées dans cet espace de travail.",
   "pages.help.guides.currentTitle": "Conseils pour votre espace de travail actuel",
   "pages.help.guides.description":
-    "Commencez par la visite guidée d’une minute, puis approfondissez la création et la livraison.",
+    "Suivez le démarrage rapide, puis explorez le parcours complet. Narration, sous-titres et transcriptions en anglais inclus.",
   "pages.help.guides.title": "Regardez, puis essayez vous-même",
   "pages.help.hiddenVideos":
-    "Les vidéos combinées sont masquées car elles démontrent des fonctionnalités qui ne sont pas toutes activées pour cet espace de travail. Votre flux de travail disponible reste entièrement pris en charge.",
+    "Le guide complet est masqué car certaines fonctionnalités présentées ne sont pas activées dans cet espace. Votre parcours disponible reste pris en charge.",
   "pages.help.openDashboard": "Tableau de bord du cycle ouvert",
   "pages.help.openVideo": "Ouvrez le fichier vidéo",
   "pages.help.quickStart.description":
     "Découvrez le chemin le plus court entre votre espace de travail et un cycle révisé et publié.",
   "pages.help.quickStart.title": "Démarrage rapide : créez votre premier tour",
-  "pages.help.quickStart.try": "Essayez un tour de démarrage",
+  "pages.help.quickStart.try": "Créez votre premier tour",
   "pages.help.readTranscript": "Lire la transcription de {title}",
   "pages.help.support.administration": "Administration",
   "pages.help.support.description":

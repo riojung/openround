@@ -27,6 +27,8 @@
     "dev": "turbo run dev --parallel",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "guides:capture": "playwright test --config=playwright.guides.config.ts",
+    "guides:render": "tsx scripts/demo/render-polling-pops-guides.ts",
     "licenses:report": "node scripts/generate-third-party-notices.mjs",
     "lint": "turbo run lint",
     "load:compose:aggregate": "tsx tests/load/compose-aggregate-load.ts",

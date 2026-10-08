@@ -1,0 +1,242 @@
+WEBVTT
+
+00:00:00.050 --> 00:00:02.951
+Let's make your first Polling Pops Round
+together.
+
+00:00:02.951 --> 00:00:04.751
+A Round is a set of questions
+
+00:00:04.751 --> 00:00:06.738
+you can run live, without asking
+
+00:00:06.738 --> 00:00:08.724
+participants to create accounts.
+
+00:00:08.724 --> 00:00:12.487
+First, sign in with your email and
+accept the policies.
+
+00:00:12.487 --> 00:00:15.902
+On a hosted site, open the link
+in your inbox.
+
+00:00:15.902 --> 00:00:18.255
+This recording uses the local development
+
+00:00:18.255 --> 00:00:20.953
+shortcut, which is not available in
+production.
+
+00:00:20.953 --> 00:00:23.161
+Once you're in, your workspace keeps
+
+00:00:23.161 --> 00:00:25.063
+everything you create together.
+
+00:00:25.954 --> 00:00:28.494
+Choose Create, then start blank.
+
+00:00:28.494 --> 00:00:30.261
+You can also use a starter or
+
+00:00:30.261 --> 00:00:33.855
+import existing work, but let's keep this
+first try simple.
+
+00:00:33.855 --> 00:00:36.625
+Give the Round a name you'll recognize
+later.
+
+00:00:36.625 --> 00:00:39.222
+We'll use a short safety-training example,
+
+00:00:39.222 --> 00:00:41.818
+and begin with a multiple-choice question.
+
+00:00:41.818 --> 00:00:45.491
+Choose Create Round and write question to
+open the builder.
+
+00:00:46.421 --> 00:00:48.369
+Here, the question map is on the
+
+00:00:48.369 --> 00:00:50.562
+left, your content is in the middle,
+
+00:00:50.562 --> 00:00:52.389
+and settings are on the right.
+
+00:00:52.389 --> 00:00:55.052
+Write a clear prompt, replace the answer
+
+00:00:55.052 --> 00:00:57.582
+labels, and mark the correct response.
+
+00:00:57.582 --> 00:01:00.246
+Our team completed twenty-four of thirty
+
+00:01:00.246 --> 00:01:02.711
+checks, so eighty percent is correct.
+
+00:01:02.711 --> 00:01:05.430
+Add a short explanation for the reveal.
+
+00:01:05.430 --> 00:01:08.149
+Before moving on, wait for Saved.
+
+00:01:08.149 --> 00:01:10.894
+That way, you know the latest changes
+are stored.
+
+00:01:11.854 --> 00:01:15.296
+Preview lets you check what participants
+will see.
+
+00:01:15.296 --> 00:01:17.884
+Read the whole question, try the reveal,
+
+00:01:17.884 --> 00:01:21.765
+and make sure the correct answer and
+explanation make sense.
+
+00:01:21.765 --> 00:01:24.136
+Return to the editor, then publish.
+
+00:01:24.136 --> 00:01:26.746
+Publishing freezes a reviewed version for
+
+00:01:26.746 --> 00:01:29.419
+delivery; it doesn't start a live session.
+
+00:01:29.419 --> 00:01:31.297
+You can keep editing the draft later
+
+00:01:31.297 --> 00:01:33.801
+without changing a Round that's already
+running.
+
+00:01:34.734 --> 00:01:37.596
+Now open the live setup for your
+published Round.
+
+00:01:37.596 --> 00:01:40.123
+Check the audience limit, scoring, and
+
+00:01:40.123 --> 00:01:43.382
+results visibility, then create the live
+session.
+
+00:01:43.382 --> 00:01:46.225
+The lobby gives you a seven-digit code,
+
+00:01:46.225 --> 00:01:48.704
+a direct join link, and a QR code.
+
+00:01:48.704 --> 00:01:51.732
+Share the link or show the QR on a screen.
+
+00:01:51.732 --> 00:01:54.537
+For phone testing, the join address must
+
+00:01:54.537 --> 00:01:56.501
+be reachable from the phone.
+
+00:01:56.501 --> 00:01:59.632
+Localhost only points back to that device.
+
+00:01:59.632 --> 00:02:01.516
+The code in this video is only
+
+00:02:01.516 --> 00:02:04.091
+a demo; use the code from your own lobby.
+
+00:02:05.034 --> 00:02:06.929
+Let's switch to a participant.
+
+00:02:06.929 --> 00:02:09.380
+Open the shared link, scan the QR,
+
+00:02:09.380 --> 00:02:11.904
+or enter the code on the join page.
+
+00:02:11.904 --> 00:02:14.594
+With these education settings, Polling
+
+00:02:14.594 --> 00:02:17.355
+Pops gives us a friendly session alias.
+
+00:02:17.355 --> 00:02:19.842
+We choose an avatar and join.
+
+00:02:19.842 --> 00:02:22.226
+No participant sign-in is needed.
+
+00:02:22.226 --> 00:02:24.657
+The lobby waits for the facilitator, so
+
+00:02:24.657 --> 00:02:28.334
+everyone can get connected before the
+first question opens.
+
+00:02:29.267 --> 00:02:31.575
+The facilitator starts the Round.
+
+00:02:31.575 --> 00:02:34.092
+Participants see the complete question and
+
+00:02:34.092 --> 00:02:36.188
+answer labels on their own devices.
+
+00:02:36.188 --> 00:02:38.688
+Choose a response and submit it.
+
+00:02:38.688 --> 00:02:41.580
+Look for Answer received and saved, rather
+
+00:02:41.580 --> 00:02:43.714
+than assuming a tap was enough.
+
+00:02:43.714 --> 00:02:47.696
+Back on the host screen, lock the
+responses, then reveal.
+
+00:02:47.696 --> 00:02:49.921
+That separates collecting answers from
+
+00:02:49.921 --> 00:02:52.146
+discussing them, and gives you a clean
+
+00:02:52.146 --> 00:02:53.843
+moment to explain the result.
+
+00:02:54.767 --> 00:02:57.332
+Finish the Round and open its report.
+
+00:02:57.332 --> 00:02:59.907
+You can review participation and question
+
+00:02:59.907 --> 00:03:02.796
+results, then come back through Results
+later.
+
+00:03:02.796 --> 00:03:05.408
+Our quick test had just one participant,
+
+00:03:05.408 --> 00:03:08.802
+so it isn't meaningful evidence about a
+whole group.
+
+00:03:08.802 --> 00:03:11.764
+Your turn: create one question, join from
+
+00:03:11.764 --> 00:03:15.232
+a second browser or phone, and complete
+a Round.
+
+00:03:15.232 --> 00:03:17.392
+For the recovery workflow and room
+
+00:03:17.392 --> 00:03:20.503
+conversation tools, continue with the user
+guide.

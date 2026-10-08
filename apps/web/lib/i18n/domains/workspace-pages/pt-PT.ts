@@ -1,6 +1,7 @@
 import type { WorkspacePageMessages } from "./index";
 
 const messages = {
+  "pages.help.card.readGuide": "Ler o guia",
   "pages.activity.accuracyValue": "{value}% de precisão",
   "pages.activity.assignment": "{status} atribuição",
   "pages.activity.emptyDescription":
@@ -203,7 +204,7 @@ const messages = {
   "pages.groups.workspaceMember": "Membro do espaço de trabalho",
   "pages.help.builder.description":
     "Passeie pelo espaço de trabalho, Round Builder, Presentation Builder, visualizações e caminhos de entrega.",
-  "pages.help.builder.title": "Guia do espaço de trabalho e do construtor",
+  "pages.help.builder.title": "Guia do utilizador: interagir, recuperar e acompanhar",
   "pages.help.builder.try": "Comece uma rodada em branco",
   "pages.help.card.classicDescription":
     "Abra o painel, nomeie um conjunto de pontos de verificação e adicione a primeira pergunta.",
@@ -228,16 +229,16 @@ const messages = {
     "Polling Pops mostra apenas orientações para recursos habilitados neste espaço de trabalho.",
   "pages.help.guides.currentTitle": "Orientação para seu espaço de trabalho atual",
   "pages.help.guides.description":
-    "Comece com um tour de um minuto e depois aprofunde-se na criação e na entrega.",
+    "Siga o início rápido e explore o fluxo completo. Inclui narração, legendas e transcrições em inglês.",
   "pages.help.guides.title": "Assista e experimente você mesmo",
   "pages.help.hiddenVideos":
-    "Os vídeos combinados ficam ocultos porque demonstram recursos que nem todos estão habilitados para este espaço de trabalho. Seu fluxo de trabalho disponível permanece totalmente suportado.",
+    "O guia completo está oculto porque algumas funções demonstradas não estão ativadas aqui. O fluxo disponível continua suportado.",
   "pages.help.openDashboard": "Abra o painel da Rodada",
   "pages.help.openVideo": "Abra o arquivo de vídeo",
   "pages.help.quickStart.description":
     "Aprenda o caminho mais curto do seu espaço de trabalho até uma Rodada revisada e publicada.",
   "pages.help.quickStart.title": "Início rápido: crie sua primeira rodada",
-  "pages.help.quickStart.try": "Experimente uma rodada inicial",
+  "pages.help.quickStart.try": "Crie a sua primeira ronda",
   "pages.help.readTranscript": "Leia a transcrição de {title}",
   "pages.help.support.administration": "Administração",
   "pages.help.support.description":

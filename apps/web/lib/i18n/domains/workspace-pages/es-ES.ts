@@ -1,6 +1,7 @@
 import type { WorkspacePageMessages } from "./index";
 
 const messages = {
+  "pages.help.card.readGuide": "Leer la guía",
   "pages.activity.accuracyValue": "{value}% de precisión",
   "pages.activity.assignment": "{status} tarea",
   "pages.activity.emptyDescription":
@@ -204,7 +205,7 @@ const messages = {
   "pages.groups.workspaceMember": "Miembro del espacio de trabajo",
   "pages.help.builder.description":
     "Recorra el espacio de trabajo, Round Builder, Presentation Builder, vistas previas y rutas de entrega.",
-  "pages.help.builder.title": "Guía de espacio de trabajo y constructor",
+  "pages.help.builder.title": "Guía de usuario: interactuar, recuperar y dar seguimiento",
   "pages.help.builder.try": "Iniciar una ronda en blanco",
   "pages.help.card.classicDescription":
     "Abra el panel, nombre un conjunto de puntos de control y agregue la primera pregunta.",
@@ -229,16 +230,16 @@ const messages = {
     "Polling Pops muestra solo orientación para las capacidades que están habilitadas en este espacio de trabajo.",
   "pages.help.guides.currentTitle": "Orientación para su espacio de trabajo actual",
   "pages.help.guides.description":
-    "Comience con el recorrido de un minuto y luego profundice en la creación y la entrega.",
+    "Siga el inicio rápido y explore el flujo completo. Incluye narración, subtítulos y transcripciones en inglés.",
   "pages.help.guides.title": "Míralo y luego pruébalo tú mismo.",
   "pages.help.hiddenVideos":
-    "Los vídeos combinados están ocultos porque demuestran capacidades que no están todas habilitadas para este espacio de trabajo. Su flujo de trabajo disponible sigue siendo totalmente compatible.",
+    "La guía completa está oculta porque algunas funciones mostradas no están habilitadas en este espacio. Su flujo disponible sigue siendo compatible.",
   "pages.help.openDashboard": "Panel de control redondo abierto",
   "pages.help.openVideo": "Abre el archivo de vídeo",
   "pages.help.quickStart.description":
     "Conozca el camino más corto desde su espacio de trabajo hasta una Ronda revisada y publicada.",
   "pages.help.quickStart.title": "Inicio rápido: crea tu primera Ronda",
-  "pages.help.quickStart.try": "Prueba una ronda inicial",
+  "pages.help.quickStart.try": "Cree su primera ronda",
   "pages.help.readTranscript": "Leer la transcripción de {title}",
   "pages.help.support.administration": "administración",
   "pages.help.support.description":
