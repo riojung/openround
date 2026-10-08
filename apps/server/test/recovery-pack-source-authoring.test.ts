@@ -324,8 +324,48 @@ describe("source-assisted Recovery Packs", () => {
     },
   );
 
+  it.each(["title", "diagnostic", "card"])(
+    "rejects self-hashed %s changes that were not in the server proposal",
+    async (kind) => {
+      const fixture = await setup();
+      const input = creation(fixture.proposal);
+      const draft = structuredClone(input.draft);
+      if (kind === "title") draft.title = "Unrelated source attribution";
+      else if (kind === "diagnostic")
+        draft.diagnostic.prompt = "A different question with the original source citations";
+      else draft.interventions[0]!.body = "Unrelated intervention with valid catalog citations";
+      const response = await fixture.app.inject({
+        method: "POST",
+        url: `/v1/authoring/jobs/${fixture.jobId}/apply-recovery-pack`,
+        headers: { cookie: fixture.cookie },
+        payload: { ...input, draft, expectedContentHash: recoveryPackContentHash(draft) },
+      });
+      expect(response.statusCode, response.body).toBe(409);
+      expect(response.json().error.code).toBe("CONFLICT");
+      expect(
+        (
+          await fixture.app.inject({
+            method: "GET",
+            url: "/v1/recovery-packs",
+            headers: { cookie: fixture.cookie },
+          })
+        ).json().packs,
+      ).toEqual([]);
+      // Rejection must not reserve the creation receipt or block the reviewed proposal.
+      const valid = await fixture.app.inject({
+        method: "POST",
+        url: `/v1/authoring/jobs/${fixture.jobId}/apply-recovery-pack`,
+        headers: { cookie: fixture.cookie },
+        payload: input,
+      });
+      expect(valid.statusCode, valid.body).toBe(201);
+      expect(valid.json().pack.draft).toEqual(input.draft);
+      expect(fixture.generate).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it.each(["diagnostic", "card", "catalog"])(
-    "rejects invented citations in %s without echoing private content",
+    "rejects invented %s citations at creation and saved-draft approval without echoing content",
     async (kind) => {
       const fixture = await setup();
       const input = creation(fixture.proposal);
@@ -347,8 +387,30 @@ describe("source-assisted Recovery Packs", () => {
           expectedContentHash: recoveryPackContentHash(content),
         },
       });
-      expect(response.statusCode, response.body).toBe(422);
+      expect(response.statusCode, response.body).toBe(409);
       expect(response.body).not.toContain(citations[0]!.excerpt);
+      const { pack } = await create(fixture);
+      const saved = await fixture.app.inject({
+        method: "PUT",
+        url: `/v1/recovery-packs/${pack.id}/draft`,
+        headers: { cookie: fixture.cookie },
+        payload: {
+          draft: content,
+          expectedRevision: pack.draftRevision,
+          mutationId: randomUUID(),
+        },
+      });
+      expect(saved.statusCode, saved.body).toBe(200);
+      const edited = saved.json<{ pack: RecoveryPackRecord }>().pack;
+      const reviewed = await fixture.app.inject({
+        method: "POST",
+        url: `/v1/recovery-packs/${pack.id}/source-review`,
+        headers: { cookie: fixture.cookie },
+        payload: approval(edited),
+      });
+      expect(reviewed.statusCode, reviewed.body).toBe(422);
+      expect(reviewed.body).not.toContain(citations[0]!.excerpt);
+      expect((await publish(fixture, edited)).statusCode).toBe(409);
     },
   );
 

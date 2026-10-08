@@ -194,6 +194,45 @@ async function sourcePackWorkflow(page: Page) {
   await citationCheck.press("Space");
   await expect(approve).toBeEnabled();
 
+  async function editUnrelatedSourceForm(approved: boolean) {
+    const phase = approved ? "after approval" : "before approval";
+    const edits = [
+      () => assistant.getByLabel("Source name").fill(`Next source ${phase}`),
+      () => assistant.getByLabel("Trusted source text").fill(`${sourceText} Prepared ${phase}.`),
+      () => assistant.getByLabel("Upload a private file", { exact: true }).check(),
+      () =>
+        assistant.getByLabel("Private source file").setInputFiles({
+          name: "next-source.pdf",
+          mimeType: "application/pdf",
+          buffer: Buffer.from("An unrelated source selected for a future proposal."),
+        }),
+      () => assistant.getByLabel("Paste text", { exact: true }).check(),
+    ];
+    for (const edit of edits) {
+      await edit();
+      await expect(contentCheck).toBeChecked();
+      await expect(citationCheck).toBeChecked();
+      await expect(approve).toBeEnabled();
+      if (approved) await expect(publish).toBeEnabled();
+      else await expect(publish).toBeDisabled();
+      await expect(page.getByLabel("Title", { exact: true })).toHaveValue(title);
+      await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeDisabled();
+    }
+    // Upload changes still discard the old source preview, independently of the
+    // selected saved Pack's checks, content, and approval.
+    await expect(
+      article.getByRole("heading", { name: "Source Pack proposal", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      article.getByRole("button", { name: "Create source Pack draft", exact: true }),
+    ).toHaveCount(0);
+  }
+  await editUnrelatedSourceForm(false);
+  await article.getByRole("button", { name: "Review Pack source proposal" }).click();
+  await expect(
+    article.getByRole("heading", { name: "Source Pack proposal", exact: true }),
+  ).toBeVisible();
+
   const approvalBodies: string[] = [];
   let loseApprovalAcknowledgement = true;
   await page.route(`**/v1/recovery-packs/${createdPack.id}/source-review`, async (route) => {
@@ -218,7 +257,14 @@ async function sourcePackWorkflow(page: Page) {
   expect(approvalBodies[0]).toBe(approvalBodies[1]);
   await expect(publish).toBeEnabled();
   const stillDraft = await page.request.get(`${apiUrl}/v1/recovery-packs/${createdPack.id}`);
-  expect((await stillDraft.json()).pack.currentVersionId).toBeNull();
+  const savedApprovedPack = (await stillDraft.json()).pack;
+  expect(savedApprovedPack.currentVersionId).toBeNull();
+  await contentCheck.check();
+  await citationCheck.check();
+  await editUnrelatedSourceForm(true);
+  await expect(review.getByRole("status")).toContainText("has content and citation approval");
+  const unchangedDraft = await page.request.get(`${apiUrl}/v1/recovery-packs/${createdPack.id}`);
+  expect((await unchangedDraft.json()).pack).toEqual(savedApprovedPack);
 
   // Even reverting an unsaved edit clears the local review checks and approval affordance.
   await page.getByLabel("Title", { exact: true }).fill(`${title} edit`);

@@ -154,6 +154,7 @@ export async function registerRecoveryPackSourceRoutes(
         if (!result) return;
         if (
           input.sourceOutputHash !== result.proposal.sourceOutputHash ||
+          input.expectedContentHash !== result.proposal.contentHash ||
           input.expectedContentHash !== recoveryPackContentHash(input.draft)
         )
           return apiError(

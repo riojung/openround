@@ -494,7 +494,6 @@ function PackLibrary() {
                         );
                       }
                     },
-                    onSourceChanged: invalidateSourceReview,
                   }}
                 />
                 <h3>Create from published material</h3>
@@ -505,7 +504,6 @@ function PackLibrary() {
                     value={sourceId}
                     disabled={Boolean(busy)}
                     onChange={(event) => {
-                      invalidateSourceReview();
                       setSourceId(event.target.value);
                     }}
                   >
@@ -526,7 +524,6 @@ function PackLibrary() {
                     value={sourceQuestionId}
                     disabled={Boolean(busy) || !currentSource}
                     onChange={(event) => {
-                      invalidateSourceReview();
                       setSourceQuestionId(event.target.value);
                     }}
                   >
