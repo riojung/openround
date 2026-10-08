@@ -72,7 +72,7 @@ describe("staging environment protection", () => {
 
   it("uses only a GET and fails closed on missing or malformed API responses", async () => {
     const token = "test-token";
-    const githubRepository = "riojung/openround";
+    const githubRepository = "riojung/pollingpops";
     const fetchImpl = vi.fn(
       async () => new Response(JSON.stringify(protectedEnvironment), { status: 200 }),
     );
@@ -81,7 +81,7 @@ describe("staging environment protection", () => {
       await main({ token, githubRepository, fetchImpl });
       expect(fetchImpl).toHaveBeenCalledOnce();
       expect(fetchImpl.mock.calls[0]?.[0]).toBe(
-        "https://api.github.com/repos/riojung/openround/environments/single-vm-staging",
+        "https://api.github.com/repos/riojung/pollingpops/environments/single-vm-staging",
       );
       expect(fetchImpl.mock.calls[0]?.[1]).toMatchObject({
         method: "GET",
@@ -119,6 +119,9 @@ describe("staging environment protection", () => {
       }),
     ).rejects.toThrow();
     await expect(main({ token, githubRepository: "someone/else", fetchImpl })).rejects.toThrow(
+      "reviewed repository",
+    );
+    await expect(main({ token, githubRepository: "riojung/openround", fetchImpl })).rejects.toThrow(
       "reviewed repository",
     );
     await expect(main({ token: "", githubRepository, fetchImpl })).rejects.toThrow(

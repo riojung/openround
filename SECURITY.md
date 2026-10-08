@@ -10,7 +10,7 @@ and subscribe to repository security advisories.
 ## Reporting a vulnerability
 
 Do not open a public issue for a suspected vulnerability. Report it through
-[GitHub private vulnerability reporting](https://github.com/riojung/openround/security/advisories/new)
+[GitHub private vulnerability reporting](https://github.com/riojung/pollingpops/security/advisories/new)
 so maintainers can investigate and coordinate a fix before disclosure. Include the affected
 version or commit, reproduction steps, impact, and any suggested remediation. Polling Pops is a
 pre-release project and does not currently promise a response or remediation SLA.

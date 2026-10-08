@@ -11,7 +11,7 @@ export default defineConfig({
   timeout: 10 * 60_000,
   retries: 0,
   reporter: "list",
-  outputDir: "artifacts/openround-demo/playwright",
+  outputDir: "artifacts/pollingpops-demo/playwright",
   use: {
     baseURL: `http://127.0.0.1:${demoWebPort}`,
     trace: "retain-on-failure",

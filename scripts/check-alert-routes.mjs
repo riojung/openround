@@ -14,9 +14,9 @@ const run = (...args) =>
   );
 const singleVmCommand = [
   "umask 077",
-  "printf '%s' 'https://paging.example.invalid/page' > /run/openround/paging-url",
-  "printf '%s' 'https://paging.example.invalid/warning' > /run/openround/warning-url",
-  "printf '%s' 'https://paging.example.invalid/ticket' > /run/openround/ticket-url",
+  "printf '%s' 'https://paging.example.invalid/page' > /run/pollingpops/paging-url",
+  "printf '%s' 'https://paging.example.invalid/warning' > /run/pollingpops/warning-url",
+  "printf '%s' 'https://paging.example.invalid/ticket' > /run/pollingpops/ticket-url",
   'exec /bin/amtool "$@"',
 ].join("\n");
 const runSingleVm = (...args) =>
@@ -26,7 +26,7 @@ const runSingleVm = (...args) =>
       "run",
       "--rm",
       "--tmpfs",
-      "/run/openround:rw,noexec,nosuid,size=1m,mode=0700,uid=65534,gid=65534",
+      "/run/pollingpops:rw,noexec,nosuid,size=1m,mode=0700,uid=65534,gid=65534",
       "--volume",
       mount,
       "--entrypoint",
@@ -46,7 +46,7 @@ execFileSync(
     "run",
     "--rm",
     "--tmpfs",
-    "/run/openround:rw,noexec,nosuid,size=1m,mode=0700,uid=65534,gid=65534",
+    "/run/pollingpops:rw,noexec,nosuid,size=1m,mode=0700,uid=65534,gid=65534",
     "--volume",
     `${process.cwd()}/infra/observability/prometheus.single-vm.yml:/etc/prometheus/prometheus.yml.tmpl:ro`,
     "--volume",
@@ -55,7 +55,7 @@ execFileSync(
     "/bin/sh",
     prometheusImage,
     "-ec",
-    "printf '%s' token > /run/openround/metrics-token; sed 's/__OPENROUND_DEPLOYMENT__/staging/g' /etc/prometheus/prometheus.yml.tmpl > /run/openround/prometheus.yml; grep -q 'deployment: staging' /run/openround/prometheus.yml; ! grep -q '__OPENROUND_DEPLOYMENT__' /run/openround/prometheus.yml; exec /bin/promtool check config /run/openround/prometheus.yml",
+    "printf '%s' token > /run/pollingpops/metrics-token; sed 's/__OPENROUND_DEPLOYMENT__/staging/g' /etc/prometheus/prometheus.yml.tmpl > /run/pollingpops/prometheus.yml; grep -q 'deployment: staging' /run/pollingpops/prometheus.yml; ! grep -q '__OPENROUND_DEPLOYMENT__' /run/pollingpops/prometheus.yml; exec /bin/promtool check config /run/pollingpops/prometheus.yml",
   ],
   { stdio: "inherit" },
 );

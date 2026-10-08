@@ -57,7 +57,7 @@ jobs:
           pnpm test:collector-config
       - name: Validate provisioned Grafana dashboard JSON
         run: >-
-          node -e "JSON.parse(require('node:fs').readFileSync('infra/observability/grafana/dashboards/openround-overview.json', 'utf8'))"
+          node -e "JSON.parse(require('node:fs').readFileSync('infra/observability/grafana/dashboards/pollingpops-overview.json', 'utf8'))"
 
   postgres-migration:
     runs-on: ubuntu-26.04

@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 const baseURL = "http://127.0.0.1:3200";
-const outputDirectory = path.resolve("artifacts/openround-demo/raw");
+const outputDirectory = path.resolve("artifacts/pollingpops-demo/raw");
 const temporaryVideoDirectory = path.join(outputDirectory, "tmp");
 
 type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;

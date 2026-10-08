@@ -95,7 +95,7 @@ services:
         mc alias set local http://minio:9000 openround change-this-local-secret
         mc mb --ignore-existing local/openround-media
         mc anonymous set none local/openround-media
-        cat > /tmp/openround-media-lifecycle.json <<EOF
+        cat > /tmp/pollingpops-media-lifecycle.json <<EOF
         {
           "Rules": [
             {
@@ -120,7 +120,7 @@ services:
           ]
         }
         EOF
-        mc ilm rule import local/openround-media < /tmp/openround-media-lifecycle.json
+        mc ilm rule import local/openround-media < /tmp/pollingpops-media-lifecycle.json
     restart: "no"
 
   mailpit:

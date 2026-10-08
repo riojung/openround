@@ -78,16 +78,16 @@ services:
       - -ec
       - |
         umask 077
-        printf '%s' "$$OPENROUND_METRICS_TOKEN" > /run/openround/metrics-token
+        printf '%s' "$$OPENROUND_METRICS_TOKEN" > /run/pollingpops/metrics-token
         case "$$OPENROUND_DEPLOYMENT" in
           ""|*[!A-Za-z0-9._-]*) echo "Invalid OPENROUND_DEPLOYMENT" >&2; exit 64 ;;
         esac
         sed "s/__OPENROUND_DEPLOYMENT__/$$OPENROUND_DEPLOYMENT/g" \
-          /etc/prometheus/prometheus.yml.tmpl > /run/openround/prometheus.yml
+          /etc/prometheus/prometheus.yml.tmpl > /run/pollingpops/prometheus.yml
         exec /bin/prometheus "$$@"
       - --
     command:
-      - --config.file=/run/openround/prometheus.yml
+      - --config.file=/run/pollingpops/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=${OPENROUND_PROMETHEUS_RETENTION:-15d}
     depends_on:
@@ -113,7 +113,7 @@ services:
     cap_drop:
       - ALL
     tmpfs:
-      - /run/openround:size=1m,mode=0700,uid=65534,gid=65534
+      - /run/pollingpops:size=1m,mode=0700,uid=65534,gid=65534
       - /tmp:size=64m,mode=1777
     cpus: ${OPENROUND_PROMETHEUS_CPUS:-0.5}
     mem_limit: ${OPENROUND_PROMETHEUS_MEMORY_LIMIT:-768m}
@@ -134,9 +134,9 @@ services:
       - -ec
       - |
         umask 077
-        printf '%s' "$$OPENROUND_PAGING_WEBHOOK_URL" > /run/openround/paging-url
-        printf '%s' "$$OPENROUND_WARNING_WEBHOOK_URL" > /run/openround/warning-url
-        printf '%s' "$$OPENROUND_TICKET_WEBHOOK_URL" > /run/openround/ticket-url
+        printf '%s' "$$OPENROUND_PAGING_WEBHOOK_URL" > /run/pollingpops/paging-url
+        printf '%s' "$$OPENROUND_WARNING_WEBHOOK_URL" > /run/pollingpops/warning-url
+        printf '%s' "$$OPENROUND_TICKET_WEBHOOK_URL" > /run/pollingpops/ticket-url
         exec /bin/alertmanager "$$@"
       - --
     command:
@@ -161,7 +161,7 @@ services:
     cap_drop:
       - ALL
     tmpfs:
-      - /run/openround:size=1m,mode=0700,uid=65534,gid=65534
+      - /run/pollingpops:size=1m,mode=0700,uid=65534,gid=65534
       - /tmp:size=64m,mode=1777
     cpus: ${OPENROUND_ALERTMANAGER_CPUS:-0.25}
     mem_limit: ${OPENROUND_ALERTMANAGER_MEMORY_LIMIT:-256m}

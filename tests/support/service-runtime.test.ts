@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -119,6 +119,37 @@ async function fakeDocker() {
 }
 
 describe("Polling Pops development service", () => {
+  it.each(["service", "product-build", "deploy"])(
+    "runs the %s wrapper through a legacy checkout alias",
+    async (name) => {
+      const directory = await mkdtemp(join(tmpdir(), "polling-pops-checkout-alias-"));
+      fixtures.push(directory);
+      const alias = join(directory, "legacy checkout");
+      await symlink(root, alias, "dir");
+      const result = await run("bash", [join(alias, "scripts", `${name}.sh`), "--help"], {
+        cwd: directory,
+        capture: true,
+      });
+      expect(result.stdout).toContain("Usage:");
+      expect(result.stderr).toBe("");
+    },
+  );
+
+  it("executes a service dry run through a legacy checkout alias", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "polling-pops-checkout-alias-"));
+    fixtures.push(directory);
+    const alias = join(directory, "legacy checkout");
+    await symlink(root, alias, "dir");
+    const result = await run(
+      "bash",
+      [join(alias, "scripts/service.sh"), "development", "status", "--dry-run"],
+      { cwd: directory, capture: true },
+    );
+    expect(result.stdout).toContain(
+      "docker compose --project-name openround --file compose.yaml ps",
+    );
+  });
+
   it("fails before Compose changes services when the daemon is unavailable", async () => {
     const fixture = await fakeDocker();
     await expect(

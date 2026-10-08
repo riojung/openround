@@ -7,7 +7,7 @@ artifact_dir="$repo_dir/artifacts/onboarding-guides"
 public_dir="$repo_dir/apps/web/public/guides"
 ffmpeg_bin="${OPENROUND_FFMPEG:-}"
 ffprobe_bin="${OPENROUND_FFPROBE:-}"
-edge_tts_bin="${OPENROUND_EDGE_TTS:-/tmp/openround-voice-tools/bin/edge-tts}"
+edge_tts_bin="${OPENROUND_EDGE_TTS:-/tmp/pollingpops-voice-tools/bin/edge-tts}"
 presenter_voice="${OPENROUND_VOICE:-en-US-AvaMultilingualNeural}"
 
 if [[ -z "$ffmpeg_bin" ]]; then
@@ -32,8 +32,8 @@ fi
 
 if [[ ! -x "$edge_tts_bin" ]]; then
   echo "The neural voice renderer is missing. Install it with:" >&2
-  echo "  python3 -m venv /tmp/openround-voice-tools" >&2
-  echo "  /tmp/openround-voice-tools/bin/pip install edge-tts" >&2
+  echo "  python3 -m venv /tmp/pollingpops-voice-tools" >&2
+  echo "  /tmp/pollingpops-voice-tools/bin/pip install edge-tts" >&2
   exit 1
 fi
 

@@ -78,7 +78,7 @@ acceptance manifest URL and checksum must be the `downloadUrl` and `digest` of t
     "decision": "accepted"
   },
   "manifest": {
-    "url": "https://github.com/riojung/openround/releases/download/v0.9.0/SHA256SUMS",
+    "url": "https://github.com/riojung/pollingpops/releases/download/v0.9.0/SHA256SUMS",
     "sha256": "sha256:<SHA-256 of the exact downloaded SHA256SUMS bytes>"
   }
 },
@@ -89,7 +89,7 @@ acceptance manifest URL and checksum must be the `downloadUrl` and `digest` of t
   "buildId": "<full tagged commit ID>",
   "githubRelease": {
     "id": 123456789,
-    "apiUrl": "https://api.github.com/repos/riojung/openround/releases/123456789",
+    "apiUrl": "https://api.github.com/repos/riojung/pollingpops/releases/123456789",
     "htmlUrl": "<exact GitHub API html_url>",
     "targetCommitish": "<full tagged commit ID>",
     "draft": true,
@@ -106,8 +106,8 @@ acceptance manifest URL and checksum must be the `downloadUrl` and `digest` of t
       "name": "SHA256SUMS",
       "size": 1234,
       "digest": "sha256:<SHA-256 of the exact SHA256SUMS bytes>",
-      "apiUrl": "https://api.github.com/repos/riojung/openround/releases/assets/123456790",
-      "downloadUrl": "https://github.com/riojung/openround/releases/download/v0.9.0/SHA256SUMS"
+      "apiUrl": "https://api.github.com/repos/riojung/pollingpops/releases/assets/123456790",
+      "downloadUrl": "https://github.com/riojung/pollingpops/releases/download/v0.9.0/SHA256SUMS"
     }
   ]
 }

@@ -62,7 +62,7 @@ such as Round, Presentation, Assignment, Recovery Pack, and Results retain their
 
 This is a public identity update. Existing `@openround/*` packages, environment variables,
 cookies, browser resume keys, database names, migration checksums, API paths, export
-format discriminators, QTI extension keys, metrics, and registry/repository locations
+format discriminators, QTI extension keys, metrics, and registry image locations
 remain compatible. Download filenames use `polling-pops-`; native JSON still accepts and
 emits the established `openround` format identifiers. Do not bulk-rename those identifiers.
 
@@ -72,8 +72,13 @@ older images must not serve newly created Candy Pop content during a mixed-versi
 
 The original copyright attribution is preserved in LICENSE and NOTICE. SMTP sender
 display names configured by an operator override the new default; update EMAIL_FROM
-when promoting an existing deployment. Domains, GitHub repository names, image registry
-paths, and DNS are separate operator changes, not prerequisites for this application update.
+when promoting an existing deployment. The canonical GitHub repository is now
+`riojung/pollingpops`, and new clones use the `pollingpops` directory. Repository links,
+operator API calls, and new workflow signing identities use that name. Previously signed
+release records keep their original identities; verification accepts only the explicitly
+trusted old/new repository pair. Registry image paths and DNS are separate operator changes.
+See the [repository rename guide](runbooks/repository-rename.md) for preserved identifiers,
+checkout moves, and existing deployment roots.
 
 Local Compose application image tags are `polling-pops-server:development` and
 `polling-pops-web:development`. The Compose project name remains `openround` to preserve

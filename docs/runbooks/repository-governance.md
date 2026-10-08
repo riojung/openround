@@ -6,7 +6,7 @@ evidence that the rules are active.
 
 ## Current rollout state — 2026-09-19
 
-The repository has a [disabled validation ruleset](https://github.com/riojung/openround/rules/23705684)
+The repository has a [disabled validation ruleset](https://github.com/riojung/pollingpops/rules/23705684)
 with the exact checks and pull-request-only owner break-glass path below. Secret scanning, push
 protection, Dependabot alerts/security updates, and private vulnerability reporting are enabled.
 The ruleset must remain disabled until a second human collaborator with write access accepts the
@@ -127,7 +127,7 @@ jq -e '
 ' .github/rulesets/release-tags.json
 test "$(gh api users/riojung --jq .id)" = \
   "$(jq -r '.bypass_actors[0].actor_id' .github/rulesets/release-tags.json)"
-gh api --method POST repos/riojung/openround/rulesets \
+gh api --method POST repos/riojung/pollingpops/rulesets \
   --input .github/rulesets/release-tags.json
 
 jq -e '
@@ -140,7 +140,7 @@ jq -e '
   }]) and
   .bypass_actors == []
 ' .github/rulesets/release-tag-immutability.json
-gh api --method POST repos/riojung/openround/rulesets \
+gh api --method POST repos/riojung/pollingpops/rulesets \
   --input .github/rulesets/release-tag-immutability.json
 ```
 

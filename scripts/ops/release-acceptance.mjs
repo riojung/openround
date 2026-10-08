@@ -12,7 +12,9 @@ const RELEASE_TAG_PATTERN = new RegExp(
   String.raw`^v${SEMVER_NUMERIC_IDENTIFIER}\.${SEMVER_NUMERIC_IDENTIFIER}\.${SEMVER_NUMERIC_IDENTIFIER}(?:-${SEMVER_PRERELEASE_IDENTIFIER}(?:\.${SEMVER_PRERELEASE_IDENTIFIER})*)?$`,
 );
 const SIGNED_RELEASE_GATE_ID = "signed-release";
-const TRUSTED_REPOSITORY = "riojung/openround";
+const TRUSTED_REPOSITORY = "riojung/pollingpops";
+// Historical signed artifacts retain their original repository identity.
+const LEGACY_TRUSTED_REPOSITORY = "riojung/openround";
 const SHA256_SUMS_ASSET = "SHA256SUMS";
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 
@@ -70,11 +72,37 @@ function assertTrustedGithubUrl(value, expected, label) {
     url.password !== "" ||
     url.search !== "" ||
     url.hash !== "" ||
+    value !== url.href ||
     (expected !== undefined && value !== expected)
   ) {
     fail(`${label} must be a trusted GitHub URL`);
   }
   return url;
+}
+
+function releaseBindingRepository(binding) {
+  const repository = [TRUSTED_REPOSITORY, LEGACY_TRUSTED_REPOSITORY].find(
+    (candidate) =>
+      binding.githubRelease.apiUrl ===
+      `https://api.github.com/repos/${candidate}/releases/${binding.githubRelease.id}`,
+  );
+  if (!repository) fail("releaseBinding.githubRelease.apiUrl must be a trusted GitHub URL");
+  return repository;
+}
+
+function liveRepositoryUrls(repository, suffix, api = false) {
+  const repositories =
+    repository === LEGACY_TRUSTED_REPOSITORY
+      ? [LEGACY_TRUSTED_REPOSITORY, TRUSTED_REPOSITORY]
+      : [TRUSTED_REPOSITORY];
+  const prefix = api ? "https://api.github.com/repos/" : "https://github.com/";
+  return repositories.map((candidate) => `${prefix}${candidate}${suffix}`);
+}
+
+export function resolveReleaseCertificateIdentity(binding) {
+  validateReleaseBinding(binding);
+  const repository = releaseBindingRepository(binding);
+  return `https://github.com/${repository}/.github/workflows/release.yml@refs/tags/${binding.tag}`;
 }
 
 export function requiredReleaseAssetNames(tag) {
@@ -104,6 +132,7 @@ function validateBoundReleaseAssets(assets, binding) {
   }
 
   const ids = new Set();
+  const repository = releaseBindingRepository(binding);
   for (const asset of assets) {
     assertExactKeys(
       asset,
@@ -121,12 +150,12 @@ function validateBoundReleaseAssets(assets, binding) {
     }
     assertTrustedGithubUrl(
       asset.apiUrl,
-      `https://api.github.com/repos/${TRUSTED_REPOSITORY}/releases/assets/${asset.id}`,
+      `https://api.github.com/repos/${repository}/releases/assets/${asset.id}`,
       `releaseBinding.assets.${asset.name}.apiUrl`,
     );
     assertTrustedGithubUrl(
       asset.downloadUrl,
-      `https://github.com/${TRUSTED_REPOSITORY}/releases/download/${binding.tag}/${asset.name}`,
+      `https://github.com/${repository}/releases/download/${binding.tag}/${asset.name}`,
       `releaseBinding.assets.${asset.name}.downloadUrl`,
     );
   }
@@ -188,9 +217,10 @@ export function validateReleaseBinding(binding, expected = {}) {
     "releaseBinding.githubRelease",
   );
   assertPositiveSafeInteger(binding.githubRelease.id, "releaseBinding.githubRelease.id");
+  const repository = releaseBindingRepository(binding);
   assertTrustedGithubUrl(
     binding.githubRelease.apiUrl,
-    `https://api.github.com/repos/${TRUSTED_REPOSITORY}/releases/${binding.githubRelease.id}`,
+    `https://api.github.com/repos/${repository}/releases/${binding.githubRelease.id}`,
     "releaseBinding.githubRelease.apiUrl",
   );
   const htmlUrl = assertTrustedGithubUrl(
@@ -200,7 +230,13 @@ export function validateReleaseBinding(binding, expected = {}) {
   );
   if (
     htmlUrl.origin !== "https://github.com" ||
-    !htmlUrl.pathname.startsWith(`/${TRUSTED_REPOSITORY}/releases/`)
+    (htmlUrl.pathname !== `/${repository}/releases/tag/${binding.tag}` &&
+      !(
+        htmlUrl.pathname.startsWith(`/${repository}/releases/tag/`) &&
+        /^untagged-[A-Za-z0-9-]+$/.test(
+          htmlUrl.pathname.slice(`/${repository}/releases/tag/`.length),
+        )
+      ))
   ) {
     fail("releaseBinding.githubRelease.htmlUrl must identify the trusted GitHub release");
   }
@@ -237,11 +273,12 @@ export function validateReleaseBinding(binding, expected = {}) {
 }
 
 function validateGithubReleaseContents(release, binding) {
+  validateReleaseBinding(binding);
   assertObject(release, "GitHub release");
   const expected = binding.githubRelease;
+  const repository = releaseBindingRepository(binding);
   const comparisons = [
     [release.id, expected.id, "id"],
-    [release.url, expected.apiUrl, "API URL"],
     [release.tag_name, binding.tag, "tag"],
     [release.target_commitish, binding.buildId, "target commit"],
     [release.created_at, expected.createdAt, "creation time"],
@@ -249,15 +286,22 @@ function validateGithubReleaseContents(release, binding) {
   for (const [actual, wanted, label] of comparisons) {
     if (actual !== wanted) fail(`GitHub release ${label} does not match releaseBinding`);
   }
+  assertTrustedGithubUrl(release.url, undefined, "GitHub release API URL");
+  if (!liveRepositoryUrls(repository, `/releases/${expected.id}`, true).includes(release.url)) {
+    fail("GitHub release API URL does not match releaseBinding");
+  }
   const liveHtmlUrl = assertTrustedGithubUrl(
     release.html_url,
     undefined,
     "GitHub release HTML URL",
   );
-  const canonicalPublishedHtmlUrl = `https://github.com/${TRUSTED_REPOSITORY}/releases/tag/${binding.tag}`;
+  const boundHtmlSuffix = new URL(expected.htmlUrl).pathname.slice(`/${repository}`.length);
   if (
-    liveHtmlUrl.href !== expected.htmlUrl &&
-    !(release.draft === false && liveHtmlUrl.href === canonicalPublishedHtmlUrl)
+    !liveRepositoryUrls(repository, boundHtmlSuffix).includes(liveHtmlUrl.href) &&
+    !(
+      release.draft === false &&
+      liveRepositoryUrls(repository, `/releases/tag/${binding.tag}`).includes(liveHtmlUrl.href)
+    )
   ) {
     fail("GitHub release HTML URL does not match releaseBinding or its published tag URL");
   }
@@ -284,22 +328,31 @@ function validateGithubReleaseContents(release, binding) {
       actual?.name !== bound.name ||
       actual?.size !== bound.size ||
       actual?.digest !== bound.digest ||
-      actual?.url !== bound.apiUrl ||
+      !liveRepositoryUrls(repository, `/releases/assets/${bound.id}`, true).includes(actual?.url) ||
       actual?.state !== "uploaded"
     ) {
       fail(`GitHub release asset ${bound.name} does not match releaseBinding`);
     }
-    if (actual?.browser_download_url !== bound.downloadUrl) {
+    if (
+      !liveRepositoryUrls(repository, `/releases/download/${binding.tag}/${bound.name}`).includes(
+        actual?.browser_download_url,
+      )
+    ) {
       const liveDownloadUrl = assertTrustedGithubUrl(
         actual?.browser_download_url,
         undefined,
         `GitHub release asset ${bound.name} browser download URL`,
       );
-      const draftPrefix = `/${TRUSTED_REPOSITORY}/releases/download/untagged-`;
+      const draftSuffix = liveDownloadUrl.pathname.slice(0, -`/${bound.name}`.length);
+      const trustedDraftUrl = liveRepositoryUrls(repository, "/releases/download/").some(
+        (prefix) =>
+          liveDownloadUrl.href.startsWith(prefix) &&
+          /^untagged-[A-Za-z0-9-]+$/.test(draftSuffix.slice(new URL(prefix).pathname.length)),
+      );
       if (
         release.draft !== true ||
         liveDownloadUrl.origin !== "https://github.com" ||
-        !liveDownloadUrl.pathname.startsWith(draftPrefix) ||
+        !trustedDraftUrl ||
         !liveDownloadUrl.pathname.endsWith(`/${bound.name}`)
       ) {
         fail(`GitHub release asset ${bound.name} download URL is not trusted`);
@@ -379,6 +432,8 @@ export function validateReleaseChecksums(content, binding) {
 }
 
 export function validateReleasePreflightEvidence(preflight, binding, evidenceCandidateBuildId) {
+  validateReleaseBinding(binding);
+  const repository = releaseBindingRepository(binding);
   assertExactKeys(
     preflight,
     [
@@ -465,7 +520,7 @@ export function validateReleasePreflightEvidence(preflight, binding, evidenceCan
       run.runAttempt,
       `release preflight candidateWorkflows.${key}.runAttempt`,
     );
-    if (run.url !== `https://github.com/${TRUSTED_REPOSITORY}/actions/runs/${run.runId}`) {
+    if (run.url !== `https://github.com/${repository}/actions/runs/${run.runId}`) {
       fail(`release preflight candidateWorkflows.${key}.url is not the trusted workflow run`);
     }
     assertIsoUtcTimestamp(run.startedAt, `release preflight candidateWorkflows.${key}.startedAt`);

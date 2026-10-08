@@ -30,10 +30,10 @@ also deferred; their original captions and transcripts remain audio-matched.
 
 At the 2026-09-25 transition checkpoint, Phase 0 repository implementation was merged through
 `3aee4d9`. CI, Security, and Production-path smoke pass on `main` after
-[PR #40](https://github.com/riojung/openround/pull/40) repaired the MinIO image path, upgrade and
-rollback ownership, and browser media smoke. [PR #42](https://github.com/riojung/openround/pull/42)
+[PR #40](https://github.com/riojung/pollingpops/pull/40) repaired the MinIO image path, upgrade and
+rollback ownership, and browser media smoke. [PR #42](https://github.com/riojung/pollingpops/pull/42)
 completed Presentation rolling-upgrade sequence compatibility, and
-[PR #43](https://github.com/riojung/openround/pull/43) added the research Prototype Lab and the next
+[PR #43](https://github.com/riojung/pollingpops/pull/43) added the research Prototype Lab and the next
 behavior-preserving Presentation refactor slice. The release ledger therefore records the source-CI
 and local-production-smoke gates complete.
 The Phase 0 exit remains open with thirteen gates pending. Most require external or human evidence.

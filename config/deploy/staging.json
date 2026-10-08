@@ -2,17 +2,17 @@
   "schemaVersion": 1,
   "environment": "staging",
   "deploymentMode": "single-vm",
-  "publicWebUrl": "https://staging.openround.example",
-  "publicApiUrl": "https://staging.openround.example",
-  "publicMediaUrl": "https://media-staging.openround.example",
+  "publicWebUrl": "https://staging.pollingpops.example",
+  "publicApiUrl": "https://staging.pollingpops.example",
+  "publicMediaUrl": "https://media-staging.pollingpops.example",
   "imageRepository": "ghcr.io/riojung/openround/openround",
   "imagePlatform": "linux/amd64",
   "billingMode": "disabled",
   "singleVm": {
-    "host": "staging-vm.openround.example",
+    "host": "staging-vm.pollingpops.example",
     "port": 22,
     "user": "openround",
-    "deployPath": "/opt/openround/staging",
+    "deployPath": "/opt/pollingpops/staging",
     "composeFiles": ["compose.single-vm.yaml", "compose.single-vm.observability.yaml"],
     "deploymentFiles": [
       "infra/single-vm/Caddyfile",
@@ -32,6 +32,6 @@
   },
   "requireSigning": true,
   "requireReadinessGate": false,
-  "cosignIdentityRegexp": "^https://github\\.com/riojung/openround/\\.github/workflows/staging-images\\.yml@refs/heads/main$",
+  "cosignIdentityRegexp": "^https://github\\.com/riojung/(pollingpops|openround)/\\.github/workflows/staging-images\\.yml@refs/heads/main$",
   "cosignOidcIssuer": "https://token.actions.githubusercontent.com"
 }
