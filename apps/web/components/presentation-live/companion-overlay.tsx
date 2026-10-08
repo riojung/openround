@@ -1,16 +1,18 @@
 "use client";
 
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import { useLocale } from "../locale-provider";
 import styles from "./companion.module.css";
 
 export function CompanionOverlay({
   title,
   onClose,
+  returnFocusRef,
   children,
 }: {
   title: string;
   onClose: () => void;
+  returnFocusRef?: RefObject<HTMLElement | null>;
   children: ReactNode;
 }) {
   const { t } = useLocale();
@@ -23,9 +25,15 @@ export function CompanionOverlay({
     closeButtonRef.current?.focus();
     return () => {
       dialog?.close();
-      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+      if (
+        previousFocus instanceof HTMLElement &&
+        previousFocus.isConnected &&
+        !(previousFocus instanceof HTMLButtonElement && previousFocus.disabled)
+      )
+        previousFocus.focus();
+      else returnFocusRef?.current?.focus();
     };
-  }, []);
+  }, [returnFocusRef]);
 
   return (
     <dialog

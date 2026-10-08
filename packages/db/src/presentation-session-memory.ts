@@ -12,6 +12,7 @@ import {
   responseWindowOpen,
   transitionWindow,
   transitionRecoveryPackIntervention,
+  transitionContent,
 } from "./presentation-session-rules.js";
 import {
   comparePresentationLeaderboardEntries,
@@ -341,10 +342,12 @@ export class MemoryPresentationSessionRepository
     if (intervention !== null && !session.recoveryPackCardsEnabled) {
       throw new Error("Recovery Pack cards were not enabled when this session was created");
     }
-    const window = transitionWindow(session, input, now);
+    const content = transitionContent(session, input);
+    const window = transitionWindow({ ...session, content }, input, now);
     const becomingFinished = session.status !== "finished" && input.status === "finished";
     const updated: PresentationSessionRecord = {
       ...session,
+      content,
       phase: input.phase,
       currentBlockIndex: input.currentBlockIndex,
       status: input.status,

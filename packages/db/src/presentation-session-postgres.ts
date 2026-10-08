@@ -19,6 +19,7 @@ import {
   responseWindowOpen,
   transitionWindow,
   transitionRecoveryPackIntervention,
+  transitionContent,
 } from "./presentation-session-rules.js";
 import {
   PresentationSessionConflictError,
@@ -441,13 +442,15 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
     if (intervention !== null && !session.recoveryPackCardsEnabled) {
       throw new Error("Recovery Pack cards were not enabled when this session was created");
     }
-    const window = transitionWindow(session, input, occurredAt);
+    const content = transitionContent(session, input);
+    const window = transitionWindow({ ...session, content }, input, occurredAt);
     await client.query(
       `UPDATE presentation_live_sessions
        SET phase = $3, current_block_index = $4, status = $5, revision = revision + 1,
            event_seq = event_seq + 1, updated_at = $6,
            question_opened_at = $7, question_closes_at = $8,
            recovery_pack_intervention = $10,
+           content_snapshot = COALESCE($11::jsonb, content_snapshot),
            finished_at = CASE
              WHEN status <> 'finished' AND $5 = 'finished' THEN $6
              ELSE finished_at
@@ -468,6 +471,7 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
         window.questionClosesAt,
         input.retentionExpiresAt ?? null,
         intervention ? JSON.stringify(intervention) : null,
+        input.content === undefined ? null : JSON.stringify(content),
       ],
     );
     const current = await client.query(

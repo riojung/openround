@@ -16,6 +16,7 @@ import {
   recoveryPackRecord,
 } from "./support/recovery-pack-conformance.js";
 import { expectRecoveryPackUpdateMediaConformance } from "./support/recovery-pack-update-media-conformance.js";
+import { expectRecoveryPackLiveMetadataConformance } from "./support/recovery-pack-live-metadata-conformance.js";
 import {
   createExpiringSourceJob,
   expectRecoveryPackSourceConformance,
@@ -37,6 +38,15 @@ async function creator(repository: MemoryRepository) {
 }
 
 describe("Recovery Pack repositories", () => {
+  it("keeps memory on the shared published Pack metadata catalogue contract", async () => {
+    await expectRecoveryPackLiveMetadataConformance({
+      repository: new MemoryRepository(),
+      workspaceId: randomUUID(),
+      otherWorkspaceId: randomUUID(),
+      editorId: randomUUID(),
+      otherEditorId: randomUUID(),
+    });
+  });
   it("preserves source provenance, exact approval retries, citation validation and publish fencing", async () => {
     await expectRecoveryPackSourceConformance({
       repository: createRecoveryPackRepository(new MemoryRepository()),

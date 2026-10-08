@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import {
   PresentationCompanionSnapshotSchema,
+  PresentationCompanionRecoveryPackCatalogSchema,
   PresentationReportEnvelopeSchema,
   PresentationReportSchema,
   PresentationReportWithSessionContextEnvelopeSchema,
@@ -23,6 +24,7 @@ import {
   type PresentationRepository,
   type PresentationSessionRecord,
   type PresentationSessionRepository,
+  type RecoveryPackRepository,
   type Repository,
 } from "@openround/db";
 import type { AppConfig } from "./config.js";
@@ -47,6 +49,7 @@ import {
   type PresentationProjectionData,
 } from "./presentation-session-projections.js";
 import type { StorageService } from "./storage.js";
+import { presentationCanInsertRecoveryPack } from "./presentation-live-recovery-packs.js";
 
 const PRESENTATION_SESSION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
 const PRESENTATION_COMPANION_PASS_LIFETIME_MS = 60 * 60 * 1_000;
@@ -112,6 +115,7 @@ export class PresentationSessionService {
       repository: Repository;
       presentations: PresentationRepository;
       sessions: PresentationSessionRepository;
+      packs?: RecoveryPackRepository;
       config: Pick<
         AppConfig,
         | "COMMUNITY_MODE"
@@ -123,12 +127,15 @@ export class PresentationSessionService {
       productEvents?: ProductEventDispatcher;
       productEventsEnabled?: (workspaceId: string) => boolean;
       recoveryPackCardsEnabled?: (workspaceId: string) => boolean;
+      recoveryPackLiveInsertionEnabled?: (workspaceId: string) => boolean;
     },
   ) {
     this.liveMutations = new PresentationLiveMutationService({
       sessions: dependencies.sessions,
       repository: dependencies.repository,
       config: dependencies.config,
+      packs: dependencies.packs,
+      recoveryPackLiveInsertionEnabled: dependencies.recoveryPackLiveInsertionEnabled,
       participantTokenHash: presentationParticipantTokenHash,
       sessionExpired: presentationLiveSessionExpired,
       authorizeHostCredential: (sessionId, token) =>
@@ -523,6 +530,28 @@ export class PresentationSessionService {
   ): Promise<PresentationCompanionSnapshot> {
     const synchronized = await this.sync({ sessionId, projection: "companion", companionToken });
     return PresentationCompanionSnapshotSchema.parse(synchronized.snapshot);
+  }
+
+  async getCompanionRecoveryPacks(sessionId: string, companionToken: string) {
+    const session = await this.authorizeCredential(sessionId, companionToken, "companion");
+    if (
+      !this.dependencies.packs ||
+      session.status !== "active" ||
+      !session.recoveryPackCardsEnabled ||
+      !this.dependencies.recoveryPackLiveInsertionEnabled?.(session.workspaceId)
+    ) {
+      throw new PresentationSessionServiceError(
+        404,
+        "NOT_FOUND",
+        "Live Recovery Pack insertion is not enabled in this workspace",
+      );
+    }
+    return PresentationCompanionRecoveryPackCatalogSchema.parse({
+      packs: await this.dependencies.packs.listPublishedRecoveryPackMetadata(
+        session.workspaceId,
+        100,
+      ),
+    });
   }
 
   async getHostSnapshot(workspaceId: string, sessionId: string) {
@@ -961,7 +990,16 @@ export class PresentationSessionService {
     connectedParticipantIds: ReadonlySet<string> = new Set(),
   ): Promise<PresentationCompanionSnapshot> {
     const data = projectionData ?? (await this.projectionData(session));
-    return buildPresentationCompanionSnapshot(session, data, connectedParticipantIds);
+    return buildPresentationCompanionSnapshot(
+      session,
+      data,
+      connectedParticipantIds,
+      Boolean(
+        this.dependencies.packs &&
+        this.dependencies.recoveryPackLiveInsertionEnabled?.(session.workspaceId) &&
+        presentationCanInsertRecoveryPack(session),
+      ),
+    );
   }
 
   private async projectionData(

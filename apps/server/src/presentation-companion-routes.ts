@@ -5,6 +5,7 @@ import {
   PresentationCompanionCommandSchema,
   PresentationCompanionPassResponseSchema,
   PresentationCompanionSnapshotSchema,
+  PresentationCompanionRecoveryPackCatalogSchema,
 } from "@openround/contracts";
 import type { CreatorContext } from "@openround/db";
 import type { AuthService } from "./auth.js";
@@ -26,7 +27,11 @@ interface PresentationCompanionRouteDependencies {
   config: AppConfig;
   service: Pick<
     PresentationSessionService,
-    "createCompanionPass" | "revokeCompanionPass" | "getCompanionSnapshot" | "companionCommand"
+    | "createCompanionPass"
+    | "revokeCompanionPass"
+    | "getCompanionSnapshot"
+    | "companionCommand"
+    | "getCompanionRecoveryPacks"
   >;
   requirePresentationWorkspace(
     workspaceId: string,
@@ -59,12 +64,12 @@ interface PresentationCompanionRouteDependencies {
 
 function presentationCompanionRateLimitKey(
   request: FastifyRequest,
-  operation: "snapshot" | "command",
+  operation: "snapshot" | "command" | "catalog",
   bearerToken: PresentationCompanionRouteDependencies["bearerToken"],
 ) {
   const body = request.body as { companionToken?: unknown } | null;
   const token =
-    operation === "snapshot"
+    operation !== "command"
       ? (bearerToken(request) ?? "invalid")
       : typeof body?.companionToken === "string"
         ? body.companionToken
@@ -90,7 +95,7 @@ export function registerPresentationCompanionRoutes(
     apiError,
     sendServiceError,
   } = dependencies;
-  const rateLimitKey = (request: FastifyRequest, operation: "snapshot" | "command") =>
+  const rateLimitKey = (request: FastifyRequest, operation: "snapshot" | "command" | "catalog") =>
     presentationCompanionRateLimitKey(request, operation, bearerToken);
 
   app.post("/v1/presentation-sessions/:id/companion-pass", async (request, reply) => {
@@ -168,6 +173,39 @@ export function registerPresentationCompanionRoutes(
             await service.getCompanionSnapshot(id, token),
           ),
         };
+      } catch (error) {
+        return sendServiceError(error, reply, request.id);
+      }
+    },
+  );
+
+  app.get(
+    "/v1/presentation-sessions/:id/companion-recovery-packs",
+    {
+      onRequest: async (_request, reply) => {
+        noStore(reply);
+      },
+      preHandler: async (request, reply) => {
+        if (!(await enforceSharedAdmission(request, reply, rateLimitKey(request, "catalog"), 30)))
+          return reply;
+      },
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+          keyGenerator: (request: FastifyRequest) => rateLimitKey(request, "catalog"),
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id } = IdParamsSchema.parse(request.params);
+      const token = bearerToken(request);
+      if (!token)
+        return apiError(reply, 401, "UNAUTHORIZED", "Companion credential required", request.id);
+      try {
+        return PresentationCompanionRecoveryPackCatalogSchema.parse(
+          await service.getCompanionRecoveryPacks(id, token),
+        );
       } catch (error) {
         return sendServiceError(error, reply, request.id);
       }

@@ -233,6 +233,7 @@ roles and entitlements; flags do not complete production or institutional readin
 | Presentation authoring                            | Professional workspace configuration plus `FEATURE_PRESENTATIONS=true`                                                                     |
 | Live Presentation creation                        | Presentation configuration plus `FEATURE_PRESENTATION_REALTIME=true` and the workspace UUID in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`     |
 | Presentation Companion foundation                 | Live Presentation configuration plus `FEATURE_PRESENTATION_COMPANION=true`; issuance remains owner/editor-only                             |
+| Companion live Recovery Pack insertion            | Companion configuration plus `FEATURE_RECOVERY_PACKS=true` and `FEATURE_RECOVERY_PACK_LIVE_CARDS=true`; create a new eligible live session |
 | Whole-room live flex timing                       | `FEATURE_LIVE_FLEX_MODE=true` and the workspace UUID in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`                                            |
 | Question Health in the professional Round builder | Professional builder configuration plus `FEATURE_QUESTION_HEALTH=true` and the workspace UUID in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`   |
 | Decision replay capture for new Round sessions    | `FEATURE_DECISION_REPLAY=true` and the workspace UUID in `EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST`                                           |
@@ -251,7 +252,19 @@ sidecar shows aggregate room health and one phase action, with the same server a
 and retry fencing as the host. Join details include the canonical join link, QR, and room code;
 results show aggregate choice counts only after reveal. **Return to deck** closes the overlay
 back to the sidecar; it does not focus a desktop slide application. Existing valid passes continue
-working if new issuance is disabled. Pack insertion and Quick Checks will follow in later slices.
+working if new issuance is disabled.
+
+For live Packs, enable Pack authoring/live cards before creating the session, then select
+**Add Recovery Pack** at a safe boundary. Choose a published text-only Pack and select
+**Insert and start Pack**. This starts its frozen diagnostic immediately without changing the
+published Presentation or Pack. After revealing responses, choose a card title and explicitly
+explain or work an example; **Continue to recheck** opens its linked recheck. The picker is not
+available during an open question, an intervention, or anywhere between a source question and its
+pending linked recheck, including intervening slides or standalone questions. A lost
+acknowledgement must be retried with the displayed retry action; it does not insert another copy.
+Published text-only snapshots continue working after source deletion or a rollout pause. Packs
+with media on any checkpoint/probe remain unsupported for live insertion until session-owned
+media retention is added. Session-only Quick Checks remain a later slice.
 
 In the professional **Library** and **Sessions** screens, workspace owners can also permanently
 delete archived content and finished or expired session history. Confirmation is required;

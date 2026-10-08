@@ -38,4 +38,27 @@ export const companionEnglishMessages = {
   "live.companion.phase.question_reveal": "Response review",
   "live.companion.phase.intervention": "Recovery intervention",
   "live.companion.phase.finished": "Presentation finished",
+  "live.companion.packs.open": "Add Recovery Pack",
+  "live.companion.packs.pickerTitle": "Published Recovery Packs",
+  "live.companion.packs.textOnly":
+    "Choose a published text-only Pack. Inserting it starts its diagnostic question now; the recheck follows the recovery intervention.",
+  "live.companion.packs.loading": "Loading published Packs…",
+  "live.companion.packs.empty": "No published text-only Packs are available.",
+  "live.companion.packs.publishedPack": "Published Recovery Pack",
+  "live.companion.packs.choosePack": "Choose a published Pack",
+  "live.companion.packs.version": "version {version}",
+  "live.companion.packs.insert": "Insert and start Pack",
+  "live.companion.packs.boundary":
+    "Pack insertion is available at an eligible pause between blocks. Confirm any pending action before inserting another Pack.",
+  "live.companion.packs.reload": "Retry loading Packs",
+  "live.companion.packs.cardActions": "Recovery Pack card actions",
+  "live.companion.packs.useCard": "Use a Recovery Pack card",
+  "live.companion.packs.cardDescription":
+    "Choose a card by title. Its content appears after the server confirms the explanation or example.",
+  "live.companion.packs.card": "Recovery Pack card",
+  "live.companion.packs.chooseCard": "Choose a card",
+  "live.companion.packs.explain": "Explain with selected card",
+  "live.companion.packs.example": "Work an example with selected card",
+  "live.companion.packs.retryInsertion": "Retry Pack insertion acknowledgement",
+  "live.companion.packs.retryCard": "Retry card action acknowledgement",
 } as const;

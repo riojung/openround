@@ -236,72 +236,103 @@ describe("Presentation companion realtime controls", () => {
     controller.stop();
   });
 
-  it("retries exactly the original advance after lost acknowledgement and newer state", async () => {
-    vi.useFakeTimers();
-    const socket = new FakeSocket();
-    const initial = companionSnapshot();
-    const controller = createPresentationRealtimeController({
-      sessionId: initial.sessionId,
-      credential: { projection: "companion", companionToken: "c".repeat(32) },
-      fetchSnapshot: async () => initial,
-      onSnapshot: () => undefined,
-      onConnectionState: () => undefined,
-      socketFactory: () => socket as unknown as Socket,
-      acknowledgementTimeoutMs: 20,
-    });
-    const recovery = createPresentationCommandRecovery<
-      PresentationCompanionSnapshot,
-      PresentationCompanionCommand
-    >({
-      execute: (command) => controller.command(command, async () => initial),
-      onState: () => undefined,
-    });
-    try {
-      controller.start();
-      sync(socket, initial);
-      await Promise.resolve();
-      const original: PresentationCompanionCommand = {
-        sessionId: initial.sessionId,
-        companionToken: "c".repeat(32),
-        commandId: randomUUID(),
-        expectedRevision: initial.revision,
-        action: "advance",
-      };
-      const attempt = recovery.run(original);
-      const rejection = expect(attempt).rejects.toMatchObject({
-        code: "PRESENTATION_COMMAND_UNCONFIRMED",
-      });
-      const emitted = socket.last("presentation.command")!;
-      const revealed = companionSnapshot({
-        phase: "question_reveal",
-        acceptingResponses: false,
-        seq: 6,
-        revision: 4,
-      });
-      socket.fire("presentation.session.updated", { payload: revealed });
-      await recovery.run({ ...original, commandId: randomUUID() });
-      expect(socket.emitted.filter(({ event }) => event === "presentation.command")).toHaveLength(
-        1,
+  it.each(["advance", "insert_recovery_pack", "start_recovery_card"] as const)(
+    "retries exactly the original %s after lost acknowledgement and newer state",
+    async (action) => {
+      vi.useFakeTimers();
+      const socket = new FakeSocket();
+      const initial = companionSnapshot(
+        action === "insert_recovery_pack"
+          ? {
+              phase: "lobby",
+              currentBlock: null,
+              currentBlockIndex: -1,
+              acceptingResponses: false,
+              canInsertRecoveryPack: true,
+            }
+          : action === "start_recovery_card"
+            ? { phase: "question_reveal", acceptingResponses: false }
+            : {},
       );
-      await vi.advanceTimersByTimeAsync(20);
-      await rejection;
-      await expect(recovery.retry()).rejects.toMatchObject({
-        code: "PRESENTATION_RECONNECT_REQUIRED",
+      const controller = createPresentationRealtimeController({
+        sessionId: initial.sessionId,
+        credential: { projection: "companion", companionToken: "c".repeat(32) },
+        fetchSnapshot: async () => initial,
+        onSnapshot: () => undefined,
+        onConnectionState: () => undefined,
+        socketFactory: () => socket as unknown as Socket,
+        acknowledgementTimeoutMs: 20,
       });
-      expect(recovery.state().pendingCommand).toEqual(original);
-      sync(socket, revealed);
-      await Promise.resolve();
-      const retry = recovery.retry();
-      expect(socket.last("presentation.command")?.payload).toBe(emitted.payload);
-      socket.last("presentation.command")!.ack?.({ data: { snapshot: revealed } });
-      await expect(retry).resolves.toEqual(revealed);
-      expect(controller.latest()?.phase).toBe("question_reveal");
-      expect(recovery.state().pendingCommand).toBeNull();
-    } finally {
-      controller.stop();
-      vi.useRealTimers();
-    }
-  });
+      const recovery = createPresentationCommandRecovery<
+        PresentationCompanionSnapshot,
+        PresentationCompanionCommand
+      >({
+        execute: (command) => controller.command(command, async () => initial),
+        onState: () => undefined,
+      });
+      try {
+        controller.start();
+        sync(socket, initial);
+        await Promise.resolve();
+        const credentials = {
+          sessionId: initial.sessionId,
+          companionToken: "c".repeat(32),
+          commandId: randomUUID(),
+          expectedRevision: initial.revision,
+        };
+        const original: PresentationCompanionCommand =
+          action === "insert_recovery_pack"
+            ? { ...credentials, action, packVersionId: randomUUID() }
+            : action === "start_recovery_card"
+              ? {
+                  ...credentials,
+                  action,
+                  recoveryPackCard: { insertionId: randomUUID(), cardId: randomUUID() },
+                  interventionType: "explain",
+                }
+              : { ...credentials, action };
+        const attempt = recovery.run(original);
+        const rejection = expect(attempt).rejects.toMatchObject({
+          code: "PRESENTATION_COMMAND_UNCONFIRMED",
+        });
+        const emitted = socket.last("presentation.command")!;
+        const revealed = companionSnapshot({
+          phase:
+            action === "insert_recovery_pack"
+              ? "question_open"
+              : action === "start_recovery_card"
+                ? "intervention"
+                : "question_reveal",
+          acceptingResponses: action === "insert_recovery_pack",
+          canInsertRecoveryPack: false,
+          seq: 6,
+          revision: 4,
+        });
+        socket.fire("presentation.session.updated", { payload: revealed });
+        await recovery.run({ ...original, commandId: randomUUID() });
+        expect(socket.emitted.filter(({ event }) => event === "presentation.command")).toHaveLength(
+          1,
+        );
+        await vi.advanceTimersByTimeAsync(20);
+        await rejection;
+        await expect(recovery.retry()).rejects.toMatchObject({
+          code: "PRESENTATION_RECONNECT_REQUIRED",
+        });
+        expect(recovery.state().pendingCommand).toEqual(original);
+        sync(socket, revealed);
+        await Promise.resolve();
+        const retry = recovery.retry();
+        expect(socket.last("presentation.command")?.payload).toBe(emitted.payload);
+        socket.last("presentation.command")!.ack?.({ data: { snapshot: revealed } });
+        await expect(retry).resolves.toEqual(revealed);
+        expect(controller.latest()?.phase).toBe(revealed.phase);
+        expect(recovery.state().pendingCommand).toBeNull();
+      } finally {
+        controller.stop();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("rejects a host acknowledgement for a companion command and accepts a companion REST fallback", async () => {
     const initial = companionSnapshot();

@@ -7,9 +7,15 @@ import {
   PresentationCompanionSnapshotSchema,
   type PresentationCompanionCommand,
   type PresentationCompanionSnapshot,
+  type RecoveryPackCardSelection,
 } from "@openround/contracts";
 import { useLocale } from "../../../../components/locale-provider";
 import { CompanionOverlay } from "../../../../components/presentation-live/companion-overlay";
+import {
+  CompanionRecoveryPackPicker,
+  CompanionRecoveryCardPicker,
+} from "../../../../components/presentation-live/companion-recovery-packs";
+import { RecoveryPackLiveCardView } from "../../../../components/recovery-pack-live-card";
 import styles from "../../../../components/presentation-live/companion.module.css";
 import { apiFetch, humanError } from "../../../../lib/api";
 import {
@@ -27,6 +33,12 @@ import {
 } from "../../../../lib/presentation-realtime";
 import { formatNumber } from "../../../../lib/i18n/format";
 import { clientUuid } from "../../../../lib/uuid";
+import { isPresentationHostPassRejection } from "../../../../lib/presentation-host-pass";
+import {
+  companionCommandRetryMessageKey,
+  fetchPresentationCompanionRecoveryPacks,
+  type CompanionRecoveryPackCatalog,
+} from "../../../../lib/presentation-companion-recovery-packs";
 
 function companionAdvanceMessageKey(snapshot: PresentationCompanionSnapshot) {
   if (snapshot.phase === "lobby") return "live.presentationSession.advance.start" as const;
@@ -72,10 +84,35 @@ export default function PresentationCompanionPage() {
   >({ busy: false, pendingCommand: null });
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
-  const [overlay, setOverlay] = useState<"join" | "results" | null>(null);
+  const [overlay, setOverlay] = useState<"join" | "results" | "packs" | null>(null);
+  const [packCatalog, setPackCatalog] = useState<CompanionRecoveryPackCatalog | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState("");
+  const catalogRequest = useRef(0);
+  const passRef = useRef(pass);
+  passRef.current = pass;
   const controllerRef =
     useRef<PresentationRealtimeController<PresentationCompanionSnapshot> | null>(null);
   const commandsRef = useRef<CompanionRecovery | null>(null);
+  const primaryButtonRef = useRef<HTMLButtonElement>(null);
+
+  const rejectPass = useCallback(
+    (rejectedToken: string) => {
+      if (passRef.current !== rejectedToken) return;
+      rejectPresentationCompanionPass(sessionStorage, id, rejectedToken);
+      passRef.current = null;
+      catalogRequest.current += 1;
+      setRejected(true);
+      setPass(null);
+      setSnapshot(null);
+      setOverlay(null);
+      setPackCatalog(null);
+      setCatalogLoading(false);
+      setCatalogError("");
+      setError("");
+    },
+    [id],
+  );
 
   useLayoutEffect(() => {
     try {
@@ -101,15 +138,6 @@ export default function PresentationCompanionPage() {
   useEffect(() => {
     if (!pass) return;
     let disposed = false;
-    const rejectPass = (rejectedToken: string) => {
-      if (disposed || rejectedToken !== pass) return;
-      rejectPresentationCompanionPass(sessionStorage, id, rejectedToken);
-      setRejected(true);
-      setPass(null);
-      setSnapshot(null);
-      setOverlay(null);
-      setError("");
-    };
     const controller = createPresentationRealtimeController<PresentationCompanionSnapshot>({
       sessionId: id,
       credential: { projection: "companion", companionToken: pass },
@@ -131,7 +159,9 @@ export default function PresentationCompanionPage() {
       onRoomStatus: (roomStatus) => {
         if (!disposed) setSnapshot((current) => (current ? { ...current, roomStatus } : current));
       },
-      onCredentialRejected: rejectPass,
+      onCredentialRejected: (rejectedToken) => {
+        if (!disposed) rejectPass(rejectedToken);
+      },
       onError: (caught) => {
         if (!disposed) setError(humanError(caught));
       },
@@ -162,42 +192,130 @@ export default function PresentationCompanionPage() {
     const authorizationTimer = window.setInterval(() => void controller.reconcile(), 15_000);
     return () => {
       disposed = true;
+      catalogRequest.current += 1;
       window.clearInterval(fallbackTimer);
       window.clearInterval(authorizationTimer);
       controller.stop();
       if (controllerRef.current === controller) controllerRef.current = null;
       if (commandsRef.current === commands) commandsRef.current = null;
     };
-  }, [applySnapshot, id, pass]);
+  }, [applySnapshot, id, pass, rejectPass]);
 
   const results = companionResults(snapshot);
   useEffect(() => {
     if (!results && overlay === "results") setOverlay(null);
   }, [overlay, results]);
 
-  async function advanceOrRetry() {
+  function closeOverlay() {
+    catalogRequest.current += 1;
+    setOverlay(null);
+    setPackCatalog(null);
+    setCatalogLoading(false);
+    setCatalogError("");
+  }
+
+  async function openPackPicker() {
+    if (!pass || !snapshot?.canInsertRecoveryPack || commandsRef.current?.state().pendingCommand)
+      return;
+    const request = ++catalogRequest.current;
+    const requestedPass = pass;
+    setOverlay("packs");
+    setPackCatalog(null);
+    setCatalogLoading(true);
+    setCatalogError("");
+    try {
+      const catalog = await fetchPresentationCompanionRecoveryPacks(id, requestedPass);
+      if (request !== catalogRequest.current || passRef.current !== requestedPass) return;
+      setPackCatalog(catalog);
+    } catch (caught) {
+      if (request !== catalogRequest.current || passRef.current !== requestedPass) return;
+      if (isPresentationHostPassRejection(caught)) rejectPass(requestedPass);
+      else {
+        setCatalogError(humanError(caught));
+        void controllerRef.current?.reconcile();
+      }
+    } finally {
+      if (request === catalogRequest.current) setCatalogLoading(false);
+    }
+  }
+
+  async function executeCommand(command?: PresentationCompanionCommand) {
     const controller = controllerRef.current;
     const commands = commandsRef.current;
     if (!pass || !snapshot || !controller?.canMutate() || !commands || commands.state().busy)
       return;
-    if (!commands.state().pendingCommand && snapshot.primaryAction !== "advance") return;
+    if (command && commands.state().pendingCommand) return;
+    if (!command && !commands.state().pendingCommand) return;
+    const activeCommand = command ?? commands.state().pendingCommand;
     setError("");
     setConfirmed(false);
     try {
-      const response = commands.state().pendingCommand
-        ? await commands.retry()
-        : await commands.run({
-            sessionId: id,
-            companionToken: pass,
-            commandId: clientUuid(),
-            expectedRevision: snapshot.revision,
-            action: "advance",
-          });
-      if (response) setConfirmed(true);
+      const response = command ? await commands.run(command) : await commands.retry();
+      if (response) {
+        setConfirmed(true);
+        if (activeCommand?.action === "insert_recovery_pack") closeOverlay();
+      }
+      return response;
     } catch (caught) {
-      setError(humanError(caught));
+      if (!isPresentationHostPassRejection(caught)) setError(humanError(caught));
       await controller.reconcile();
     }
+  }
+
+  async function advanceOrRetry() {
+    if (commandsRef.current?.state().pendingCommand) return executeCommand();
+    if (!pass || !snapshot || snapshot.primaryAction !== "advance") return;
+    return executeCommand({
+      sessionId: id,
+      companionToken: pass,
+      commandId: clientUuid(),
+      expectedRevision: snapshot.revision,
+      action: "advance",
+    });
+  }
+
+  async function insertPack(packVersionId: string) {
+    if (
+      !pass ||
+      !snapshot?.canInsertRecoveryPack ||
+      !packCatalog?.packs.some((pack) => pack.packVersionId === packVersionId)
+    )
+      return;
+    return executeCommand({
+      sessionId: id,
+      companionToken: pass,
+      commandId: clientUuid(),
+      expectedRevision: snapshot.revision,
+      action: "insert_recovery_pack",
+      packVersionId,
+    });
+  }
+
+  async function startRecoveryCard(
+    recoveryPackCard: RecoveryPackCardSelection,
+    interventionType: "explain" | "example",
+  ) {
+    if (
+      !pass ||
+      !snapshot ||
+      snapshot.phase !== "question_reveal" ||
+      snapshot.acceptingResponses ||
+      !snapshot.recoveryPackCards?.some(
+        (card) =>
+          card.reference.insertionId === recoveryPackCard.insertionId &&
+          card.reference.cardId === recoveryPackCard.cardId,
+      )
+    )
+      return;
+    return executeCommand({
+      sessionId: id,
+      companionToken: pass,
+      commandId: clientUuid(),
+      expectedRevision: snapshot.revision,
+      action: "start_recovery_card",
+      recoveryPackCard,
+      interventionType,
+    });
   }
 
   const joinUrl = snapshot
@@ -284,13 +402,14 @@ export default function PresentationCompanionPage() {
                 (!commandState.pendingCommand && snapshot.primaryAction !== "advance")
               }
               onClick={() => void advanceOrRetry()}
+              ref={primaryButtonRef}
               type="button"
             >
               {t(
                 commandState.busy
                   ? "live.common.updating"
                   : commandState.pendingCommand
-                    ? "live.companion.retryAck"
+                    ? companionCommandRetryMessageKey(commandState.pendingCommand)
                     : snapshot.primaryAction === "none"
                       ? "live.companion.noAction"
                       : companionAdvanceMessageKey(snapshot),
@@ -309,12 +428,47 @@ export default function PresentationCompanionPage() {
                   {t("live.companion.showResults")}
                 </button>
               ) : null}
+              {snapshot.canInsertRecoveryPack !== undefined ? (
+                <button
+                  className="button-quiet"
+                  disabled={
+                    !pass ||
+                    !snapshot.canInsertRecoveryPack ||
+                    commandState.busy ||
+                    !!commandState.pendingCommand
+                  }
+                  onClick={() => void openPackPicker()}
+                  type="button"
+                >
+                  {t("live.companion.packs.open")}
+                </button>
+              ) : null}
             </div>
+            {snapshot.phase === "question_reveal" &&
+            !snapshot.acceptingResponses &&
+            snapshot.recoveryPackCards?.length ? (
+              <CompanionRecoveryCardPicker
+                key={snapshot.currentBlock?.id}
+                cards={snapshot.recoveryPackCards}
+                disabled={
+                  !pass ||
+                  commandState.busy ||
+                  !!commandState.pendingCommand ||
+                  !controllerRef.current?.canMutate()
+                }
+                onStart={(selection, interventionType) =>
+                  void startRecoveryCard(selection, interventionType)
+                }
+              />
+            ) : null}
+            {snapshot.phase === "intervention" && snapshot.recoveryPackIntervention ? (
+              <RecoveryPackLiveCardView card={snapshot.recoveryPackIntervention.card} />
+            ) : null}
           </>
         ) : null}
       </section>
       {overlay === "join" && snapshot ? (
-        <CompanionOverlay title={t("live.companion.joinTitle")} onClose={() => setOverlay(null)}>
+        <CompanionOverlay title={t("live.companion.joinTitle")} onClose={closeOverlay}>
           <p>{t("live.presentationSession.joinCode")}</p>
           <p className={styles.joinCode}>{snapshot.code}</p>
           <QRCodeSVG value={joinUrl} size={200} title={t("live.companion.joinQr")} />
@@ -324,7 +478,7 @@ export default function PresentationCompanionPage() {
         </CompanionOverlay>
       ) : null}
       {overlay === "results" && results && block?.kind === "question" ? (
-        <CompanionOverlay title={t("live.companion.resultTitle")} onClose={() => setOverlay(null)}>
+        <CompanionOverlay title={t("live.companion.resultTitle")} onClose={closeOverlay}>
           <p lang="">{block.question.prompt}</p>
           <p>
             {t("live.companion.answered")}: {formatNumber(locale, results.responseCount)}
@@ -343,6 +497,49 @@ export default function PresentationCompanionPage() {
                 ) : null;
               })}
             </dl>
+          ) : null}
+        </CompanionOverlay>
+      ) : null}
+      {overlay === "packs" && snapshot && pass ? (
+        <CompanionOverlay
+          title={t("live.companion.packs.pickerTitle")}
+          onClose={closeOverlay}
+          returnFocusRef={primaryButtonRef}
+        >
+          <CompanionRecoveryPackPicker
+            catalog={packCatalog}
+            loading={catalogLoading}
+            error={catalogError}
+            disabled={
+              !snapshot.canInsertRecoveryPack ||
+              commandState.busy ||
+              !!commandState.pendingCommand ||
+              !controllerRef.current?.canMutate()
+            }
+            onReload={() => void openPackPicker()}
+            onInsert={(packVersionId) => void insertPack(packVersionId)}
+          />
+          {commandState.pendingCommand ? (
+            <>
+              <p role="status">
+                {t(commandState.busy ? "live.companion.waitingAck" : "live.companion.unconfirmed")}
+              </p>
+              {!commandState.busy ? (
+                <button
+                  className="button-quiet full-width"
+                  disabled={!controllerRef.current?.canMutate()}
+                  onClick={() => void executeCommand()}
+                  type="button"
+                >
+                  {t(companionCommandRetryMessageKey(commandState.pendingCommand))}
+                </button>
+              ) : null}
+            </>
+          ) : null}
+          {error ? (
+            <p className="error" role="alert">
+              {error}
+            </p>
           ) : null}
         </CompanionOverlay>
       ) : null}

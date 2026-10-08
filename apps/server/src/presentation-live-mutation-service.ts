@@ -19,11 +19,16 @@ import {
   type PresentationSessionRepository,
   type PresentationSessionResponseRecord,
   type Repository,
+  type RecoveryPackRepository,
 } from "@openround/db";
 import type { AppConfig } from "./config.js";
 import { entitlementsFor, retentionExpiry } from "./entitlements.js";
 import type { ProductEventInput } from "./product-events.js";
 import { PresentationSessionServiceError } from "./presentation-session-errors.js";
+import {
+  presentationCanInsertRecoveryPack,
+  presentationRecoveryPackInsertionTransition,
+} from "./presentation-live-recovery-packs.js";
 import {
   buildTargetedPresentationParticipantSnapshot,
   presentationCurrentBlock,
@@ -98,6 +103,8 @@ interface PresentationLiveMutationDependencies {
   sessions: PresentationMutationSessionRepository;
   repository: PresentationMutationRepository;
   config: PresentationEntitlementConfig;
+  packs?: Pick<RecoveryPackRepository, "getRecoveryPackVersion">;
+  recoveryPackLiveInsertionEnabled?: (workspaceId: string) => boolean;
   participantTokenHash(token: string): string;
   sessionExpired(session: PresentationSessionRecord, now?: Date): boolean;
   authorizeHostCredential(sessionId: string, token: string): Promise<PresentationSessionRecord>;
@@ -177,7 +184,7 @@ function nextTransition(session: PresentationSessionRecord) {
 
 function recoveryCardTransition(
   session: PresentationSessionRecord,
-  input: Extract<PresentationCommand, { action: "start_recovery_card" }>,
+  input: Extract<PresentationControlCommand, { action: "start_recovery_card" }>,
 ) {
   if (session.status !== "active" || session.phase !== "question_reveal") {
     throw new PresentationSessionServiceError(
@@ -362,7 +369,11 @@ export class PresentationLiveMutationService {
       throw this.staleSession(input.expectedRevision, session.revision);
     }
     const transition =
-      input.action === "advance" ? nextTransition(session) : recoveryCardTransition(session, input);
+      input.action === "advance"
+        ? nextTransition(session)
+        : input.action === "start_recovery_card"
+          ? recoveryCardTransition(session, input)
+          : await this.recoveryPackInsertionTransition(session, input);
     if (!transition) return snapshot(session);
     try {
       const transitionRetentionExpiresAt = await this.transitionRetentionExpiry(
@@ -406,6 +417,19 @@ export class PresentationLiveMutationService {
       }
       if (accepted.status === "accepted") {
         this.recordAcceptedTransitionProductEvents(accepted.session, transition);
+        if (input.action === "insert_recovery_pack") {
+          await this.dependencies.repository
+            .recordAudit({
+              workspaceId: accepted.session.workspaceId,
+              actorId: null,
+              action: "presentation.session.recovery_pack.insert",
+              targetType: "presentation_live_session",
+              targetId: accepted.session.id,
+              requestId: input.commandId,
+              metadata: { packVersionId: input.packVersionId, insertionId: input.commandId },
+            })
+            .catch(() => undefined);
+        }
         if (input.action === "start_recovery_card" && accepted.session.recoveryPackIntervention) {
           await this.dependencies.repository
             .recordAudit({
@@ -430,6 +454,40 @@ export class PresentationLiveMutationService {
       }
       throw error;
     }
+  }
+
+  private async recoveryPackInsertionTransition(
+    session: PresentationSessionRecord,
+    input: Extract<PresentationCompanionCommand, { action: "insert_recovery_pack" }>,
+  ) {
+    if (
+      !this.dependencies.packs ||
+      !this.dependencies.recoveryPackLiveInsertionEnabled?.(session.workspaceId)
+    ) {
+      throw new PresentationSessionServiceError(
+        404,
+        "NOT_FOUND",
+        "Live Recovery Pack insertion is not enabled in this workspace",
+      );
+    }
+    if (!presentationCanInsertRecoveryPack(session)) {
+      throw new PresentationSessionServiceError(
+        409,
+        "PHASE_CLOSED",
+        "Insert a Recovery Pack between presentation checkpoints without a pending recheck",
+      );
+    }
+    const version = await this.dependencies.packs.getRecoveryPackVersion(
+      session.workspaceId,
+      input.packVersionId,
+    );
+    if (!version)
+      throw new PresentationSessionServiceError(
+        404,
+        "NOT_FOUND",
+        "Published Recovery Pack version not found",
+      );
+    return presentationRecoveryPackInsertionTransition(session, version, input);
   }
 
   async submitResponse(

@@ -240,6 +240,8 @@ export interface PresentationSessionTransitionInput {
   questionClosesAt?: Date | null;
   retentionExpiresAt?: Date;
   recoveryPackIntervention?: PresentationRecoveryPackIntervention | null;
+  /** Session-local frozen content replacement, fenced with the command and its receipt. */
+  content?: PresentationContent;
   event: Omit<
     PresentationSessionTimelineRecord,
     "id" | "workspaceId" | "sessionId" | "sequence" | "occurredAt"

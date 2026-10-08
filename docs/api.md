@@ -613,15 +613,25 @@ projection prevent participants/companions from receiving unrevealed answers or 
 - `DELETE /v1/presentation-sessions/{id}/companion-passes/{credentialId}` — owner/editor revocation,
   restricted to the companion role. Available even when new issuance is paused.
 - `GET /v1/presentation-sessions/{id}/companion` — bearer companion pass, returning `{ snapshot }`.
+- `GET /v1/presentation-sessions/{id}/companion-recovery-packs` — bearer companion pass,
+  returning a bounded `{ packs: [{ packId, packVersionId, packVersion, title }] }` catalog of
+  current published, text-only versions in the session's workspace. Drafts, checkpoints,
+  interventions, citations, and source-review data are not returned.
 - `POST /v1/presentation-sessions/{id}/companion-command` — strict
-  `{ sessionId, companionToken, commandId, expectedRevision, action: "advance" }`, returning
-  `{ snapshot }`. The same command is accepted by `presentation.command` over Socket.IO.
+  `{ sessionId, companionToken, commandId, expectedRevision, action, ...actionFields }`, returning
+  `{ snapshot }`. Actions are `advance`, `insert_recovery_pack` with `packVersionId`, and
+  `start_recovery_card` with `recoveryPackCard: { insertionId, cardId }` and
+  `interventionType: "explain" | "example"`. The same commands are accepted by
+  `presentation.command` over Socket.IO.
 
 Passes expire after at most one hour and never outlive the live session. Tokens are hashed in the
 existing tenant-scoped credential store; responses are private/no-store and admission controls
 are session/credential-scoped. Read, command, synchronization, and revocation paths remain usable
-after flag/allowlist rollback for existing valid passes. A companion cannot use a host-only
-credential, select an intervention card, change settings, kick participants, or retrieve identities.
+after flag/allowlist rollback for existing valid passes. New Pack insertion/catalog access require
+current professional Presentation, Companion/realtime, Pack/live-card, and workspace eligibility,
+plus a session created with live Pack cards enabled. Exact accepted insertion retries and already
+frozen card playback remain available during rollback. A companion cannot use a host-only
+credential, change settings, kick participants, or retrieve identities.
 
 Companion snapshots contain a participant-safe current block and aggregate room counts. Optional
 `resultSummary` contains only `{ blockId, responseCount, choiceCounts: [{ choiceId, count }] }` for
@@ -629,7 +639,27 @@ the current question after reveal. It contains no correctness, keys, explanation
 participant responses, raw numeric/rating values, or leaderboard. Before reveal it is `null`.
 The browser consumes `#pass=...`, removes it from URL history before requests, and keeps the pass
 in session storage, with no inherited host passes or creator cookies on companion API fetches.
-Pack insertion and session-only Quick Checks are separate, not yet implemented Companion slices.
+
+Optional `canInsertRecoveryPack` is the server-authoritative insertion capability. Insertion is
+allowed in the lobby, on a content block, or after a closed question only when no previously
+visited source question has a linked recheck still ahead, including practice-purpose sources.
+Intervening content or standalone questions
+do not bypass that fence. It is never allowed while responses are open, during an intervention,
+or after finish.
+The command inserts the frozen diagnostic/recheck pair after the current block (first in the
+lobby) and immediately opens the diagnostic. Content, question timing, revision, event sequence,
+timeline, and command receipt change atomically; published Presentation/Pack versions and drafts
+remain untouched. Every copy retains immutable Pack/version/item-role/hash provenance and a full
+frozen baseline. Limits remain 100 blocks/insertions and the existing Presentation size bound.
+Media on diagnostic, recheck, or delayed probe is rejected until live-session media ownership and
+retention are implemented. The delayed probe is not run by this live insertion.
+
+After diagnostic reveal, optional `recoveryPackCards` contains only title/reference choices;
+unselected bodies and citations are never supplied to the sidecar. An explicit card action starts
+the existing explanation/worked-example intervention and returns only the selected card in
+`recoveryPackIntervention`. Advance then opens the linked recheck. Receipt recovery precedes
+phase/revision/source/rollout checks, so an exact retry does not duplicate an insertion even after
+the source Pack is deleted or the host advances. Session-only Quick Checks remain a later slice.
 
 ## Stable errors
 

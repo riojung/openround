@@ -177,6 +177,204 @@ describe("Presentation host command recovery", () => {
 });
 
 describe("Presentation companion command recovery", () => {
+  it.each([
+    ["NOT_FOUND", 404],
+    ["PHASE_CLOSED", 409],
+    ["VALIDATION_ERROR", 400],
+  ] as const)(
+    "keeps an ambiguous insertion after retry prerequisite %s until its exact acknowledgement",
+    async (code, status) => {
+      const execute = vi
+        .fn()
+        .mockRejectedValueOnce(
+          Object.assign(new Error("Original insertion is still unconfirmed"), {
+            code: "PRESENTATION_COMMAND_UNCONFIRMED",
+          }),
+        )
+        .mockRejectedValueOnce(new ApiClientError("Retry prerequisite rejected", code, status))
+        .mockResolvedValueOnce({ revision: 9, phase: "question_open" });
+      const recovery = createPresentationCommandRecovery<
+        { revision: number; phase: string },
+        PresentationCompanionCommand
+      >({ execute, onState: () => undefined });
+      const command: PresentationCompanionCommand = {
+        sessionId: "session",
+        companionToken: "pass",
+        commandId: "original-insertion",
+        expectedRevision: 8,
+        action: "insert_recovery_pack",
+        packVersionId: "original-version",
+      };
+      await expect(recovery.run(command)).rejects.toThrow(
+        "Original insertion is still unconfirmed",
+      );
+      const pending = recovery.state().pendingCommand;
+      await expect(recovery.retry()).rejects.toMatchObject({ code, status });
+      expect(recovery.state()).toEqual({ busy: false, pendingCommand: pending });
+      command.expectedRevision = 9;
+      command.packVersionId = "different-version";
+      await recovery.run({ ...command, commandId: "fresh-insertion" });
+      await recovery.run({
+        sessionId: "session",
+        companionToken: "pass",
+        commandId: "fresh-advance",
+        expectedRevision: 9,
+        action: "advance",
+      });
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(pending).toMatchObject({
+        commandId: "original-insertion",
+        expectedRevision: 8,
+        packVersionId: "original-version",
+      });
+      await expect(recovery.retry()).resolves.toEqual({ revision: 9, phase: "question_open" });
+      expect(execute.mock.calls.every(([request]) => request === pending)).toBe(true);
+      expect(recovery.state()).toEqual({ busy: false, pendingCommand: null });
+    },
+  );
+
+  it.each([
+    ["NOT_FOUND", 404],
+    ["PHASE_CLOSED", 409],
+    ["VALIDATION_ERROR", 400],
+  ] as const)("clears a definite first-attempt insertion %s rejection", async (code, status) => {
+    const execute = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ApiClientError("Insertion rejected before application", code, status),
+      );
+    const recovery = createPresentationCommandRecovery<unknown, PresentationCompanionCommand>({
+      execute,
+      onState: () => undefined,
+    });
+    await expect(
+      recovery.run({
+        sessionId: "session",
+        companionToken: "pass",
+        commandId: "first-insertion",
+        expectedRevision: 8,
+        action: "insert_recovery_pack",
+        packVersionId: "version",
+      }),
+    ).rejects.toMatchObject({ code, status });
+    expect(recovery.state()).toEqual({ busy: false, pendingCommand: null });
+  });
+
+  it.each(["advance", "start_recovery_card"] as const)(
+    "keeps definitive prerequisite rejection behavior for %s retries",
+    async (action) => {
+      const execute = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Acknowledgement lost"))
+        .mockRejectedValueOnce(
+          new ApiClientError("Definitive phase rejection", "PHASE_CLOSED", 409),
+        );
+      const recovery = createPresentationCommandRecovery<unknown, PresentationCompanionCommand>({
+        execute,
+        onState: () => undefined,
+      });
+      const credentials = {
+        sessionId: "session",
+        companionToken: "pass",
+        commandId: "original",
+        expectedRevision: 8,
+      };
+      const command: PresentationCompanionCommand =
+        action === "advance"
+          ? { ...credentials, action }
+          : {
+              ...credentials,
+              action,
+              recoveryPackCard: { insertionId: "insertion", cardId: "card" },
+              interventionType: "explain",
+            };
+      await expect(recovery.run(command)).rejects.toThrow("Acknowledgement lost");
+      await expect(recovery.retry()).rejects.toMatchObject({ code: "PHASE_CLOSED" });
+      expect(recovery.state()).toEqual({ busy: false, pendingCommand: null });
+    },
+  );
+
+  it.each(["STALE_REVISION", "IDEMPOTENCY_CONFLICT"])(
+    "clears a definitive %s insertion retry rejection",
+    async (code) => {
+      const execute = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Acknowledgement lost"))
+        .mockRejectedValueOnce(new ApiClientError("Definitive command rejection", code, 409));
+      const recovery = createPresentationCommandRecovery<unknown, PresentationCompanionCommand>({
+        execute,
+        onState: () => undefined,
+      });
+      await expect(
+        recovery.run({
+          sessionId: "session",
+          companionToken: "pass",
+          commandId: "original",
+          expectedRevision: 8,
+          action: "insert_recovery_pack",
+          packVersionId: "version",
+        }),
+      ).rejects.toThrow("Acknowledgement lost");
+      await expect(recovery.retry()).rejects.toMatchObject({ code });
+      expect(recovery.state()).toEqual({ busy: false, pendingCommand: null });
+    },
+  );
+
+  it.each(["insert_recovery_pack", "start_recovery_card"] as const)(
+    "freezes and serializes %s through a denied retry and phase change",
+    async (action) => {
+      const execute = vi
+        .fn()
+        .mockRejectedValueOnce(
+          Object.assign(new Error("Unconfirmed"), { code: "PRESENTATION_COMMAND_UNCONFIRMED" }),
+        )
+        .mockRejectedValueOnce(
+          Object.assign(new Error("Reconciling"), { code: "PRESENTATION_RECONNECT_REQUIRED" }),
+        )
+        .mockResolvedValueOnce({ revision: 12 });
+      const recovery = createPresentationCommandRecovery<
+        { revision: number },
+        PresentationCompanionCommand
+      >({ execute, onState: () => undefined });
+      const credentials = {
+        sessionId: "session",
+        companionToken: "companion-pass",
+        commandId: "original-command",
+        expectedRevision: 8,
+      };
+      const command: PresentationCompanionCommand =
+        action === "insert_recovery_pack"
+          ? { ...credentials, action, packVersionId: "original-version" }
+          : {
+              ...credentials,
+              action,
+              recoveryPackCard: { insertionId: "insertion", cardId: "original-card" },
+              interventionType: "example",
+            };
+      await expect(recovery.run(command)).rejects.toThrow("Unconfirmed");
+      const pending = recovery.state().pendingCommand;
+      command.expectedRevision = 12;
+      if (command.action === "insert_recovery_pack") command.packVersionId = "different-version";
+      else command.recoveryPackCard.cardId = "different-card";
+      await recovery.run({ ...credentials, commandId: "new-advance", action: "advance" });
+      expect(execute).toHaveBeenCalledTimes(1);
+      await expect(recovery.retry()).rejects.toThrow("Reconciling");
+      expect(recovery.state().pendingCommand).toBe(pending);
+      expect(Object.isFrozen(pending)).toBe(true);
+      if (pending?.action === "start_recovery_card")
+        expect(Object.isFrozen(pending.recoveryPackCard)).toBe(true);
+      await expect(recovery.retry()).resolves.toEqual({ revision: 12 });
+      expect(execute.mock.calls.every(([request]) => request === pending)).toBe(true);
+      expect(pending).toMatchObject({ commandId: "original-command", expectedRevision: 8 });
+      expect(pending).toMatchObject(
+        action === "insert_recovery_pack"
+          ? { packVersionId: "original-version" }
+          : { recoveryPackCard: { cardId: "original-card" } },
+      );
+      expect(recovery.state().pendingCommand).toBeNull();
+    },
+  );
+
   it("keeps the scoped advance identity through reconciliation and cannot attach a host token", async () => {
     const execute = vi
       .fn()

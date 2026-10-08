@@ -4382,7 +4382,7 @@ function validatePresentationRecoveryPackPlayback(
   snapshot: {
     phase: PresentationSessionPhase;
     recoveryPackIntervention?: z.infer<typeof PresentationRecoveryPackPlaybackSchema>;
-    recoveryPackCards?: RecoveryPackLiveCard[];
+    recoveryPackCards?: Array<Pick<RecoveryPackLiveCard, "reference" | "title">>;
   },
   ctx: z.RefinementCtx,
 ) {
@@ -4770,6 +4770,45 @@ export type PresentationCompanionResultSummary = z.infer<
   typeof PresentationCompanionResultSummarySchema
 >;
 
+/** A sidecar's published Pack catalog contains no checkpoint, card, or source content. */
+export const PresentationCompanionPublishedRecoveryPackSchema = z
+  .object({
+    packId: z.string().uuid(),
+    packVersionId: z.string().uuid(),
+    packVersion: z.number().int().positive(),
+    title: z.string().trim().min(1).max(160),
+  })
+  .strict();
+export type PresentationCompanionPublishedRecoveryPack = z.infer<
+  typeof PresentationCompanionPublishedRecoveryPackSchema
+>;
+export const PresentationCompanionRecoveryPackCatalogSchema = z
+  .object({ packs: z.array(PresentationCompanionPublishedRecoveryPackSchema).max(100) })
+  .strict()
+  .superRefine(({ packs }, ctx) => {
+    if (new Set(packs.map((pack) => pack.packVersionId)).size !== packs.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Published Pack versions must be unique",
+        path: ["packs"],
+      });
+    }
+  });
+export type PresentationCompanionRecoveryPackCatalog = z.infer<
+  typeof PresentationCompanionRecoveryPackCatalogSchema
+>;
+
+/** Titles are available after reveal; only the explicitly selected card may include a body. */
+export const PresentationCompanionRecoveryPackCardSchema = z
+  .object({
+    reference: RecoveryPackCardReferenceSchema,
+    title: z.string().trim().min(1).max(160),
+  })
+  .strict();
+export type PresentationCompanionRecoveryPackCard = z.infer<
+  typeof PresentationCompanionRecoveryPackCardSchema
+>;
+
 export const PresentationCompanionSnapshotSchema = z
   .object({
     ...PresentationSnapshotBaseFields,
@@ -4777,12 +4816,48 @@ export const PresentationCompanionSnapshotSchema = z
     currentBlock: PresentationParticipantCurrentBlockSchema.nullable(),
     roomStatus: PresentationRoomStatusSchema,
     primaryAction: z.enum(["advance", "none"]),
+    canInsertRecoveryPack: z.boolean().optional(),
+    recoveryPackCards: z
+      .array(PresentationCompanionRecoveryPackCardSchema)
+      .min(1)
+      .max(5)
+      .optional(),
     resultSummary: PresentationCompanionResultSummarySchema.nullable().optional(),
     finishedAt: z.string().datetime().nullable(),
   })
   .strict()
   .superRefine((snapshot, ctx) => {
     validatePresentationRecoveryPackPlayback(snapshot, ctx);
+    if (
+      snapshot.canInsertRecoveryPack &&
+      (snapshot.status !== "active" ||
+        !["lobby", "content", "question_reveal"].includes(snapshot.phase) ||
+        snapshot.acceptingResponses ||
+        !snapshot.settings.recoveryPackCardsEnabled)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Pack insertion requires an eligible room at a closed, safe boundary",
+        path: ["canInsertRecoveryPack"],
+      });
+    }
+    if (snapshot.recoveryPackCards) {
+      const ids = snapshot.recoveryPackCards.map(
+        ({ reference }) => `${reference.insertionId}:${reference.cardId}`,
+      );
+      if (
+        snapshot.currentBlock?.kind !== "question" ||
+        snapshot.acceptingResponses ||
+        !snapshot.settings.recoveryPackCardsEnabled ||
+        new Set(ids).size !== ids.length
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Companion card choices require a revealed diagnostic and unique references",
+          path: ["recoveryPackCards"],
+        });
+      }
+    }
     if (!snapshot.resultSummary) return;
     const block = snapshot.currentBlock;
     if (
@@ -4935,16 +5010,31 @@ export const PresentationCommandSchema = z.discriminatedUnion("action", [
 ]);
 export type PresentationCommand = z.infer<typeof PresentationCommandSchema>;
 
-/** A Companion cannot select interventions or perform other host-only commands. */
-export const PresentationCompanionCommandSchema = z
-  .object({
-    sessionId: z.string().uuid(),
-    companionToken: PresentationCredentialSchema,
-    commandId: z.string().uuid(),
-    expectedRevision: z.number().int().nonnegative(),
-    action: z.literal("advance"),
-  })
-  .strict();
+const PresentationCompanionCommandFields = {
+  sessionId: z.string().uuid(),
+  companionToken: PresentationCredentialSchema,
+  commandId: z.string().uuid(),
+  expectedRevision: z.number().int().nonnegative(),
+};
+/** Scoped live controls only; no creator, settings, identity, or host authority. */
+export const PresentationCompanionCommandSchema = z.discriminatedUnion("action", [
+  z.object({ ...PresentationCompanionCommandFields, action: z.literal("advance") }).strict(),
+  z
+    .object({
+      ...PresentationCompanionCommandFields,
+      action: z.literal("insert_recovery_pack"),
+      packVersionId: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      ...PresentationCompanionCommandFields,
+      action: z.literal("start_recovery_card"),
+      recoveryPackCard: RecoveryPackCardSelectionSchema,
+      interventionType: z.enum(["explain", "example"]),
+    })
+    .strict(),
+]);
 export type PresentationCompanionCommand = z.infer<typeof PresentationCompanionCommandSchema>;
 export const PresentationControlCommandSchema = z.union([
   PresentationCommandSchema,

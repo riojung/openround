@@ -430,6 +430,7 @@ export function buildPresentationCompanionSnapshot(
   session: PresentationSessionRecord,
   data: PresentationProjectionData,
   connectedParticipantIds: ReadonlySet<string> = new Set(),
+  canInsertRecoveryPack = false,
 ): PresentationCompanionSnapshot {
   const host = buildPresentationHostSnapshot(session, data, connectedParticipantIds);
   const block = presentationCurrentBlock(session);
@@ -472,6 +473,15 @@ export function buildPresentationCompanionSnapshot(
     projection: "companion",
     currentBlock: presentationRealtimeBlock(block, false),
     roomStatus: host.roomStatus,
+    canInsertRecoveryPack,
+    ...(host.recoveryPackCards?.length
+      ? {
+          recoveryPackCards: host.recoveryPackCards.map(({ reference, title }) => ({
+            reference,
+            title,
+          })),
+        }
+      : {}),
     resultSummary:
       resultVisible && block?.kind === "question"
         ? { blockId: block.id, responseCount: currentResponses.length, choiceCounts }

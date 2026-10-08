@@ -62,7 +62,7 @@ function snapshotBase() {
 }
 
 describe("Presentation realtime contracts", () => {
-  it("keeps companion commands strict, separately credentialed, and advance-only", () => {
+  it("keeps companion live commands strict and separately credentialed", () => {
     const command = {
       sessionId: randomUUID(),
       companionToken: "c".repeat(32),

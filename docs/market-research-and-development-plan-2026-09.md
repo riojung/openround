@@ -103,22 +103,22 @@ Polling Pops is already much more than a happy-path quiz application. The audite
 
 The current constraints matter more than the feature count:
 
-| Boundary                 | Current reality                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Public readiness         | Source CI and local production smoke are complete; thirteen release-readiness gates remain, primarily awaiting external or human evidence. These are not missing product-code features.                                                                                                                                                                                                                                    |
-| Rollout                  | Major workspace, builder, Presentation, Group, Discover, rehearsal, practice, live-flex, Question Health, Session Decision Replay, and Recovery Pack capabilities are gated or require workspace allowlisting; repository presence does not mean general availability.                                                                                                                                                     |
-| Presentation delivery    | Live Presentations have server-authoritative realtime synchronization, acknowledgement/reconnect handling, role-filtered projections, and report reconciliation. The older polling-only description is obsolete.                                                                                                                                                                                                           |
-| Live accessibility       | Whole-room timed/flex mode is implemented for new Rounds and Presentations behind `FEATURE_LIVE_FLEX_MODE` and a workspace allowlist. It has no countdown; the facilitator closes the window. Private individual extra-time passes remain deferred pending fairness, privacy, and reveal research.                                                                                                                         |
-| Response breadth         | Six response types are implemented. Exact short text and rank/order are not; add them only if the roadmap's observed demand threshold passes. Moderated open response, drawing, and word cloud remain deliberate later decisions.                                                                                                                                                                                          |
-| Existing-deck workflow   | The scoped Presentation Companion foundation provides compact controls, aggregate room health, join QR/code, and safe result overlays behind deployment and workspace gates. Prepared Pack insertion and session-only Quick Checks remain pending; native slide add-ins are out of scope.                                                                                                                                  |
-| Reuse                    | Recovery Packs support immutable versions, independent Round/Presentation draft insertion, three-way update review/undo, eligible live cards, delayed-probe and full-sequence practice, and published-checkpoint CSV/QTI exports with source-bound loss reports. Source-assisted drafts now require exact-content/source-hash-bound content and citation approval before publication. Companion insertion remains pending. |
-| Question Health          | Deterministic advice, dismiss/reopen, approved draft edits with same-revision undo, immutable published-version analysis, and exact-version aggregate post-use observations are implemented in a gated slice. Advice usefulness and retained-revision thresholds remain unmeasured.                                                                                                                                        |
-| Session Decision Replay  | New eligible sessions can capture aggregate facilitator-decision events in durable state and show a read-only Report V4 timeline. Older report versions remain readable without replay; rollout and partner-value evidence remain open.                                                                                                                                                                                    |
-| Presentation editing     | Text boxes can be positioned/resized on a bounded 16:9 slide with guides, keyboard controls, and an image-safe region. This is not a full freeform design canvas or production slide companion.                                                                                                                                                                                                                            |
-| Content/session deletion | Owners can permanently delete archived Rounds/Presentations and finished or expired session history after confirmation. Retained sessions and practice assignments block content deletion.                                                                                                                                                                                                                                 |
-| Longitudinal evidence    | Immediate linked rechecks, accountless practice/follow-ups, and standalone Pack delayed-probe assignments exist. Pack practice does not pair results to source participants. Multi-stage Recovery Trail access/evidence and privacy-safe Concept Health views remain unimplemented.                                                                                                                                        |
-| Institution mode         | Creator OIDC and instructor LTI launch/Deep Linking foundations exist. Verified learners, NRPS/AGS roster and grade delivery, managed SAML/SCIM, certification, and institutional pilots remain contract-gated.                                                                                                                                                                                                            |
-| Maintainability          | Core session repositories and mutation orchestration have been split behind stable facades. Some large routes/builders remain and should be refactored when touched; this is ongoing engineering hygiene, not a Phase 0 feature blocker.                                                                                                                                                                                   |
+| Boundary                 | Current reality                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Public readiness         | Source CI and local production smoke are complete; thirteen release-readiness gates remain, primarily awaiting external or human evidence. These are not missing product-code features.                                                                                                                                                                                                                                               |
+| Rollout                  | Major workspace, builder, Presentation, Group, Discover, rehearsal, practice, live-flex, Question Health, Session Decision Replay, and Recovery Pack capabilities are gated or require workspace allowlisting; repository presence does not mean general availability.                                                                                                                                                                |
+| Presentation delivery    | Live Presentations have server-authoritative realtime synchronization, acknowledgement/reconnect handling, role-filtered projections, and report reconciliation. The older polling-only description is obsolete.                                                                                                                                                                                                                      |
+| Live accessibility       | Whole-room timed/flex mode is implemented for new Rounds and Presentations behind `FEATURE_LIVE_FLEX_MODE` and a workspace allowlist. It has no countdown; the facilitator closes the window. Private individual extra-time passes remain deferred pending fairness, privacy, and reveal research.                                                                                                                                    |
+| Response breadth         | Six response types are implemented. Exact short text and rank/order are not; add them only if the roadmap's observed demand threshold passes. Moderated open response, drawing, and word cloud remain deliberate later decisions.                                                                                                                                                                                                     |
+| Existing-deck workflow   | The scoped Presentation Companion provides compact controls, aggregate room health, join QR/code, and safe result overlays behind deployment and workspace gates. Prepared text-only Pack insertion now starts a frozen diagnostic and supports selected-card playback plus linked recheck. Media-backed insertion and session-only Quick Checks remain pending; native slide add-ins are out of scope.                               |
+| Reuse                    | Recovery Packs support immutable versions, independent Round/Presentation draft insertion, three-way update review/undo, eligible live cards, delayed-probe and full-sequence practice, published-checkpoint CSV/QTI exports with source-bound loss reports, and scoped text-only Companion live insertion/playback. Source-assisted drafts require exact-content/source-hash-bound content and citation approval before publication. |
+| Question Health          | Deterministic advice, dismiss/reopen, approved draft edits with same-revision undo, immutable published-version analysis, and exact-version aggregate post-use observations are implemented in a gated slice. Advice usefulness and retained-revision thresholds remain unmeasured.                                                                                                                                                   |
+| Session Decision Replay  | New eligible sessions can capture aggregate facilitator-decision events in durable state and show a read-only Report V4 timeline. Older report versions remain readable without replay; rollout and partner-value evidence remain open.                                                                                                                                                                                               |
+| Presentation editing     | Text boxes can be positioned/resized on a bounded 16:9 slide with guides, keyboard controls, and an image-safe region. This is not a full freeform design canvas or production slide companion.                                                                                                                                                                                                                                       |
+| Content/session deletion | Owners can permanently delete archived Rounds/Presentations and finished or expired session history after confirmation. Retained sessions and practice assignments block content deletion.                                                                                                                                                                                                                                            |
+| Longitudinal evidence    | Immediate linked rechecks, accountless practice/follow-ups, and standalone Pack delayed-probe assignments exist. Pack practice does not pair results to source participants. Multi-stage Recovery Trail access/evidence and privacy-safe Concept Health views remain unimplemented.                                                                                                                                                   |
+| Institution mode         | Creator OIDC and instructor LTI launch/Deep Linking foundations exist. Verified learners, NRPS/AGS roster and grade delivery, managed SAML/SCIM, certification, and institutional pilots remain contract-gated.                                                                                                                                                                                                                       |
+| Maintainability          | Core session repositories and mutation orchestration have been split behind stable facades. Some large routes/builders remain and should be refactored when touched; this is ongoing engineering hygiene, not a Phase 0 feature blocker.                                                                                                                                                                                              |
 
 The repository-side functionality committed for Phase 0 is implemented. Phase 0 is not formally
 closed because the research, manual review, and deployment evidence gates remain open. Phase 1 is
@@ -527,7 +527,8 @@ than depending on the temporary source job. Creator content/citation approval is
 revision, complete content hash, source digest, and source-output hash; edits require renewed review.
 Publication remains a separate action. This is human attestation, not automated verification of
 pedagogical quality or a claim of source truth. Native JSON carries content, not that attestation.
-Companion insertion remains next. See the
+At that checkpoint, Companion insertion remained next; the subsequent Companion Pack increment
+is recorded below. See the
 [delayed-probe checkpoint](implementation-status.md#recovery-pack-delayed-probe-practice--2026-10-07)
 [full-sequence checkpoint](implementation-status.md#recovery-pack-full-sequence-practice--2026-10-07),
 the [portability checkpoint](implementation-status.md#recovery-pack-qticsv-portability--2026-10-07),
@@ -743,7 +744,7 @@ silently upgraded into identified reporting.
 
 ### Incremental Companion checkpoint — 2026-10-08
 
-The provisional Companion foundation now implements the compact Presentation sidecar, dedicated
+The provisional Companion foundation checkpoint implements the compact Presentation sidecar, dedicated
 one-hour expiring/revocable pass, primary phase controls, aggregate room health, join QR/code, and
 post-reveal choice-count overlay. Server-authoritative command receipts and existing realtime
 fences are reused; no participant identities, answer keys, host pass, or creator-cookie authority
@@ -752,9 +753,27 @@ pass lives in session storage. “Return to deck” closes the overlay, not an a
 
 It remains off by default behind `FEATURE_PRESENTATION_COMPANION`, realtime/professional
 Presentation eligibility, and the workspace allowlist. Partner branch selection remains deferred,
-not passed. The next Companion increments are immutable prepared Pack insertion/playback and
-one session-only unscored Quick Check; neither is part of this foundation. See
+not passed. Immutable prepared Pack insertion/playback and one session-only unscored Quick Check
+were pending at this foundation checkpoint. See the subsequent Pack increment below and
 [implementation status](implementation-status.md#presentation-companion-foundation--october-8-2026).
+
+### Incremental Companion Pack checkpoint — 2026-10-08
+
+The next source increment adds live insertion of a selected immutable published text-only Pack.
+The catalog is bounded and workspace/pass-scoped, with IDs, version, and title only. At a safe
+boundary, one fenced command inserts the frozen diagnostic/recheck pair and immediately opens
+the diagnostic. Session content, timing, revision, sequence, timeline, and receipt update atomically;
+published sources and drafts remain unchanged. Exact retry recovers before phase, rollout, size,
+or source checks, and the frozen copy survives source deletion. Post-reveal card choices expose
+titles/references only; explanation/example selection plays only that card before the linked recheck.
+
+New insertion requires the existing Companion/realtime, Presentation, Pack/live-card, workspace,
+and session-creation gates. Rollback blocks new insertion, not receipt recovery or frozen playback.
+Insertion never splits an open question or a pending linked recheck, including practice-purpose
+sources and intervening content/standalone questions. Packs with media on
+any diagnostic/recheck/delayed probe remain unsupported until session-owned media retention exists;
+the delayed probe is not played in this live slice. One session-only unscored Quick Check remains
+next. Partner evidence and production acceptance are still deferred, not passed.
 
 ### Epic A — Companion mode
 
@@ -803,7 +822,8 @@ as CSV or QTI with an explicit, downloadable loss report; QTI packages embed tha
 These formats do not replace complete native JSON content. Source-assisted editable drafts and
 hash-bound content/citation approval are now implemented; publication stays separate, changes
 invalidate approval, and source-job expiry does not erase retained Pack review evidence. Companion
-insertion remains pending. See the
+now supports scoped live insertion/playback of published text-only Packs. Media-backed Companion
+insertion remains pending session-owned retention. See the
 [delayed-probe checkpoint](implementation-status.md#recovery-pack-delayed-probe-practice--2026-10-07)
 [full-sequence checkpoint](implementation-status.md#recovery-pack-full-sequence-practice--2026-10-07),
 the [portability checkpoint](implementation-status.md#recovery-pack-qticsv-portability--2026-10-07),
