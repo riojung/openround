@@ -67,10 +67,17 @@ describe("Docker readiness preflight", () => {
     await assertDockerReady({ dryRun: true, runCommand: command });
     expect(command).not.toHaveBeenCalled();
     expect(dockerContextArgv(undefined)).toEqual([]);
-    for (const context of ["", "--host=bad", "context;bad", "with spaces", "a".repeat(129)]) {
+    for (const context of ["", "a", "--host=bad", "context;bad", "with spaces", "team+desktop\n"]) {
       expect(() => dockerContextArgv(context)).toThrow("must be a Docker context name");
     }
   });
+
+  it.each(["default", "colima", "team+desktop", "Team_1.dev+staging", "a".repeat(129)])(
+    "accepts Docker-valid context syntax without an arbitrary length limit: %s",
+    (context) => {
+      expect(dockerContextArgv(context)).toEqual(["--context", context]);
+    },
+  );
 
   it("bounds a hung diagnostic subprocess", async () => {
     await expect(
@@ -135,28 +142,31 @@ describe("Polling Pops development service", () => {
     ]);
   });
 
-  it("uses the selected context for preflight and restart without changing global configuration", async () => {
-    const fixture = await fakeDocker();
-    await run(
-      process.execPath,
-      [
-        "scripts/ops/service.mjs",
-        "development",
-        "restart",
-        "--profile",
-        "core",
-        "--docker-context",
-        "colima-pollingpops",
-      ],
-      { cwd: root, capture: true, env: fixture.env },
-    );
-    expect((await readFile(fixture.calls, "utf8")).trim().split("\n")).toEqual([
-      "--version",
-      "--context colima-pollingpops compose version",
-      "--context colima-pollingpops info --format {{.ServerVersion}}",
-      "--context colima-pollingpops compose --project-name openround --file compose.yaml up --detach --force-recreate --build --wait",
-    ]);
-  });
+  it.each(["colima-pollingpops", "team+desktop"])(
+    "uses context %s for preflight and restart without changing global configuration",
+    async (context) => {
+      const fixture = await fakeDocker();
+      await run(
+        process.execPath,
+        [
+          "scripts/ops/service.mjs",
+          "development",
+          "restart",
+          "--profile",
+          "core",
+          "--docker-context",
+          context,
+        ],
+        { cwd: root, capture: true, env: fixture.env },
+      );
+      expect((await readFile(fixture.calls, "utf8")).trim().split("\n")).toEqual([
+        "--version",
+        `--context ${context} compose version`,
+        `--context ${context} info --format {{.ServerVersion}}`,
+        `--context ${context} compose --project-name openround --file compose.yaml up --detach --force-recreate --build --wait`,
+      ]);
+    },
+  );
 
   it("rejects local context selection for hosted services before running Docker", async () => {
     const fixture = await fakeDocker();

@@ -409,7 +409,12 @@ export function composeArgv(action, { follow = false, noBuild = false, profile =
 
 export function dockerContextArgv(context) {
   if (context === undefined) return [];
-  if (typeof context !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(context)) {
+  // Docker's context-name syntax permits "+" and has no name-length cap.
+  // The built-in "default" context is selectable even though its name is reserved for creation.
+  if (
+    typeof context !== "string" ||
+    context.match(/^[A-Za-z0-9][A-Za-z0-9_.+-]+$/)?.[0] !== context
+  ) {
     throw new Error("--docker-context must be a Docker context name from docker context ls");
   }
   return ["--context", context];
