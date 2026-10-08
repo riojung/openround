@@ -4,7 +4,7 @@
   "deploymentMode": "compose",
   "publicWebUrl": "http://localhost:8080",
   "publicApiUrl": "http://localhost:8080",
-  "imageRepository": "openround",
+  "imageRepository": "polling-pops",
   "health": {
     "timeoutSeconds": 180,
     "intervalSeconds": 3,

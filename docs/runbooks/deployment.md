@@ -112,7 +112,7 @@ Local development supports fixed profiles:
 
 ```text
 ./scripts/service.sh development start|stop|restart|status|logs \
-  [--profile core|media|observability] [--no-build] [--follow]
+  [--profile core|media|observability] [--docker-context NAME] [--no-build] [--follow]
 ```
 
 | Profile         | Services                                                                  |
@@ -130,6 +130,45 @@ Examples:
 ./scripts/service.sh development logs --profile core --follow
 ./scripts/service.sh development stop --profile core
 ```
+
+#### Docker readiness and the Polling Pops rebrand
+
+Development service commands check the Docker CLI, Compose v2 plugin, and daemon before changing
+services. Development product builds make the same check before running the host build. Each
+preflight subprocess has a ten-second timeout; dry runs need no running Docker daemon.
+
+A missing `/var/run/docker.sock` is a runtime/context problem, not an image-name problem. Start
+the runtime that owns the existing data, verify `docker info`, and then retry. On macOS use
+`open -a Docker` for Docker Desktop, or `colima start --profile YOUR_EXISTING_PROFILE` for an
+existing Docker-backed Colima profile. Do not delete or recreate the VM as a first troubleshooting
+step. Inspect `docker context ls` and stale `DOCKER_HOST` / `DOCKER_CONTEXT` overrides.
+
+To select an existing context for one service command without changing Docker's global selection:
+
+```bash
+pnpm service development restart --profile core --docker-context colima-YOUR_EXISTING_PROFILE
+```
+
+Use the exact name listed by `docker context ls`; the default Colima profile commonly uses
+`colima`. For build commands, or an entire sequence of development commands, use the standard
+Docker environment override:
+
+```bash
+DOCKER_CONTEXT=colima-YOUR_EXISTING_PROFILE pnpm product:build development
+DOCKER_CONTEXT=colima-YOUR_EXISTING_PROFILE pnpm service development start --profile core --no-build
+```
+
+`--docker-context` is development-only. Hosted service control still uses the pinned SSH target
+and current release in the checked-in configuration. No automatic context switching, runtime
+startup, VM deletion, or volume renaming is performed.
+
+All local profiles now build `polling-pops-server:development` and
+`polling-pops-web:development`; the multiwriter secondary uses the same server image. Rebuild
+once after this update before using `--no-build`. Registry paths and immutable hosted image
+references remain unchanged. The Compose project stays `openround`, preserving its existing
+containers and PostgreSQL, Valkey, and MinIO volume namespace. The profile names `core`, `media`,
+and `observability` describe service bundles and are intentionally unchanged. A Colima profile
+is a separate VM/runtime choice, not the `--profile` service bundle.
 
 #### Reclaim local Docker disk space and rebuild
 

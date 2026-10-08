@@ -1,3 +1,4 @@
+# Keep this data namespace stable across the Polling Pops rebrand.
 name: openround
 
 services:
@@ -132,6 +133,7 @@ services:
     restart: unless-stopped
 
   server:
+    image: polling-pops-server:development
     build:
       context: .
       dockerfile: apps/server/Dockerfile
@@ -236,6 +238,7 @@ services:
     restart: unless-stopped
 
   web:
+    image: polling-pops-web:development
     build:
       context: .
       dockerfile: apps/web/Dockerfile

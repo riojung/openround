@@ -6,10 +6,12 @@ import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
 import {
   assertCommandAvailable,
+  assertDockerReady,
   assertConfiguredHostedTarget,
   assertKnownHostsTarget,
   composeArgv,
   createPrivateFileSnapshot,
+  dockerContextArgv,
   normalizeEnvironment,
   parseCliArguments,
   readStrictJson,
@@ -24,11 +26,14 @@ const repositoryRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)))
 const ACTIONS = new Set(["start", "stop", "restart", "status", "logs"]);
 
 function usage() {
-  return `Usage: scripts/service.sh <development|staging|production> <start|stop|restart|status|logs> [options]
+  return `Polling Pops service control
+
+Usage: scripts/service.sh <development|staging|production> <start|stop|restart|status|logs> [options]
        scripts/service.sh --environment <environment> <action> [options]
 
 Options:
   --profile <core|media|observability>  Select a fixed Compose file set (default: core)
+  --docker-context NAME                Use an existing Docker context for this command only
   --no-build                           Do not build images during start or restart
   --follow                             Follow logs instead of returning after the last 200 lines
   --config PATH                        Checked-in hosted deployment config
@@ -136,8 +141,12 @@ export const REMOTE_SERVICE_SCRIPT = [
 ].join("\n");
 
 async function runHostedService(environment, action, parsed, dryRun) {
-  if (parsed.values.has("profile") || parsed.flags.has("no-build")) {
-    throw new Error("--profile and --no-build are development-only");
+  if (
+    parsed.values.has("profile") ||
+    parsed.values.has("docker-context") ||
+    parsed.flags.has("no-build")
+  ) {
+    throw new Error("--profile, --docker-context, and --no-build are development-only");
   }
   const configPath = await resolveCheckedRepositoryFile(
     strictHostedConfigPath(parsed.values.get("config"), environment),
@@ -192,7 +201,7 @@ async function runHostedService(environment, action, parsed, dryRun) {
 
 export async function main(argv = process.argv.slice(2)) {
   const parsed = parseCliArguments(argv, {
-    valueOptions: ["environment", "profile", "config", "ssh-identity"],
+    valueOptions: ["environment", "profile", "docker-context", "config", "ssh-identity"],
     booleanOptions: ["dry-run", "no-build", "follow", "help"],
   });
   if (parsed.flags.has("help")) {
@@ -214,21 +223,22 @@ export async function main(argv = process.argv.slice(2)) {
   if (parsed.values.has("config") || parsed.values.has("ssh-identity")) {
     throw new Error("--config and --ssh-identity are hosted-only");
   }
-  await assertCommandAvailable("docker", { cwd: repositoryRoot, dryRun });
-  await run(
-    "docker",
-    composeArgv(action, {
+  const dockerContext = parsed.values.get("docker-context");
+  const args = [
+    ...dockerContextArgv(dockerContext),
+    ...composeArgv(action, {
       follow: parsed.flags.has("follow"),
       noBuild: parsed.flags.has("no-build"),
       profile: parsed.values.get("profile") ?? "core",
     }),
-    { cwd: repositoryRoot, dryRun },
-  );
+  ];
+  await assertDockerReady({ cwd: repositoryRoot, dryRun, dockerContext });
+  await run("docker", args, { cwd: repositoryRoot, dryRun });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
-    process.stderr.write(`Service command failed: ${error.message}\n`);
+    process.stderr.write(`Polling Pops service command failed: ${error.message}\n`);
     process.exitCode = 1;
   });
 }

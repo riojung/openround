@@ -75,6 +75,15 @@ display names configured by an operator override the new default; update EMAIL_F
 when promoting an existing deployment. Domains, GitHub repository names, image registry
 paths, and DNS are separate operator changes, not prerequisites for this application update.
 
+Local Compose application image tags are `polling-pops-server:development` and
+`polling-pops-web:development`. The Compose project name remains `openround` to preserve
+existing named volumes, databases, and media. Do not rename or delete the data namespace
+merely to match the public name. Service bundles remain `core`, `media`, and `observability`.
+Rebuild the local app images once before using `--no-build`; a missing Docker socket instead
+requires starting or selecting the existing runtime. The service wrapper supports
+`--docker-context NAME` without changing the global Docker context. See the
+[deployment runbook](runbooks/deployment.md#docker-readiness-and-the-polling-pops-rebrand).
+
 Set `OPENROUND_PUBLIC_URL` on the web process to the public product origin so social-card
 URLs point to the deployed site. Local Compose supplies this automatically. The fallback
 origin is localhost and is intended only for development, not public sharing.

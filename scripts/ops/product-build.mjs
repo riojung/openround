@@ -7,6 +7,7 @@ import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
 import {
   assertCommandAvailable,
+  assertDockerReady,
   assertConfiguredHostedTarget,
   assertFullGitSha,
   assertPathWithin,
@@ -309,7 +310,11 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
 
-  await assertCommandAvailable("docker", { cwd: repositoryRoot, dryRun });
+  if (hosted) {
+    await assertCommandAvailable("docker", { cwd: repositoryRoot, dryRun });
+  } else {
+    await assertDockerReady({ cwd: repositoryRoot, dryRun });
+  }
   if (hosted) {
     await run("docker", ["buildx", "version"], {
       cwd: repositoryRoot,
