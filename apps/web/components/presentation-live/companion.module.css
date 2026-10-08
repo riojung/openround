@@ -60,6 +60,20 @@
   gap: 0.5rem;
   margin-top: 0.75rem;
 }
+.packPicker {
+  min-width: 0;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--ui-border);
+}
+.packPicker h3 {
+  font-size: 1.1rem;
+}
+.packPicker select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
 .overlay {
   width: min(34rem, calc(100vw - 2rem));
   max-height: calc(100dvh - 2rem);

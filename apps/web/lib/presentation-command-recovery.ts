@@ -34,6 +34,16 @@ function retryTemporarilyDenied(error: unknown) {
   );
 }
 
+function insertionRetryPrerequisiteDenied(error: unknown, command: PresentationControlCommand) {
+  const { code } = (error ?? {}) as { code?: string };
+  // An earlier insertion may still be committing while this retry misses its durable receipt.
+  // Source, phase, or media checks on the retry cannot settle that earlier ambiguous attempt.
+  return (
+    command.action === "insert_recovery_pack" &&
+    (code === "NOT_FOUND" || code === "PHASE_CLOSED" || code === "VALIDATION_ERROR")
+  );
+}
+
 /** Keep the exact request until its acknowledgement resolves the action, even after a phase update. */
 export function createPresentationCommandRecovery<
   Snapshot,
@@ -63,7 +73,9 @@ export function createPresentationCommandRecovery<
         busy: false,
         // A retry rejected before receipt lookup does not settle the original ambiguous attempt.
         pendingCommand:
-          acknowledgementMayBeLost(error) || (retrying && retryTemporarilyDenied(error))
+          acknowledgementMayBeLost(error) ||
+          (retrying &&
+            (retryTemporarilyDenied(error) || insertionRetryPrerequisiteDenied(error, command)))
             ? command
             : null,
       });

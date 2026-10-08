@@ -1,4 +1,7 @@
-import { PresentationRecoveryPackInterventionSchema } from "@openround/contracts";
+import {
+  PresentationContentSchema,
+  PresentationRecoveryPackInterventionSchema,
+} from "@openround/contracts";
 import type {
   PresentationSessionCommandInput,
   PresentationSessionCommandReceiptRecord,
@@ -61,15 +64,24 @@ export function commandReceiptMatches(
   receipt: Pick<PresentationSessionCommandReceiptRecord, "expectedRevision" | "requestHash">,
   input: Pick<
     PresentationSessionCommandInput,
-    "expectedRevision" | "requestHash" | "recoveryPackIntervention"
+    "expectedRevision" | "requestHash" | "recoveryPackIntervention" | "content"
   >,
 ) {
   return (
     receipt.expectedRevision === input.expectedRevision &&
     (receipt.requestHash == null
-      ? input.recoveryPackIntervention == null
+      ? input.recoveryPackIntervention == null && input.content == null
       : receipt.requestHash === input.requestHash)
   );
+}
+
+export function transitionContent(
+  session: PresentationSessionRecord,
+  input: PresentationSessionTransitionInput,
+) {
+  return input.content === undefined
+    ? session.content
+    : PresentationContentSchema.parse(input.content);
 }
 
 export function assertCommandRequestHash(

@@ -25,9 +25,11 @@ import type {
   Repository,
 } from "@openround/db";
 import type { AuthService } from "./auth.js";
+import { createRecoveryPackRepository } from "@openround/db";
 import type { AppConfig } from "./config.js";
 import type { MetricsService } from "./metrics.js";
 import { registerPresentationCompanionRoutes } from "./presentation-companion-routes.js";
+import { presentationRecoveryPackLiveInsertionEnabled } from "./presentation-live-recovery-packs.js";
 import {
   PresentationSessionService,
   PresentationSessionServiceError,
@@ -224,11 +226,14 @@ export async function registerPresentationSessionRoutes(
       repository: dependencies.repository,
       presentations: dependencies.presentations,
       sessions: dependencies.presentationSessions,
+      packs: createRecoveryPackRepository(dependencies.repository),
       config: dependencies.config,
       storage: dependencies.storage,
       recoveryPackCardsEnabled: (workspaceId) =>
         evidenceWorkspaceFeatureEnabled(dependencies.config, workspaceId, "recoveryPacks") &&
         evidenceWorkspaceFeatureEnabled(dependencies.config, workspaceId, "recoveryPackLiveCards"),
+      recoveryPackLiveInsertionEnabled: (workspaceId) =>
+        presentationRecoveryPackLiveInsertionEnabled(dependencies.config, workspaceId),
     });
   const enforceSharedAdmission = async (
     request: FastifyRequest,

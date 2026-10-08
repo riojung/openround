@@ -86,6 +86,9 @@ export function presentationCommandRequestHash(command: PresentationControlComma
               interventionType: command.interventionType,
             }
           : {}),
+        ...(command.action === "insert_recovery_pack"
+          ? { packVersionId: command.packVersionId }
+          : {}),
       }),
     )
     .digest("hex");

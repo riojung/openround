@@ -543,96 +543,111 @@ describe("Presentation realtime transport", () => {
     expect(JSON.stringify(result)).not.toContain("secret_table");
   });
 
-  it("dispatches companion commands without promoting their socket or leaking host broadcasts", async () => {
-    const companion = await connect();
-    const host = await connect();
-    await emitAck(companion, "presentation.sync.request", {
-      sessionId,
-      projection: "companion",
-      companionToken,
-    });
-    await emitAck(host, "presentation.sync.request", {
-      sessionId,
-      projection: "host",
-      controlToken,
-    });
-    const waitForProjection = (client: Socket, revision: number) =>
-      new Promise<PresentationRoleSnapshot>((resolve) => {
-        const listener = (
-          event: PresentationEventEnvelope<{ snapshot: PresentationRoleSnapshot }>,
-          acknowledge?: () => void,
-        ) => {
-          acknowledge?.();
-          if (event.payload.snapshot.revision !== revision) return;
-          client.off("presentation.session.updated", listener);
-          resolve(event.payload.snapshot);
-        };
-        client.on("presentation.session.updated", listener);
-      });
-    const companionUpdate = waitForProjection(companion, 1);
-    const hostUpdate = waitForProjection(host, 1);
-    const command = {
-      sessionId,
-      companionToken,
-      commandId: crypto.randomUUID(),
-      expectedRevision: 0,
-      action: "advance",
-    };
-    const accepted = await emitAck<{ data: { snapshot: PresentationCompanionSnapshot } }>(
-      companion,
-      "presentation.command",
-      command,
-    );
-    expect(accepted.data.snapshot).toMatchObject({ projection: "companion", revision: 1 });
-    const companionBroadcast = await companionUpdate;
-    expect(companionBroadcast.projection).toBe("companion");
-    expect(JSON.stringify(companionBroadcast)).not.toContain("Learner");
-    expect(await hostUpdate).toMatchObject({
-      projection: "host",
-      participants: [{ nickname: "Learner" }],
-    });
-    const serverSocket = (await realtime.io.fetchSockets()).find(
-      (candidate) => candidate.id === companion.id,
-    )!;
-    expect(serverSocket.data).toMatchObject({
-      presentationProjection: "companion",
-      presentationCompanionTokenHash: presentationParticipantTokenHash(companionToken),
-    });
-    expect(serverSocket.data.presentationControlTokenHash).toBeUndefined();
-    for (const payload of [
-      { ...command, action: "start_recovery_card" },
-      { ...command, controlToken },
-      {
+  it.each(["advance", "insert_recovery_pack", "start_recovery_card"] as const)(
+    "dispatches companion %s without promoting their socket or leaking host broadcasts",
+    async (action) => {
+      const companion = await connect();
+      const host = await connect();
+      await emitAck(companion, "presentation.sync.request", {
         sessionId,
-        controlToken: companionToken,
+        projection: "companion",
+        companionToken,
+      });
+      await emitAck(host, "presentation.sync.request", {
+        sessionId,
+        projection: "host",
+        controlToken,
+      });
+      const waitForProjection = (client: Socket, revision: number) =>
+        new Promise<PresentationRoleSnapshot>((resolve) => {
+          const listener = (
+            event: PresentationEventEnvelope<{ snapshot: PresentationRoleSnapshot }>,
+            acknowledge?: () => void,
+          ) => {
+            acknowledge?.();
+            if (event.payload.snapshot.revision !== revision) return;
+            client.off("presentation.session.updated", listener);
+            resolve(event.payload.snapshot);
+          };
+          client.on("presentation.session.updated", listener);
+        });
+      const companionUpdate = waitForProjection(companion, 1);
+      const hostUpdate = waitForProjection(host, 1);
+      const command = {
+        sessionId,
+        companionToken,
+        commandId: crypto.randomUUID(),
+        expectedRevision: 0,
+        action,
+        ...(action === "insert_recovery_pack" ? { packVersionId: crypto.randomUUID() } : {}),
+        ...(action === "start_recovery_card"
+          ? {
+              recoveryPackCard: { insertionId: crypto.randomUUID(), cardId: crypto.randomUUID() },
+              interventionType: "explain",
+            }
+          : {}),
+      };
+      const accepted = await emitAck<{ data: { snapshot: PresentationCompanionSnapshot } }>(
+        companion,
+        "presentation.command",
+        command,
+      );
+      expect(accepted.data.snapshot).toMatchObject({ projection: "companion", revision: 1 });
+      const companionBroadcast = await companionUpdate;
+      expect(companionBroadcast.projection).toBe("companion");
+      expect(JSON.stringify(companionBroadcast)).not.toContain("Learner");
+      expect(await hostUpdate).toMatchObject({
+        projection: "host",
+        participants: [{ nickname: "Learner" }],
+      });
+      const serverSocket = (await realtime.io.fetchSockets()).find(
+        (candidate) => candidate.id === companion.id,
+      )!;
+      expect(serverSocket.data).toMatchObject({
+        presentationProjection: "companion",
+        presentationCompanionTokenHash: presentationParticipantTokenHash(companionToken),
+      });
+      expect(serverSocket.data.presentationControlTokenHash).toBeUndefined();
+      for (const payload of [
+        {
+          ...command,
+          action: "start_recovery_card",
+          recoveryPackCard: undefined,
+          interventionType: undefined,
+        },
+        { ...command, controlToken },
+        {
+          sessionId,
+          controlToken: companionToken,
+          commandId: crypto.randomUUID(),
+          expectedRevision: 1,
+          action: "advance",
+        },
+      ]) {
+        const rejected = await emitAck<{ error: { code: string } }>(
+          companion,
+          "presentation.command",
+          payload,
+        );
+        expect(["VALIDATION_ERROR", "UNAUTHORIZED"]).toContain(rejected.error.code);
+      }
+      expect(service.revision).toBe(1);
+      expect(serverSocket.data.presentationProjection).toBe("companion");
+      service.companionRevoked = true;
+      const disconnected = new Promise<void>((resolve) =>
+        companion.once("disconnect", () => resolve()),
+      );
+      await emitAck(host, "presentation.command", {
+        sessionId,
+        controlToken,
         commandId: crypto.randomUUID(),
         expectedRevision: 1,
         action: "advance",
-      },
-    ]) {
-      const rejected = await emitAck<{ error: { code: string } }>(
-        companion,
-        "presentation.command",
-        payload,
-      );
-      expect(["VALIDATION_ERROR", "UNAUTHORIZED"]).toContain(rejected.error.code);
-    }
-    expect(service.revision).toBe(1);
-    expect(serverSocket.data.presentationProjection).toBe("companion");
-    service.companionRevoked = true;
-    const disconnected = new Promise<void>((resolve) =>
-      companion.once("disconnect", () => resolve()),
-    );
-    await emitAck(host, "presentation.command", {
-      sessionId,
-      controlToken,
-      commandId: crypto.randomUUID(),
-      expectedRevision: 1,
-      action: "advance",
-    });
-    await disconnected;
-    expect(host.connected).toBe(true);
-  });
+      });
+      await disconnected;
+      expect(host.connected).toBe(true);
+    },
+  );
 
   it("broadcasts only the projection authorized for each socket", async () => {
     const participant = await connect();

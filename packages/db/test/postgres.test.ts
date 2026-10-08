@@ -50,6 +50,8 @@ import {
   presentationSessionConformanceContent,
 } from "./support/presentation-session-conformance.js";
 import { expectRecoveryPackDraftUndoConformance } from "./support/recovery-pack-draft-undo-conformance.js";
+import { expectPresentationLiveInsertionConformance } from "./support/presentation-live-insertion-conformance.js";
+import { expectRecoveryPackLiveMetadataConformance } from "./support/recovery-pack-live-metadata-conformance.js";
 import {
   expectPresentationPackUndoConformance,
   expectPresentationPackUndoRetentionConformance,
@@ -2489,6 +2491,39 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       beginWorkspaceDeletion: async () => {
         await repository.claimWorkspaceMediaDeletion(owner.workspaceId);
       },
+    });
+  });
+
+  it("keeps PostgreSQL on the shared live insertion CAS, timer and receipt contract", async () => {
+    const owner = await creator("presentation-live-insertion-conformance");
+    const outsider = await creator("presentation-live-insertion-outsider");
+    const published = await createPublishedPresentationFixture(
+      owner,
+      "Presentation live insertion",
+    );
+    await expectPresentationLiveInsertionConformance({
+      repository: new PostgresPresentationSessionRepository(repository),
+      workspaceId: owner.workspaceId,
+      otherWorkspaceId: outsider.workspaceId,
+      presentationId: published.presentation.id,
+      presentationVersionId: published.version.id,
+      createdBy: owner.userId,
+      content: published.content,
+      beginWorkspaceDeletion: async () => {
+        await repository.claimWorkspaceMediaDeletion(owner.workspaceId);
+      },
+    });
+  });
+
+  it("keeps PostgreSQL on the shared published Pack metadata catalogue contract", async () => {
+    const owner = await creator("recovery-pack-live-metadata-conformance");
+    const outsider = await creator("recovery-pack-live-metadata-outsider");
+    await expectRecoveryPackLiveMetadataConformance({
+      repository,
+      workspaceId: owner.workspaceId,
+      otherWorkspaceId: outsider.workspaceId,
+      editorId: owner.userId,
+      otherEditorId: outsider.userId,
     });
   });
 

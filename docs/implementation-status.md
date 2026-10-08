@@ -8,6 +8,48 @@ trademark review.
 
 ## Staged implementation plan checkpoint
 
+### Presentation Companion Recovery Packs — October 8, 2026
+
+The next provisional Companion slice adds a bounded, bearer-scoped published Pack catalog and
+live insertion of an explicitly selected immutable text-only version. One revision-fenced command
+inserts the frozen diagnostic/recheck pair and immediately opens the diagnostic. Session content,
+question timing, revision, event sequence, timeline, and command receipt commit atomically in
+memory and PostgreSQL. Published Presentation/Pack versions and drafts remain unchanged. Every
+copy keeps its complete original Pack baseline and provenance; it survives source deletion.
+
+Insertion is limited to safe closed boundaries. Any earlier/current source question with a linked
+recheck still ahead blocks insertion, including practice-purpose sources and intervening content
+or standalone questions. Post-reveal card choices expose titles/references only. An explicit
+explanation/worked-example action plays only the selected frozen card, then opens its linked
+recheck. The picker and card controls share exact-command acknowledgement recovery with advance;
+ambiguous insertion retries retain their original intent. Accepted retries and frozen playback
+remain available after source deletion or flag/allowlist rollback.
+
+New insertion requires the existing Companion/realtime, professional Presentation, Pack/live-card,
+workspace allowlist, and session-creation gates. This slice supports text-only Packs: media on a
+diagnostic, recheck, or optional delayed probe is rejected until session-owned media retention is
+implemented. The delayed probe is retained but not played live. Existing credential/session tables,
+forced RLS, retention, export/delete, and audit boundaries are reused; there are no new migrations,
+dependencies, CI jobs, participant-cap changes, or production-acceptance claims.
+
+Verification: all 303 contract tests, 532 web tests, 126 memory/database tests, and 66 PostgreSQL
+integration tests pass. The PostgreSQL suite ran against an isolated disposable PostgreSQL 17
+database, which was removed afterward without changing existing services or data volumes. All 65
+focused server tests, server type checks/lint, and the diff check pass. Twelve selected browser
+checks pass across desktop Chromium, Android Chromium, and mobile WebKit with a production Next
+build: the three new Pack workflows plus nine existing Companion/host regressions. They cover
+immutable source-version selection, source deletion, lost acknowledgement/exact retry, selected-only
+card playback, recheck/report reconciliation, cookie omission, keyboard/focus, axe, and mobile
+overflow. Independent focused review verified the diagnostic/practice pending-recheck fixes and
+corrected disabled-button assertions. Firefox retains the foundation checkpoint's local launch
+limitation and its existing CI project; manual assistive-technology/device, partner, and external
+security/release evidence remain separate gates. Local `CI=true pnpm check` also passes formatting,
+Docker dependency-context checks, lint, type checks, all package/support tests, and production builds.
+
+Next: session-only unscored Quick Checks. Media-backed Companion insertion requires its own
+retention increment; Recovery Trails and Concept Health remain later capabilities. Partner-evidence
+decisions and staging/production exercises remain explicitly deferred, not passed.
+
 ### Presentation Companion foundation — October 8, 2026
 
 The first provisional Companion slice adds a compact live Presentation sidecar, owner/editor
@@ -39,7 +81,8 @@ no remaining actionable issues after repairing popup storage inheritance and coo
 New Companion labels use explicit English fallbacks until reviewed translations are available;
 manual assistive-technology/device and external security/rollout evidence remain separate gates.
 
-Next: immutable prepared Pack insertion/playback, then session-only unscored Quick Checks.
+At this foundation checkpoint, immutable prepared Pack insertion/playback was next; the subsequent
+text-only Pack increment is recorded above. Session-only unscored Quick Checks remain next.
 Recovery Trails and Concept Health remain later increments; learner formats and institutional
 integrations keep their existing scope and privacy constraints.
 

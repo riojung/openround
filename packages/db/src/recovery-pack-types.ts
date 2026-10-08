@@ -53,6 +53,13 @@ export interface RecoveryPackVersionRecord {
   publishedAt: Date;
 }
 
+export interface PublishedRecoveryPackMetadata {
+  packId: string;
+  packVersionId: string;
+  packVersion: number;
+  title: string;
+}
+
 export interface RecoveryPackHistoryRecord {
   id: string;
   workspaceId: string;
@@ -82,6 +89,11 @@ export type RecoveryPackMutationReplay = Pick<
 
 export interface RecoveryPackRepository {
   listRecoveryPacks(workspaceId: string): Promise<RecoveryPackRecord[]>;
+  /** Current published text-only versions; no drafts, keys, cards, or source review data. */
+  listPublishedRecoveryPackMetadata(
+    workspaceId: string,
+    limit?: number,
+  ): Promise<PublishedRecoveryPackMetadata[]>;
   createRecoveryPack(input: RecoveryPackRecord): Promise<RecoveryPackRecord>;
   replaySourceRecoveryPack(
     workspaceId: string,

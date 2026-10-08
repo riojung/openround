@@ -16,6 +16,10 @@ import {
 import { recoveryPackMediaIds } from "./media-references.js";
 import { RecoveryPackContentSchema } from "@openround/contracts";
 import {
+  recoveryPackTextOnlyLiveEligible,
+  RECOVERY_PACK_TEXT_ONLY_LIVE_SQL,
+} from "./recovery-pack-live-metadata.js";
+import {
   assertSourceApproval,
   assertSourceCitations,
   assertSourceProvenance,
@@ -38,6 +42,7 @@ import {
   type RecoveryPackSourceApproval,
   type RecoveryPackSourceProvenance,
   type RecoveryPackVersionRecord,
+  type PublishedRecoveryPackMetadata,
 } from "./recovery-pack-types.js";
 
 interface MutationReceipt {
@@ -296,6 +301,35 @@ export class MemoryRecoveryPackRepository
           right.updatedAt.getTime() - left.updatedAt.getTime() || left.id.localeCompare(right.id),
       )
       .map((item) => structuredClone(this.review(item)));
+  }
+
+  async listPublishedRecoveryPackMetadata(workspaceId: string, limit = 100) {
+    const packs = [...this.packs.values()]
+      .filter((pack) => pack.workspaceId === workspaceId)
+      .sort(
+        (left, right) =>
+          right.updatedAt.getTime() - left.updatedAt.getTime() || left.id.localeCompare(right.id),
+      );
+    return packs
+      .flatMap((pack): PublishedRecoveryPackMetadata[] => {
+        const version = pack.currentVersionId ? this.versions.get(pack.currentVersionId) : null;
+        if (
+          !version ||
+          version.workspaceId !== workspaceId ||
+          version.packId !== pack.id ||
+          !recoveryPackTextOnlyLiveEligible(version.content)
+        )
+          return [];
+        return [
+          {
+            packId: pack.id,
+            packVersionId: version.id,
+            packVersion: version.version,
+            title: version.content.title,
+          },
+        ];
+      })
+      .slice(0, Math.min(100, Math.max(0, Math.trunc(limit))));
   }
 
   async createRecoveryPack(input: RecoveryPackRecord) {
@@ -779,6 +813,32 @@ export class PostgresRecoveryPackRepository implements RecoveryPackRepository {
           row.source_record ? mapSource(row.source_record) : undefined,
         ),
       );
+    });
+  }
+
+  async listPublishedRecoveryPackMetadata(
+    workspaceId: string,
+    limit = 100,
+  ): Promise<PublishedRecoveryPackMetadata[]> {
+    return this.transaction(workspaceId, async (client) => {
+      const result = await client.query(
+        `SELECT pack.id AS pack_id, version.id AS pack_version_id, version.version AS pack_version,
+                version.content ->> 'title' AS title
+           FROM recovery_packs pack
+           JOIN recovery_pack_versions version
+             ON version.workspace_id = pack.workspace_id AND version.pack_id = pack.id
+            AND version.id = pack.current_version_id
+          WHERE pack.workspace_id = $1 AND ${RECOVERY_PACK_TEXT_ONLY_LIVE_SQL}
+          ORDER BY pack.updated_at DESC, pack.id
+          LIMIT $2`,
+        [workspaceId, Math.min(100, Math.max(0, Math.trunc(limit)))],
+      );
+      return result.rows.map((row) => ({
+        packId: String(row.pack_id),
+        packVersionId: String(row.pack_version_id),
+        packVersion: Number(row.pack_version),
+        title: String(row.title),
+      }));
     });
   }
 

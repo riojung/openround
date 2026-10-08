@@ -463,7 +463,15 @@ describe("Presentation Recovery Pack live playback", () => {
       expect(revealed.recoveryPackCards).toHaveLength(2);
       expect(revealed.recoveryPackCards?.[0]).toEqual(f.card);
       expect(revealed).not.toHaveProperty("recoveryPackIntervention");
-      for (const { snapshot } of (await f.projections()).slice(1)) expectNoCards(snapshot);
+      const [, participant, companion] = await f.projections();
+      expectNoCards(participant!.snapshot);
+      expect(companion!.snapshot).toHaveProperty("recoveryPackCards", [
+        { reference: f.card.reference, title: f.card.title },
+        expect.objectContaining({ title: "Alternative example" }),
+      ]);
+      expect(companion!.snapshot).not.toHaveProperty("recoveryPackIntervention");
+      expect(JSON.stringify(companion!.snapshot)).not.toContain(UNSELECTED_BODY);
+      expect(JSON.stringify(companion!.snapshot)).not.toContain(f.card.body);
 
       const selected = await f.select(accepted ? "example" : "explain");
       expect(selected.snapshot).toMatchObject({ phase: "intervention", currentBlockIndex: 0 });
