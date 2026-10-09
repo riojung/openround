@@ -57,10 +57,30 @@ export async function expectPresentationLiveInsertionConformance(
     },
   };
   const commandId = randomUUID();
+  const publishedBlockId = randomUUID();
+  const publishedMarker = {
+    commandId: randomUUID(),
+    blockId: publishedBlockId,
+    sourceQuizId: randomUUID(),
+    sourceQuizVersionId: randomUUID(),
+    sourceQuizVersion: 1,
+    sourceQuestionId: randomUUID(),
+    contentHash: "e".repeat(64),
+  };
+  const publishedBlock = {
+    id: publishedBlockId,
+    kind: "question" as const,
+    provenance: {
+      sourceQuizVersionId: publishedMarker.sourceQuizVersionId,
+      sourceQuestionId: publishedMarker.sourceQuestionId,
+    },
+    question: { ...structuredClone(source.question), id: randomUUID() },
+  };
   const content: PresentationContent = {
     ...structuredClone(input.content),
-    blocks: [inserted, ...structuredClone(input.content.blocks)],
+    blocks: [inserted, ...structuredClone(input.content.blocks), publishedBlock],
     liveQuickCheck: { commandId, blockId: inserted.id },
+    livePublishedQuestions: [publishedMarker],
   };
   // Restoring a frozen snapshot uses the content upcaster, not the authoring draft parser.
   const restored = await repository.createSession({
@@ -70,6 +90,10 @@ export async function expectPresentationLiveInsertionConformance(
     content,
   });
   expect(restored.content.liveQuickCheck).toEqual(content.liveQuickCheck);
+  expect(restored.content.livePublishedQuestions).toEqual([publishedMarker]);
+  expect((await repository.getSessionById(restored.id))?.content.livePublishedQuestions).toEqual([
+    publishedMarker,
+  ]);
   expect((await repository.getSessionById(restored.id))?.content.liveQuickCheck).toEqual(
     content.liveQuickCheck,
   );
@@ -116,6 +140,9 @@ export async function expectPresentationLiveInsertionConformance(
     commandId,
     blockId: inserted.id,
   });
+  expect((await repository.getSessionById(session.id))?.content.livePublishedQuestions).toEqual([
+    publishedMarker,
+  ]);
   await expect(
     repository.findCommandReceipt(workspaceId, session.id, command.commandId),
   ).resolves.toMatchObject({

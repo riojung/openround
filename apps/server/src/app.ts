@@ -309,6 +309,8 @@ export async function buildApp(
       presentationRecoveryPackLiveInsertionEnabled(config, workspaceId),
     quickCheckLiveInsertionEnabled: (workspaceId) =>
       presentationLiveInsertionEnabled(config, workspaceId),
+    publishedQuestionLiveInsertionEnabled: (workspaceId) =>
+      presentationLiveInsertionEnabled(config, workspaceId),
   });
   const readiness =
     overrides.readiness ??

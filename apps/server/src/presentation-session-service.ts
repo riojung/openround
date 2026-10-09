@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import {
   PresentationCompanionSnapshotSchema,
   PresentationCompanionRecoveryPackCatalogSchema,
+  PresentationCompanionPublishedQuestionCatalogSchema,
   PresentationReportEnvelopeSchema,
   PresentationReportSchema,
   PresentationReportWithSessionContextEnvelopeSchema,
@@ -54,6 +55,7 @@ import {
 import type { StorageService } from "./storage.js";
 import { presentationCanInsertRecoveryPack } from "./presentation-live-recovery-packs.js";
 import { presentationCanInsertQuickCheck } from "./presentation-live-quick-checks.js";
+import { presentationCanInsertPublishedQuestion } from "./presentation-live-published-questions.js";
 
 const PRESENTATION_SESSION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
 const PRESENTATION_COMPANION_PASS_LIFETIME_MS = 60 * 60 * 1_000;
@@ -133,6 +135,7 @@ export class PresentationSessionService {
       recoveryPackCardsEnabled?: (workspaceId: string) => boolean;
       recoveryPackLiveInsertionEnabled?: (workspaceId: string) => boolean;
       quickCheckLiveInsertionEnabled?: (workspaceId: string) => boolean;
+      publishedQuestionLiveInsertionEnabled?: (workspaceId: string) => boolean;
     },
   ) {
     this.liveMutations = new PresentationLiveMutationService({
@@ -142,6 +145,7 @@ export class PresentationSessionService {
       packs: dependencies.packs,
       recoveryPackLiveInsertionEnabled: dependencies.recoveryPackLiveInsertionEnabled,
       quickCheckLiveInsertionEnabled: dependencies.quickCheckLiveInsertionEnabled,
+      publishedQuestionLiveInsertionEnabled: dependencies.publishedQuestionLiveInsertionEnabled,
       participantTokenHash: presentationParticipantTokenHash,
       sessionExpired: presentationLiveSessionExpired,
       authorizeHostCredential: (sessionId, token) =>
@@ -558,6 +562,26 @@ export class PresentationSessionService {
         100,
       ),
     });
+  }
+
+  async getCompanionPublishedQuestions(sessionId: string, companionToken: string, search = "") {
+    const session = await this.authorizeCredential(sessionId, companionToken, "companion");
+    if (
+      session.status !== "active" ||
+      !this.dependencies.publishedQuestionLiveInsertionEnabled?.(session.workspaceId)
+    )
+      throw new PresentationSessionServiceError(
+        404,
+        "NOT_FOUND",
+        "Live published question insertion is not enabled in this workspace",
+      );
+    return PresentationCompanionPublishedQuestionCatalogSchema.parse(
+      await this.dependencies.repository.listPublishedQuizQuestionMetadata(
+        session.workspaceId,
+        search,
+        100,
+      ),
+    );
   }
 
   async getHostSnapshot(workspaceId: string, sessionId: string) {
@@ -1013,6 +1037,10 @@ export class PresentationSessionService {
       Boolean(
         this.dependencies.quickCheckLiveInsertionEnabled?.(session.workspaceId) &&
         presentationCanInsertQuickCheck(session),
+      ),
+      Boolean(
+        this.dependencies.publishedQuestionLiveInsertionEnabled?.(session.workspaceId) &&
+        presentationCanInsertPublishedQuestion(session),
       ),
     );
   }

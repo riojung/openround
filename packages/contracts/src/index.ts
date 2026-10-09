@@ -3927,6 +3927,30 @@ export const PresentationLiveQuickCheckSchema = z
   .strict();
 export type PresentationLiveQuickCheck = z.infer<typeof PresentationLiveQuickCheckSchema>;
 
+/** A scoped sidecar selects an exact retained version, never supplies mutable question content. */
+export const PresentationPublishedQuestionSelectionSchema = z
+  .object({
+    sourceQuizVersionId: z.string().uuid(),
+    sourceQuestionId: z.string().uuid(),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+export type PresentationPublishedQuestionSelection = z.infer<
+  typeof PresentationPublishedQuestionSelectionSchema
+>;
+
+/** Frozen Round provenance is session-only; authoring drafts do not retain live insertions. */
+export const PresentationLivePublishedQuestionSchema =
+  PresentationPublishedQuestionSelectionSchema.extend({
+    commandId: z.string().uuid(),
+    blockId: z.string().uuid(),
+    sourceQuizId: z.string().uuid(),
+    sourceQuizVersion: z.number().int().positive(),
+  }).strict();
+export type PresentationLivePublishedQuestion = z.infer<
+  typeof PresentationLivePublishedQuestionSchema
+>;
+
 export const PresentationBlockDraftSchema = z.discriminatedUnion("kind", [
   ContentSlideDraftSchema,
   InteractiveQuestionBlockDraftSchema,
@@ -4099,10 +4123,43 @@ export const PresentationContentSchema = z
     blocks: z.array(PresentationBlockSchema).min(1).max(200),
     recoveryPackInsertions: z.array(RecoveryPackInsertionSchema).max(100).optional(),
     liveQuickCheck: PresentationLiveQuickCheckSchema.optional(),
+    livePublishedQuestions: z
+      .array(PresentationLivePublishedQuestionSchema)
+      .min(1)
+      .max(100)
+      .optional(),
   })
   .superRefine((presentation, ctx) => {
     applyPresentationTopology(presentation, ctx, true);
     applyPresentationRecoveryPackRules(presentation, ctx);
+    const liveCommandIds = new Set<string>();
+    const liveBlockIds = new Set<string>();
+    for (const [index, insertion] of (presentation.livePublishedQuestions ?? []).entries()) {
+      const block = presentation.blocks.find((candidate) => candidate.id === insertion.blockId);
+      if (
+        liveCommandIds.has(insertion.commandId) ||
+        liveBlockIds.has(insertion.blockId) ||
+        insertion.commandId === presentation.liveQuickCheck?.commandId ||
+        insertion.blockId === presentation.liveQuickCheck?.blockId ||
+        presentation.recoveryPackInsertions?.some((pack) => pack.id === insertion.commandId) ||
+        block?.kind !== "question" ||
+        (block.question.delivery ?? "main") !== "main" ||
+        block.question.mediaId !== null ||
+        block.question.linkedRecheckQuestionId ||
+        block.question.recoveryPackSource ||
+        block.provenance?.sourceQuizVersionId !== insertion.sourceQuizVersionId ||
+        block.provenance.sourceQuestionId !== insertion.sourceQuestionId
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["livePublishedQuestions", index],
+          message:
+            "Live published questions require unique insertions and matching standalone text-only provenance",
+        });
+      }
+      liveCommandIds.add(insertion.commandId);
+      liveBlockIds.add(insertion.blockId);
+    }
     if (presentation.liveQuickCheck) {
       const block = presentation.blocks.find(
         (candidate) => candidate.id === presentation.liveQuickCheck!.blockId,
@@ -4864,6 +4921,40 @@ export type PresentationCompanionRecoveryPackCatalog = z.infer<
   typeof PresentationCompanionRecoveryPackCatalogSchema
 >;
 
+/** Catalog metadata excludes keys, choices, explanations, concepts, citations, and media. */
+export const PresentationCompanionPublishedQuestionSchema =
+  PresentationPublishedQuestionSelectionSchema.extend({
+    sourceQuizId: z.string().uuid(),
+    sourceQuizVersion: z.number().int().positive(),
+    title: z.string().trim().min(1).max(160),
+    prompt: z.string().trim().min(1).max(500),
+    type: z.enum(["single_select", "true_false", "multi_select", "poll", "numeric", "rating"]),
+  }).strict();
+export type PresentationCompanionPublishedQuestion = z.infer<
+  typeof PresentationCompanionPublishedQuestionSchema
+>;
+export const PresentationCompanionPublishedQuestionCatalogSchema = z
+  .object({
+    questions: z.array(PresentationCompanionPublishedQuestionSchema).max(100),
+    hasMore: z.boolean(),
+  })
+  .strict()
+  .superRefine(({ questions }, ctx) => {
+    const identities = questions.map(
+      (question) => `${question.sourceQuizVersionId}:${question.sourceQuestionId}`,
+    );
+    if (new Set(identities).size !== identities.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Published question references must be unique",
+        path: ["questions"],
+      });
+    }
+  });
+export type PresentationCompanionPublishedQuestionCatalog = z.infer<
+  typeof PresentationCompanionPublishedQuestionCatalogSchema
+>;
+
 /** Titles are available after reveal; only the explicitly selected card may include a body. */
 export const PresentationCompanionRecoveryPackCardSchema = z
   .object({
@@ -4884,6 +4975,7 @@ export const PresentationCompanionSnapshotSchema = z
     primaryAction: z.enum(["advance", "none"]),
     canInsertRecoveryPack: z.boolean().optional(),
     canInsertQuickCheck: z.boolean().optional(),
+    canInsertPublishedQuestion: z.boolean().optional(),
     recoveryPackCards: z
       .array(PresentationCompanionRecoveryPackCardSchema)
       .min(1)
@@ -4895,6 +4987,18 @@ export const PresentationCompanionSnapshotSchema = z
   .strict()
   .superRefine((snapshot, ctx) => {
     validatePresentationRecoveryPackPlayback(snapshot, ctx);
+    if (
+      snapshot.canInsertPublishedQuestion &&
+      (snapshot.status !== "active" ||
+        !["lobby", "content", "question_reveal"].includes(snapshot.phase) ||
+        snapshot.acceptingResponses)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["canInsertPublishedQuestion"],
+        message: "Published question insertion requires an active room at a closed, safe boundary",
+      });
+    }
     if (
       snapshot.canInsertQuickCheck &&
       (snapshot.status !== "active" ||
@@ -5098,6 +5202,13 @@ const PresentationCompanionCommandFields = {
 /** Scoped live controls only; no creator, settings, identity, or host authority. */
 export const PresentationCompanionCommandSchema = z.discriminatedUnion("action", [
   z.object({ ...PresentationCompanionCommandFields, action: z.literal("advance") }).strict(),
+  z
+    .object({
+      ...PresentationCompanionCommandFields,
+      action: z.literal("insert_published_question"),
+      publishedQuestion: PresentationPublishedQuestionSelectionSchema,
+    })
+    .strict(),
   z
     .object({
       ...PresentationCompanionCommandFields,

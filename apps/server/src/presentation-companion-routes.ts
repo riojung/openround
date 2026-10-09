@@ -6,6 +6,7 @@ import {
   PresentationCompanionPassResponseSchema,
   PresentationCompanionSnapshotSchema,
   PresentationCompanionRecoveryPackCatalogSchema,
+  PresentationCompanionPublishedQuestionCatalogSchema,
   type PresentationCompanionSnapshot,
 } from "@openround/contracts";
 import type { CreatorContext } from "@openround/db";
@@ -22,15 +23,25 @@ const CompanionPassParamsSchema = z.object({
   id: z.string().uuid(),
   credentialId: z.string().uuid(),
 });
-const QuickCheckQuerySchema = z
-  .object({ includeQuickChecks: z.literal("true").optional() })
+const CompanionFeatureQuerySchema = z
+  .object({
+    includeQuickChecks: z.literal("true").optional(),
+    includePublishedQuestions: z.literal("true").optional(),
+  })
+  .strict();
+const PublishedQuestionQuerySchema = z
+  .object({ search: z.string().trim().max(100).optional() })
   .strict();
 
-function restCompanionSnapshot(value: PresentationCompanionSnapshot, includeQuickChecks: boolean) {
+function restCompanionSnapshot(
+  value: PresentationCompanionSnapshot,
+  includeQuickChecks: boolean,
+  includePublishedQuestions: boolean,
+) {
   const snapshot = PresentationCompanionSnapshotSchema.parse(value);
-  if (includeQuickChecks) return snapshot;
   const legacy = { ...snapshot };
-  delete legacy.canInsertQuickCheck;
+  if (!includeQuickChecks) delete legacy.canInsertQuickCheck;
+  if (!includePublishedQuestions) delete legacy.canInsertPublishedQuestion;
   return legacy;
 }
 
@@ -44,6 +55,7 @@ interface PresentationCompanionRouteDependencies {
     | "getCompanionSnapshot"
     | "companionCommand"
     | "getCompanionRecoveryPacks"
+    | "getCompanionPublishedQuestions"
   >;
   requirePresentationWorkspace(
     workspaceId: string,
@@ -76,7 +88,7 @@ interface PresentationCompanionRouteDependencies {
 
 function presentationCompanionRateLimitKey(
   request: FastifyRequest,
-  operation: "snapshot" | "command" | "catalog",
+  operation: "snapshot" | "command" | "catalog" | "published-questions",
   bearerToken: PresentationCompanionRouteDependencies["bearerToken"],
 ) {
   const body = request.body as { companionToken?: unknown } | null;
@@ -107,8 +119,10 @@ export function registerPresentationCompanionRoutes(
     apiError,
     sendServiceError,
   } = dependencies;
-  const rateLimitKey = (request: FastifyRequest, operation: "snapshot" | "command" | "catalog") =>
-    presentationCompanionRateLimitKey(request, operation, bearerToken);
+  const rateLimitKey = (
+    request: FastifyRequest,
+    operation: "snapshot" | "command" | "catalog" | "published-questions",
+  ) => presentationCompanionRateLimitKey(request, operation, bearerToken);
 
   app.post("/v1/presentation-sessions/:id/companion-pass", async (request, reply) => {
     noStore(reply);
@@ -179,12 +193,15 @@ export function registerPresentationCompanionRoutes(
       const token = bearerToken(request);
       if (!token)
         return apiError(reply, 401, "UNAUTHORIZED", "Companion credential required", request.id);
-      const { includeQuickChecks } = QuickCheckQuerySchema.parse(request.query);
+      const { includeQuickChecks, includePublishedQuestions } = CompanionFeatureQuerySchema.parse(
+        request.query,
+      );
       try {
         return {
           snapshot: restCompanionSnapshot(
             await service.getCompanionSnapshot(id, token),
             includeQuickChecks === "true",
+            includePublishedQuestions === "true",
           ),
         };
       } catch (error) {
@@ -244,7 +261,9 @@ export function registerPresentationCompanionRoutes(
     async (request, reply) => {
       const { id } = IdParamsSchema.parse(request.params);
       const input = PresentationCompanionCommandSchema.parse(request.body);
-      const { includeQuickChecks } = QuickCheckQuerySchema.parse(request.query);
+      const { includeQuickChecks, includePublishedQuestions } = CompanionFeatureQuerySchema.parse(
+        request.query,
+      );
       if (input.sessionId !== id)
         return apiError(
           reply,
@@ -260,8 +279,50 @@ export function registerPresentationCompanionRoutes(
           snapshot: restCompanionSnapshot(
             await service.companionCommand(input),
             includeQuickChecks === "true",
+            includePublishedQuestions === "true",
           ),
         };
+      } catch (error) {
+        return sendServiceError(error, reply, request.id);
+      }
+    },
+  );
+
+  app.get(
+    "/v1/presentation-sessions/:id/companion-published-questions",
+    {
+      onRequest: async (_request, reply) => {
+        noStore(reply);
+      },
+      preHandler: async (request, reply) => {
+        if (
+          !(await enforceSharedAdmission(
+            request,
+            reply,
+            rateLimitKey(request, "published-questions"),
+            30,
+          ))
+        )
+          return reply;
+      },
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+          keyGenerator: (request: FastifyRequest) => rateLimitKey(request, "published-questions"),
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id } = IdParamsSchema.parse(request.params);
+      const token = bearerToken(request);
+      if (!token)
+        return apiError(reply, 401, "UNAUTHORIZED", "Companion credential required", request.id);
+      const { search } = PublishedQuestionQuerySchema.parse(request.query);
+      try {
+        return PresentationCompanionPublishedQuestionCatalogSchema.parse(
+          await service.getCompanionPublishedQuestions(id, token, search),
+        );
       } catch (error) {
         return sendServiceError(error, reply, request.id);
       }

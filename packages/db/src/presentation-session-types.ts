@@ -251,6 +251,12 @@ export interface PresentationSessionTransitionInput {
 export type PresentationSessionCommandInput = PresentationSessionTransitionInput & {
   commandId: string;
   requestHash?: string | null;
+  /** Revalidated atomically with a new insertion; accepted receipts bypass this source fence. */
+  publishedQuestionSource?: {
+    quizId: string;
+    versionId: string;
+    contentHash: string;
+  };
 };
 
 export interface PresentationSessionRepository {
@@ -374,5 +380,12 @@ export class PresentationSessionConflictError extends Error {
   ) {
     super("The live presentation changed in another host window");
     this.name = "PresentationSessionConflictError";
+  }
+}
+
+export class PresentationPublishedQuestionSourceUnavailableError extends Error {
+  constructor() {
+    super("Published source Round version not found");
+    this.name = "PresentationPublishedQuestionSourceUnavailableError";
   }
 }

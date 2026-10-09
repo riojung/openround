@@ -240,6 +240,8 @@ export async function registerPresentationSessionRoutes(
         presentationRecoveryPackLiveInsertionEnabled(dependencies.config, workspaceId),
       quickCheckLiveInsertionEnabled: (workspaceId) =>
         presentationLiveInsertionEnabled(dependencies.config, workspaceId),
+      publishedQuestionLiveInsertionEnabled: (workspaceId) =>
+        presentationLiveInsertionEnabled(dependencies.config, workspaceId),
     });
   const enforceSharedAdmission = async (
     request: FastifyRequest,

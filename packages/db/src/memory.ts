@@ -87,6 +87,15 @@ import type {
 } from "./types.js";
 import { quizMediaIds } from "./media-references.js";
 import {
+  PresentationPublishedQuestionSourceUnavailableError,
+  type PresentationSessionCommandInput,
+} from "./presentation-session-types.js";
+import {
+  publishedQuestionCatalogOptions,
+  publishedQuestionMetadata,
+  publishedQuestionTextOnlyLiveEligible,
+} from "./published-question-live-metadata.js";
+import {
   createRecoveryPackRepository,
   type MemoryRecoveryPackRepository,
 } from "./recovery-packs.js";
@@ -100,6 +109,7 @@ import {
 import {
   ROUND_CONTENT_SCHEMA_VERSION,
   ROUND_DRAFT_SCHEMA_VERSION,
+  assertRoundContentSchemaVersion,
   upcastRoundContent,
   upcastRoundDraft,
 } from "./artifact-schemas.js";
@@ -401,6 +411,24 @@ export class MemoryRepository implements Repository {
     artifactId: string,
   ) {
     return this.deletedLibraryArtifacts.has(`${workspaceId}:${artifactType}:${artifactId}`);
+  }
+
+  assertPresentationPublishedQuestionSource(
+    workspaceId: string,
+    source: NonNullable<PresentationSessionCommandInput["publishedQuestionSource"]>,
+  ) {
+    const quiz = this.quizzes.get(source.quizId);
+    const version = this.versions.get(source.versionId);
+    if (
+      !quiz ||
+      quiz.workspaceId !== workspaceId ||
+      quiz.status === "archived" ||
+      !version ||
+      version.workspaceId !== workspaceId ||
+      version.quizId !== quiz.id ||
+      version.contentHash !== source.contentHash
+    )
+      throw new PresentationPublishedQuestionSourceUnavailableError();
   }
 
   markLibraryArtifactDeleted(
@@ -780,6 +808,47 @@ export class MemoryRepository implements Repository {
         ...structuredClone(normalizeQuizRecord(quiz)),
         lastHostedAt: structuredClone(lastHostedAtByQuizId.get(quiz.id) ?? null),
       }));
+  }
+
+  async listPublishedQuizQuestionMetadata(workspaceId: string, search = "", limit = 100) {
+    const options = publishedQuestionCatalogOptions(search, limit);
+    const needle = options.search.toLowerCase();
+    const quizzes = [...this.quizzes.values()]
+      .filter((quiz) => quiz.workspaceId === workspaceId && quiz.status !== "archived")
+      .sort(
+        (left, right) =>
+          right.updatedAt.getTime() - left.updatedAt.getTime() ||
+          (left.id === right.id ? 0 : left.id < right.id ? 1 : -1),
+      );
+    const questions: Awaited<
+      ReturnType<Repository["listPublishedQuizQuestionMetadata"]>
+    >["questions"] = [];
+    const versions = quizzes.flatMap((quiz) => {
+      const version = quiz.currentVersionId ? this.versions.get(quiz.currentVersionId) : undefined;
+      return version && version.workspaceId === workspaceId && version.quizId === quiz.id
+        ? [version]
+        : [];
+    });
+    for (const version of versions) {
+      assertRoundContentSchemaVersion(version.contentSchemaVersion);
+    }
+    for (const version of versions) {
+      const normalized = normalizeQuizVersion(version);
+      for (const question of normalized.content.questions) {
+        if (
+          !publishedQuestionTextOnlyLiveEligible(question, normalized.content.questions) ||
+          (needle &&
+            !normalized.content.title.toLowerCase().includes(needle) &&
+            !question.prompt.toLowerCase().includes(needle))
+        )
+          continue;
+        questions.push(publishedQuestionMetadata(normalized, question));
+        if (questions.length > options.limit) {
+          return { questions: questions.slice(0, options.limit), hasMore: true };
+        }
+      }
+    }
+    return { questions, hasMore: false };
   }
 
   async listFolders(workspaceId: string) {

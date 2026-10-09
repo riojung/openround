@@ -13,6 +13,7 @@ import {
   type PresentationSessionResponse,
 } from "@openround/contracts";
 import {
+  PresentationPublishedQuestionSourceUnavailableError,
   PresentationSessionConflictError,
   WorkspaceDeletionInProgressError,
   type PresentationResponseAcknowledgementState,
@@ -34,6 +35,10 @@ import {
   presentationCanInsertQuickCheck,
   presentationQuickCheckInsertionTransition,
 } from "./presentation-live-quick-checks.js";
+import {
+  presentationCanInsertPublishedQuestion,
+  presentationPublishedQuestionInsertionTransition,
+} from "./presentation-live-published-questions.js";
 import {
   buildTargetedPresentationParticipantSnapshot,
   presentationCurrentBlock,
@@ -94,7 +99,10 @@ type PresentationMutationSessionRepository = Pick<
   | "findResponseByIdempotencyKey"
 >;
 
-type PresentationMutationRepository = Pick<Repository, "getPlan" | "recordAudit">;
+type PresentationMutationRepository = Pick<
+  Repository,
+  "getPlan" | "recordAudit" | "getQuizVersion" | "getQuiz"
+>;
 
 type PresentationEntitlementConfig = Pick<
   AppConfig,
@@ -111,6 +119,7 @@ interface PresentationLiveMutationDependencies {
   packs?: Pick<RecoveryPackRepository, "getRecoveryPackVersion">;
   recoveryPackLiveInsertionEnabled?: (workspaceId: string) => boolean;
   quickCheckLiveInsertionEnabled?: (workspaceId: string) => boolean;
+  publishedQuestionLiveInsertionEnabled?: (workspaceId: string) => boolean;
   participantTokenHash(token: string): string;
   sessionExpired(session: PresentationSessionRecord, now?: Date): boolean;
   authorizeHostCredential(sessionId: string, token: string): Promise<PresentationSessionRecord>;
@@ -335,12 +344,12 @@ export class PresentationLiveMutationService {
     return this.acceptCommand(command, session, this.dependencies.realtimeCompanionSnapshot);
   }
 
-  private async acceptCommand<T extends PresentationHostSnapshot | PresentationCompanionSnapshot>(
+  private async replayCommand<T extends PresentationHostSnapshot | PresentationCompanionSnapshot>(
     input: PresentationControlCommand,
     session: PresentationSessionRecord,
     snapshot: (session: PresentationSessionRecord) => Promise<T>,
-  ): Promise<T> {
-    const requestHash = presentationCommandRequestHash(input);
+    requestHash: string,
+  ): Promise<T | null> {
     // Recover an exact durable command before inspecting the current phase, revision or card.
     // An acknowledgement can be lost and retried after another host has advanced or finished.
     const receipt = await this.dependencies.sessions.findCommandReceipt(
@@ -372,19 +381,32 @@ export class PresentationLiveMutationService {
       }
       return snapshot(current);
     }
+    return null;
+  }
+
+  private async acceptCommand<T extends PresentationHostSnapshot | PresentationCompanionSnapshot>(
+    input: PresentationControlCommand,
+    session: PresentationSessionRecord,
+    snapshot: (session: PresentationSessionRecord) => Promise<T>,
+  ): Promise<T> {
+    const requestHash = presentationCommandRequestHash(input);
+    const replayed = await this.replayCommand(input, session, snapshot, requestHash);
+    if (replayed) return replayed;
     if (input.expectedRevision !== session.revision) {
       throw this.staleSession(input.expectedRevision, session.revision);
     }
-    const transition =
-      input.action === "advance"
-        ? nextTransition(session)
-        : input.action === "start_recovery_card"
-          ? recoveryCardTransition(session, input)
-          : input.action === "insert_quick_check"
-            ? this.quickCheckInsertionTransition(session, input)
-            : await this.recoveryPackInsertionTransition(session, input);
-    if (!transition) return snapshot(session);
     try {
+      const transition =
+        input.action === "advance"
+          ? nextTransition(session)
+          : input.action === "start_recovery_card"
+            ? recoveryCardTransition(session, input)
+            : input.action === "insert_quick_check"
+              ? this.quickCheckInsertionTransition(session, input)
+              : input.action === "insert_published_question"
+                ? await this.publishedQuestionInsertionTransition(session, input)
+                : await this.recoveryPackInsertionTransition(session, input);
+      if (!transition) return snapshot(session);
       const transitionRetentionExpiresAt = await this.transitionRetentionExpiry(
         session.workspaceId,
         transition.status,
@@ -426,6 +448,27 @@ export class PresentationLiveMutationService {
       }
       if (accepted.status === "accepted") {
         this.recordAcceptedTransitionProductEvents(accepted.session, transition);
+        if (input.action === "insert_published_question") {
+          const inserted = accepted.session.content.livePublishedQuestions!.find(
+            (item) => item.commandId === input.commandId,
+          )!;
+          await this.dependencies.repository
+            .recordAudit({
+              workspaceId: accepted.session.workspaceId,
+              actorId: null,
+              action: "presentation.session.published_question.insert",
+              targetType: "presentation_live_session",
+              targetId: accepted.session.id,
+              requestId: input.commandId,
+              metadata: {
+                blockId: inserted.blockId,
+                sourceQuizId: inserted.sourceQuizId,
+                sourceQuizVersionId: inserted.sourceQuizVersionId,
+                sourceQuestionId: inserted.sourceQuestionId,
+              },
+            })
+            .catch(() => undefined);
+        }
         if (input.action === "insert_quick_check") {
           await this.dependencies.repository
             .recordAudit({
@@ -471,6 +514,19 @@ export class PresentationLiveMutationService {
       }
       return snapshot(accepted.session);
     } catch (error) {
+      if (
+        input.action === "insert_published_question" &&
+        (error instanceof PresentationPublishedQuestionSourceUnavailableError ||
+          (error instanceof PresentationSessionServiceError && error.code === "NOT_FOUND"))
+      ) {
+        // Another copy of this exact command may have committed after our receipt preflight
+        // and then lost its source. That is acknowledgement recovery, not a new insertion.
+        const racedReplay = await this.replayCommand(input, session, snapshot, requestHash);
+        if (racedReplay) return racedReplay;
+      }
+      if (error instanceof PresentationPublishedQuestionSourceUnavailableError) {
+        throw new PresentationSessionServiceError(404, "NOT_FOUND", error.message);
+      }
       if (error instanceof PresentationSessionConflictError) {
         throw this.staleSession(error.expectedRevision, error.currentRevision);
       }
@@ -479,6 +535,38 @@ export class PresentationLiveMutationService {
       }
       throw error;
     }
+  }
+
+  private async publishedQuestionInsertionTransition(
+    session: PresentationSessionRecord,
+    input: Extract<PresentationCompanionCommand, { action: "insert_published_question" }>,
+  ) {
+    if (!this.dependencies.publishedQuestionLiveInsertionEnabled?.(session.workspaceId))
+      throw new PresentationSessionServiceError(
+        404,
+        "NOT_FOUND",
+        "Live published question insertion is not enabled in this workspace",
+      );
+    if (!presentationCanInsertPublishedQuestion(session))
+      throw new PresentationSessionServiceError(
+        409,
+        "PHASE_CLOSED",
+        "Insert a published question at a closed checkpoint without a pending recheck",
+      );
+    const version = await this.dependencies.repository.getQuizVersion(
+      session.workspaceId,
+      input.publishedQuestion.sourceQuizVersionId,
+    );
+    const quiz = version
+      ? await this.dependencies.repository.getQuiz(session.workspaceId, version.quizId)
+      : null;
+    if (!version || !quiz || quiz.status === "archived")
+      throw new PresentationSessionServiceError(
+        404,
+        "NOT_FOUND",
+        "Published source Round version not found",
+      );
+    return presentationPublishedQuestionInsertionTransition(session, version, input);
   }
 
   private quickCheckInsertionTransition(

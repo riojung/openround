@@ -22,6 +22,7 @@ import {
   transitionContent,
 } from "./presentation-session-rules.js";
 import {
+  PresentationPublishedQuestionSourceUnavailableError,
   PresentationSessionConflictError,
   type PresentationParticipantJoin,
   type PresentationParticipantSnapshotProjection,
@@ -437,6 +438,22 @@ export class PostgresPresentationSessionRepository implements PresentationSessio
       throw new PresentationSessionConflictError(input.expectedRevision, session.revision);
     }
     assertCommandRequestHash(command?.requestHash);
+    if (command?.publishedQuestionSource) {
+      const source = command.publishedQuestionSource;
+      // Keep the source eligible until the state, timeline and receipt commit. FOR SHARE
+      // conflicts with both non-key archive updates and deletion; KEY SHARE would not.
+      // Lock order is workspace -> session -> quiz, matching Library's workspace -> quiz.
+      const eligible = await client.query(
+        `SELECT quiz.id FROM quizzes quiz
+         JOIN quiz_versions version ON version.workspace_id = quiz.workspace_id
+           AND version.quiz_id = quiz.id
+         WHERE quiz.workspace_id = $1 AND quiz.id = $2 AND quiz.status <> 'archived'
+           AND version.id = $3 AND version.content_hash = $4
+         FOR SHARE OF quiz`,
+        [input.workspaceId, source.quizId, source.versionId, source.contentHash],
+      );
+      if (!eligible.rows[0]) throw new PresentationPublishedQuestionSourceUnavailableError();
+    }
     const occurredAt = input.occurredAt ?? new Date();
     const { intervention, timelineIntervention } = transitionRecoveryPackIntervention(input);
     if (intervention !== null && !session.recoveryPackCardsEnabled) {

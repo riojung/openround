@@ -12,6 +12,7 @@ import type {
   InstitutionContractStatus,
   InteractionSettings,
   ProductEvent,
+  PresentationCompanionPublishedQuestionCatalog,
   QuestionHealthDismissalReason,
   QuestionHealthRevisionChange,
   QuizDraft,
@@ -1088,6 +1089,11 @@ export interface Repository {
   revokeCreatorSession(tokenHash: string): Promise<void>;
   getCreatorByUserId(userId: string, workspaceId: string): Promise<CreatorContext | null>;
   listQuizzes(workspaceId: string, includeArchived?: boolean): Promise<QuizListRecord[]>;
+  listPublishedQuizQuestionMetadata(
+    workspaceId: string,
+    search?: string,
+    limit?: number,
+  ): Promise<PresentationCompanionPublishedQuestionCatalog>;
   listFolders(workspaceId: string): Promise<FolderRecord[]>;
   createFolder(input: FolderRecord): Promise<FolderRecord>;
   renameFolder(workspaceId: string, folderId: string, name: string): Promise<FolderRecord | null>;

@@ -8,6 +8,53 @@ trademark review.
 
 ## Staged implementation plan checkpoint
 
+### Presentation Companion standalone published questions — October 9, 2026
+
+Companion can now insert one explicitly selected immutable question from a published Round at a
+safe closed boundary, without requiring a Recovery Pack. The bounded workspace/pass-scoped
+catalog supports literal title/prompt search and returns only IDs, published title/version/hash,
+prompt, and type. It excludes media, Pack-derived questions, rechecks, and both sides of linked
+recovery sequences. The accessible two-step source/question picker supports keyboard dismissal,
+focus return, loading/error recovery, bounded search, and exact acknowledgement retry.
+
+The server freezes the selected retained version, assigns destination IDs, and stores block and
+session-only provenance atomically with content, timer, revision, sequence, event, and receipt.
+New publication never substitutes another version. Accepted copies/retries survive source deletion
+and feature rollback; new insertion revalidates the present non-archived source inside the state/
+receipt transaction and holds the PostgreSQL source lock until commit. Memory/PostgreSQL
+reads and snapshot restore retain the markers and reject unsupported stored source schemas.
+Catalog reads validate all eligible current schemas before JSON interpretation, filtering, or
+pagination; PostgreSQL uses one read-only repeatable snapshot for validation and metadata.
+Sources/drafts remain unchanged. Supported question types retain existing timed/flex, scoring,
+confidence, and report behavior, with no invented paired-recovery evidence or new report schema.
+
+New creation uses current professional Presentation, Companion/realtime, and workspace gates,
+independently of Pack flags/latches. The optional capability is independently opt-in via
+`includePublishedQuestions=true`, preserving default and Quick-Check-only strict REST readers.
+Upgrade compatible API/report-worker readers before enabling insertion and retain them during
+feature rollback. No new tables, migrations, dependencies, CI jobs, or participant-cap changes.
+
+Verification: local `CI=true pnpm check` passes formatting, Docker dependency-context checks,
+lint, type checks, package/support tests, and production builds, including 312 contract, 615 web,
+131 memory/database, 498 server, and 206 support tests. All 72 PostgreSQL integration tests pass
+against a fresh disposable PostgreSQL 17 database; the test container was removed afterward
+without changing existing services or data volumes. Nine selected production-browser checks pass
+across desktop Chromium, Android Chromium, and mobile WebKit: three new published-question journeys
+and six Quick Check/Pack regressions. They cover explicit-version freezing after republish, source
+deletion, lost acknowledgement/exact retry, timed/flex grading, unchanged source drafts, report
+reconciliation, cookie omission, keyboard/focus, axe, and mobile overflow. Independent read-only
+review found no remaining actionable issues after fixing unsupported-schema catalog parity and
+the browser assertions for report readiness and timed scoring. Review follow-up tests prove
+archive/delete lock races reject without partial writes, exact accepted receipts survive concurrent
+source deletion and repository restart, and search/eligibility/limit cannot hide future schemas.
+The nine browser checks were not rerun for this backend-only review follow-up. Firefox retains the documented
+local launch limitation and its existing CI project; manual/external acceptance remains separate.
+
+Next: session-owned media retention for media-backed Companion insertion, then Recovery Trail
+and Concept Health. Partner-evidence decisions, manual assistive-technology/device reviews, and
+staging/production exercises remain deferred, not passed. Published Presentation source selection
+is outside this Round-source increment; no mutable authoring surface or full deck editor is added.
+
 ### Presentation Companion session-only Quick Checks — October 8, 2026
 
 The next provisional Companion increment adds one immutable unscored opinion poll per live
@@ -48,9 +95,9 @@ Independent focused review verified the strict legacy REST/report compatibility 
 session-marker persistence; no actionable issues remain in that recheck. Firefox retains the
 foundation checkpoint's local launch limitation and its existing CI project.
 
-Next: scoped insertion of an immutable standalone question from published material, then
-session-owned media retention for media-backed Companion insertion and the staged Recovery Trail
-and Concept Health increments. This completes the session-only Quick Check slice, not all original
+At this checkpoint standalone published-question insertion was next; the subsequent Round-source
+increment is recorded above. Media-backed Companion insertion and the staged Recovery Trail
+and Concept Health increments remain separate. This completes the session-only Quick Check slice, not all original
 Companion scope; partner-evidence decisions, manual assistive-technology/device reviews, and staging/production
 exercises remain explicitly deferred, not passed.
 

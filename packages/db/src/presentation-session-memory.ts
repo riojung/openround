@@ -16,6 +16,7 @@ import {
 } from "./presentation-session-rules.js";
 import {
   comparePresentationLeaderboardEntries,
+  PresentationPublishedQuestionSourceUnavailableError,
   PresentationSessionConflictError,
   type PresentationParticipantJoin,
   type PresentationParticipantSnapshotProjection,
@@ -58,6 +59,10 @@ export class MemoryPresentationSessionRepository
   constructor(
     private readonly liveRooms: Pick<Repository, "claimLiveRoomCode" | "releaseLiveRoomCode"> & {
       assertWorkspaceLiveSessionCreationAllowed?: (workspaceId: string) => void;
+      assertPresentationPublishedQuestionSource?: (
+        workspaceId: string,
+        source: NonNullable<PresentationSessionCommandInput["publishedQuestionSource"]>,
+      ) => void;
       isLibraryArtifactDeleted?: (
         workspaceId: string,
         artifactType: "round" | "presentation",
@@ -337,6 +342,15 @@ export class MemoryPresentationSessionRepository
       throw new PresentationSessionConflictError(input.expectedRevision, session.revision);
     }
     assertCommandRequestHash(command?.requestHash);
+    if (command?.publishedQuestionSource) {
+      if (!this.liveRooms.assertPresentationPublishedQuestionSource)
+        throw new PresentationPublishedQuestionSourceUnavailableError();
+      // Do not suspend between this source check and the synchronous state/receipt writes.
+      this.liveRooms.assertPresentationPublishedQuestionSource(
+        input.workspaceId,
+        command.publishedQuestionSource,
+      );
+    }
     const now = input.occurredAt ?? new Date();
     const { intervention, timelineIntervention } = transitionRecoveryPackIntervention(input);
     if (intervention !== null && !session.recoveryPackCardsEnabled) {

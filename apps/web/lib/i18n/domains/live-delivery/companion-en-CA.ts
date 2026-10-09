@@ -88,4 +88,25 @@ export const companionEnglishMessages = {
   "live.companion.quickCheck.timeInvalid": "Enter a whole number of seconds from 10 to 300.",
   "live.companion.quickCheck.retryAcknowledgement": "Retry Quick Check acknowledgement",
   "live.presentationReport.sessionOnlyQuickCheck": "Session-only Quick Check · unscored",
+  "live.companion.publishedQuestions.open": "Add published question",
+  "live.companion.publishedQuestions.title": "Published Round questions",
+  "live.companion.publishedQuestions.description":
+    "Choose a standalone text-only question from a published Round. Inserting it starts the question now with this room's timing mode.",
+  "live.companion.publishedQuestions.search": "Search published questions",
+  "live.companion.publishedQuestions.searchButton": "Search questions",
+  "live.companion.publishedQuestions.loading": "Loading published questions…",
+  "live.companion.publishedQuestions.empty": "No published text-only questions match this search.",
+  "live.companion.publishedQuestions.hasMore":
+    "Showing up to 100 matching questions. Refine your search to find another question.",
+  "live.companion.publishedQuestions.round": "Published Round",
+  "live.companion.publishedQuestions.chooseRound": "Choose a published Round",
+  "live.companion.publishedQuestions.version": "version {version}",
+  "live.companion.publishedQuestions.question": "Published question",
+  "live.companion.publishedQuestions.chooseQuestion": "Choose a published question",
+  "live.companion.publishedQuestions.insert": "Insert and start question",
+  "live.companion.publishedQuestions.boundary":
+    "Question insertion is available at an eligible pause between blocks. Confirm any pending action first.",
+  "live.companion.publishedQuestions.reload": "Retry loading published questions",
+  "live.companion.publishedQuestions.retryAcknowledgement":
+    "Retry published question acknowledgement",
 } as const;
