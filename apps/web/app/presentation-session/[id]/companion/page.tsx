@@ -7,10 +7,12 @@ import {
   PresentationCompanionSnapshotSchema,
   type PresentationCompanionCommand,
   type PresentationCompanionSnapshot,
+  type PresentationQuickCheckInput,
   type RecoveryPackCardSelection,
 } from "@openround/contracts";
 import { useLocale } from "../../../../components/locale-provider";
 import { CompanionOverlay } from "../../../../components/presentation-live/companion-overlay";
+import { CompanionQuickCheckForm } from "../../../../components/presentation-live/companion-quick-check";
 import {
   CompanionRecoveryPackPicker,
   CompanionRecoveryCardPicker,
@@ -39,6 +41,7 @@ import {
   fetchPresentationCompanionRecoveryPacks,
   type CompanionRecoveryPackCatalog,
 } from "../../../../lib/presentation-companion-recovery-packs";
+import { createCompanionQuickCheckDraft } from "../../../../lib/presentation-companion-quick-check";
 
 function companionAdvanceMessageKey(snapshot: PresentationCompanionSnapshot) {
   if (snapshot.phase === "lobby") return "live.presentationSession.advance.start" as const;
@@ -84,7 +87,8 @@ export default function PresentationCompanionPage() {
   >({ busy: false, pendingCommand: null });
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
-  const [overlay, setOverlay] = useState<"join" | "results" | "packs" | null>(null);
+  const [overlay, setOverlay] = useState<"join" | "results" | "packs" | "quickCheck" | null>(null);
+  const [quickCheckDraft, setQuickCheckDraft] = useState(createCompanionQuickCheckDraft);
   const [packCatalog, setPackCatalog] = useState<CompanionRecoveryPackCatalog | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState("");
@@ -143,7 +147,7 @@ export default function PresentationCompanionPage() {
       credential: { projection: "companion", companionToken: pass },
       fetchSnapshot: async () => {
         const response = await apiFetch<{ snapshot: unknown }>(
-          `/v1/presentation-sessions/${id}/companion`,
+          `/v1/presentation-sessions/${id}/companion?includeQuickChecks=true`,
           { credentials: "omit", headers: { authorization: `Bearer ${pass}` } },
         );
         const incoming = PresentationCompanionSnapshotSchema.parse(response.snapshot);
@@ -174,7 +178,7 @@ export default function PresentationCompanionPage() {
       execute: (command) =>
         controller.command(command, async () => {
           const response = await apiFetch<{ snapshot: unknown }>(
-            `/v1/presentation-sessions/${id}/companion-command`,
+            `/v1/presentation-sessions/${id}/companion-command?includeQuickChecks=true`,
             { method: "POST", credentials: "omit", body: JSON.stringify(command) },
           );
           return PresentationCompanionSnapshotSchema.parse(response.snapshot);
@@ -212,6 +216,20 @@ export default function PresentationCompanionPage() {
     setPackCatalog(null);
     setCatalogLoading(false);
     setCatalogError("");
+  }
+
+  function openQuickCheck() {
+    const commands = commandsRef.current;
+    if (
+      !pass ||
+      !snapshot?.canInsertQuickCheck ||
+      !controllerRef.current?.canMutate() ||
+      !commands ||
+      commands.state().busy ||
+      commands.state().pendingCommand
+    )
+      return;
+    setOverlay("quickCheck");
   }
 
   async function openPackPicker() {
@@ -253,7 +271,11 @@ export default function PresentationCompanionPage() {
       const response = command ? await commands.run(command) : await commands.retry();
       if (response) {
         setConfirmed(true);
-        if (activeCommand?.action === "insert_recovery_pack") closeOverlay();
+        if (
+          activeCommand?.action === "insert_recovery_pack" ||
+          activeCommand?.action === "insert_quick_check"
+        )
+          closeOverlay();
       }
       return response;
     } catch (caught) {
@@ -288,6 +310,18 @@ export default function PresentationCompanionPage() {
       expectedRevision: snapshot.revision,
       action: "insert_recovery_pack",
       packVersionId,
+    });
+  }
+
+  async function insertQuickCheck(quickCheck: PresentationQuickCheckInput) {
+    if (!pass || !snapshot?.canInsertQuickCheck) return;
+    return executeCommand({
+      sessionId: id,
+      companionToken: pass,
+      commandId: clientUuid(),
+      expectedRevision: snapshot.revision,
+      action: "insert_quick_check",
+      quickCheck,
     });
   }
 
@@ -443,6 +477,22 @@ export default function PresentationCompanionPage() {
                   {t("live.companion.packs.open")}
                 </button>
               ) : null}
+              {snapshot.canInsertQuickCheck !== undefined ? (
+                <button
+                  className="button-quiet"
+                  disabled={
+                    !pass ||
+                    !snapshot.canInsertQuickCheck ||
+                    commandState.busy ||
+                    !!commandState.pendingCommand ||
+                    !controllerRef.current?.canMutate()
+                  }
+                  onClick={openQuickCheck}
+                  type="button"
+                >
+                  {t("live.companion.quickCheck.open")}
+                </button>
+              ) : null}
             </div>
             {snapshot.phase === "question_reveal" &&
             !snapshot.acceptingResponses &&
@@ -518,6 +568,49 @@ export default function PresentationCompanionPage() {
             }
             onReload={() => void openPackPicker()}
             onInsert={(packVersionId) => void insertPack(packVersionId)}
+          />
+          {commandState.pendingCommand ? (
+            <>
+              <p role="status">
+                {t(commandState.busy ? "live.companion.waitingAck" : "live.companion.unconfirmed")}
+              </p>
+              {!commandState.busy ? (
+                <button
+                  className="button-quiet full-width"
+                  disabled={!controllerRef.current?.canMutate()}
+                  onClick={() => void executeCommand()}
+                  type="button"
+                >
+                  {t(companionCommandRetryMessageKey(commandState.pendingCommand))}
+                </button>
+              ) : null}
+            </>
+          ) : null}
+          {error ? (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </CompanionOverlay>
+      ) : null}
+      {overlay === "quickCheck" && snapshot && pass ? (
+        <CompanionOverlay
+          title={t("live.companion.quickCheck.title")}
+          onClose={closeOverlay}
+          returnFocusRef={primaryButtonRef}
+        >
+          <CompanionQuickCheckForm
+            draft={quickCheckDraft}
+            timeMode={snapshot.settings.timeMode}
+            available={!!snapshot.canInsertQuickCheck}
+            disabled={
+              !snapshot.canInsertQuickCheck ||
+              commandState.busy ||
+              !!commandState.pendingCommand ||
+              !controllerRef.current?.canMutate()
+            }
+            onChange={setQuickCheckDraft}
+            onInsert={(quickCheck) => void insertQuickCheck(quickCheck)}
           />
           {commandState.pendingCommand ? (
             <>

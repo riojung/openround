@@ -431,6 +431,7 @@ export function buildPresentationCompanionSnapshot(
   data: PresentationProjectionData,
   connectedParticipantIds: ReadonlySet<string> = new Set(),
   canInsertRecoveryPack = false,
+  canInsertQuickCheck = false,
 ): PresentationCompanionSnapshot {
   const host = buildPresentationHostSnapshot(session, data, connectedParticipantIds);
   const block = presentationCurrentBlock(session);
@@ -474,6 +475,7 @@ export function buildPresentationCompanionSnapshot(
     currentBlock: presentationRealtimeBlock(block, false),
     roomStatus: host.roomStatus,
     canInsertRecoveryPack,
+    canInsertQuickCheck,
     ...(host.recoveryPackCards?.length
       ? {
           recoveryPackCards: host.recoveryPackCards.map(({ reference, title }) => ({

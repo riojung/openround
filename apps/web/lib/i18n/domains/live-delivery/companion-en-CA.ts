@@ -61,4 +61,31 @@ export const companionEnglishMessages = {
   "live.companion.packs.example": "Work an example with selected card",
   "live.companion.packs.retryInsertion": "Retry Pack insertion acknowledgement",
   "live.companion.packs.retryCard": "Retry card action acknowledgement",
+  "live.companion.quickCheck.open": "Add Quick Check",
+  "live.companion.quickCheck.title": "Session-only Quick Check",
+  "live.companion.quickCheck.description":
+    "Ask one unscored poll in this session. It uses the room's timing mode and stays fixed once accepted.",
+  "live.companion.quickCheck.prompt": "Quick Check prompt",
+  "live.companion.quickCheck.choices": "Choices",
+  "live.companion.quickCheck.choicesHelp":
+    "Enter 2–6 different choices, up to 180 characters each.",
+  "live.companion.quickCheck.choice": "Choice {number}",
+  "live.companion.quickCheck.addChoice": "Add choice",
+  "live.companion.quickCheck.removeChoice": "Remove choice {number}",
+  "live.companion.quickCheck.remove": "Remove",
+  "live.companion.quickCheck.timeLimit": "Response time (seconds)",
+  "live.companion.quickCheck.timedDescription":
+    "The whole room has 10–300 seconds to respond before the poll closes.",
+  "live.companion.quickCheck.flexDescription":
+    "This room uses time-flex mode. There is no response deadline; reveal the poll when the room is ready.",
+  "live.companion.quickCheck.insert": "Insert and start Quick Check",
+  "live.companion.quickCheck.boundary":
+    "A Quick Check is available at an eligible pause between blocks, once per session. Confirm any pending action first.",
+  "live.companion.quickCheck.promptInvalid": "Enter a question prompt of 1–500 characters.",
+  "live.companion.quickCheck.choicesInvalid": "Enter 2–6 choices, each with 1–180 characters.",
+  "live.companion.quickCheck.choicesDuplicate":
+    "Use different choices. Letter case and extra spaces do not make a choice different.",
+  "live.companion.quickCheck.timeInvalid": "Enter a whole number of seconds from 10 to 300.",
+  "live.companion.quickCheck.retryAcknowledgement": "Retry Quick Check acknowledgement",
+  "live.presentationReport.sessionOnlyQuickCheck": "Session-only Quick Check · unscored",
 } as const;

@@ -80,6 +80,17 @@ describe("Companion published Pack catalog", () => {
     expect(
       companionCommandRetryMessageKey({
         ...credential,
+        action: "insert_quick_check",
+        quickCheck: {
+          prompt: "Which approach?",
+          choices: ["First", "Second"],
+          timeLimitSeconds: 30,
+        },
+      }),
+    ).toBe("live.companion.quickCheck.retryAcknowledgement");
+    expect(
+      companionCommandRetryMessageKey({
+        ...credential,
         action: "start_recovery_card",
         recoveryPackCard: { insertionId: "insertion", cardId: "card" },
         interventionType: "example",

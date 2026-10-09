@@ -30,6 +30,7 @@ import type { AppConfig } from "./config.js";
 import type { MetricsService } from "./metrics.js";
 import { registerPresentationCompanionRoutes } from "./presentation-companion-routes.js";
 import { presentationRecoveryPackLiveInsertionEnabled } from "./presentation-live-recovery-packs.js";
+import { presentationLiveInsertionEnabled } from "./presentation-live-insertion.js";
 import {
   PresentationSessionService,
   PresentationSessionServiceError,
@@ -49,9 +50,12 @@ const ControlPassParamsSchema = z.object({
   id: z.string().uuid(),
   credentialId: z.string().uuid(),
 });
-const PresentationReportQuerySchema = z.object({
-  includeSessionContext: z.literal("true").optional(),
-});
+const PresentationReportQuerySchema = z
+  .object({
+    includeSessionContext: z.literal("true").optional(),
+    includeQuickChecks: z.literal("true").optional(),
+  })
+  .strict();
 
 function apiError(
   reply: FastifyReply,
@@ -234,6 +238,8 @@ export async function registerPresentationSessionRoutes(
         evidenceWorkspaceFeatureEnabled(dependencies.config, workspaceId, "recoveryPackLiveCards"),
       recoveryPackLiveInsertionEnabled: (workspaceId) =>
         presentationRecoveryPackLiveInsertionEnabled(dependencies.config, workspaceId),
+      quickCheckLiveInsertionEnabled: (workspaceId) =>
+        presentationLiveInsertionEnabled(dependencies.config, workspaceId),
     });
   const enforceSharedAdmission = async (
     request: FastifyRequest,
@@ -750,12 +756,15 @@ export async function registerPresentationSessionRoutes(
     const creator = await auth.requireCreator(request, reply);
     if (!creator) return;
     const { id } = IdParamsSchema.parse(request.params);
-    const { includeSessionContext } = PresentationReportQuerySchema.parse(request.query);
+    const { includeSessionContext, includeQuickChecks } = PresentationReportQuerySchema.parse(
+      request.query,
+    );
     try {
       const result = await service.getReport(
         creator.workspaceId,
         id,
         includeSessionContext === "true",
+        includeQuickChecks === "true",
       );
       return reply
         .code(result.reportStatus === "pending" && !result.report ? 202 : 200)

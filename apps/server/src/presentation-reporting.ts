@@ -1,5 +1,7 @@
 import {
   PresentationReportSchema,
+  PresentationReportV1Schema,
+  PresentationReportV2Schema,
   questionTypeDefinition,
   type PresentationReport,
 } from "@openround/contracts";
@@ -68,12 +70,16 @@ export function generatePresentationReport(input: {
       };
     }
     const blockResponses = responsesByBlock.get(block.id) ?? [];
-    const assessed = blockResponses.filter((response) => response.correct !== null);
+    const quickCheck = session.content.liveQuickCheck?.blockId === block.id;
+    const assessed = quickCheck
+      ? []
+      : blockResponses.filter((response) => response.correct !== null);
     const correct = assessed.filter((response) => response.correct).length;
     return {
       blockId: block.id,
       blockIndex,
       kind: "question" as const,
+      ...(quickCheck ? { sessionOnly: "quick_check" as const } : {}),
       questionId: block.question.id,
       prompt: block.question.prompt,
       questionType: block.question.type,
@@ -82,7 +88,9 @@ export function generatePresentationReport(input: {
       respondents: blockResponses.length,
       correct: assessed.length ? correct : null,
       accuracyPercent: assessed.length ? Math.round((correct / assessed.length) * 100) : null,
-      totalScore: blockResponses.reduce((total, response) => total + response.score, 0),
+      totalScore: quickCheck
+        ? 0
+        : blockResponses.reduce((total, response) => total + response.score, 0),
       averageResponseMs: blockResponses.length
         ? Math.round(
             blockResponses.reduce((total, response) => total + response.responseMs, 0) /
@@ -122,7 +130,7 @@ export function generatePresentationReport(input: {
 
   const includesPackEvidence = timeline.some((event) => event.recoveryPackIntervention);
   return PresentationReportSchema.parse({
-    schemaVersion: includesPackEvidence ? 2 : 1,
+    schemaVersion: session.content.liveQuickCheck ? 3 : includesPackEvidence ? 2 : 1,
     sessionId: session.id,
     artifactType: "presentation",
     presentationId: session.presentationId,
@@ -149,4 +157,26 @@ export function generatePresentationReport(input: {
     createdAt: session.createdAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
   });
+}
+
+/** REST opt-in preserves strict older readers without mutating the stored V3 evidence. */
+export function presentationReportRestProjection(
+  report: PresentationReport,
+  includeQuickChecks: boolean,
+) {
+  if (includeQuickChecks || report.schemaVersion !== 3) return report;
+  const includesPackEvidence = report.timeline.some((event) => event.recoveryPackIntervention);
+  const legacy = {
+    ...report,
+    schemaVersion: includesPackEvidence ? 2 : 1,
+    evidence: report.evidence.map((entry) => {
+      if (entry.kind !== "question") return entry;
+      const evidence = { ...entry };
+      delete evidence.sessionOnly;
+      return evidence;
+    }),
+  };
+  return includesPackEvidence
+    ? PresentationReportV2Schema.parse(legacy)
+    : PresentationReportV1Schema.parse(legacy);
 }

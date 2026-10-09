@@ -34,7 +34,10 @@ import {
   type SubmitPresentationResponseInput,
 } from "./presentation-live-mutation-service.js";
 import type { ProductEventDispatcher, ProductEventInput } from "./product-events.js";
-import { generatePresentationReport } from "./presentation-reporting.js";
+import {
+  generatePresentationReport,
+  presentationReportRestProjection,
+} from "./presentation-reporting.js";
 import {
   PresentationSessionServiceError,
   type PresentationSessionServiceErrorCode,
@@ -50,6 +53,7 @@ import {
 } from "./presentation-session-projections.js";
 import type { StorageService } from "./storage.js";
 import { presentationCanInsertRecoveryPack } from "./presentation-live-recovery-packs.js";
+import { presentationCanInsertQuickCheck } from "./presentation-live-quick-checks.js";
 
 const PRESENTATION_SESSION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
 const PRESENTATION_COMPANION_PASS_LIFETIME_MS = 60 * 60 * 1_000;
@@ -128,6 +132,7 @@ export class PresentationSessionService {
       productEventsEnabled?: (workspaceId: string) => boolean;
       recoveryPackCardsEnabled?: (workspaceId: string) => boolean;
       recoveryPackLiveInsertionEnabled?: (workspaceId: string) => boolean;
+      quickCheckLiveInsertionEnabled?: (workspaceId: string) => boolean;
     },
   ) {
     this.liveMutations = new PresentationLiveMutationService({
@@ -136,6 +141,7 @@ export class PresentationSessionService {
       config: dependencies.config,
       packs: dependencies.packs,
       recoveryPackLiveInsertionEnabled: dependencies.recoveryPackLiveInsertionEnabled,
+      quickCheckLiveInsertionEnabled: dependencies.quickCheckLiveInsertionEnabled,
       participantTokenHash: presentationParticipantTokenHash,
       sessionExpired: presentationLiveSessionExpired,
       authorizeHostCredential: (sessionId, token) =>
@@ -840,7 +846,12 @@ export class PresentationSessionService {
     return this.liveMutations.submitLegacyResponse(input);
   }
 
-  async getReport(workspaceId: string, sessionId: string, includeSessionContext = false) {
+  async getReport(
+    workspaceId: string,
+    sessionId: string,
+    includeSessionContext = false,
+    includeQuickChecks = false,
+  ) {
     const session = await this.sessions.getSessionForWorkspace(workspaceId, sessionId);
     if (!session) {
       throw new PresentationSessionServiceError(404, "NOT_FOUND", "Presentation session not found");
@@ -876,7 +887,7 @@ export class PresentationSessionService {
     }
     const envelope = PresentationReportEnvelopeSchema.parse({
       reportStatus: stored.status,
-      report,
+      report: report ? presentationReportRestProjection(report, includeQuickChecks) : null,
     });
     return includeSessionContext
       ? PresentationReportWithSessionContextEnvelopeSchema.parse({
@@ -998,6 +1009,10 @@ export class PresentationSessionService {
         this.dependencies.packs &&
         this.dependencies.recoveryPackLiveInsertionEnabled?.(session.workspaceId) &&
         presentationCanInsertRecoveryPack(session),
+      ),
+      Boolean(
+        this.dependencies.quickCheckLiveInsertionEnabled?.(session.workspaceId) &&
+        presentationCanInsertQuickCheck(session),
       ),
     );
   }

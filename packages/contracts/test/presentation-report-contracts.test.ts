@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   PresentationReportEnvelopeSchema,
   PresentationReportV1Schema,
+  PresentationReportV2Schema,
+  PresentationReportV3Schema,
+  PresentationReportSchema,
   PresentationReportWithSessionContextEnvelopeSchema,
 } from "../src/index";
 
@@ -72,6 +75,45 @@ function reportFixture() {
 }
 
 describe("Presentation report contracts", () => {
+  it("versions session-only Quick Checks without widening strict legacy report readers", () => {
+    const report = reportFixture();
+    const existing = report.evidence[1]!;
+    const quickCheck = {
+      ...existing,
+      questionType: "poll",
+      questionTypeLabel: "Poll",
+      sessionOnly: "quick_check",
+      correct: null,
+      accuracyPercent: null,
+      totalScore: 0,
+    };
+    const value = { ...report, schemaVersion: 3, evidence: [quickCheck] };
+    expect(PresentationReportV3Schema.parse(value).evidence[0]).toMatchObject({
+      sessionOnly: "quick_check",
+      correct: null,
+      accuracyPercent: null,
+      totalScore: 0,
+    });
+    for (const extra of [
+      { questionType: "single_select" },
+      { delivery: "recheck" },
+      { correct: 1 },
+      { accuracyPercent: 50 },
+      { totalScore: 1 },
+    ]) {
+      expect(
+        PresentationReportV3Schema.safeParse({ ...value, evidence: [{ ...quickCheck, ...extra }] })
+          .success,
+      ).toBe(false);
+    }
+    expect(PresentationReportSchema.parse(value).schemaVersion).toBe(3);
+    for (const schemaVersion of [1, 2] as const) {
+      const schema = schemaVersion === 1 ? PresentationReportV1Schema : PresentationReportV2Schema;
+      expect(schema.safeParse({ ...value, schemaVersion }).success).toBe(false);
+      expect(schema.parse({ ...report, schemaVersion }).schemaVersion).toBe(schemaVersion);
+    }
+  });
+
   it("accepts a strict, versioned aggregate report", () => {
     expect(PresentationReportV1Schema.parse(reportFixture())).toMatchObject({
       schemaVersion: 1,

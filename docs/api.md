@@ -613,6 +613,8 @@ projection prevent participants/companions from receiving unrevealed answers or 
 - `DELETE /v1/presentation-sessions/{id}/companion-passes/{credentialId}` — owner/editor revocation,
   restricted to the companion role. Available even when new issuance is paused.
 - `GET /v1/presentation-sessions/{id}/companion` — bearer companion pass, returning `{ snapshot }`.
+  Add `?includeQuickChecks=true` to opt into the new Quick Check capability field. Without the
+  query the legacy strict snapshot shape is preserved.
 - `GET /v1/presentation-sessions/{id}/companion-recovery-packs` — bearer companion pass,
   returning a bounded `{ packs: [{ packId, packVersionId, packVersion, title }] }` catalog of
   current published, text-only versions in the session's workspace. Drafts, checkpoints,
@@ -621,8 +623,15 @@ projection prevent participants/companions from receiving unrevealed answers or 
   `{ sessionId, companionToken, commandId, expectedRevision, action, ...actionFields }`, returning
   `{ snapshot }`. Actions are `advance`, `insert_recovery_pack` with `packVersionId`, and
   `start_recovery_card` with `recoveryPackCard: { insertionId, cardId }` and
-  `interventionType: "explain" | "example"`. The same commands are accepted by
+  `interventionType: "explain" | "example"`, and `insert_quick_check` with
+  `quickCheck: { prompt, choices, timeLimitSeconds }`. Quick Checks accept a 1–500-character
+  prompt, 2–6 distinct 1–180-character choice labels, and an integer 10–300-second limit.
+  Prompt/labels are trimmed; choice uniqueness ignores Unicode compatibility, case, and repeated
+  whitespace. Correctness, scoring, media, identity, and other extra fields are rejected.
+  The same commands are accepted by
   `presentation.command` over Socket.IO.
+  Add `?includeQuickChecks=true` to the REST command URL to receive the capability field in its
+  acknowledgement; default REST acknowledgements retain the legacy shape.
 
 Passes expire after at most one hour and never outlive the live session. Tokens are hashed in the
 existing tenant-scoped credential store; responses are private/no-store and admission controls
@@ -659,7 +668,37 @@ unselected bodies and citations are never supplied to the sidecar. An explicit c
 the existing explanation/worked-example intervention and returns only the selected card in
 `recoveryPackIntervention`. Advance then opens the linked recheck. Receipt recovery precedes
 phase/revision/source/rollout checks, so an exact retry does not duplicate an insertion even after
-the source Pack is deleted or the host advances. Session-only Quick Checks remain a later slice.
+the source Pack is deleted or the host advances.
+
+Optional `canInsertQuickCheck` uses the same closed-boundary and pending-linked-recheck fence,
+with a one-per-session limit. New Quick Checks require current professional Presentation,
+Companion/realtime, and workspace eligibility, but not Pack/live-card flags or the Pack session
+creation latch. The poll is inserted after the current block (first in the lobby) and opens
+immediately through the same atomic content/timer/revision/event/receipt transition. The command
+fingerprint includes prompt, ordered choices, and timing; exact receipt recovery precedes new
+creation gates and stale-state checks. New creation stops during rollout rollback, while existing
+polls, responses, report reads, and accepted retries remain usable.
+
+Quick Checks are immutable session-only opinion polls: no correct answer, confidence, points,
+media, concept metadata, or recovery links. The best-effort audit action
+`presentation.session.quick_check.insert` records the block ID and choice count only, never prompt,
+choice text, or participant data; the durable receipt remains authoritative if audit delivery fails.
+Timed rooms use the submitted deadline; flex rooms
+have no deadline/countdown and the facilitator closes responses. The frozen live snapshot stores
+`liveQuickCheck: { commandId, blockId }`, excluded from authoring drafts and retained across
+PostgreSQL reads/restoration. Published sources remain unchanged. Presentation Report V3
+question evidence optionally carries `sessionOnly: "quick_check"`, with null correctness/accuracy
+and zero score. This records participation/opinion only, not learning or recovery evidence.
+Reports without a Quick Check still use V1/V2; those strict formats are unchanged. Add
+`?includeQuickChecks=true` to report retrieval for V3 evidence (combinable with
+`includeSessionContext=true`). Default retrieval projects V3 to a compatible unscored V1/V2
+response without session-only metadata; the ready stored report is never rewritten.
+
+Upgrade order: pause new Companion use via `FEATURE_PRESENTATION_COMPANION=false` on every API
+node, upgrade all API/report-worker readers and web clients, then re-enable the flag/allowlist.
+Once V3 reports exist, do not roll back API/report workers to binaries that only read V1/V2.
+Disable new creation and retain compatible readers, or apply a forward fix; feature rollback
+continues to preserve existing polls and reports. Older web clients use the legacy REST projection.
 
 ## Stable errors
 

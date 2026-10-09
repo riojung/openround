@@ -5,21 +5,22 @@ import {
   type RecoveryPackVersionRecord,
 } from "@openround/db";
 import type { AppConfig } from "./config.js";
-import { PRESENTATION_PACK_INSERTION_DRAFT_LIMIT } from "./draft-limits.js";
 import { recoveryPackCopyId, recoveryPackQuestions } from "./recovery-pack-copies.js";
 import { PresentationSessionServiceError } from "./presentation-session-errors.js";
+import { evidenceWorkspaceFeatureEnabled } from "./workspace-rollout.js";
 import {
-  evidenceWorkspaceFeatureEnabled,
-  professionalWorkspaceFeatureEnabled,
-} from "./workspace-rollout.js";
+  assertPresentationLiveInsertionSize,
+  presentationClosedInsertionBoundary,
+  presentationLiveInsertionEnabled,
+  presentationLiveInsertionIndex,
+} from "./presentation-live-insertion.js";
 
 export function presentationRecoveryPackLiveInsertionEnabled(
   config: AppConfig,
   workspaceId: string,
 ) {
   return (
-    professionalWorkspaceFeatureEnabled(config, workspaceId, "presentations") &&
-    evidenceWorkspaceFeatureEnabled(config, workspaceId, "presentationCompanion") &&
+    presentationLiveInsertionEnabled(config, workspaceId) &&
     evidenceWorkspaceFeatureEnabled(config, workspaceId, "recoveryPacks") &&
     evidenceWorkspaceFeatureEnabled(config, workspaceId, "recoveryPackLiveCards")
   );
@@ -33,29 +34,7 @@ export function presentationCanInsertRecoveryPack(session: PresentationSessionRe
     (session.content.recoveryPackInsertions?.length ?? 0) + 1 > 100
   )
     return false;
-  if (session.phase === "lobby") return true;
-  const block = session.content.blocks[session.currentBlockIndex];
-  if (
-    session.phase !== "content" &&
-    !(session.phase === "question_reveal" && block?.kind === "question")
-  )
-    return false;
-  const pendingQuestions = new Set(
-    session.content.blocks
-      .slice(session.currentBlockIndex + 1)
-      .filter((item) => item.kind === "question")
-      .map((item) => item.question.id),
-  );
-  // A valid Presentation may put slides or standalone checkpoints between a linked source and
-  // its linked recheck. The whole pending pair stays indivisible, not just the current block.
-  return !session.content.blocks
-    .slice(0, session.currentBlockIndex + 1)
-    .some(
-      (item) =>
-        item.kind === "question" &&
-        typeof item.question.linkedRecheckQuestionId === "string" &&
-        pendingQuestions.has(item.question.linkedRecheckQuestionId),
-    );
+  return presentationClosedInsertionBoundary(session);
 }
 
 export function presentationRecoveryPackInsertionTransition(
@@ -78,7 +57,7 @@ export function presentationRecoveryPackInsertionTransition(
     kind: "question" as const,
     question,
   }));
-  const insertionIndex = session.phase === "lobby" ? 0 : session.currentBlockIndex + 1;
+  const insertionIndex = presentationLiveInsertionIndex(session);
   const blocks = [...session.content.blocks];
   blocks.splice(insertionIndex, 0, ...insertedBlocks);
   const content = PresentationContentSchema.parse({
@@ -99,15 +78,7 @@ export function presentationRecoveryPackInsertionTransition(
       },
     ],
   });
-  if (
-    Buffer.byteLength(JSON.stringify(content), "utf8") > PRESENTATION_PACK_INSERTION_DRAFT_LIMIT
-  ) {
-    throw new PresentationSessionServiceError(
-      422,
-      "VALIDATION_ERROR",
-      "This Recovery Pack would make the live presentation too large",
-    );
-  }
+  assertPresentationLiveInsertionSize(content);
   return {
     content,
     phase: "question_open" as const,

@@ -6,6 +6,7 @@ import {
   PresentationCompanionPassResponseSchema,
   PresentationCompanionSnapshotSchema,
   PresentationCompanionRecoveryPackCatalogSchema,
+  type PresentationCompanionSnapshot,
 } from "@openround/contracts";
 import type { CreatorContext } from "@openround/db";
 import type { AuthService } from "./auth.js";
@@ -21,6 +22,17 @@ const CompanionPassParamsSchema = z.object({
   id: z.string().uuid(),
   credentialId: z.string().uuid(),
 });
+const QuickCheckQuerySchema = z
+  .object({ includeQuickChecks: z.literal("true").optional() })
+  .strict();
+
+function restCompanionSnapshot(value: PresentationCompanionSnapshot, includeQuickChecks: boolean) {
+  const snapshot = PresentationCompanionSnapshotSchema.parse(value);
+  if (includeQuickChecks) return snapshot;
+  const legacy = { ...snapshot };
+  delete legacy.canInsertQuickCheck;
+  return legacy;
+}
 
 interface PresentationCompanionRouteDependencies {
   auth: Pick<AuthService, "requireCreator">;
@@ -167,10 +179,12 @@ export function registerPresentationCompanionRoutes(
       const token = bearerToken(request);
       if (!token)
         return apiError(reply, 401, "UNAUTHORIZED", "Companion credential required", request.id);
+      const { includeQuickChecks } = QuickCheckQuerySchema.parse(request.query);
       try {
         return {
-          snapshot: PresentationCompanionSnapshotSchema.parse(
+          snapshot: restCompanionSnapshot(
             await service.getCompanionSnapshot(id, token),
+            includeQuickChecks === "true",
           ),
         };
       } catch (error) {
@@ -230,6 +244,7 @@ export function registerPresentationCompanionRoutes(
     async (request, reply) => {
       const { id } = IdParamsSchema.parse(request.params);
       const input = PresentationCompanionCommandSchema.parse(request.body);
+      const { includeQuickChecks } = QuickCheckQuerySchema.parse(request.query);
       if (input.sessionId !== id)
         return apiError(
           reply,
@@ -242,8 +257,9 @@ export function registerPresentationCompanionRoutes(
         return;
       try {
         return {
-          snapshot: PresentationCompanionSnapshotSchema.parse(
+          snapshot: restCompanionSnapshot(
             await service.companionCommand(input),
+            includeQuickChecks === "true",
           ),
         };
       } catch (error) {

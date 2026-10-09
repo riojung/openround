@@ -10,6 +10,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { CreatorBrand } from "../../../../components/brand";
 import { useLocale } from "../../../../components/locale-provider";
+import { SessionOnlyQuickCheckLabel } from "../../../../components/presentation-live/session-only-quick-check-label";
 import {
   useWorkspace,
   WorkspaceProvider,
@@ -38,7 +39,7 @@ function PresentationReportContent() {
     const load = async () => {
       try {
         const result = await apiFetch<PresentationReportWithSessionContextEnvelope>(
-          `/v1/presentation-sessions/${id}/report?includeSessionContext=true`,
+          `/v1/presentation-sessions/${id}/report?includeSessionContext=true&includeQuickChecks=true`,
         );
         if (cancelled) return;
         setError("");
@@ -151,6 +152,11 @@ function PresentationReportContent() {
                       ? block.title || t("live.presentationReport.contentSlide")
                       : block.prompt}
                   </h2>
+                  {block.kind === "question" ? (
+                    <SessionOnlyQuickCheckLabel
+                      sessionOnly={"sessionOnly" in block ? block.sessionOnly : undefined}
+                    />
+                  ) : null}
                   {block.kind === "content" ? (
                     <p>
                       <strong>{t("live.presentationReport.notAssessed")}</strong>{" "}

@@ -3899,6 +3899,34 @@ export const InteractiveQuestionBlockSchema = z.object({
 });
 export type InteractiveQuestionBlock = z.infer<typeof InteractiveQuestionBlockSchema>;
 
+/** Only a bounded, unscored choice prompt may be authored from the scoped sidecar. */
+export const PresentationQuickCheckInputSchema = z
+  .object({
+    prompt: z.string().trim().min(1, "Enter a Quick Check prompt").max(500),
+    choices: z.array(z.string().trim().min(1, "Enter a choice").max(180)).min(2).max(6),
+    timeLimitSeconds: z.number().int().min(10).max(300),
+  })
+  .strict()
+  .superRefine(({ choices }, ctx) => {
+    const normalized = choices.map((choice) =>
+      choice.normalize("NFKC").replace(/\s+/gu, " ").toLowerCase(),
+    );
+    if (new Set(normalized).size !== normalized.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["choices"],
+        message: "Use distinct Quick Check choices",
+      });
+    }
+  });
+export type PresentationQuickCheckInput = z.infer<typeof PresentationQuickCheckInputSchema>;
+
+/** Session content only: this marker is deliberately absent from authoring drafts. */
+export const PresentationLiveQuickCheckSchema = z
+  .object({ commandId: z.string().uuid(), blockId: z.string().uuid() })
+  .strict();
+export type PresentationLiveQuickCheck = z.infer<typeof PresentationLiveQuickCheckSchema>;
+
 export const PresentationBlockDraftSchema = z.discriminatedUnion("kind", [
   ContentSlideDraftSchema,
   InteractiveQuestionBlockDraftSchema,
@@ -4070,10 +4098,48 @@ export const PresentationContentSchema = z
     sourceDisclosure: PresentationSourceDisclosureSchema.optional(),
     blocks: z.array(PresentationBlockSchema).min(1).max(200),
     recoveryPackInsertions: z.array(RecoveryPackInsertionSchema).max(100).optional(),
+    liveQuickCheck: PresentationLiveQuickCheckSchema.optional(),
   })
   .superRefine((presentation, ctx) => {
     applyPresentationTopology(presentation, ctx, true);
     applyPresentationRecoveryPackRules(presentation, ctx);
+    if (presentation.liveQuickCheck) {
+      const block = presentation.blocks.find(
+        (candidate) => candidate.id === presentation.liveQuickCheck!.blockId,
+      );
+      if (
+        block?.kind !== "question" ||
+        block.question.type !== "poll" ||
+        block.question.purpose !== "opinion" ||
+        block.question.confidence !== "off" ||
+        block.question.delivery !== "main" ||
+        block.question.basePoints !== 0 ||
+        block.question.linkedRecheckQuestionId !== null ||
+        block.question.conceptKeys?.length ||
+        block.question.explanation !== "" ||
+        block.question.mediaId !== null ||
+        block.question.mediaAlt !== null ||
+        block.question.recoveryPackSource ||
+        block.question.sourceCitations?.length ||
+        block.provenance ||
+        block.sourceDisclosure ||
+        block.citations?.length ||
+        block.question.choices.some(
+          (choice) => choice.isCorrect || choice.feedback || choice.misconceptionKey,
+        ) ||
+        !PresentationQuickCheckInputSchema.safeParse({
+          prompt: block.question.prompt,
+          choices: block.question.choices.map((choice) => choice.label),
+          timeLimitSeconds: block.question.timeLimitSeconds,
+        }).success
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["liveQuickCheck"],
+          message: "A session-only Quick Check must reference one plain, unscored opinion poll",
+        });
+      }
+    }
     if (!presentation.blocks.some((block) => block.kind === "question")) {
       ctx.addIssue({
         code: "custom",
@@ -4817,6 +4883,7 @@ export const PresentationCompanionSnapshotSchema = z
     roomStatus: PresentationRoomStatusSchema,
     primaryAction: z.enum(["advance", "none"]),
     canInsertRecoveryPack: z.boolean().optional(),
+    canInsertQuickCheck: z.boolean().optional(),
     recoveryPackCards: z
       .array(PresentationCompanionRecoveryPackCardSchema)
       .min(1)
@@ -4828,6 +4895,18 @@ export const PresentationCompanionSnapshotSchema = z
   .strict()
   .superRefine((snapshot, ctx) => {
     validatePresentationRecoveryPackPlayback(snapshot, ctx);
+    if (
+      snapshot.canInsertQuickCheck &&
+      (snapshot.status !== "active" ||
+        !["lobby", "content", "question_reveal"].includes(snapshot.phase) ||
+        snapshot.acceptingResponses)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["canInsertQuickCheck"],
+        message: "Quick Check insertion requires an active room at a closed, safe boundary",
+      });
+    }
     if (
       snapshot.canInsertRecoveryPack &&
       (snapshot.status !== "active" ||
@@ -5019,6 +5098,13 @@ const PresentationCompanionCommandFields = {
 /** Scoped live controls only; no creator, settings, identity, or host authority. */
 export const PresentationCompanionCommandSchema = z.discriminatedUnion("action", [
   z.object({ ...PresentationCompanionCommandFields, action: z.literal("advance") }).strict(),
+  z
+    .object({
+      ...PresentationCompanionCommandFields,
+      action: z.literal("insert_quick_check"),
+      quickCheck: PresentationQuickCheckInputSchema,
+    })
+    .strict(),
   z
     .object({
       ...PresentationCompanionCommandFields,
@@ -5243,6 +5329,28 @@ const PresentationReportEvidenceSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+const PresentationReportQuickCheckEvidenceSchema = z.discriminatedUnion("kind", [
+  PresentationReportEvidenceSchema.options[0],
+  PresentationReportEvidenceSchema.options[1]
+    .extend({ sessionOnly: z.literal("quick_check").optional() })
+    .superRefine((evidence, ctx) => {
+      if (
+        evidence.sessionOnly &&
+        (evidence.questionType !== "poll" ||
+          evidence.delivery !== "main" ||
+          evidence.correct !== null ||
+          evidence.accuracyPercent !== null ||
+          evidence.totalScore !== 0)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["sessionOnly"],
+          message: "Session-only Quick Checks report participation, not scored learning evidence",
+        });
+      }
+    }),
+]);
+
 /** Immutable, aggregate-only evidence produced from one finished Presentation session. */
 export const PresentationReportV1Schema = z
   .object({
@@ -5314,9 +5422,16 @@ export const PresentationReportV2Schema = PresentationReportV1Schema.extend({
   ),
 });
 export type PresentationReportV2 = z.infer<typeof PresentationReportV2Schema>;
+/** Session-only evidence is separately versioned; legacy V1/V2 stay strict and unchanged. */
+export const PresentationReportV3Schema = PresentationReportV2Schema.extend({
+  schemaVersion: z.literal(3),
+  evidence: z.array(PresentationReportQuickCheckEvidenceSchema),
+});
+export type PresentationReportV3 = z.infer<typeof PresentationReportV3Schema>;
 export const PresentationReportSchema = z.discriminatedUnion("schemaVersion", [
   PresentationReportV1Schema,
   PresentationReportV2Schema,
+  PresentationReportV3Schema,
 ]);
 export type PresentationReport = z.infer<typeof PresentationReportSchema>;
 
