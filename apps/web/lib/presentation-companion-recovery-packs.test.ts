@@ -91,6 +91,17 @@ describe("Companion published Pack catalog", () => {
     expect(
       companionCommandRetryMessageKey({
         ...credential,
+        action: "insert_published_question",
+        publishedQuestion: {
+          sourceQuizVersionId: "version",
+          sourceQuestionId: "question",
+          contentHash: "a".repeat(64),
+        },
+      }),
+    ).toBe("live.companion.publishedQuestions.retryAcknowledgement");
+    expect(
+      companionCommandRetryMessageKey({
+        ...credential,
         action: "start_recovery_card",
         recoveryPackCard: { insertionId: "insertion", cardId: "card" },
         interventionType: "example",

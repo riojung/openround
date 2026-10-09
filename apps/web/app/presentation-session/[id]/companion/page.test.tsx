@@ -12,6 +12,12 @@ import { liveDeliveryEnglishMessages } from "../../../../lib/i18n/domains/live-d
 import type { PresentationRealtimeControllerOptions } from "../../../../lib/presentation-realtime";
 import { CompanionOverlay } from "../../../../components/presentation-live/companion-overlay";
 import { CompanionQuickCheckForm } from "../../../../components/presentation-live/companion-quick-check";
+import { CompanionPublishedQuestionPicker } from "../../../../components/presentation-live/companion-published-questions";
+import {
+  publishedQuestion,
+  publishedQuestionCatalog,
+} from "../../../../test-utils/companion-published-questions";
+import { publishedQuestionSelection } from "../../../../lib/presentation-companion-published-questions";
 import PresentationCompanionPage from "./page";
 
 interface PageHooks {
@@ -139,6 +145,7 @@ function initialSnapshot() {
     primaryAction: "advance",
     canInsertRecoveryPack: true,
     canInsertQuickCheck: true,
+    canInsertPublishedQuestion: true,
     finishedAt: null,
   });
 }
@@ -153,7 +160,13 @@ beforeEach(() => {
     .mockImplementation((_command, fallback: () => Promise<PresentationCompanionSnapshot>) =>
       fallback(),
     );
-  fixtures.apiFetch.mockReset().mockImplementation(async () => ({ snapshot: fixtures.snapshot }));
+  fixtures.apiFetch
+    .mockReset()
+    .mockImplementation(async (url: string) =>
+      url.includes("/companion-published-questions")
+        ? publishedQuestionCatalog
+        : { snapshot: fixtures.snapshot },
+    );
   fixtures.reconcile.mockReset().mockResolvedValue(null);
   vi.stubGlobal("window", {
     location: { origin: "https://discussion.example.test" },
@@ -186,10 +199,12 @@ function button(tree: ReactNode, name: string): ComponentProps<"button"> {
   return element.props as ComponentProps<"button">;
 }
 
-function propsFor<T extends typeof CompanionQuickCheckForm | typeof CompanionOverlay>(
-  tree: ReactNode,
-  type: T,
-): ComponentProps<T> {
+function propsFor<
+  T extends
+    | typeof CompanionQuickCheckForm
+    | typeof CompanionOverlay
+    | typeof CompanionPublishedQuestionPicker,
+>(tree: ReactNode, type: T): ComponentProps<T> {
   const element = elements(tree).find((candidate) => candidate.type === type);
   if (!element) throw new Error("Expected Companion child control");
   return element.props as ComponentProps<T>;
@@ -243,6 +258,251 @@ const authoredDraft = {
 };
 const quickCheck = { ...authoredDraft, timeLimitSeconds: 120 };
 
+describe("Companion published question page state", () => {
+  it("uses scoped metadata and inserts independently of Recovery Pack availability", async () => {
+    const harness = pageHarness();
+    harness.broadcast({
+      ...initialSnapshot(),
+      settings: { timeMode: "timed", trustMode: "learning", recoveryPackCardsEnabled: false },
+      canInsertRecoveryPack: false,
+    });
+    expect(button(harness.render(), "Add published question").disabled).toBe(false);
+    click(harness.render(), "Add published question");
+    await settle();
+    expect(fixtures.apiFetch.mock.calls[0]?.[0]).toBe(
+      "/v1/presentation-sessions/11111111-1111-4111-8111-111111111111/companion-published-questions",
+    );
+    expect(fixtures.apiFetch.mock.calls[0]?.[1]).toMatchObject({
+      credentials: "omit",
+      headers: { authorization: "Bearer companion-pass" },
+    });
+    expect(propsFor(harness.render(), CompanionPublishedQuestionPicker).catalog).toEqual(
+      publishedQuestionCatalog,
+    );
+    propsFor(harness.render(), CompanionPublishedQuestionPicker).onInsert(
+      publishedQuestionSelection(publishedQuestion),
+    );
+    await settle();
+    const command = fixtures.execute.mock.calls[0]?.[0];
+    expect(command).toMatchObject({
+      action: "insert_published_question",
+      companionToken: "companion-pass",
+      expectedRevision: 2,
+      publishedQuestion: publishedQuestionSelection(publishedQuestion),
+    });
+    expect(command).not.toHaveProperty("controlToken");
+    expect(fixtures.apiFetch.mock.calls[1]?.[0]).toContain(
+      "/companion-command?includeQuickChecks=true&includePublishedQuestions=true",
+    );
+    expect(fixtures.apiFetch.mock.calls[1]?.[1]).toMatchObject({
+      method: "POST",
+      credentials: "omit",
+    });
+    expect(elements(harness.render()).some((element) => element.type === CompanionOverlay)).toBe(
+      false,
+    );
+  });
+
+  it("hides the unsupported opener on older snapshots and gates stale callbacks at unavailable boundaries", async () => {
+    const harness = pageHarness();
+    const older = initialSnapshot();
+    delete older.canInsertPublishedQuestion;
+    harness.broadcast(PresentationCompanionSnapshotSchema.parse(older));
+    expect(
+      elements(harness.render()).some(
+        (element) =>
+          element.type === "button" &&
+          text(element.props.children as ReactNode) === "Add published question",
+      ),
+    ).toBe(false);
+    harness.broadcast({ ...initialSnapshot(), canInsertPublishedQuestion: false });
+    expect(button(harness.render(), "Add published question").disabled).toBe(true);
+    click(harness.render(), "Add published question");
+    harness.broadcast(initialSnapshot());
+    fixtures.canMutate = false;
+    click(harness.render(), "Add published question");
+    await settle();
+    expect(fixtures.apiFetch).not.toHaveBeenCalled();
+    expect(
+      elements(harness.render()).some(
+        (element) => element.type === CompanionPublishedQuestionPicker,
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps the picker through a broadcast, fences double insertion, and closes only on its acknowledgement", async () => {
+    let acknowledge!: (snapshot: PresentationCompanionSnapshot) => void;
+    fixtures.execute.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          acknowledge = resolve;
+        }),
+    );
+    const harness = pageHarness();
+    click(harness.render(), "Add published question");
+    await settle();
+    const overlay = propsFor(harness.render(), CompanionOverlay);
+    expect(overlay.title).toBe("Published Round questions");
+    expect(overlay.returnFocusRef).toBe(button(harness.render(), "Start Presentation").ref);
+    const picker = propsFor(harness.render(), CompanionPublishedQuestionPicker);
+    const selection = publishedQuestionSelection(publishedQuestion);
+    picker.onInsert(selection);
+    picker.onInsert(selection);
+    expect(fixtures.execute).toHaveBeenCalledOnce();
+    harness.broadcast({
+      ...initialSnapshot(),
+      revision: 3,
+      seq: 3,
+      phase: "question_open",
+      acceptingResponses: true,
+      canInsertRecoveryPack: false,
+      canInsertQuickCheck: false,
+      canInsertPublishedQuestion: false,
+    });
+    expect(propsFor(harness.render(), CompanionPublishedQuestionPicker)).toMatchObject({
+      catalog: publishedQuestionCatalog,
+      disabled: true,
+    });
+    expect(button(harness.render(), "Add published question").disabled).toBe(true);
+    acknowledge(fixtures.snapshot!);
+    await settle();
+    expect(elements(harness.render()).some((element) => element.type === CompanionOverlay)).toBe(
+      false,
+    );
+  });
+
+  it("retains the exact published insertion retry after phase and capability changes without reloading sources", async () => {
+    fixtures.execute
+      .mockRejectedValueOnce(new Error("Acknowledgement lost"))
+      .mockRejectedValueOnce(new ApiClientError("Source no longer in catalog", "NOT_FOUND", 404))
+      .mockResolvedValueOnce({ ...initialSnapshot(), revision: 4 });
+    const harness = pageHarness();
+    click(harness.render(), "Add published question");
+    await settle();
+    propsFor(harness.render(), CompanionPublishedQuestionPicker).onInsert(
+      publishedQuestionSelection(publishedQuestion),
+    );
+    await settle();
+    const original = fixtures.execute.mock.calls[0]?.[0];
+    const finished: PresentationCompanionSnapshot = {
+      ...initialSnapshot(),
+      revision: 4,
+      seq: 4,
+      status: "finished",
+      phase: "finished",
+      primaryAction: "none",
+      canInsertRecoveryPack: false,
+      canInsertQuickCheck: false,
+      canInsertPublishedQuestion: false,
+      finishedAt: "2026-10-08T12:10:00.000Z",
+    };
+    delete finished.canInsertPublishedQuestion;
+    harness.broadcast(finished);
+    expect(button(harness.render(), "Retry published question acknowledgement").disabled).toBe(
+      false,
+    );
+    const picker = propsFor(harness.render(), CompanionPublishedQuestionPicker);
+    expect(picker.disabled).toBe(true);
+    picker.onSearch("another question");
+    picker.onInsert({
+      ...publishedQuestionSelection(publishedQuestion),
+      contentHash: "b".repeat(64),
+    });
+    expect(fixtures.apiFetch).toHaveBeenCalledOnce();
+    expect(fixtures.execute).toHaveBeenCalledOnce();
+    click(harness.render(), "Retry published question acknowledgement");
+    await settle();
+    expect(fixtures.execute.mock.calls[1]?.[0]).toBe(original);
+    expect(button(harness.render(), "Retry published question acknowledgement").disabled).toBe(
+      false,
+    );
+    click(harness.render(), "Retry published question acknowledgement");
+    await settle();
+    expect(fixtures.execute.mock.calls[2]?.[0]).toBe(original);
+    expect(elements(harness.render()).some((element) => element.type === CompanionOverlay)).toBe(
+      false,
+    );
+  });
+
+  it("rejects stale catalog references before sending a new insertion and recovers catalog errors with explicit search", async () => {
+    fixtures.apiFetch.mockRejectedValueOnce(
+      new ApiClientError("Catalog unavailable", "UNAVAILABLE", 503),
+    );
+    const harness = pageHarness();
+    click(harness.render(), "Add published question");
+    await settle();
+    expect(propsFor(harness.render(), CompanionPublishedQuestionPicker)).toMatchObject({
+      loading: false,
+      error: "Catalog unavailable",
+    });
+    propsFor(harness.render(), CompanionPublishedQuestionPicker).onSearch("  comparison %_  ");
+    await settle();
+    expect(fixtures.apiFetch.mock.calls[1]?.[0]).toContain(
+      "/companion-published-questions?search=comparison+%25_",
+    );
+    const picker = propsFor(harness.render(), CompanionPublishedQuestionPicker);
+    expect(picker).toMatchObject({ loading: false, error: "", catalog: publishedQuestionCatalog });
+    picker.onInsert({
+      ...publishedQuestionSelection(publishedQuestion),
+      sourceQuizVersionId: "55555555-5555-4555-8555-555555555555",
+    });
+    picker.onInsert({
+      ...publishedQuestionSelection(publishedQuestion),
+      sourceQuestionId: "66666666-6666-4666-8666-666666666666",
+    });
+    picker.onInsert({
+      ...publishedQuestionSelection(publishedQuestion),
+      contentHash: "b".repeat(64),
+    });
+    expect(fixtures.execute).not.toHaveBeenCalled();
+  });
+
+  it("ignores a late catalog response after dismissal and reopening", async () => {
+    let finishOldRequest!: (catalog: typeof publishedQuestionCatalog) => void;
+    fixtures.apiFetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOldRequest = resolve;
+        }),
+    );
+    const harness = pageHarness();
+    click(harness.render(), "Add published question");
+    expect(propsFor(harness.render(), CompanionPublishedQuestionPicker).loading).toBe(true);
+    propsFor(harness.render(), CompanionOverlay).onClose();
+    click(harness.render(), "Add published question");
+    await settle();
+    expect(propsFor(harness.render(), CompanionPublishedQuestionPicker).catalog).toEqual(
+      publishedQuestionCatalog,
+    );
+    finishOldRequest({
+      questions: [{ ...publishedQuestion, title: "Late stale catalog" }],
+      hasMore: false,
+    });
+    await settle();
+    expect(propsFor(harness.render(), CompanionPublishedQuestionPicker).catalog).toEqual(
+      publishedQuestionCatalog,
+    );
+  });
+
+  it("leaves the picker editable after a definite first rejection", async () => {
+    fixtures.execute.mockRejectedValueOnce(
+      new ApiClientError("Source unavailable", "NOT_FOUND", 404),
+    );
+    const harness = pageHarness();
+    click(harness.render(), "Add published question");
+    await settle();
+    propsFor(harness.render(), CompanionPublishedQuestionPicker).onInsert(
+      publishedQuestionSelection(publishedQuestion),
+    );
+    await settle();
+    expect(propsFor(harness.render(), CompanionPublishedQuestionPicker)).toMatchObject({
+      disabled: false,
+      catalog: publishedQuestionCatalog,
+    });
+    expect(button(harness.render(), "Start Presentation").disabled).toBe(false);
+  });
+});
+
 describe("Companion Quick Check page state", () => {
   it("uses only the scoped bearer credential and preserves omitted cookie credentials", async () => {
     const harness = pageHarness();
@@ -252,7 +512,7 @@ describe("Companion Quick Check page state", () => {
     });
     await fixtures.controllerOptions?.fetchSnapshot();
     expect(fixtures.apiFetch.mock.calls[0]?.[0]).toBe(
-      "/v1/presentation-sessions/11111111-1111-4111-8111-111111111111/companion?includeQuickChecks=true",
+      "/v1/presentation-sessions/11111111-1111-4111-8111-111111111111/companion?includeQuickChecks=true&includePublishedQuestions=true",
     );
     expect(fixtures.apiFetch.mock.calls[0]?.[1]).toMatchObject({
       credentials: "omit",
@@ -262,7 +522,7 @@ describe("Companion Quick Check page state", () => {
     propsFor(harness.render(), CompanionQuickCheckForm).onInsert(quickCheck);
     await settle();
     expect(fixtures.apiFetch.mock.calls[1]?.[0]).toBe(
-      "/v1/presentation-sessions/11111111-1111-4111-8111-111111111111/companion-command?includeQuickChecks=true",
+      "/v1/presentation-sessions/11111111-1111-4111-8111-111111111111/companion-command?includeQuickChecks=true&includePublishedQuestions=true",
     );
     expect(fixtures.apiFetch.mock.calls[1]?.[1]).toMatchObject({
       method: "POST",

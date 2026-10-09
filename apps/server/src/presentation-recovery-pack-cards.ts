@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   RecoveryPackLiveCardSchema,
   PresentationQuickCheckInputSchema,
+  PresentationPublishedQuestionSelectionSchema,
   questionDelivery,
   questionPurpose,
   type PresentationControlCommand,
@@ -92,6 +93,13 @@ export function presentationCommandRequestHash(command: PresentationControlComma
           : {}),
         ...(command.action === "insert_quick_check"
           ? { quickCheck: PresentationQuickCheckInputSchema.parse(command.quickCheck) }
+          : {}),
+        ...(command.action === "insert_published_question"
+          ? {
+              publishedQuestion: PresentationPublishedQuestionSelectionSchema.parse(
+                command.publishedQuestion,
+              ),
+            }
           : {}),
       }),
     )

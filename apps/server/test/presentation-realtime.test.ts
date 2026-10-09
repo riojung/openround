@@ -548,6 +548,7 @@ describe("Presentation realtime transport", () => {
     "insert_recovery_pack",
     "start_recovery_card",
     "insert_quick_check",
+    "insert_published_question",
   ] as const)(
     "dispatches companion %s without promoting their socket or leaking host broadcasts",
     async (action) => {
@@ -585,6 +586,15 @@ describe("Presentation realtime transport", () => {
         expectedRevision: 0,
         action,
         ...(action === "insert_recovery_pack" ? { packVersionId: crypto.randomUUID() } : {}),
+        ...(action === "insert_published_question"
+          ? {
+              publishedQuestion: {
+                sourceQuizVersionId: crypto.randomUUID(),
+                sourceQuestionId: crypto.randomUUID(),
+                contentHash: "a".repeat(64),
+              },
+            }
+          : {}),
         ...(action === "insert_quick_check"
           ? {
               quickCheck: {

@@ -39,7 +39,9 @@ function insertionRetryPrerequisiteDenied(error: unknown, command: PresentationC
   // An earlier insertion may still be committing while this retry misses its durable receipt.
   // Source, phase, or media checks on the retry cannot settle that earlier ambiguous attempt.
   return (
-    (command.action === "insert_recovery_pack" || command.action === "insert_quick_check") &&
+    (command.action === "insert_recovery_pack" ||
+      command.action === "insert_quick_check" ||
+      command.action === "insert_published_question") &&
     (code === "NOT_FOUND" || code === "PHASE_CLOSED" || code === "VALIDATION_ERROR")
   );
 }
@@ -99,6 +101,9 @@ export function createPresentationCommandRecovery<
                 choices: Object.freeze([...command.quickCheck.choices]),
               }),
             }
+          : {}),
+        ...(command.action === "insert_published_question"
+          ? { publishedQuestion: Object.freeze({ ...command.publishedQuestion }) }
           : {}),
       }) as Command;
       return attempt(frozen);

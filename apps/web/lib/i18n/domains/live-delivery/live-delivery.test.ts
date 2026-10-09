@@ -29,13 +29,15 @@ const canonicalPresetNames = [
 ] as const;
 
 describe("live delivery localization catalog", () => {
-  it("keeps Quick Check foundation copy in the existing English fallback with exact placeholders", async () => {
+  it("keeps Companion foundation copy in the existing English fallback with exact placeholders", async () => {
     const keys = Object.keys(liveDeliveryEnglishMessages).filter(
       (key) =>
         key.startsWith("live.companion.quickCheck.") ||
+        key.startsWith("live.companion.publishedQuestions.") ||
         key === "live.presentationReport.sessionOnlyQuickCheck",
     );
     expect(keys).toContain("live.companion.quickCheck.retryAcknowledgement");
+    expect(keys).toContain("live.companion.publishedQuestions.retryAcknowledgement");
     for (const locale of supportedLocales) {
       const messages = await loadLiveDeliveryMessages(locale);
       for (const key of keys) {

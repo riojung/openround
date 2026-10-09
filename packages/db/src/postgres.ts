@@ -15,6 +15,7 @@ import {
   SupportedLocaleSchema,
   TrustModeSchema,
   questionDelivery,
+  QuestionSchema,
   type BrandTheme,
   type QuizDraft,
   type Report,
@@ -35,6 +36,11 @@ import {
 } from "./types.js";
 import { runMigrations } from "./migrations.js";
 import {
+  publishedQuestionCatalogOptions,
+  publishedQuestionMetadata,
+  publishedQuestionTextOnlyLiveEligible,
+} from "./published-question-live-metadata.js";
+import {
   assertRecoveryPackPracticeInput,
   matchRecoveryPackPracticeReceipt,
   recoveryPackPracticeSourceMatches,
@@ -50,6 +56,7 @@ import {
   upcastPresentationContent,
   upcastPresentationDraft,
   upcastRoundContent,
+  assertRoundContentSchemaVersion,
   upcastRoundDraft,
   upcastRecoveryPackContent,
   upcastRecoveryPackDraft,
@@ -1743,6 +1750,56 @@ export class PostgresRepository implements Repository {
       [workspaceId, includeArchived],
     );
     return result.rows.map(mapQuizListRecord);
+  }
+
+  async listPublishedQuizQuestionMetadata(workspaceId: string, search = "", limit = 100) {
+    const options = publishedQuestionCatalogOptions(search, limit);
+    const result = await this.workspaceQuery(
+      workspaceId,
+      `SELECT version.id, version.quiz_id, version.version, version.content_hash, version.content_schema_version,
+              version.content ->> 'title' AS source_title, source.question
+       FROM quizzes AS quiz
+       JOIN quiz_versions AS version
+         ON version.id = quiz.current_version_id
+        AND version.quiz_id = quiz.id AND version.workspace_id = $1
+       CROSS JOIN LATERAL jsonb_array_elements(version.content -> 'questions')
+         WITH ORDINALITY AS source(question, ordinal)
+       WHERE quiz.workspace_id = $1 AND quiz.status <> 'archived'
+         AND source.question ->> 'mediaId' IS NULL
+         AND COALESCE(source.question ->> 'delivery', 'main') = 'main'
+         AND source.question ->> 'linkedRecheckQuestionId' IS NULL
+         AND source.question ->> 'recoveryPackSource' IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM jsonb_array_elements(version.content -> 'questions') AS related(question)
+           WHERE related.question ->> 'linkedRecheckQuestionId' = source.question ->> 'id'
+         )
+         AND ($2 = '' OR strpos(lower(version.content ->> 'title'), lower($2)) > 0
+              OR strpos(lower(source.question ->> 'prompt'), lower($2)) > 0)
+       ORDER BY quiz.updated_at DESC, quiz.id DESC, source.ordinal
+       LIMIT $3`,
+      [workspaceId, options.search, options.limit + 1],
+    );
+    const questions = result.rows.flatMap((row) => {
+      assertRoundContentSchemaVersion(row.content_schema_version);
+      const question = QuestionSchema.safeParse(row.question);
+      if (!question.success || !publishedQuestionTextOnlyLiveEligible(question.data)) return [];
+      return [
+        publishedQuestionMetadata(
+          {
+            id: String(row.id),
+            quizId: String(row.quiz_id),
+            version: Number(row.version),
+            contentHash: String(row.content_hash),
+            content: { title: String(row.source_title) },
+          },
+          question.data,
+        ),
+      ];
+    });
+    return {
+      questions: questions.slice(0, options.limit),
+      hasMore: questions.length > options.limit,
+    };
   }
 
   async listFolders(workspaceId: string) {

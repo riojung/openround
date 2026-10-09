@@ -87,6 +87,11 @@ import type {
 } from "./types.js";
 import { quizMediaIds } from "./media-references.js";
 import {
+  publishedQuestionCatalogOptions,
+  publishedQuestionMetadata,
+  publishedQuestionTextOnlyLiveEligible,
+} from "./published-question-live-metadata.js";
+import {
   createRecoveryPackRepository,
   type MemoryRecoveryPackRepository,
 } from "./recovery-packs.js";
@@ -780,6 +785,40 @@ export class MemoryRepository implements Repository {
         ...structuredClone(normalizeQuizRecord(quiz)),
         lastHostedAt: structuredClone(lastHostedAtByQuizId.get(quiz.id) ?? null),
       }));
+  }
+
+  async listPublishedQuizQuestionMetadata(workspaceId: string, search = "", limit = 100) {
+    const options = publishedQuestionCatalogOptions(search, limit);
+    const needle = options.search.toLowerCase();
+    const quizzes = [...this.quizzes.values()]
+      .filter((quiz) => quiz.workspaceId === workspaceId && quiz.status !== "archived")
+      .sort(
+        (left, right) =>
+          right.updatedAt.getTime() - left.updatedAt.getTime() ||
+          (left.id === right.id ? 0 : left.id < right.id ? 1 : -1),
+      );
+    const questions: Awaited<
+      ReturnType<Repository["listPublishedQuizQuestionMetadata"]>
+    >["questions"] = [];
+    for (const quiz of quizzes) {
+      const version = quiz.currentVersionId ? this.versions.get(quiz.currentVersionId) : undefined;
+      if (!version || version.workspaceId !== workspaceId || version.quizId !== quiz.id) continue;
+      const normalized = normalizeQuizVersion(version);
+      for (const question of normalized.content.questions) {
+        if (
+          !publishedQuestionTextOnlyLiveEligible(question, normalized.content.questions) ||
+          (needle &&
+            !normalized.content.title.toLowerCase().includes(needle) &&
+            !question.prompt.toLowerCase().includes(needle))
+        )
+          continue;
+        questions.push(publishedQuestionMetadata(normalized, question));
+        if (questions.length > options.limit) {
+          return { questions: questions.slice(0, options.limit), hasMore: true };
+        }
+      }
+    }
+    return { questions, hasMore: false };
   }
 
   async listFolders(workspaceId: string) {

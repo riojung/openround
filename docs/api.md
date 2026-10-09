@@ -613,12 +613,21 @@ projection prevent participants/companions from receiving unrevealed answers or 
 - `DELETE /v1/presentation-sessions/{id}/companion-passes/{credentialId}` — owner/editor revocation,
   restricted to the companion role. Available even when new issuance is paused.
 - `GET /v1/presentation-sessions/{id}/companion` — bearer companion pass, returning `{ snapshot }`.
-  Add `?includeQuickChecks=true` to opt into the new Quick Check capability field. Without the
-  query the legacy strict snapshot shape is preserved.
+  Add `includeQuickChecks=true` and/or `includePublishedQuestions=true` to opt independently into
+  the Quick Check/published-question capability fields. Default reads preserve the legacy strict shape.
 - `GET /v1/presentation-sessions/{id}/companion-recovery-packs` — bearer companion pass,
   returning a bounded `{ packs: [{ packId, packVersionId, packVersion, title }] }` catalog of
   current published, text-only versions in the session's workspace. Drafts, checkpoints,
   interventions, citations, and source-review data are not returned.
+- `GET /v1/presentation-sessions/{id}/companion-published-questions` — bearer companion pass,
+  returning `{ questions, hasMore }`, at most 100 matching questions from current published,
+  non-archived Rounds in the session's workspace. Optional `search` is trimmed, limited to 100
+  characters, and matches literal case-insensitive title/prompt substrings (not SQL wildcards).
+  Each item contains only `sourceQuizId`, `sourceQuizVersionId`, `sourceQuizVersion`,
+  `sourceQuestionId`, `contentHash`, `title`, `prompt`, and `type`. The hash identifies the exact
+  immutable Round version. Refine search when `hasMore` is true. Keys, choices, explanations,
+  concepts, citations, media, and draft content are never returned. Rechecks, linked sources,
+  Pack-derived questions, and media-backed items are excluded.
 - `POST /v1/presentation-sessions/{id}/companion-command` — strict
   `{ sessionId, companionToken, commandId, expectedRevision, action, ...actionFields }`, returning
   `{ snapshot }`. Actions are `advance`, `insert_recovery_pack` with `packVersionId`, and
@@ -628,10 +637,13 @@ projection prevent participants/companions from receiving unrevealed answers or 
   prompt, 2–6 distinct 1–180-character choice labels, and an integer 10–300-second limit.
   Prompt/labels are trimmed; choice uniqueness ignores Unicode compatibility, case, and repeated
   whitespace. Correctness, scoring, media, identity, and other extra fields are rejected.
+  `insert_published_question` accepts only
+  `publishedQuestion: { sourceQuizVersionId, sourceQuestionId, contentHash }`; the server resolves
+  and validates that exact retained version. The client cannot supply question content or keys.
   The same commands are accepted by
   `presentation.command` over Socket.IO.
-  Add `?includeQuickChecks=true` to the REST command URL to receive the capability field in its
-  acknowledgement; default REST acknowledgements retain the legacy shape.
+  Add `includeQuickChecks=true` and/or `includePublishedQuestions=true` to the REST command URL
+  to receive the respective capability fields; default acknowledgements retain the legacy shape.
 
 Passes expire after at most one hour and never outlive the live session. Tokens are hashed in the
 existing tenant-scoped credential store; responses are private/no-store and admission controls
@@ -648,6 +660,30 @@ the current question after reveal. It contains no correctness, keys, explanation
 participant responses, raw numeric/rating values, or leaderboard. Before reveal it is `null`.
 The browser consumes `#pass=...`, removes it from URL history before requests, and keeps the pass
 in session storage, with no inherited host passes or creator cookies on companion API fetches.
+
+Optional `canInsertPublishedQuestion` uses the same safe closed-boundary/pending-recheck fence.
+New catalog access and insertion require current professional Presentation, Companion/realtime,
+and workspace eligibility, independently of Pack flags and the Pack session-creation latch.
+Only standalone text-only main questions are eligible, including supported choice, numeric,
+poll, and rating types. Both outgoing and incoming recovery links and Pack provenance are
+excluded. A selected retained version remains valid after a newer publication, but new insertion
+requires a still-present, non-archived workspace source and an exact version hash.
+
+The command freezes the full published question, derives new destination IDs, retains existing
+block provenance, and records `livePublishedQuestions` with command/block/source Round/version/
+question IDs, version number, and version hash. This metadata exists only in live snapshots,
+survives durable reads/restoration, and is not copied into authoring drafts. Content, timer,
+revision, sequence, event, and receipt commit atomically. Existing sources/drafts remain unchanged.
+Timed/flex behavior and ordinary scoring/confidence follow the frozen question and room settings.
+Reports use existing question evidence with no new provenance fields or schema version; this
+standalone insertion creates no linked/paired recovery claim. Existing snapshots retain the
+internal provenance for session export and retention/deletion with their parent session.
+
+Exact receipt recovery occurs before source, phase, gate, or stale-revision rejection, including
+after source deletion and feature rollback. New commands cannot interrupt open responses,
+interventions, or pending linked rechecks. Limits remain 100 live blocks/insertions and the existing
+size bound. Best-effort audit action `presentation.session.published_question.insert` records IDs
+only, never question bodies or participant data; version/hash provenance remains frozen in the snapshot.
 
 Optional `canInsertRecoveryPack` is the server-authoritative insertion capability. Insertion is
 allowed in the lobby, on a content block, or after a closed question only when no previously
@@ -696,6 +732,9 @@ response without session-only metadata; the ready stored report is never rewritt
 
 Upgrade order: pause new Companion use via `FEATURE_PRESENTATION_COMPANION=false` on every API
 node, upgrade all API/report-worker readers and web clients, then re-enable the flag/allowlist.
+Live published-question markers also require compatible API/report-worker snapshot readers;
+retain these readers when disabling creation rather than deploying an older binary that strips
+session-only provenance. Older clients can continue to use the legacy REST projection.
 Once V3 reports exist, do not roll back API/report workers to binaries that only read V1/V2.
 Disable new creation and retain compatible readers, or apply a forward fix; feature rollback
 continues to preserve existing polls and reports. Older web clients use the legacy REST projection.

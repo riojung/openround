@@ -8,11 +8,13 @@ import {
   type PresentationCompanionCommand,
   type PresentationCompanionSnapshot,
   type PresentationQuickCheckInput,
+  type PresentationPublishedQuestionSelection,
   type RecoveryPackCardSelection,
 } from "@openround/contracts";
 import { useLocale } from "../../../../components/locale-provider";
 import { CompanionOverlay } from "../../../../components/presentation-live/companion-overlay";
 import { CompanionQuickCheckForm } from "../../../../components/presentation-live/companion-quick-check";
+import { CompanionPublishedQuestionPicker } from "../../../../components/presentation-live/companion-published-questions";
 import {
   CompanionRecoveryPackPicker,
   CompanionRecoveryCardPicker,
@@ -42,6 +44,11 @@ import {
   type CompanionRecoveryPackCatalog,
 } from "../../../../lib/presentation-companion-recovery-packs";
 import { createCompanionQuickCheckDraft } from "../../../../lib/presentation-companion-quick-check";
+import {
+  fetchPresentationCompanionPublishedQuestions,
+  selectedPublishedQuestion,
+  type CompanionPublishedQuestionCatalog,
+} from "../../../../lib/presentation-companion-published-questions";
 
 function companionAdvanceMessageKey(snapshot: PresentationCompanionSnapshot) {
   if (snapshot.phase === "lobby") return "live.presentationSession.advance.start" as const;
@@ -87,11 +94,17 @@ export default function PresentationCompanionPage() {
   >({ busy: false, pendingCommand: null });
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
-  const [overlay, setOverlay] = useState<"join" | "results" | "packs" | "quickCheck" | null>(null);
+  const [overlay, setOverlay] = useState<
+    "join" | "results" | "packs" | "quickCheck" | "publishedQuestions" | null
+  >(null);
   const [quickCheckDraft, setQuickCheckDraft] = useState(createCompanionQuickCheckDraft);
   const [packCatalog, setPackCatalog] = useState<CompanionRecoveryPackCatalog | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState("");
+  const [publishedQuestionCatalog, setPublishedQuestionCatalog] =
+    useState<CompanionPublishedQuestionCatalog | null>(null);
+  const [publishedQuestionLoading, setPublishedQuestionLoading] = useState(false);
+  const [publishedQuestionError, setPublishedQuestionError] = useState("");
   const catalogRequest = useRef(0);
   const passRef = useRef(pass);
   passRef.current = pass;
@@ -113,6 +126,9 @@ export default function PresentationCompanionPage() {
       setPackCatalog(null);
       setCatalogLoading(false);
       setCatalogError("");
+      setPublishedQuestionCatalog(null);
+      setPublishedQuestionLoading(false);
+      setPublishedQuestionError("");
       setError("");
     },
     [id],
@@ -147,7 +163,7 @@ export default function PresentationCompanionPage() {
       credential: { projection: "companion", companionToken: pass },
       fetchSnapshot: async () => {
         const response = await apiFetch<{ snapshot: unknown }>(
-          `/v1/presentation-sessions/${id}/companion?includeQuickChecks=true`,
+          `/v1/presentation-sessions/${id}/companion?includeQuickChecks=true&includePublishedQuestions=true`,
           { credentials: "omit", headers: { authorization: `Bearer ${pass}` } },
         );
         const incoming = PresentationCompanionSnapshotSchema.parse(response.snapshot);
@@ -178,7 +194,7 @@ export default function PresentationCompanionPage() {
       execute: (command) =>
         controller.command(command, async () => {
           const response = await apiFetch<{ snapshot: unknown }>(
-            `/v1/presentation-sessions/${id}/companion-command?includeQuickChecks=true`,
+            `/v1/presentation-sessions/${id}/companion-command?includeQuickChecks=true&includePublishedQuestions=true`,
             { method: "POST", credentials: "omit", body: JSON.stringify(command) },
           );
           return PresentationCompanionSnapshotSchema.parse(response.snapshot);
@@ -216,6 +232,9 @@ export default function PresentationCompanionPage() {
     setPackCatalog(null);
     setCatalogLoading(false);
     setCatalogError("");
+    setPublishedQuestionCatalog(null);
+    setPublishedQuestionLoading(false);
+    setPublishedQuestionError("");
   }
 
   function openQuickCheck() {
@@ -257,6 +276,39 @@ export default function PresentationCompanionPage() {
     }
   }
 
+  async function openPublishedQuestionPicker(search = "") {
+    const commands = commandsRef.current;
+    if (
+      !pass ||
+      !snapshot?.canInsertPublishedQuestion ||
+      !controllerRef.current?.canMutate() ||
+      !commands ||
+      commands.state().busy ||
+      commands.state().pendingCommand
+    )
+      return;
+    const request = ++catalogRequest.current;
+    const requestedPass = pass;
+    setOverlay("publishedQuestions");
+    setPublishedQuestionCatalog(null);
+    setPublishedQuestionLoading(true);
+    setPublishedQuestionError("");
+    try {
+      const catalog = await fetchPresentationCompanionPublishedQuestions(id, requestedPass, search);
+      if (request !== catalogRequest.current || passRef.current !== requestedPass) return;
+      setPublishedQuestionCatalog(catalog);
+    } catch (caught) {
+      if (request !== catalogRequest.current || passRef.current !== requestedPass) return;
+      if (isPresentationHostPassRejection(caught)) rejectPass(requestedPass);
+      else {
+        setPublishedQuestionError(humanError(caught));
+        void controllerRef.current?.reconcile();
+      }
+    } finally {
+      if (request === catalogRequest.current) setPublishedQuestionLoading(false);
+    }
+  }
+
   async function executeCommand(command?: PresentationCompanionCommand) {
     const controller = controllerRef.current;
     const commands = commandsRef.current;
@@ -273,7 +325,8 @@ export default function PresentationCompanionPage() {
         setConfirmed(true);
         if (
           activeCommand?.action === "insert_recovery_pack" ||
-          activeCommand?.action === "insert_quick_check"
+          activeCommand?.action === "insert_quick_check" ||
+          activeCommand?.action === "insert_published_question"
         )
           closeOverlay();
       }
@@ -322,6 +375,25 @@ export default function PresentationCompanionPage() {
       expectedRevision: snapshot.revision,
       action: "insert_quick_check",
       quickCheck,
+    });
+  }
+
+  async function insertPublishedQuestion(
+    publishedQuestion: PresentationPublishedQuestionSelection,
+  ) {
+    if (
+      !pass ||
+      !snapshot?.canInsertPublishedQuestion ||
+      !selectedPublishedQuestion(publishedQuestionCatalog, publishedQuestion)
+    )
+      return;
+    return executeCommand({
+      sessionId: id,
+      companionToken: pass,
+      commandId: clientUuid(),
+      expectedRevision: snapshot.revision,
+      action: "insert_published_question",
+      publishedQuestion,
     });
   }
 
@@ -493,6 +565,22 @@ export default function PresentationCompanionPage() {
                   {t("live.companion.quickCheck.open")}
                 </button>
               ) : null}
+              {snapshot.canInsertPublishedQuestion !== undefined ? (
+                <button
+                  className="button-quiet"
+                  disabled={
+                    !pass ||
+                    !snapshot.canInsertPublishedQuestion ||
+                    commandState.busy ||
+                    !!commandState.pendingCommand ||
+                    !controllerRef.current?.canMutate()
+                  }
+                  onClick={() => void openPublishedQuestionPicker()}
+                  type="button"
+                >
+                  {t("live.companion.publishedQuestions.open")}
+                </button>
+              ) : null}
             </div>
             {snapshot.phase === "question_reveal" &&
             !snapshot.acceptingResponses &&
@@ -611,6 +699,49 @@ export default function PresentationCompanionPage() {
             }
             onChange={setQuickCheckDraft}
             onInsert={(quickCheck) => void insertQuickCheck(quickCheck)}
+          />
+          {commandState.pendingCommand ? (
+            <>
+              <p role="status">
+                {t(commandState.busy ? "live.companion.waitingAck" : "live.companion.unconfirmed")}
+              </p>
+              {!commandState.busy ? (
+                <button
+                  className="button-quiet full-width"
+                  disabled={!controllerRef.current?.canMutate()}
+                  onClick={() => void executeCommand()}
+                  type="button"
+                >
+                  {t(companionCommandRetryMessageKey(commandState.pendingCommand))}
+                </button>
+              ) : null}
+            </>
+          ) : null}
+          {error ? (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </CompanionOverlay>
+      ) : null}
+      {overlay === "publishedQuestions" && snapshot && pass ? (
+        <CompanionOverlay
+          title={t("live.companion.publishedQuestions.title")}
+          onClose={closeOverlay}
+          returnFocusRef={primaryButtonRef}
+        >
+          <CompanionPublishedQuestionPicker
+            catalog={publishedQuestionCatalog}
+            loading={publishedQuestionLoading}
+            error={publishedQuestionError}
+            disabled={
+              !snapshot.canInsertPublishedQuestion ||
+              commandState.busy ||
+              !!commandState.pendingCommand ||
+              !controllerRef.current?.canMutate()
+            }
+            onSearch={(search) => void openPublishedQuestionPicker(search)}
+            onInsert={(selection) => void insertPublishedQuestion(selection)}
           />
           {commandState.pendingCommand ? (
             <>

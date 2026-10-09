@@ -276,6 +276,17 @@ an accepted poll is fixed for that session. If confirmation is lost, use **Retry
 acknowledgement** to confirm the original poll rather than submitting another. Reports label it
 **Session-only Quick Check · unscored**; opinion responses do not establish learning or recovery.
 
+For an existing standalone checkpoint, select **Add published question**. Search by published
+Round title or question prompt, choose the **Published Round** and **Published question**, then
+select **Insert and start question**. The picker exposes no answer keys or explanation previews.
+Only text-only main questions without Pack provenance or linked recovery flow are offered.
+Refine search when more than 100 questions match. Insertion freezes the explicitly selected
+published version, not a later update, and leaves the Round and Presentation drafts unchanged.
+It uses the same Companion configuration/allowlist, independently of Pack flags. If confirmation
+is lost, use **Retry published question acknowledgement**; the exact retry never inserts a second
+copy, including after source deletion. Existing scoring/confidence and room timed/flex behavior
+are retained. Standalone results are ordinary question evidence, not linked recovery evidence.
+
 In the professional **Library** and **Sessions** screens, workspace owners can also permanently
 delete archived content and finished or expired session history. Confirmation is required;
 retained sessions or practice assignments prevent source-content deletion. See

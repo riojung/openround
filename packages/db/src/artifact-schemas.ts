@@ -48,13 +48,12 @@ export class UnsupportedArtifactSchemaVersionError extends Error {
 
 type Upcaster<T> = (value: unknown) => T;
 
-function parseVersioned<T>(
+function resolveUpcaster<T>(
   artifactType: PersistedArtifactType,
   document: PersistedArtifactDocument,
-  value: unknown,
   schemaVersion: unknown,
   upcasters: ReadonlyMap<number, Upcaster<T>>,
-): T {
+): Upcaster<T> {
   // Version columns were introduced after the original tables. Treat an absent in-memory value as
   // v1, matching the database migration defaults, but never silently guess for another value.
   const version = schemaVersion == null ? 1 : schemaVersion;
@@ -65,7 +64,17 @@ function parseVersioned<T>(
       ...upcasters.keys(),
     ]);
   }
-  return upcaster(value);
+  return upcaster;
+}
+
+function parseVersioned<T>(
+  artifactType: PersistedArtifactType,
+  document: PersistedArtifactDocument,
+  value: unknown,
+  schemaVersion: unknown,
+  upcasters: ReadonlyMap<number, Upcaster<T>>,
+): T {
+  return resolveUpcaster(artifactType, document, schemaVersion, upcasters)(value);
 }
 
 const roundDraftUpcasters = new Map<number, Upcaster<QuizDraft>>([
@@ -130,6 +139,11 @@ export function upcastRoundContent(value: unknown, schemaVersion?: unknown): Qui
   return parseVersioned("round", "content", value, schemaVersion, roundContentUpcasters);
 }
 
+/** Bounded metadata reads must not guess the interpretation of an unsupported stored version. */
+export function assertRoundContentSchemaVersion(schemaVersion: unknown): void {
+  resolveUpcaster("round", "content", schemaVersion, roundContentUpcasters);
+}
+
 export function upcastRecoveryPackDraft(
   value: unknown,
   schemaVersion?: unknown,
@@ -173,13 +187,17 @@ export function upcastPresentationContent(
 /**
  * Legacy live snapshots used draft validation, including partially authored old snapshots.
  * Preserve that read path, but validate session-only metadata with the frozen content contract
- * so it cannot be stripped by the authoring parser or restore an invalid Quick Check.
+ * so it cannot be stripped by the authoring parser or restore invalid live insertion metadata.
  */
 export function upcastPresentationSessionContent(
   value: unknown,
   schemaVersion?: unknown,
 ): PresentationContent {
-  if (value && typeof value === "object" && "liveQuickCheck" in value) {
+  if (
+    value &&
+    typeof value === "object" &&
+    ("liveQuickCheck" in value || "livePublishedQuestions" in value)
+  ) {
     return upcastPresentationContent(value, schemaVersion);
   }
   return upcastPresentationDraft(value, schemaVersion) as PresentationContent;

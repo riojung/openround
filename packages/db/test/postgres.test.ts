@@ -52,6 +52,7 @@ import {
 import { expectRecoveryPackDraftUndoConformance } from "./support/recovery-pack-draft-undo-conformance.js";
 import { expectPresentationLiveInsertionConformance } from "./support/presentation-live-insertion-conformance.js";
 import { expectRecoveryPackLiveMetadataConformance } from "./support/recovery-pack-live-metadata-conformance.js";
+import { expectPublishedQuestionLiveMetadataConformance } from "./support/published-question-live-metadata-conformance.js";
 import {
   expectPresentationPackUndoConformance,
   expectPresentationPackUndoRetentionConformance,
@@ -1162,6 +1163,42 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
     });
     return { content, version };
   }
+
+  it("keeps PostgreSQL published question metadata bounded, safe, and tenant-isolated", async () => {
+    const owner = await creator("published-question-metadata-owner");
+    const other = await creator("published-question-metadata-other");
+    await expectPublishedQuestionLiveMetadataConformance({
+      repository,
+      workspaceId: owner.workspaceId,
+      otherWorkspaceId: other.workspaceId,
+    });
+  });
+
+  it("does not offer unsupported stored Round schemas from the PostgreSQL question catalog", async () => {
+    const owner = await creator("published-question-future-schema");
+    const fixture = await createPublishedRoundFixture(owner, "Future question schema");
+    const futureVersionId = randomUUID();
+    await packPracticeScoped(owner.workspaceId, async (client) => {
+      // Simulate a later publisher without changing the immutable v1 record or disabling guards.
+      await client.query(
+        `INSERT INTO quiz_versions (id, workspace_id, quiz_id, version, content,
+           content_schema_version, content_hash, published_at)
+         SELECT $3, workspace_id, quiz_id, 2, content, 99, $4, published_at
+         FROM quiz_versions WHERE workspace_id = $1 AND id = $2`,
+        [owner.workspaceId, fixture.version.id, futureVersionId, "a".repeat(64)],
+      );
+      await client.query(
+        "UPDATE quizzes SET current_version_id = $3 WHERE workspace_id = $1 AND id = $2",
+        [owner.workspaceId, fixture.version.quizId, futureVersionId],
+      );
+    });
+    await expect(repository.listPublishedQuizQuestionMetadata(owner.workspaceId)).rejects.toThrow(
+      "Unsupported round content schema version",
+    );
+    await expect(repository.getQuizVersion(owner.workspaceId, futureVersionId)).rejects.toThrow(
+      "Unsupported round content schema version",
+    );
+  });
 
   it("persists source Recovery Packs with approval intent, exact citations, restores and publish fencing", async () => {
     const owner = await creator("source-recovery-pack-owner");

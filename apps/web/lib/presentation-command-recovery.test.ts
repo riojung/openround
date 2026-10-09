@@ -177,6 +177,114 @@ describe("Presentation host command recovery", () => {
 });
 
 describe("Presentation companion command recovery", () => {
+  function publishedQuestionCommand(): PresentationCompanionCommand {
+    return {
+      sessionId: "session",
+      companionToken: "pass",
+      commandId: "original-published-question",
+      expectedRevision: 8,
+      action: "insert_published_question",
+      publishedQuestion: {
+        sourceQuizVersionId: "original-version",
+        sourceQuestionId: "original-question",
+        contentHash: "a".repeat(64),
+      },
+    };
+  }
+
+  it("freezes the original nested published version/question/hash through caller changes and retry", async () => {
+    const execute = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Acknowledgement lost"))
+      .mockResolvedValueOnce({ revision: 12 });
+    const recovery = createPresentationCommandRecovery<unknown, PresentationCompanionCommand>({
+      execute,
+      onState: () => undefined,
+    });
+    const original = publishedQuestionCommand();
+    await expect(recovery.run(original)).rejects.toThrow("Acknowledgement lost");
+    const pending = recovery.state().pendingCommand;
+    if (
+      pending?.action !== "insert_published_question" ||
+      original.action !== "insert_published_question"
+    )
+      throw new Error("Expected published question insertion");
+    expect(Object.isFrozen(pending)).toBe(true);
+    expect(Object.isFrozen(pending.publishedQuestion)).toBe(true);
+    original.expectedRevision = 12;
+    original.publishedQuestion.sourceQuizVersionId = "republished-version";
+    original.publishedQuestion.sourceQuestionId = "another-question";
+    original.publishedQuestion.contentHash = "b".repeat(64);
+    await recovery.run({ ...original, commandId: "new-selection" });
+    expect(execute).toHaveBeenCalledOnce();
+    await expect(recovery.retry()).resolves.toEqual({ revision: 12 });
+    expect(execute.mock.calls[1]?.[0]).toBe(pending);
+    expect(pending).toMatchObject({
+      commandId: "original-published-question",
+      expectedRevision: 8,
+      publishedQuestion: {
+        sourceQuizVersionId: "original-version",
+        sourceQuestionId: "original-question",
+        contentHash: "a".repeat(64),
+      },
+    });
+    expect(recovery.state()).toEqual({ busy: false, pendingCommand: null });
+  });
+
+  it.each([
+    ["NOT_FOUND", 404],
+    ["PHASE_CLOSED", 409],
+    ["VALIDATION_ERROR", 400],
+    ["FEATURE_UNAVAILABLE", 409],
+  ] as const)(
+    "keeps ambiguous published insertion through %s but clears a definite first rejection",
+    async (code, status) => {
+      const denial = new ApiClientError("Source or phase unavailable", code, status);
+      const execute = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Acknowledgement lost"))
+        .mockRejectedValueOnce(denial)
+        .mockResolvedValueOnce({ revision: 12 });
+      const recovery = createPresentationCommandRecovery<unknown, PresentationCompanionCommand>({
+        execute,
+        onState: () => undefined,
+      });
+      await expect(recovery.run(publishedQuestionCommand())).rejects.toThrow(
+        "Acknowledgement lost",
+      );
+      const pending = recovery.state().pendingCommand;
+      await expect(recovery.retry()).rejects.toMatchObject({ code, status });
+      expect(recovery.state().pendingCommand).toBe(pending);
+      await expect(recovery.retry()).resolves.toEqual({ revision: 12 });
+      expect(execute.mock.calls.every(([command]) => command === pending)).toBe(true);
+      const fresh = createPresentationCommandRecovery<unknown, PresentationCompanionCommand>({
+        execute: vi.fn().mockRejectedValueOnce(denial),
+        onState: () => undefined,
+      });
+      await expect(fresh.run(publishedQuestionCommand())).rejects.toMatchObject({ code, status });
+      expect(fresh.state()).toEqual({ busy: false, pendingCommand: null });
+    },
+  );
+
+  it.each(["STALE_REVISION", "IDEMPOTENCY_CONFLICT"])(
+    "clears a definitive %s published insertion retry rejection",
+    async (code) => {
+      const execute = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Acknowledgement lost"))
+        .mockRejectedValueOnce(new ApiClientError("Definitive command rejection", code, 409));
+      const recovery = createPresentationCommandRecovery<unknown, PresentationCompanionCommand>({
+        execute,
+        onState: () => undefined,
+      });
+      await expect(recovery.run(publishedQuestionCommand())).rejects.toThrow(
+        "Acknowledgement lost",
+      );
+      await expect(recovery.retry()).rejects.toMatchObject({ code });
+      expect(recovery.state()).toEqual({ busy: false, pendingCommand: null });
+    },
+  );
+
   function quickCheckCommand(): PresentationCompanionCommand {
     return {
       sessionId: "session",
@@ -227,6 +335,7 @@ describe("Presentation companion command recovery", () => {
       expectedRevision: 12,
     };
     const otherCommands: PresentationCompanionCommand[] = [
+      publishedQuestionCommand(),
       { ...credentials, action: "advance" },
       { ...credentials, action: "insert_recovery_pack", packVersionId: "version" },
       {
