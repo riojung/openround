@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import type { QuizDraft } from "@openround/contracts";
 import {
   MemoryRepository,
   publishedQuestionTextOnlyLiveEligible,
@@ -8,6 +9,7 @@ import {
 } from "../src/index.js";
 import {
   expectPublishedQuestionLiveMetadataConformance,
+  expectPublishedQuestionLiveMetadataSchemaConformance,
   publishedQuestionFixture,
 } from "./support/published-question-live-metadata-conformance.js";
 
@@ -58,6 +60,26 @@ describe("published question live metadata", () => {
       repository: new MemoryRepository(),
       workspaceId: randomUUID(),
       otherWorkspaceId: randomUUID(),
+    });
+  });
+  it("validates every eligible current schema before filtering the memory catalog", async () => {
+    const repository = new MemoryRepository();
+    await expectPublishedQuestionLiveMetadataSchemaConformance({
+      repository,
+      workspaceId: randomUUID(),
+      otherWorkspaceId: randomUUID(),
+      storeUnsupportedVersion: async ({ version, content, makeCurrent }) => {
+        const futureVersionId = randomUUID();
+        repository.versions.set(futureVersionId, {
+          ...version,
+          id: futureVersionId,
+          version: version.version + 1,
+          contentSchemaVersion: 99,
+          content: structuredClone(content) as QuizDraft,
+        });
+        if (makeCurrent) repository.quizzes.get(version.quizId)!.currentVersionId = futureVersionId;
+        return futureVersionId;
+      },
     });
   });
   it("rejects media, Pack roles, both sides of a linked flow, and invalid published items", () => {

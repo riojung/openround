@@ -582,6 +582,57 @@ describe("Companion standalone published Round questions", () => {
     expect(await f.sessions.listTimeline(f.sessionId)).toHaveLength(6);
   });
 
+  it.each(["archive", "delete"])(
+    "rejects new insertion when source %s wins after service validation without writing a receipt",
+    async (mutation) => {
+      const f = await fixture();
+      const transition = f.sessions.transitionSessionCommand.bind(f.sessions);
+      vi.spyOn(f.sessions, "transitionSessionCommand").mockImplementationOnce(async (input) => {
+        await f.repository.archiveQuiz(f.workspaceId, f.source.quiz.id, true);
+        if (mutation === "delete")
+          expect(await f.repository.deleteQuiz(f.workspaceId, f.source.quiz.id)).toBe("deleted");
+        return transition(input);
+      });
+      await expectNoMutation(f, f.command(), "NOT_FOUND");
+    },
+  );
+
+  it("recovers a concurrently accepted repository receipt before checking a deleted source", async () => {
+    const f = await fixture();
+    const transition = f.sessions.transitionSessionCommand.bind(f.sessions);
+    vi.spyOn(f.sessions, "transitionSessionCommand").mockImplementationOnce(async (input) => {
+      expect(await transition(input)).toMatchObject({ status: "accepted" });
+      await f.repository.archiveQuiz(f.workspaceId, f.source.quiz.id, true);
+      expect(await f.repository.deleteQuiz(f.workspaceId, f.source.quiz.id)).toBe("deleted");
+      return transition(input);
+    });
+    expect(await f.service.companionCommand(f.command())).toMatchObject({
+      phase: "question_open",
+      revision: 1,
+    });
+    expect(await f.sessions.listTimeline(f.sessionId)).toHaveLength(1);
+    expect((await f.current()).content.livePublishedQuestions).toHaveLength(1);
+  });
+
+  it("recovers an exact receipt committed after preflight but before source lookup", async () => {
+    const f = await fixture();
+    const command = f.command();
+    const current = await f.current();
+    const findReceipt = f.sessions.findCommandReceipt.bind(f.sessions);
+    vi.spyOn(f.sessions, "findCommandReceipt").mockImplementationOnce(async (...args) => {
+      expect(await findReceipt(...args)).toBeNull();
+      await f.service.companionCommand(command);
+      await f.repository.archiveQuiz(f.workspaceId, f.source.quiz.id, true);
+      expect(await f.repository.deleteQuiz(f.workspaceId, f.source.quiz.id)).toBe("deleted");
+      return null;
+    });
+    expect(await f.service.companionCommand(command)).toMatchObject({
+      phase: "question_open",
+      revision: current.revision + 1,
+    });
+    expect(await f.sessions.listTimeline(f.sessionId)).toHaveLength(1);
+  });
+
   it("fences roles, selectors, stale/CAS races and changed or legacy intent before writes", async () => {
     const f = await fixture(),
       other = await fixture();

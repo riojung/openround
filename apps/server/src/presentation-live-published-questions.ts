@@ -87,6 +87,11 @@ export function presentationPublishedQuestionInsertionTransition(
   });
   assertPresentationLiveInsertionSize(content);
   return {
+    publishedQuestionSource: {
+      quizId: version.quizId,
+      versionId: version.id,
+      contentHash: version.contentHash,
+    },
     content,
     phase: "question_open" as const,
     currentBlockIndex: insertionIndex,

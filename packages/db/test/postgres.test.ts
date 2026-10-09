@@ -24,12 +24,14 @@ import {
 import { assertRestrictedRuntimeDatabasePrincipal, PostgresRepository } from "../src/postgres.js";
 import {
   PresentationMutationConflictError,
+  PresentationPublishedQuestionSourceUnavailableError,
   PostgresCollaborationGroupRepository,
   PostgresLibraryMetadataRepository,
   PostgresPresentationRepository,
   PostgresPresentationSessionRepository,
   createRecoveryPackRepository,
   RecoveryPackMediaValidationError,
+  type PresentationSessionCommandInput,
   type PresentationSessionCredentialRecord,
 } from "../src/index.js";
 import {
@@ -52,7 +54,10 @@ import {
 import { expectRecoveryPackDraftUndoConformance } from "./support/recovery-pack-draft-undo-conformance.js";
 import { expectPresentationLiveInsertionConformance } from "./support/presentation-live-insertion-conformance.js";
 import { expectRecoveryPackLiveMetadataConformance } from "./support/recovery-pack-live-metadata-conformance.js";
-import { expectPublishedQuestionLiveMetadataConformance } from "./support/published-question-live-metadata-conformance.js";
+import {
+  expectPublishedQuestionLiveMetadataConformance,
+  expectPublishedQuestionLiveMetadataSchemaConformance,
+} from "./support/published-question-live-metadata-conformance.js";
 import {
   expectPresentationPackUndoConformance,
   expectPresentationPackUndoRetentionConformance,
@@ -1176,28 +1181,38 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
 
   it("does not offer unsupported stored Round schemas from the PostgreSQL question catalog", async () => {
     const owner = await creator("published-question-future-schema");
-    const fixture = await createPublishedRoundFixture(owner, "Future question schema");
-    const futureVersionId = randomUUID();
-    await packPracticeScoped(owner.workspaceId, async (client) => {
-      // Simulate a later publisher without changing the immutable v1 record or disabling guards.
-      await client.query(
-        `INSERT INTO quiz_versions (id, workspace_id, quiz_id, version, content,
-           content_schema_version, content_hash, published_at)
-         SELECT $3, workspace_id, quiz_id, 2, content, 99, $4, published_at
-         FROM quiz_versions WHERE workspace_id = $1 AND id = $2`,
-        [owner.workspaceId, fixture.version.id, futureVersionId, "a".repeat(64)],
-      );
-      await client.query(
-        "UPDATE quizzes SET current_version_id = $3 WHERE workspace_id = $1 AND id = $2",
-        [owner.workspaceId, fixture.version.quizId, futureVersionId],
-      );
+    const other = await creator("published-question-future-schema-other");
+    await expectPublishedQuestionLiveMetadataSchemaConformance({
+      repository,
+      workspaceId: owner.workspaceId,
+      otherWorkspaceId: other.workspaceId,
+      storeUnsupportedVersion: async ({ version, content, makeCurrent }) => {
+        const futureVersionId = randomUUID();
+        await packPracticeScoped(version.workspaceId, async (client) => {
+          // Simulate a later publisher without changing immutable records or disabling guards.
+          await client.query(
+            `INSERT INTO quiz_versions (id, workspace_id, quiz_id, version, content,
+               content_schema_version, content_hash, published_at)
+             SELECT $3, workspace_id, quiz_id, version + 1, $4::jsonb, 99, $5, published_at
+             FROM quiz_versions WHERE workspace_id = $1 AND id = $2`,
+            [
+              version.workspaceId,
+              version.id,
+              futureVersionId,
+              JSON.stringify(content),
+              "a".repeat(64),
+            ],
+          );
+          if (makeCurrent) {
+            await client.query(
+              "UPDATE quizzes SET current_version_id = $3 WHERE workspace_id = $1 AND id = $2",
+              [version.workspaceId, version.quizId, futureVersionId],
+            );
+          }
+        });
+        return futureVersionId;
+      },
     });
-    await expect(repository.listPublishedQuizQuestionMetadata(owner.workspaceId)).rejects.toThrow(
-      "Unsupported round content schema version",
-    );
-    await expect(repository.getQuizVersion(owner.workspaceId, futureVersionId)).rejects.toThrow(
-      "Unsupported round content schema version",
-    );
   });
 
   it("persists source Recovery Packs with approval intent, exact citations, restores and publish fencing", async () => {
@@ -2550,6 +2565,248 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
         await repository.claimWorkspaceMediaDeletion(owner.workspaceId);
       },
     });
+  });
+
+  async function publishedQuestionInsertionFixture(label: string) {
+    const owner = await creator(`published-question-${label}`);
+    const published = await createPublishedPresentationFixture(owner, "Published question room");
+    const { session, sessions } = await createPresentationSessionFixture(
+      owner,
+      published,
+      String(randomInt(1_000_000, 10_000_000)),
+    );
+    const now = new Date();
+    const content = publishableRound("Published insertion source");
+    const quiz = await repository.createQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      title: content.title,
+      description: content.description,
+      status: "draft",
+      draft: content,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const version = await repository.publishQuiz({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      quizId: quiz.id,
+      version: 1,
+      content,
+      contentHash: createHash("sha256").update(JSON.stringify(content)).digest("hex"),
+      publishedAt: now,
+    });
+    const commandId = randomUUID();
+    const blockId = randomUUID();
+    const sourceQuestion = version.content.questions[0]!;
+    const command: PresentationSessionCommandInput = {
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      commandId,
+      requestHash: "a".repeat(64),
+      expectedRevision: 0,
+      publishedQuestionSource: {
+        quizId: version.quizId,
+        versionId: version.id,
+        contentHash: version.contentHash,
+      },
+      content: {
+        ...structuredClone(session.content),
+        blocks: [
+          {
+            id: blockId,
+            kind: "question",
+            question: {
+              ...structuredClone(sourceQuestion),
+              id: randomUUID(),
+              delivery: "main",
+              linkedRecheckQuestionId: null,
+            },
+            provenance: {
+              sourceQuizVersionId: version.id,
+              sourceQuestionId: sourceQuestion.id,
+            },
+          },
+          ...structuredClone(session.content.blocks),
+        ],
+        livePublishedQuestions: [
+          {
+            commandId,
+            blockId,
+            sourceQuizId: version.quizId,
+            sourceQuizVersionId: version.id,
+            sourceQuizVersion: version.version,
+            sourceQuestionId: sourceQuestion.id,
+            contentHash: version.contentHash,
+          },
+        ],
+      },
+      phase: "question_open",
+      currentBlockIndex: 0,
+      status: "active",
+      occurredAt: now,
+      event: { type: "question.launched", blockIndex: 0, blockId },
+    };
+    return { owner, session, sessions, version, command };
+  }
+
+  it.each(["archive", "archive and delete"] as const)(
+    "rejects published question insertion when an in-flight %s wins the source lock",
+    async (mutation) => {
+      const f = await publishedQuestionInsertionFixture(mutation.replaceAll(" ", "-"));
+      const blocker = await runtimePool.connect();
+      let pending:
+        | Promise<{ status: "fulfilled"; value: unknown } | { status: "rejected"; error: unknown }>
+        | undefined;
+      try {
+        await blocker.query("BEGIN");
+        await blocker.query("SELECT set_config('app.workspace_id', $1, true)", [
+          f.owner.workspaceId,
+        ]);
+        const blockerPid = Number(
+          (await blocker.query("SELECT pg_backend_pid() AS pid")).rows[0]?.pid,
+        );
+        // Leave the previously published row visible until the insertion reaches its source lock.
+        // Locking only the quiz proves the source fence independently of the workspace fence.
+        await expect(
+          blocker.query(
+            `UPDATE quizzes SET status = 'archived', archived_at = now(), updated_at = now()
+             WHERE workspace_id = $1 AND id = $2`,
+            [f.owner.workspaceId, f.version.quizId],
+          ),
+        ).resolves.toMatchObject({ rowCount: 1 });
+        if (mutation === "archive and delete") {
+          await expect(
+            blocker.query("DELETE FROM quizzes WHERE workspace_id = $1 AND id = $2", [
+              f.owner.workspaceId,
+              f.version.quizId,
+            ]),
+          ).resolves.toMatchObject({ rowCount: 1 });
+        }
+        pending = f.sessions.transitionSessionCommand(f.command).then(
+          (value) => ({ status: "fulfilled" as const, value }),
+          (error: unknown) => ({ status: "rejected" as const, error }),
+        );
+        let waitingOnSource = false;
+        const deadline = Date.now() + 3_000;
+        while (Date.now() < deadline) {
+          // Autocommit refreshes activity rather than retaining the blocker's statistics snapshot.
+          const activity = await runtimePool.query<{ waiting: boolean }>(
+            `SELECT EXISTS (
+               SELECT 1 FROM pg_stat_activity
+               WHERE pid <> pg_backend_pid()
+                 AND wait_event_type = 'Lock'
+                 AND query LIKE '%FOR SHARE OF quiz%'
+                 AND $1::integer = ANY(pg_blocking_pids(pid))
+             ) AS waiting`,
+            [blockerPid],
+          );
+          waitingOnSource = activity.rows[0]?.waiting === true;
+          if (waitingOnSource) break;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(waitingOnSource).toBe(true);
+        await blocker.query("COMMIT");
+      } catch (error) {
+        await blocker.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        blocker.release();
+        await pending;
+      }
+      await expect(pending).resolves.toMatchObject({
+        status: "rejected",
+        error: expect.any(PresentationPublishedQuestionSourceUnavailableError),
+      });
+      // Full equality also fences content, revision, event sequence and both question timers.
+      await expect(f.sessions.getSessionById(f.session.id)).resolves.toEqual(f.session);
+      await expect(f.sessions.listTimeline(f.session.id)).resolves.toEqual([]);
+      await expect(
+        f.sessions.findCommandReceipt(f.owner.workspaceId, f.session.id, f.command.commandId),
+      ).resolves.toBeNull();
+      if (mutation === "archive and delete") {
+        await expect(repository.getQuiz(f.owner.workspaceId, f.version.quizId)).resolves.toBeNull();
+        await expect(
+          repository.getQuizVersion(f.owner.workspaceId, f.version.id),
+        ).resolves.toBeNull();
+      } else {
+        await expect(
+          repository.getQuiz(f.owner.workspaceId, f.version.quizId),
+        ).resolves.toMatchObject({
+          status: "archived",
+        });
+      }
+    },
+  );
+
+  it("recovers a published question receipt after source deletion and repository restart", async () => {
+    const f = await publishedQuestionInsertionFixture("deleted-source-retry");
+    await expect(f.sessions.transitionSessionCommand(f.command)).resolves.toMatchObject({
+      status: "accepted",
+      session: {
+        content: f.command.content,
+        revision: 1,
+        eventSeq: 1,
+        questionOpenedAt: f.command.occurredAt,
+        questionClosesAt: new Date(f.command.occurredAt!.getTime() + 30_000),
+      },
+    });
+    await f.sessions.transitionSessionCommand({
+      ...f.command,
+      commandId: randomUUID(),
+      requestHash: "b".repeat(64),
+      expectedRevision: 1,
+      publishedQuestionSource: undefined,
+      content: undefined,
+      phase: "question_reveal",
+      event: { ...f.command.event, type: "question.revealed" },
+    });
+    const current = await f.sessions.getSessionById(f.session.id);
+    await repository.archiveQuiz(f.owner.workspaceId, f.version.quizId, true);
+    await expect(repository.deleteQuiz(f.owner.workspaceId, f.version.quizId)).resolves.toBe(
+      "deleted",
+    );
+    await expect(repository.getQuizVersion(f.owner.workspaceId, f.version.id)).resolves.toBeNull();
+    const restarted = new PostgresPresentationSessionRepository(repository);
+    await expect(restarted.transitionSessionCommand(f.command)).resolves.toEqual({
+      status: "duplicate",
+      session: current,
+    });
+    await expect(
+      restarted.transitionSessionCommand({ ...f.command, requestHash: "c".repeat(64) }),
+    ).resolves.toMatchObject({ status: "idempotency_conflict", session: current });
+    await expect(restarted.getSessionById(f.session.id)).resolves.toEqual(current);
+    await expect(restarted.listTimeline(f.session.id)).resolves.toHaveLength(2);
+    await expect(
+      restarted.findCommandReceipt(f.owner.workspaceId, f.session.id, f.command.commandId),
+    ).resolves.toMatchObject({
+      expectedRevision: 0,
+      resultingRevision: 1,
+      requestHash: f.command.requestHash,
+    });
+  });
+
+  it("rejects published question source quiz, version, hash and tenant mismatches without writes", async () => {
+    const f = await publishedQuestionInsertionFixture("source-guards");
+    const other = await publishedQuestionInsertionFixture("foreign-source-guards");
+    const source = f.command.publishedQuestionSource!;
+    for (const publishedQuestionSource of [
+      { ...source, quizId: randomUUID() },
+      { ...source, versionId: randomUUID() },
+      { ...source, contentHash: "f".repeat(64) },
+      other.command.publishedQuestionSource!,
+    ]) {
+      const command = { ...f.command, publishedQuestionSource };
+      await expect(f.sessions.transitionSessionCommand(command)).rejects.toBeInstanceOf(
+        PresentationPublishedQuestionSourceUnavailableError,
+      );
+      await expect(f.sessions.getSessionById(f.session.id)).resolves.toEqual(f.session);
+      await expect(f.sessions.listTimeline(f.session.id)).resolves.toEqual([]);
+      await expect(
+        f.sessions.findCommandReceipt(f.owner.workspaceId, f.session.id, command.commandId),
+      ).resolves.toBeNull();
+    }
   });
 
   it("keeps PostgreSQL on the shared published Pack metadata catalogue contract", async () => {

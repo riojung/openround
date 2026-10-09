@@ -627,7 +627,9 @@ projection prevent participants/companions from receiving unrevealed answers or 
   `sourceQuestionId`, `contentHash`, `title`, `prompt`, and `type`. The hash identifies the exact
   immutable Round version. Refine search when `hasMore` is true. Keys, choices, explanations,
   concepts, citations, media, and draft content are never returned. Rechecks, linked sources,
-  Pack-derived questions, and media-backed items are excluded.
+  Pack-derived questions, and media-backed items are excluded. All current non-archived source
+  schema versions are checked before JSON interpretation, search, eligibility, or the result cap;
+  unsupported versions fail the catalog read rather than appearing as an empty catalog.
 - `POST /v1/presentation-sessions/{id}/companion-command` — strict
   `{ sessionId, companionToken, commandId, expectedRevision, action, ...actionFields }`, returning
   `{ snapshot }`. Actions are `advance`, `insert_recovery_pack` with `packVersionId`, and
@@ -668,6 +670,9 @@ Only standalone text-only main questions are eligible, including supported choic
 poll, and rating types. Both outgoing and incoming recovery links and Pack provenance are
 excluded. A selected retained version remains valid after a newer publication, but new insertion
 requires a still-present, non-archived workspace source and an exact version hash.
+Source eligibility is revalidated and locked in the insertion transaction through the state,
+timeline, and receipt commit. An archive or delete that wins the race rejects the new insertion
+without partial writes; accepted receipt recovery does not require the source to remain present.
 
 The command freezes the full published question, derives new destination IDs, retains existing
 block provenance, and records `livePublishedQuestions` with command/block/source Round/version/

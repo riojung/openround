@@ -1754,9 +1754,25 @@ export class PostgresRepository implements Repository {
 
   async listPublishedQuizQuestionMetadata(workspaceId: string, search = "", limit = 100) {
     const options = publishedQuestionCatalogOptions(search, limit);
-    const result = await this.workspaceQuery(
-      workspaceId,
-      `SELECT version.id, version.quiz_id, version.version, version.content_hash, version.content_schema_version,
+    const result = await this.transaction(async (client) => {
+      // Validate the entire current catalog before reading JSON, on the same snapshot as the
+      // bounded metadata query so a concurrent publisher cannot introduce an unchecked version.
+      await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      await client.query("SELECT set_config('app.workspace_id', $1, true)", [workspaceId]);
+      const versions = await client.query(
+        `SELECT version.content_schema_version
+         FROM quizzes AS quiz
+         JOIN quiz_versions AS version
+           ON version.id = quiz.current_version_id
+          AND version.quiz_id = quiz.id AND version.workspace_id = $1
+         WHERE quiz.workspace_id = $1 AND quiz.status <> 'archived'`,
+        [workspaceId],
+      );
+      for (const version of versions.rows) {
+        assertRoundContentSchemaVersion(version.content_schema_version);
+      }
+      return client.query(
+        `SELECT version.id, version.quiz_id, version.version, version.content_hash,
               version.content ->> 'title' AS source_title, source.question
        FROM quizzes AS quiz
        JOIN quiz_versions AS version
@@ -1777,10 +1793,10 @@ export class PostgresRepository implements Repository {
               OR strpos(lower(source.question ->> 'prompt'), lower($2)) > 0)
        ORDER BY quiz.updated_at DESC, quiz.id DESC, source.ordinal
        LIMIT $3`,
-      [workspaceId, options.search, options.limit + 1],
-    );
+        [workspaceId, options.search, options.limit + 1],
+      );
+    });
     const questions = result.rows.flatMap((row) => {
-      assertRoundContentSchemaVersion(row.content_schema_version);
       const question = QuestionSchema.safeParse(row.question);
       if (!question.success || !publishedQuestionTextOnlyLiveEligible(question.data)) return [];
       return [

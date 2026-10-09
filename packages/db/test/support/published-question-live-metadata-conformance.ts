@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import type { QuizDraft } from "@openround/contracts";
-import type { Repository } from "../../src/index.js";
+import type { QuizVersionRecord, Repository } from "../../src/index.js";
 
 export function publishedQuestionFixture(prompt = "Synthetic standalone checkpoint") {
   return {
@@ -158,4 +158,86 @@ export async function expectPublishedQuestionLiveMetadataConformance(input: {
   expect(
     await repository.listPublishedQuizQuestionMetadata(workspaceId, "Bounded checkpoint 100"),
   ).toMatchObject({ questions: [{ prompt: "Bounded checkpoint 100" }], hasMore: false });
+}
+
+/** Unsupported current versions fail before JSON interpretation, filtering, or pagination. */
+export async function expectPublishedQuestionLiveMetadataSchemaConformance(input: {
+  repository: Repository;
+  workspaceId: string;
+  otherWorkspaceId: string;
+  storeUnsupportedVersion: (input: {
+    version: QuizVersionRecord;
+    content: unknown;
+    makeCurrent: boolean;
+  }) => Promise<string>;
+}) {
+  const { repository, workspaceId, otherWorkspaceId, storeUnsupportedVersion } = input;
+  async function publish(workspace = workspaceId, newest = false) {
+    const now = new Date();
+    const content = {
+      title: "Supported catalog Round",
+      description: "",
+      questions: [publishedQuestionFixture(), publishedQuestionFixture("Second checkpoint")],
+    };
+    const quiz = await repository.createQuiz({
+      // Break same-millisecond ties in memory so the pagination fixture is always newer.
+      id: `${newest ? "f" : "0"}${randomUUID().slice(1)}`,
+      workspaceId: workspace,
+      title: content.title,
+      description: "",
+      status: "draft",
+      draft: content,
+      currentVersionId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    return repository.publishQuiz({
+      id: randomUUID(),
+      workspaceId: workspace,
+      quizId: quiz.id,
+      version: 1,
+      content,
+      contentHash: createHash("sha256").update(JSON.stringify(content)).digest("hex"),
+      publishedAt: now,
+    });
+  }
+  const futureQuestion = publishedQuestionFixture("Future checkpoint");
+  const futureContent = { title: "Future Round", description: "", questions: [futureQuestion] };
+  const cases = [
+    { content: { title: "Future Round", description: "" } },
+    { content: { title: "Future Round", description: "", items: [futureQuestion] } },
+    { content: { ...futureContent, questions: [] } },
+    { content: { ...futureContent, questions: [{ ...futureQuestion, delivery: "recheck" }] } },
+    { content: futureContent, search: "Supported catalog" },
+    { content: futureContent, limit: 1 },
+  ];
+  for (const scenario of cases) {
+    const version = await publish();
+    const futureVersionId = await storeUnsupportedVersion({
+      version,
+      content: scenario.content,
+      makeCurrent: true,
+    });
+    const newer = scenario.limit ? await publish(workspaceId, true) : null;
+    await expect(
+      repository.listPublishedQuizQuestionMetadata(workspaceId, scenario.search, scenario.limit),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED_ARTIFACT_SCHEMA_VERSION", schemaVersion: 99 });
+    await expect(repository.getQuizVersion(workspaceId, futureVersionId)).rejects.toMatchObject({
+      code: "UNSUPPORTED_ARTIFACT_SCHEMA_VERSION",
+    });
+    await repository.archiveQuiz(workspaceId, version.quizId, true);
+    if (newer) await repository.archiveQuiz(workspaceId, newer.quizId, true);
+    expect(await repository.listPublishedQuizQuestionMetadata(workspaceId)).toEqual({
+      questions: [],
+      hasMore: false,
+    });
+  }
+  const retained = await publish();
+  await storeUnsupportedVersion({ version: retained, content: futureContent, makeCurrent: false });
+  const other = await publish(otherWorkspaceId);
+  await storeUnsupportedVersion({ version: other, content: futureContent, makeCurrent: true });
+  expect(await repository.listPublishedQuizQuestionMetadata(workspaceId)).toMatchObject({
+    questions: [{ sourceQuizVersionId: retained.id }, { sourceQuizVersionId: retained.id }],
+    hasMore: false,
+  });
 }

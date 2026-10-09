@@ -20,8 +20,11 @@ focus return, loading/error recovery, bounded search, and exact acknowledgement 
 The server freezes the selected retained version, assigns destination IDs, and stores block and
 session-only provenance atomically with content, timer, revision, sequence, event, and receipt.
 New publication never substitutes another version. Accepted copies/retries survive source deletion
-and feature rollback; new insertion requires a present non-archived source. Memory/PostgreSQL
+and feature rollback; new insertion revalidates the present non-archived source inside the state/
+receipt transaction and holds the PostgreSQL source lock until commit. Memory/PostgreSQL
 reads and snapshot restore retain the markers and reject unsupported stored source schemas.
+Catalog reads validate all eligible current schemas before JSON interpretation, filtering, or
+pagination; PostgreSQL uses one read-only repeatable snapshot for validation and metadata.
 Sources/drafts remain unchanged. Supported question types retain existing timed/flex, scoring,
 confidence, and report behavior, with no invented paired-recovery evidence or new report schema.
 
@@ -33,7 +36,7 @@ feature rollback. No new tables, migrations, dependencies, CI jobs, or participa
 
 Verification: local `CI=true pnpm check` passes formatting, Docker dependency-context checks,
 lint, type checks, package/support tests, and production builds, including 312 contract, 615 web,
-130 memory/database, 494 server, and 206 support tests. All 68 PostgreSQL integration tests pass
+131 memory/database, 498 server, and 206 support tests. All 72 PostgreSQL integration tests pass
 against a fresh disposable PostgreSQL 17 database; the test container was removed afterward
 without changing existing services or data volumes. Nine selected production-browser checks pass
 across desktop Chromium, Android Chromium, and mobile WebKit: three new published-question journeys
@@ -41,7 +44,10 @@ and six Quick Check/Pack regressions. They cover explicit-version freezing after
 deletion, lost acknowledgement/exact retry, timed/flex grading, unchanged source drafts, report
 reconciliation, cookie omission, keyboard/focus, axe, and mobile overflow. Independent read-only
 review found no remaining actionable issues after fixing unsupported-schema catalog parity and
-the browser assertions for report readiness and timed scoring. Firefox retains the documented
+the browser assertions for report readiness and timed scoring. Review follow-up tests prove
+archive/delete lock races reject without partial writes, exact accepted receipts survive concurrent
+source deletion and repository restart, and search/eligibility/limit cannot hide future schemas.
+The nine browser checks were not rerun for this backend-only review follow-up. Firefox retains the documented
 local launch limitation and its existing CI project; manual/external acceptance remains separate.
 
 Next: session-owned media retention for media-backed Companion insertion, then Recovery Trail
