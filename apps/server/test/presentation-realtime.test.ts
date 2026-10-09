@@ -543,7 +543,12 @@ describe("Presentation realtime transport", () => {
     expect(JSON.stringify(result)).not.toContain("secret_table");
   });
 
-  it.each(["advance", "insert_recovery_pack", "start_recovery_card"] as const)(
+  it.each([
+    "advance",
+    "insert_recovery_pack",
+    "start_recovery_card",
+    "insert_quick_check",
+  ] as const)(
     "dispatches companion %s without promoting their socket or leaking host broadcasts",
     async (action) => {
       const companion = await connect();
@@ -580,6 +585,15 @@ describe("Presentation realtime transport", () => {
         expectedRevision: 0,
         action,
         ...(action === "insert_recovery_pack" ? { packVersionId: crypto.randomUUID() } : {}),
+        ...(action === "insert_quick_check"
+          ? {
+              quickCheck: {
+                prompt: "Which pace works best?",
+                choices: ["More time", "Ready to continue"],
+                timeLimitSeconds: 23,
+              },
+            }
+          : {}),
         ...(action === "start_recovery_card"
           ? {
               recoveryPackCard: { insertionId: crypto.randomUUID(), cardId: crypto.randomUUID() },

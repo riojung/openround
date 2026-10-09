@@ -8,6 +8,52 @@ trademark review.
 
 ## Staged implementation plan checkpoint
 
+### Presentation Companion session-only Quick Checks — October 8, 2026
+
+The next provisional Companion increment adds one immutable unscored opinion poll per live
+session, with a 1–500-character prompt and 2–6 distinct 1–180-character choices. It reuses the
+existing scoped Companion pass, authoritative live engine, atomic content/timer/revision/event/
+receipt transition, and exact acknowledgement recovery. The closed-boundary fence never splits
+an open question, intervention, or pending linked recheck, including practice-purpose sources
+and intervening blocks. Timed rooms use a 10–300-second deadline; flex rooms have no deadline or
+countdown and the facilitator closes responses.
+
+The accessible form supports bounded add/remove, duplicate-choice validation, keyboard dismissal,
+focus return, and draft preservation across closing/errors. Accepted-state broadcasts cannot
+close the form before acknowledgement, and ambiguous retries freeze the original prompt, ordered
+choices, timing, revision, and command ID. PostgreSQL reads and snapshot restoration retain the
+session-only marker; legacy snapshot upcasters remain compatible. Published content and drafts
+are not edited. Reports identify the poll as **Session-only Quick Check · unscored**, with null
+correctness/accuracy and zero score, never as learning or recovery evidence.
+The new evidence uses Presentation Report V3, leaving strict V1/V2 unchanged. Companion/report
+REST metadata is opt-in via `includeQuickChecks=true`; default responses preserve legacy strict
+readers without rewriting ready reports. Roll out compatible API/report-worker readers before
+enabling new use; after V3 is written, retain compatible readers during feature rollback rather
+than deploying a V1/V2-only binary. See [API compatibility and upgrade order](api.md#presentation-companion-foundation).
+
+New creation uses current professional Presentation, Companion/realtime, and workspace gates,
+independently of Pack/live-card flags and the Pack session-creation latch. Rollback blocks new
+creation while preserving existing polls, response submissions, reads, and accepted retries.
+No new tables, migrations, dependencies, CI jobs, or public participant-cap changes are introduced.
+
+Verification: local `CI=true pnpm check` passes formatting, lint, type checks, package/support
+tests, and production builds, including 308 contract, 583 web, 126 memory/database, 484 server,
+and 206 support tests. All 66 PostgreSQL integration tests pass against an isolated disposable
+PostgreSQL 17 database, removed afterward without changing existing services or data volumes.
+Nine selected production-browser checks pass across desktop Chromium, Android Chromium, and
+mobile WebKit: three new Quick Check journeys and six Companion/Pack regressions. They cover
+timed/flex behavior, lost acknowledgement/exact retry, preserved drafts, unchanged published
+sources, unscored report reconciliation, cookie omission, keyboard/focus, axe, and mobile overflow.
+Independent focused review verified the strict legacy REST/report compatibility fixes and
+session-marker persistence; no actionable issues remain in that recheck. Firefox retains the
+foundation checkpoint's local launch limitation and its existing CI project.
+
+Next: scoped insertion of an immutable standalone question from published material, then
+session-owned media retention for media-backed Companion insertion and the staged Recovery Trail
+and Concept Health increments. This completes the session-only Quick Check slice, not all original
+Companion scope; partner-evidence decisions, manual assistive-technology/device reviews, and staging/production
+exercises remain explicitly deferred, not passed.
+
 ### Presentation Companion Recovery Packs — October 8, 2026
 
 The next provisional Companion slice adds a bounded, bearer-scoped published Pack catalog and
@@ -46,8 +92,9 @@ limitation and its existing CI project; manual assistive-technology/device, part
 security/release evidence remain separate gates. Local `CI=true pnpm check` also passes formatting,
 Docker dependency-context checks, lint, type checks, all package/support tests, and production builds.
 
-Next: session-only unscored Quick Checks. Media-backed Companion insertion requires its own
-retention increment; Recovery Trails and Concept Health remain later capabilities. Partner-evidence
+At this checkpoint, session-only unscored Quick Checks were next; the subsequent increment is
+recorded above. Media-backed Companion insertion requires its own retention increment;
+Recovery Trails and Concept Health remain later capabilities. Partner-evidence
 decisions and staging/production exercises remain explicitly deferred, not passed.
 
 ### Presentation Companion foundation — October 8, 2026
@@ -82,7 +129,7 @@ New Companion labels use explicit English fallbacks until reviewed translations 
 manual assistive-technology/device and external security/rollout evidence remain separate gates.
 
 At this foundation checkpoint, immutable prepared Pack insertion/playback was next; the subsequent
-text-only Pack increment is recorded above. Session-only unscored Quick Checks remain next.
+text-only Pack and session-only Quick Check increments are recorded above.
 Recovery Trails and Concept Health remain later increments; learner formats and institutional
 integrations keep their existing scope and privacy constraints.
 

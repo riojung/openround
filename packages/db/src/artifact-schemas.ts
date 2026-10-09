@@ -169,3 +169,18 @@ export function upcastPresentationContent(
     presentationContentUpcasters,
   );
 }
+
+/**
+ * Legacy live snapshots used draft validation, including partially authored old snapshots.
+ * Preserve that read path, but validate session-only metadata with the frozen content contract
+ * so it cannot be stripped by the authoring parser or restore an invalid Quick Check.
+ */
+export function upcastPresentationSessionContent(
+  value: unknown,
+  schemaVersion?: unknown,
+): PresentationContent {
+  if (value && typeof value === "object" && "liveQuickCheck" in value) {
+    return upcastPresentationContent(value, schemaVersion);
+  }
+  return upcastPresentationDraft(value, schemaVersion) as PresentationContent;
+}

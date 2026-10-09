@@ -264,7 +264,17 @@ pending linked recheck, including intervening slides or standalone questions. A 
 acknowledgement must be retried with the displayed retry action; it does not insert another copy.
 Published text-only snapshots continue working after source deletion or a rollout pause. Packs
 with media on any checkpoint/probe remain unsupported for live insertion until session-owned
-media retention is added. Session-only Quick Checks remain a later slice.
+media retention is added.
+
+For a spontaneous poll, select **Add Quick Check** at the same safe boundary. Enter a prompt and
+2–6 different choices, then select **Insert and start Quick Check**. One Quick Check is allowed
+per live session. In timed rooms choose 10–300 seconds; flex rooms have no deadline and you reveal
+responses when ready. No correct answer, confidence, points, media, or recovery link is attached.
+Quick Checks require the existing Companion configuration/allowlist, not Pack flags. They never
+change your draft or published Presentation. Closing the form preserves your draft in this tab;
+an accepted poll is fixed for that session. If confirmation is lost, use **Retry Quick Check
+acknowledgement** to confirm the original poll rather than submitting another. Reports label it
+**Session-only Quick Check · unscored**; opinion responses do not establish learning or recovery.
 
 In the professional **Library** and **Sessions** screens, workspace owners can also permanently
 delete archived content and finished or expired session history. Confirmation is required;

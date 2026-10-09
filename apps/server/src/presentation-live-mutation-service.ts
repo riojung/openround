@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   PresentationParticipantSnapshotSchema,
+  PresentationCommandSchema,
   PresentationCompanionCommandSchema,
   type PresentationCommand,
   type PresentationCompanionCommand,
@@ -29,6 +30,10 @@ import {
   presentationCanInsertRecoveryPack,
   presentationRecoveryPackInsertionTransition,
 } from "./presentation-live-recovery-packs.js";
+import {
+  presentationCanInsertQuickCheck,
+  presentationQuickCheckInsertionTransition,
+} from "./presentation-live-quick-checks.js";
 import {
   buildTargetedPresentationParticipantSnapshot,
   presentationCurrentBlock,
@@ -105,6 +110,7 @@ interface PresentationLiveMutationDependencies {
   config: PresentationEntitlementConfig;
   packs?: Pick<RecoveryPackRepository, "getRecoveryPackVersion">;
   recoveryPackLiveInsertionEnabled?: (workspaceId: string) => boolean;
+  quickCheckLiveInsertionEnabled?: (workspaceId: string) => boolean;
   participantTokenHash(token: string): string;
   sessionExpired(session: PresentationSessionRecord, now?: Date): boolean;
   authorizeHostCredential(sessionId: string, token: string): Promise<PresentationSessionRecord>;
@@ -314,7 +320,8 @@ export class PresentationLiveMutationService {
       input.sessionId,
       input.controlToken,
     );
-    return this.acceptCommand(input, session, this.dependencies.realtimeHostSnapshot);
+    const command = PresentationCommandSchema.parse(input);
+    return this.acceptCommand(command, session, this.dependencies.realtimeHostSnapshot);
   }
 
   async companionCommand(
@@ -373,7 +380,9 @@ export class PresentationLiveMutationService {
         ? nextTransition(session)
         : input.action === "start_recovery_card"
           ? recoveryCardTransition(session, input)
-          : await this.recoveryPackInsertionTransition(session, input);
+          : input.action === "insert_quick_check"
+            ? this.quickCheckInsertionTransition(session, input)
+            : await this.recoveryPackInsertionTransition(session, input);
     if (!transition) return snapshot(session);
     try {
       const transitionRetentionExpiresAt = await this.transitionRetentionExpiry(
@@ -417,6 +426,22 @@ export class PresentationLiveMutationService {
       }
       if (accepted.status === "accepted") {
         this.recordAcceptedTransitionProductEvents(accepted.session, transition);
+        if (input.action === "insert_quick_check") {
+          await this.dependencies.repository
+            .recordAudit({
+              workspaceId: accepted.session.workspaceId,
+              actorId: null,
+              action: "presentation.session.quick_check.insert",
+              targetType: "presentation_live_session",
+              targetId: accepted.session.id,
+              requestId: input.commandId,
+              metadata: {
+                blockId: accepted.session.content.liveQuickCheck!.blockId,
+                choiceCount: input.quickCheck.choices.length,
+              },
+            })
+            .catch(() => undefined);
+        }
         if (input.action === "insert_recovery_pack") {
           await this.dependencies.repository
             .recordAudit({
@@ -454,6 +479,25 @@ export class PresentationLiveMutationService {
       }
       throw error;
     }
+  }
+
+  private quickCheckInsertionTransition(
+    session: PresentationSessionRecord,
+    input: Extract<PresentationCompanionCommand, { action: "insert_quick_check" }>,
+  ) {
+    if (!this.dependencies.quickCheckLiveInsertionEnabled?.(session.workspaceId))
+      throw new PresentationSessionServiceError(
+        404,
+        "NOT_FOUND",
+        "Live Quick Checks are not enabled in this workspace",
+      );
+    if (!presentationCanInsertQuickCheck(session))
+      throw new PresentationSessionServiceError(
+        409,
+        "PHASE_CLOSED",
+        "Insert one Quick Check at a closed checkpoint without a pending recheck",
+      );
+    return presentationQuickCheckInsertionTransition(session, input);
   }
 
   private async recoveryPackInsertionTransition(

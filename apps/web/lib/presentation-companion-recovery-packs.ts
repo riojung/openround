@@ -24,6 +24,8 @@ export async function fetchPresentationCompanionRecoveryPacks(
 }
 
 export function companionCommandRetryMessageKey(command: PresentationCompanionCommand) {
+  if (command.action === "insert_quick_check")
+    return "live.companion.quickCheck.retryAcknowledgement" as const;
   if (command.action === "insert_recovery_pack")
     return "live.companion.packs.retryInsertion" as const;
   if (command.action === "start_recovery_card") return "live.companion.packs.retryCard" as const;

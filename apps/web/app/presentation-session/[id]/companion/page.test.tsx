@@ -1,0 +1,412 @@
+import { isValidElement, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import type * as ReactModule from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  PresentationCompanionSnapshotSchema,
+  type PresentationCompanionSnapshot,
+} from "@openround/contracts";
+import { ApiClientError } from "../../../../lib/api";
+import type * as ApiModule from "../../../../lib/api";
+import { translate, type MessageKey } from "../../../../lib/i18n/catalog";
+import { liveDeliveryEnglishMessages } from "../../../../lib/i18n/domains/live-delivery";
+import type { PresentationRealtimeControllerOptions } from "../../../../lib/presentation-realtime";
+import { CompanionOverlay } from "../../../../components/presentation-live/companion-overlay";
+import { CompanionQuickCheckForm } from "../../../../components/presentation-live/companion-quick-check";
+import PresentationCompanionPage from "./page";
+
+interface PageHooks {
+  cursor: number;
+  slots: unknown[];
+  effects: Array<() => unknown>;
+  layouts: Array<() => unknown>;
+}
+
+const fixtures = vi.hoisted(() => ({
+  hooks: null as PageHooks | null,
+  snapshot: null as PresentationCompanionSnapshot | null,
+  controllerOptions:
+    null as PresentationRealtimeControllerOptions<PresentationCompanionSnapshot> | null,
+  canMutate: true,
+  execute: vi.fn(),
+  apiFetch: vi.fn(),
+  reconcile: vi.fn(),
+}));
+
+vi.mock("react", async (importOriginal) => {
+  const react = await importOriginal<typeof ReactModule>();
+  return {
+    ...react,
+    useState: <T,>(initial: T | (() => T)) => {
+      const hooks = fixtures.hooks;
+      if (!hooks) return react.useState(initial);
+      const index = hooks.cursor++;
+      if (!(index in hooks.slots))
+        hooks.slots[index] = typeof initial === "function" ? (initial as () => T)() : initial;
+      return [
+        hooks.slots[index] as T,
+        (next: T | ((current: T) => T)) => {
+          hooks.slots[index] =
+            typeof next === "function"
+              ? (next as (current: T) => T)(hooks.slots[index] as T)
+              : next;
+        },
+      ];
+    },
+    useRef: <T,>(initial: T) => {
+      const hooks = fixtures.hooks;
+      if (!hooks) return react.useRef(initial);
+      const index = hooks.cursor++;
+      if (!(index in hooks.slots)) hooks.slots[index] = { current: initial };
+      return hooks.slots[index];
+    },
+    useCallback: <T,>(callback: T) => callback,
+    useEffect: (effect: () => unknown) => {
+      if (fixtures.hooks) fixtures.hooks.effects.push(effect);
+      else react.useEffect(effect as Parameters<typeof react.useEffect>[0]);
+    },
+    useLayoutEffect: (effect: () => unknown) => {
+      if (fixtures.hooks) fixtures.hooks.layouts.push(effect);
+      else react.useLayoutEffect(effect as Parameters<typeof react.useLayoutEffect>[0]);
+    },
+  };
+});
+
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ id: "11111111-1111-4111-8111-111111111111" }),
+}));
+vi.mock("../../../../components/locale-provider", () => ({
+  useLocale: () => ({
+    locale: "en-CA",
+    t: (key: MessageKey, values?: Record<string, string | number>) =>
+      translate(liveDeliveryEnglishMessages, key, values),
+  }),
+}));
+vi.mock("../../../../lib/presentation-companion-pass", () => ({
+  capturePresentationCompanionPass: () => "companion-pass",
+  rejectPresentationCompanionPass: vi.fn(),
+}));
+vi.mock("../../../../lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiModule>()),
+  apiFetch: fixtures.apiFetch,
+}));
+vi.mock("../../../../lib/presentation-realtime", () => ({
+  createPresentationRealtimeController: (
+    options: PresentationRealtimeControllerOptions<PresentationCompanionSnapshot>,
+  ) => {
+    fixtures.controllerOptions = options;
+    return {
+      start: () => {
+        if (fixtures.snapshot) options.onSnapshot(fixtures.snapshot);
+      },
+      stop: vi.fn(),
+      canMutate: () => fixtures.canMutate,
+      needsFallbackPolling: () => false,
+      reconcile: fixtures.reconcile,
+      command: fixtures.execute,
+    };
+  },
+}));
+
+function initialSnapshot() {
+  return PresentationCompanionSnapshotSchema.parse({
+    sessionId: "11111111-1111-4111-8111-111111111111",
+    artifactType: "presentation",
+    presentationId: "22222222-2222-4222-8222-222222222222",
+    presentationVersionId: "33333333-3333-4333-8333-333333333333",
+    title: "A facilitated discussion",
+    code: "1234567",
+    status: "active",
+    phase: "lobby",
+    currentBlockIndex: -1,
+    blockCount: 1,
+    revision: 2,
+    seq: 2,
+    serverTime: "2026-10-08T12:00:00.000Z",
+    questionOpenedAt: null,
+    questionClosesAt: null,
+    acceptingResponses: false,
+    settings: { timeMode: "timed", trustMode: "learning", recoveryPackCardsEnabled: true },
+    projection: "companion",
+    currentBlock: null,
+    roomStatus: {
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      joinedCount: 0,
+      connectedCount: 0,
+      notCurrentlyConnectedCount: 0,
+      responseCount: 0,
+      sampledAt: "2026-10-08T12:00:00.000Z",
+    },
+    primaryAction: "advance",
+    canInsertRecoveryPack: true,
+    canInsertQuickCheck: true,
+    finishedAt: null,
+  });
+}
+
+beforeEach(() => {
+  fixtures.hooks = null;
+  fixtures.snapshot = initialSnapshot();
+  fixtures.controllerOptions = null;
+  fixtures.canMutate = true;
+  fixtures.execute
+    .mockReset()
+    .mockImplementation((_command, fallback: () => Promise<PresentationCompanionSnapshot>) =>
+      fallback(),
+    );
+  fixtures.apiFetch.mockReset().mockImplementation(async () => ({ snapshot: fixtures.snapshot }));
+  fixtures.reconcile.mockReset().mockResolvedValue(null);
+  vi.stubGlobal("window", {
+    location: { origin: "https://discussion.example.test" },
+    history: {},
+    setInterval: vi.fn(() => 1),
+    clearInterval: vi.fn(),
+  });
+  vi.stubGlobal("sessionStorage", {});
+});
+afterEach(() => vi.unstubAllGlobals());
+
+function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
+  if (Array.isArray(node)) return node.flatMap(elements);
+  if (!isValidElement<Record<string, unknown>>(node)) return [];
+  return [node, ...elements(node.props.children as ReactNode)];
+}
+
+function text(node: ReactNode): string {
+  if (Array.isArray(node)) return node.map(text).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return text(node.props.children);
+  return typeof node === "string" || typeof node === "number" ? String(node) : "";
+}
+
+function button(tree: ReactNode, name: string): ComponentProps<"button"> {
+  const element = elements(tree).find(
+    (candidate) =>
+      candidate.type === "button" && text(candidate.props.children as ReactNode) === name,
+  );
+  if (!element) throw new Error(`Expected button: ${name}`);
+  return element.props as ComponentProps<"button">;
+}
+
+function propsFor<T extends typeof CompanionQuickCheckForm | typeof CompanionOverlay>(
+  tree: ReactNode,
+  type: T,
+): ComponentProps<T> {
+  const element = elements(tree).find((candidate) => candidate.type === type);
+  if (!element) throw new Error("Expected Companion child control");
+  return element.props as ComponentProps<T>;
+}
+
+function click(tree: ReactNode, name: string) {
+  button(tree, name).onClick?.(
+    {} as Parameters<NonNullable<ComponentProps<"button">["onClick"]>>[0],
+  );
+}
+
+// The harness runs the page's capture/controller setup once and exercises the real
+// command recovery callbacks; browser tests cover native dialog focus and effects.
+function pageHarness() {
+  const hooks: PageHooks = { cursor: 0, slots: [], effects: [], layouts: [] };
+  const render = () => {
+    hooks.cursor = 0;
+    hooks.effects = [];
+    hooks.layouts = [];
+    fixtures.hooks = hooks;
+    try {
+      return PresentationCompanionPage();
+    } finally {
+      fixtures.hooks = null;
+    }
+  };
+  render();
+  hooks.layouts[0]?.();
+  render();
+  hooks.effects[0]?.();
+  return {
+    render,
+    broadcast(snapshot: PresentationCompanionSnapshot) {
+      fixtures.snapshot = snapshot;
+      fixtures.controllerOptions?.onSnapshot(snapshot);
+    },
+    open() {
+      click(render(), "Add Quick Check");
+    },
+  };
+}
+
+async function settle() {
+  for (let index = 0; index < 8; index++) await Promise.resolve();
+}
+
+const authoredDraft = {
+  prompt: "Which approach should we discuss?",
+  choices: ["First approach", "Second approach"],
+  timeLimitSeconds: "120",
+};
+const quickCheck = { ...authoredDraft, timeLimitSeconds: 120 };
+
+describe("Companion Quick Check page state", () => {
+  it("uses only the scoped bearer credential and preserves omitted cookie credentials", async () => {
+    const harness = pageHarness();
+    expect(fixtures.controllerOptions?.credential).toEqual({
+      projection: "companion",
+      companionToken: "companion-pass",
+    });
+    await fixtures.controllerOptions?.fetchSnapshot();
+    expect(fixtures.apiFetch.mock.calls[0]?.[0]).toBe(
+      "/v1/presentation-sessions/11111111-1111-4111-8111-111111111111/companion?includeQuickChecks=true",
+    );
+    expect(fixtures.apiFetch.mock.calls[0]?.[1]).toMatchObject({
+      credentials: "omit",
+      headers: { authorization: "Bearer companion-pass" },
+    });
+    harness.open();
+    propsFor(harness.render(), CompanionQuickCheckForm).onInsert(quickCheck);
+    await settle();
+    expect(fixtures.apiFetch.mock.calls[1]?.[0]).toBe(
+      "/v1/presentation-sessions/11111111-1111-4111-8111-111111111111/companion-command?includeQuickChecks=true",
+    );
+    expect(fixtures.apiFetch.mock.calls[1]?.[1]).toMatchObject({
+      method: "POST",
+      credentials: "omit",
+    });
+    expect(JSON.parse(fixtures.apiFetch.mock.calls[1]?.[1].body)).toMatchObject({
+      companionToken: "companion-pass",
+      action: "insert_quick_check",
+      quickCheck,
+    });
+  });
+
+  it("keeps older snapshots without the optional capability usable and hides the unsupported opener", () => {
+    const harness = pageHarness();
+    const older = initialSnapshot();
+    delete older.canInsertQuickCheck;
+    harness.broadcast(PresentationCompanionSnapshotSchema.parse(older));
+    const tree = harness.render();
+    expect(
+      elements(tree).some(
+        (element) =>
+          element.type === "button" &&
+          text(element.props.children as ReactNode) === "Add Quick Check",
+      ),
+    ).toBe(false);
+    expect(button(tree, "Start Presentation").disabled).toBe(false);
+  });
+
+  it.each(["capability unavailable", "reconciling"])(
+    "gates insertion when %s, including stale opener callbacks",
+    (reason) => {
+      const harness = pageHarness();
+      if (reason === "capability unavailable")
+        harness.broadcast({ ...initialSnapshot(), canInsertQuickCheck: false });
+      else fixtures.canMutate = false;
+      const tree = harness.render();
+      expect(button(tree, "Add Quick Check").disabled).toBe(true);
+      click(tree, "Add Quick Check");
+      expect(
+        elements(harness.render()).some((element) => element.type === CompanionQuickCheckForm),
+      ).toBe(false);
+      expect(fixtures.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps the dialog and authored text through a broadcast and closes only after acknowledgement", async () => {
+    let acknowledge!: (snapshot: PresentationCompanionSnapshot) => void;
+    fixtures.execute.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          acknowledge = resolve;
+        }),
+    );
+    const harness = pageHarness();
+    harness.open();
+    const overlay = propsFor(harness.render(), CompanionOverlay);
+    expect(overlay.title).toBe("Session-only Quick Check");
+    expect(overlay.returnFocusRef).toBe(button(harness.render(), "Start Presentation").ref);
+    propsFor(harness.render(), CompanionQuickCheckForm).onChange(authoredDraft);
+    const form = propsFor(harness.render(), CompanionQuickCheckForm);
+    form.onInsert(quickCheck);
+    form.onInsert({ ...quickCheck, prompt: "A second click" });
+    expect(fixtures.execute).toHaveBeenCalledOnce();
+    harness.broadcast({
+      ...initialSnapshot(),
+      revision: 3,
+      seq: 3,
+      phase: "question_open",
+      acceptingResponses: true,
+      canInsertQuickCheck: false,
+      canInsertRecoveryPack: false,
+    });
+    expect(propsFor(harness.render(), CompanionQuickCheckForm)).toMatchObject({
+      draft: authoredDraft,
+      disabled: true,
+    });
+    expect(button(harness.render(), "Add Quick Check").disabled).toBe(true);
+    acknowledge(fixtures.snapshot!);
+    await settle();
+    expect(elements(harness.render()).some((element) => element.type === CompanionOverlay)).toBe(
+      false,
+    );
+  });
+
+  it("keeps an exact retry visible after phase/capability changes and feature rollback until acknowledgement", async () => {
+    fixtures.execute
+      .mockRejectedValueOnce(new Error("Acknowledgement lost"))
+      .mockRejectedValueOnce(new ApiClientError("The room has moved", "PHASE_CLOSED", 409))
+      .mockResolvedValueOnce({ ...initialSnapshot(), revision: 4 });
+    const harness = pageHarness();
+    harness.open();
+    propsFor(harness.render(), CompanionQuickCheckForm).onChange(authoredDraft);
+    propsFor(harness.render(), CompanionQuickCheckForm).onInsert(quickCheck);
+    await settle();
+    const original = fixtures.execute.mock.calls[0]?.[0];
+    const finished: PresentationCompanionSnapshot = {
+      ...initialSnapshot(),
+      revision: 4,
+      seq: 4,
+      phase: "finished",
+      status: "finished",
+      primaryAction: "none",
+      canInsertQuickCheck: false,
+      canInsertRecoveryPack: false,
+      finishedAt: "2026-10-08T12:10:00.000Z",
+    };
+    harness.broadcast(finished);
+    expect(button(harness.render(), "Retry Quick Check acknowledgement").disabled).toBe(false);
+    delete finished.canInsertQuickCheck;
+    harness.broadcast(finished);
+    expect(propsFor(harness.render(), CompanionQuickCheckForm)).toMatchObject({
+      draft: authoredDraft,
+      disabled: true,
+      available: false,
+    });
+    click(harness.render(), "Retry Quick Check acknowledgement");
+    await settle();
+    expect(button(harness.render(), "Retry Quick Check acknowledgement").disabled).toBe(false);
+    expect(fixtures.execute.mock.calls[1]?.[0]).toBe(original);
+    expect(propsFor(harness.render(), CompanionQuickCheckForm).draft).toEqual(authoredDraft);
+    click(harness.render(), "Retry Quick Check acknowledgement");
+    await settle();
+    expect(fixtures.execute.mock.calls[2]?.[0]).toBe(original);
+    expect(elements(harness.render()).some((element) => element.type === CompanionOverlay)).toBe(
+      false,
+    );
+  });
+
+  it("preserves the draft and leaves it editable after a definite first rejection and overlay reopening", async () => {
+    fixtures.execute.mockRejectedValueOnce(
+      new ApiClientError("Please revise the prompt", "VALIDATION_ERROR", 400),
+    );
+    const harness = pageHarness();
+    harness.open();
+    propsFor(harness.render(), CompanionQuickCheckForm).onChange(authoredDraft);
+    propsFor(harness.render(), CompanionQuickCheckForm).onInsert(quickCheck);
+    await settle();
+    expect(propsFor(harness.render(), CompanionQuickCheckForm)).toMatchObject({
+      draft: authoredDraft,
+      disabled: false,
+    });
+    expect(button(harness.render(), "Start Presentation").disabled).toBe(false);
+    propsFor(harness.render(), CompanionOverlay).onClose();
+    harness.open();
+    expect(propsFor(harness.render(), CompanionQuickCheckForm).draft).toEqual(authoredDraft);
+  });
+});

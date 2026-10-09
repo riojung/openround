@@ -10,17 +10,14 @@ import type {
   PresentationSessionResponseRecord,
   PresentationSessionTransitionInput,
 } from "./presentation-session-types.js";
-import { upcastPresentationDraft } from "./artifact-schemas.js";
+import { upcastPresentationSessionContent } from "./artifact-schemas.js";
 
 export function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
 export function normalizeSession(input: PresentationSessionCreateInput): PresentationSessionRecord {
-  const content = upcastPresentationDraft(
-    input.content,
-    input.content.schemaVersion,
-  ) as PresentationSessionRecord["content"];
+  const content = upcastPresentationSessionContent(input.content, input.content.schemaVersion);
   const settings = input.settings ?? { timeMode: "timed" as const };
   const recoveryPackCardsEnabled = input.recoveryPackCardsEnabled ?? false;
   const recoveryPackIntervention = input.recoveryPackIntervention

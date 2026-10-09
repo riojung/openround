@@ -34,18 +34,49 @@ export async function expectPresentationLiveInsertionConformance(
     retentionExpiresAt: new Date(now.getTime() + 86_400_000),
   });
   const inserted = {
-    ...structuredClone(source),
     id: randomUUID(),
-    question: { ...structuredClone(source.question), id: randomUUID(), timeLimitSeconds: 17 },
+    kind: "question" as const,
+    question: {
+      id: randomUUID(),
+      type: "poll" as const,
+      prompt: source.question.prompt,
+      purpose: "opinion" as const,
+      confidence: "off" as const,
+      delivery: "main" as const,
+      conceptKeys: [],
+      linkedRecheckQuestionId: null,
+      timeLimitSeconds: 17,
+      basePoints: 0,
+      explanation: "",
+      mediaId: null,
+      mediaAlt: null,
+      choices: [
+        { id: randomUUID(), label: "Synthetic option one", isCorrect: false },
+        { id: randomUUID(), label: "Synthetic option two", isCorrect: false },
+      ],
+    },
   };
+  const commandId = randomUUID();
   const content: PresentationContent = {
     ...structuredClone(input.content),
     blocks: [inserted, ...structuredClone(input.content.blocks)],
+    liveQuickCheck: { commandId, blockId: inserted.id },
   };
+  // Restoring a frozen snapshot uses the content upcaster, not the authoring draft parser.
+  const restored = await repository.createSession({
+    ...session,
+    id: randomUUID(),
+    code: String(randomInt(1_000_000, 10_000_000)),
+    content,
+  });
+  expect(restored.content.liveQuickCheck).toEqual(content.liveQuickCheck);
+  expect((await repository.getSessionById(restored.id))?.content.liveQuickCheck).toEqual(
+    content.liveQuickCheck,
+  );
   const command = {
     workspaceId,
     sessionId: session.id,
-    commandId: randomUUID(),
+    commandId,
     requestHash: "a".repeat(64),
     expectedRevision: 0,
     content,
@@ -80,6 +111,10 @@ export async function expectPresentationLiveInsertionConformance(
   expect((await repository.getSessionById(session.id))?.content.blocks[0]).toMatchObject({
     id: inserted.id,
     question: { prompt: source.question.prompt },
+  });
+  expect((await repository.getSessionById(session.id))?.content.liveQuickCheck).toEqual({
+    commandId,
+    blockId: inserted.id,
   });
   await expect(
     repository.findCommandReceipt(workspaceId, session.id, command.commandId),

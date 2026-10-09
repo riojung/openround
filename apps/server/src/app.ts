@@ -40,6 +40,7 @@ import { registerRoutes } from "./routes.js";
 import { ReportWorker } from "./report-worker.js";
 import { PresentationReportWorker } from "./presentation-report-worker.js";
 import { presentationRecoveryPackLiveInsertionEnabled } from "./presentation-live-recovery-packs.js";
+import { presentationLiveInsertionEnabled } from "./presentation-live-insertion.js";
 import { RetentionService } from "./retention.js";
 import { SessionService } from "./session-service.js";
 import { StorageService } from "./storage.js";
@@ -306,6 +307,8 @@ export async function buildApp(
       evidenceWorkspaceFeatureEnabled(config, workspaceId, "recoveryPackLiveCards"),
     recoveryPackLiveInsertionEnabled: (workspaceId) =>
       presentationRecoveryPackLiveInsertionEnabled(config, workspaceId),
+    quickCheckLiveInsertionEnabled: (workspaceId) =>
+      presentationLiveInsertionEnabled(config, workspaceId),
   });
   const readiness =
     overrides.readiness ??

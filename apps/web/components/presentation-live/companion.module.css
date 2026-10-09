@@ -74,6 +74,34 @@
   min-width: 0;
   max-width: 100%;
 }
+.quickCheckForm {
+  min-width: 0;
+}
+.quickCheckForm input,
+.quickCheckForm textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.quickCheckChoices {
+  min-width: 0;
+  margin: 1rem 0;
+  padding: 0;
+  border: 0;
+}
+.quickCheckChoice {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+.quickCheckChoice label {
+  flex: 1;
+  min-width: 0;
+}
+.quickCheckChoice button {
+  flex: 0 0 auto;
+  margin: 0 0 1rem;
+}
 .overlay {
   width: min(34rem, calc(100vw - 2rem));
   max-height: calc(100dvh - 2rem);

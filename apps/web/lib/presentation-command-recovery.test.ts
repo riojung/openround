@@ -177,6 +177,152 @@ describe("Presentation host command recovery", () => {
 });
 
 describe("Presentation companion command recovery", () => {
+  function quickCheckCommand(): PresentationCompanionCommand {
+    return {
+      sessionId: "session",
+      companionToken: "pass",
+      commandId: "original-quick-check",
+      expectedRevision: 8,
+      action: "insert_quick_check",
+      quickCheck: {
+        prompt: "Which approach should we discuss?",
+        choices: ["First approach", "Second approach"],
+        timeLimitSeconds: 30,
+      },
+    };
+  }
+
+  it("freezes the nested Quick Check intent and serializes it with every other Companion action", async () => {
+    let rejectAttempt!: (error: Error) => void;
+    const execute = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectAttempt = reject;
+          }),
+      )
+      .mockResolvedValueOnce({ revision: 12, phase: "finished" });
+    const recovery = createPresentationCommandRecovery<unknown, PresentationCompanionCommand>({
+      execute,
+      onState: () => undefined,
+    });
+    const original = quickCheckCommand();
+    const attempt = recovery.run(original);
+    const pending = recovery.state().pendingCommand;
+    expect(Object.isFrozen(pending)).toBe(true);
+    if (pending?.action !== "insert_quick_check" || original.action !== "insert_quick_check")
+      throw new Error("Expected Quick Check intent");
+    expect(Object.isFrozen(pending.quickCheck)).toBe(true);
+    expect(Object.isFrozen(pending.quickCheck.choices)).toBe(true);
+    original.expectedRevision = 12;
+    original.quickCheck.prompt = "A changed prompt";
+    original.quickCheck.timeLimitSeconds = 120;
+    original.quickCheck.choices[0] = "Changed choice";
+    original.quickCheck.choices.push("A third choice");
+    const credentials = {
+      sessionId: "session",
+      companionToken: "pass",
+      commandId: "new-command",
+      expectedRevision: 12,
+    };
+    const otherCommands: PresentationCompanionCommand[] = [
+      { ...credentials, action: "advance" },
+      { ...credentials, action: "insert_recovery_pack", packVersionId: "version" },
+      {
+        ...credentials,
+        action: "start_recovery_card",
+        recoveryPackCard: { insertionId: "insertion", cardId: "card" },
+        interventionType: "explain",
+      },
+      { ...original, commandId: "new-quick-check" },
+    ];
+    for (const command of otherCommands) await recovery.run(command);
+    await recovery.retry();
+    expect(execute).toHaveBeenCalledTimes(1);
+    rejectAttempt(new Error("Original acknowledgement lost"));
+    await expect(attempt).rejects.toThrow("Original acknowledgement lost");
+    for (const command of otherCommands) await recovery.run(command);
+    expect(execute).toHaveBeenCalledTimes(1);
+    await expect(recovery.retry()).resolves.toEqual({ revision: 12, phase: "finished" });
+    expect(execute.mock.calls[1]?.[0]).toBe(pending);
+    expect(pending).toMatchObject({
+      commandId: "original-quick-check",
+      expectedRevision: 8,
+      quickCheck: {
+        prompt: "Which approach should we discuss?",
+        choices: ["First approach", "Second approach"],
+        timeLimitSeconds: 30,
+      },
+    });
+    expect(recovery.state().pendingCommand).toBeNull();
+  });
+
+  it.each([
+    ["NOT_FOUND", 404],
+    ["PHASE_CLOSED", 409],
+    ["VALIDATION_ERROR", 400],
+    ["FEATURE_UNAVAILABLE", 409],
+  ] as const)(
+    "retains the original ambiguous Quick Check through a %s retry denial",
+    async (code, status) => {
+      const execute = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Original acknowledgement lost"))
+        .mockRejectedValueOnce(new ApiClientError("Retry prerequisite rejected", code, status))
+        .mockResolvedValueOnce({ revision: 12, phase: "finished" });
+      const recovery = createPresentationCommandRecovery<unknown, PresentationCompanionCommand>({
+        execute,
+        onState: () => undefined,
+      });
+      await expect(recovery.run(quickCheckCommand())).rejects.toThrow(
+        "Original acknowledgement lost",
+      );
+      const pending = recovery.state().pendingCommand;
+      await expect(recovery.retry()).rejects.toMatchObject({ code, status });
+      expect(recovery.state().pendingCommand).toBe(pending);
+      await expect(recovery.retry()).resolves.toEqual({ revision: 12, phase: "finished" });
+      expect(execute.mock.calls.every(([command]) => command === pending)).toBe(true);
+      expect(recovery.state().pendingCommand).toBeNull();
+    },
+  );
+
+  it.each([
+    ["NOT_FOUND", 404],
+    ["PHASE_CLOSED", 409],
+    ["VALIDATION_ERROR", 400],
+    ["FEATURE_UNAVAILABLE", 409],
+  ] as const)("clears a definite first-attempt Quick Check %s rejection", async (code, status) => {
+    const execute = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiClientError("Insertion rejected", code, status));
+    const recovery = createPresentationCommandRecovery<unknown, PresentationCompanionCommand>({
+      execute,
+      onState: () => undefined,
+    });
+    await expect(recovery.run(quickCheckCommand())).rejects.toMatchObject({ code, status });
+    expect(recovery.state()).toEqual({ busy: false, pendingCommand: null });
+  });
+
+  it.each(["STALE_REVISION", "IDEMPOTENCY_CONFLICT"])(
+    "clears a definitive %s Quick Check retry rejection",
+    async (code) => {
+      const execute = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Original acknowledgement lost"))
+        .mockRejectedValueOnce(new ApiClientError("Definitive command rejection", code, 409));
+      const recovery = createPresentationCommandRecovery<unknown, PresentationCompanionCommand>({
+        execute,
+        onState: () => undefined,
+      });
+      await expect(recovery.run(quickCheckCommand())).rejects.toThrow(
+        "Original acknowledgement lost",
+      );
+      await expect(recovery.retry()).rejects.toMatchObject({ code });
+      expect(recovery.state()).toEqual({ busy: false, pendingCommand: null });
+    },
+  );
+
   it.each([
     ["NOT_FOUND", 404],
     ["PHASE_CLOSED", 409],
