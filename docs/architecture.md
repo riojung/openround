@@ -33,6 +33,9 @@ the native credential store and scope lifecycle. Strict event
 validation currently allows only `audience.scope.activated`, with no identities/text/answers. Future
 interaction events require role-filtered projections, not raw outbox broadcasting. Scope sync adapts
 legacy Round current state; Presentation sync is metadata-only until scoped interaction writers land.
+Round settings and the audience cursor come from the same initialized record, not a concurrent
+pre-bootstrap read. Finished, uninitialized Rounds project transient interaction/Q&A defaults:
+authenticated scope reads and synchronization stay read-only and allocate no bootstrap event.
 The existing `live_room_codes` registry remains the only join-code namespace.
 
 This is a staged foundation, not a second Q&A/chat implementation. Scoped content repositories,

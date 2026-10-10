@@ -61,14 +61,18 @@ Verification: `CI=true pnpm check` passes formatting, dependency-context checks,
 package/support tests, and production builds. All 74 PostgreSQL integration tests pass separately
 against a fresh disposable local PostgreSQL 18.3 cluster, including migration/repeat/checksum,
 shared scope conformance, forced RLS, immutable retention/privacy, account export, and deletion.
-Ten new server tests cover API roles/rollback, activation throttling, legacy sync projections,
+Thirteen new server tests cover API roles/rollback, activation throttling, legacy sync projections,
 kicked/expired access, real Socket.IO subscription, duplicate relay delivery, and revocation,
 hash-only distributed socket metadata, and serialized remote-subscriber credential revalidation.
 Review fixes also add memory race tests proving that concurrent finishing/deletion cannot recreate
-an audience scope or outbox event. Both reported regressions failed before their fixes; all ten
+an audience scope or outbox event. Both reported regressions failed before their fixes; all thirteen
 audience server tests and three memory audience tests now pass, as does `CI=true pnpm check`.
 The review-fix follow-up did not rerun PostgreSQL integration or real multi-process Redis tests;
 the 74-test PostgreSQL result above is the earlier foundation verification.
+The October 10 PR follow-up keeps closed, uninitialized Round scope GET/sync requests read-only
+across all four roles, including Q&A settings, and derives active-room cursors from the initialized
+settings record. First GET and sync responses agree with the bootstrap event and interaction cursor;
+retries allocate no additional event. These behaviors have direct regression coverage.
 No web source changed; this backend-only increment did not rerun Playwright or claim manual
 accessibility/device, Redis multi-process, target-host capacity, legal, or partner acceptance.
 

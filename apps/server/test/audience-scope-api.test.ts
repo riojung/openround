@@ -391,6 +391,112 @@ describe("core-parity foundation", () => {
     expect(disabled.round?.qna).toBeNull();
   });
 
+  it("keeps closed Round scope reads and sync read-only when settings were never initialized", async () => {
+    const f = await fixture(false);
+    const round = await roundFixture(f);
+    const memory = f.repository as MemoryRepository;
+    // Simulate a retained legacy room that never initialized audience interactions.
+    memory.interactionSettings.delete(round.sessionId);
+    memory.sessions.get(round.sessionId)!.state.phase = "finished";
+    const saveInteractions = vi.spyOn(f.repository, "saveInteractionSettings");
+    const saveQna = vi.spyOn(f.repository, "saveQnaSettings");
+    for (const role of ["host", "cohost", "presenter", "participant"] as const) {
+      const headers = { authorization: `Bearer ${round.tokens[role]}` };
+      const read = await f.app.inject({
+        method: "GET",
+        url: `/v1/audience-scopes/${round.sessionId}?kind=round`,
+        headers,
+      });
+      expect(read.statusCode).toBe(200);
+      expect(read.json().scope).toMatchObject({
+        lifecycle: "closed",
+        audienceSeq: 0,
+        permissions: { read: true, submit: false, moderate: false, manageSettings: false },
+      });
+      const sync = await f.app.inject({
+        method: "POST",
+        url: `/v1/audience-scopes/${round.sessionId}/sync`,
+        headers,
+        payload: { kind: "round" },
+      });
+      expect(sync.statusCode).toBe(200);
+      expect(sync.json().scope).toEqual(read.json().scope);
+      expect(sync.json().round.interactions.summary.audienceSeq).toBe(0);
+      expect(sync.json().round.interactions.chat.audienceSeq).toBe(0);
+      expect(sync.json().round.qna.questions).toEqual([]);
+      expect(sync.body).not.toContain("PRIVATE ANSWER");
+      if (role === "presenter" || role === "participant")
+        expect(sync.json().round.interactions.summary.participants).toBeUndefined();
+    }
+    expect(saveInteractions).not.toHaveBeenCalled();
+    expect(saveQna).not.toHaveBeenCalled();
+    expect(
+      await f.repository.getInteractionSettings(round.workspaceId, round.sessionId),
+    ).toBeNull();
+    expect(await f.repository.getQnaSettings(round.workspaceId, round.sessionId)).toBeNull();
+    expect(memory.audienceOutbox.size).toBe(0);
+  });
+
+  it.each(["GET", "sync"] as const)(
+    "returns the initialized audience sequence on the first %s request",
+    async (method) => {
+      const f = await fixture(false);
+      const round = await roundFixture(f);
+      (f.repository as MemoryRepository).interactionSettings.delete(round.sessionId);
+      expect(
+        await f.repository.getInteractionSettings(round.workspaceId, round.sessionId),
+      ).toBeNull();
+      const headers = { authorization: `Bearer ${round.tokens.host}` };
+      const response = await f.app.inject(
+        method === "GET"
+          ? {
+              method: "GET",
+              url: `/v1/audience-scopes/${round.sessionId}?kind=round`,
+              headers,
+            }
+          : {
+              method: "POST",
+              url: `/v1/audience-scopes/${round.sessionId}/sync`,
+              headers,
+              payload: { kind: "round" },
+            },
+      );
+      expect(response.statusCode).toBe(200);
+      expect(response.json().scope.audienceSeq).toBe(1);
+      const sync =
+        method === "sync"
+          ? response
+          : await f.app.inject({
+              method: "POST",
+              url: `/v1/audience-scopes/${round.sessionId}/sync`,
+              headers,
+              payload: { kind: "round" },
+            });
+      expect(sync.statusCode).toBe(200);
+      expect(sync.json().scope.audienceSeq).toBe(1);
+      expect(sync.json().round.interactions.summary.audienceSeq).toBe(1);
+      expect(sync.json().round.interactions.chat.audienceSeq).toBe(1);
+      const reads = await Promise.all(
+        Object.values(round.tokens).map((token) =>
+          f.app.inject({
+            method: "GET",
+            url: `/v1/audience-scopes/${round.sessionId}?kind=round`,
+            headers: { authorization: `Bearer ${token}` },
+          }),
+        ),
+      );
+      for (const read of reads) {
+        expect(read.statusCode).toBe(200);
+        expect(read.json().scope.audienceSeq).toBe(1);
+      }
+      const events = [...(f.repository as MemoryRepository).audienceOutbox.values()].filter(
+        (event) => event.sessionId === round.sessionId,
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ type: "audience.settings.updated", audienceSeq: 1 });
+    },
+  );
+
   it("shares revoked/kicked/expired Round authentication between Q&A and interactions", async () => {
     const f = await fixture(false);
     const round = await roundFixture(f);

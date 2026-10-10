@@ -131,7 +131,7 @@ export class QnaService {
     const existing = await this.repository.getQnaSettings(session.workspaceId, session.id);
     if (existing) return existing;
     const segment = await this.repository.getWorkspaceSegment(session.workspaceId);
-    return this.repository.saveQnaSettings({
+    const defaults: QnaSettingsRecord = {
       workspaceId: session.workspaceId,
       sessionId: session.id,
       enabled: true,
@@ -139,7 +139,10 @@ export class QnaService {
       moderationMode: segment === "education" ? "pre" : "post",
       participantReplies: segment === "workplace",
       updatedAt: new Date(),
-    });
+    };
+    // Reading retained Q&A in an uninitialized closed room must not create durable settings.
+    if (session.state.phase === "finished") return defaults;
+    return this.repository.saveQnaSettings(defaults);
   }
 
   private async repliesFor(

@@ -251,24 +251,27 @@ export class InteractionService {
     const existing = await this.repository.getInteractionSettings(session.workspaceId, session.id);
     if (existing) return existing;
     const now = new Date();
-    const mutation = await this.repository.saveInteractionSettings(
-      {
-        workspaceId: session.workspaceId,
-        sessionId: session.id,
-        signalsEnabled: true,
-        chatEnabled: false,
-        chatIdentityMode: "alias_public",
-        slowModeSeconds: 5,
-        presenterFeedMode: "pinned",
-        updatedAt: now,
-      },
-      {
-        eventId: randomUUID(),
-        idempotencyKey: `interaction-bootstrap:${session.id}`,
-        type: "audience.settings.updated",
-        payload: {},
-      },
-    );
+    const defaults: Omit<InteractionSettingsRecord, "audienceSeq" | "closedAt"> = {
+      workspaceId: session.workspaceId,
+      sessionId: session.id,
+      signalsEnabled: true,
+      chatEnabled: false,
+      chatIdentityMode: "alias_public",
+      slowModeSeconds: 5,
+      presenterFeedMode: "pinned",
+      updatedAt: now,
+    };
+    // Retained closed rooms may predate interaction initialization. Reads must not bootstrap a
+    // settings row or allocate an event after finishing; use transient defaults for projection.
+    if (session.state.phase === "finished") {
+      return { ...defaults, audienceSeq: 0, closedAt: session.updatedAt };
+    }
+    const mutation = await this.repository.saveInteractionSettings(defaults, {
+      eventId: randomUUID(),
+      idempotencyKey: `interaction-bootstrap:${session.id}`,
+      type: "audience.settings.updated",
+      payload: {},
+    });
     await this.publish(mutation);
     return mutation.record;
   }
@@ -286,11 +289,17 @@ export class InteractionService {
   }
 
   async getSettings(sessionId: string, token: string) {
+    return (await this.getSettingsSnapshot(sessionId, token)).settings;
+  }
+
+  /** Keep the cursor and projected settings tied to the same accepted bootstrap/read. */
+  async getSettingsSnapshot(sessionId: string, token: string) {
     const actor = await this.authenticate(sessionId, token);
     const availability = await this.availability(actor.session.workspaceId);
+    const record = await this.settingsFor(actor.session);
     return {
-      ...this.settingsView(await this.settingsFor(actor.session), availability),
-      capabilities: availability,
+      record,
+      settings: { ...this.settingsView(record, availability), capabilities: availability },
     };
   }
 

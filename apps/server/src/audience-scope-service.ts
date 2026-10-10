@@ -82,12 +82,11 @@ export class AudienceScopeService {
         token,
       );
       // This is an additive alias of retained legacy resources, not a new Round writer gate.
-      const [settings, availability, qnaSettings] = await Promise.all([
-        this.dependencies.repository.getInteractionSettings(actor.session.workspaceId, scopeId),
-        this.dependencies.interactions.getSettings(scopeId, token),
+      const [interactions, qnaSettings] = await Promise.all([
+        this.dependencies.interactions.getSettingsSnapshot(scopeId, token),
         this.dependencies.repository.getQnaSettings(actor.session.workspaceId, scopeId),
       ]);
-      const open = actor.session.state.phase !== "finished" && !settings?.closedAt;
+      const open = actor.session.state.phase !== "finished" && !interactions.record.closedAt;
       return AudienceScopeSnapshotSchema.parse({
         schemaVersion: 1,
         scopeId,
@@ -95,12 +94,12 @@ export class AudienceScopeService {
         lifecycle: open ? "open" : "closed",
         identityPolicy: "facilitator_visible_alias",
         identityDisclosure: ALIAS_DISCLOSURE,
-        audienceSeq: settings?.audienceSeq ?? 0,
+        audienceSeq: interactions.record.audienceSeq,
         permissions: audienceRolePermissions(roundAudienceRole(actor), open),
         features: {
           qna: qnaSettings?.enabled ?? true,
-          chat: availability.chatEnabled,
-          pulse: availability.signalsEnabled,
+          chat: interactions.settings.chatEnabled,
+          pulse: interactions.settings.signalsEnabled,
         },
       });
     }
