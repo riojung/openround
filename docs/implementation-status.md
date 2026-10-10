@@ -29,12 +29,14 @@ transport, then scoped replies/chat/Pulse and feedback-room anonymity/passcodes.
 opinion formats, exports/sharing and external launch gates remain later milestones. No
 participant-cap, billing, organizer-blind anonymity or GA availability claims change.
 
-Verification: full `CI=true pnpm check` passed; all eighteen audience-scope API/realtime tests
+Verification: full `CI=true pnpm check` passed; all twenty-two audience-scope API/realtime tests
 passed, including body-free notices for pending questions and read-only Companion sync. All
 75 PostgreSQL integration tests passed on an isolated PostgreSQL 18.3 cluster, including fresh/
 repeat migrations, memory/PostgreSQL Q&A conformance, forced RLS, receipt immutability, account
 export and deletion. Malformed cursor IDs use shared UUID validation and return an actionable
-`CONFLICT` before database casts; regression checks cover memory, PostgreSQL and HTTP. No
+`CONFLICT` before database casts. Timestamp bounds and explicit UTC query serialization keep
+cursor dates within PostgreSQL's supported range, including boundary dates; regression checks
+cover memory, PostgreSQL and HTTP. No
 Presentation UI/browser journey, target-region mixed-load run, external
 Redis/process-loss exercise or launch gate is claimed by this backend increment.
 

@@ -136,6 +136,16 @@ function cursor(question: Question) {
     "base64url",
   );
 }
+// PostgreSQL's inclusive timestamp lower bound (Julian day zero). JavaScript's
+// finite Date upper bound is already below PostgreSQL's timestamp upper bound.
+// https://github.com/postgres/postgres/blob/REL_18_STABLE/src/include/datatype/timestamp.h
+const MIN_CURSOR_TIMESTAMP = Date.parse("-004713-11-24T00:00:00.000Z");
+function cursorTimestamp(date: Date): string {
+  // Use UTC explicitly: the driver's local-time Date formatter drops historic
+  // offset seconds. PostgreSQL also requires BC notation rather than ISO years <= 0.
+  const year = date.getUTCFullYear();
+  return `${String(year > 0 ? year : 1 - year).padStart(4, "0")}${date.toISOString().slice(-20)}${year > 0 ? "" : " BC"}`;
+}
 function decodeCursor(value?: string): { date: Date; id: string } | null {
   if (!value) return null;
   try {
@@ -150,7 +160,8 @@ function decodeCursor(value?: string): { date: Date; id: string } | null {
     )
       throw new Error();
     const date = new Date(parsed[0]);
-    if (Number.isNaN(date.getTime())) throw new Error();
+    if (!Number.isFinite(date.getTime()) || date.getTime() < MIN_CURSOR_TIMESTAMP)
+      throw new Error();
     return { date, id: parsed[1] };
   } catch {
     throw new ScopedQnaError("CONFLICT", "The Q&A pagination cursor is invalid; refresh the list");
@@ -516,7 +527,7 @@ class PostgresScopedQnaRepository implements ScopedQnaRepository {
           input.scopeId,
           actor.role === "participant" ? actor.id : null,
           actor.role === "host",
-          after?.date ?? null,
+          after ? cursorTimestamp(after.date) : null,
           after?.id ?? null,
           input.limit + 1,
         ],

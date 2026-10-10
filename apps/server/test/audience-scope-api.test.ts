@@ -224,6 +224,27 @@ describe("core-parity foundation", () => {
     },
   );
 
+  it.each([
+    "-271821-04-20T00:00:00.000Z",
+    "-004713-11-23T23:59:59.999Z",
+    "+275760-09-13T00:00:00.001Z",
+    "not-a-date",
+  ])("returns an actionable cursor conflict for invalid timestamp %s", async (invalidDate) => {
+    const f = await fixture();
+    await f.activate();
+    const cursor = Buffer.from(JSON.stringify([invalidDate, randomUUID()])).toString("base64url");
+    const response = await f.app.inject({
+      method: "GET",
+      url: `/v1/audience-scopes/${f.session.id}/qna/questions?kind=presentation&cursor=${cursor}`,
+      headers: { authorization: `Bearer ${f.tokens.host}` },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toMatchObject({
+      code: "CONFLICT",
+      message: "The Q&A pagination cursor is invalid; refresh the list",
+    });
+  });
+
   it("supports moderated Presentation questions and votes without granting Companion control", async () => {
     const f = await fixture();
     await f.activate();
