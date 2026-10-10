@@ -9,6 +9,7 @@ import rawBody from "fastify-raw-body";
 import type Stripe from "stripe";
 import {
   createCollaborationGroupRepository,
+  createAudienceScopeRepository,
   createLibraryMetadataRepository,
   createPresentationRepository,
   createRecoveryPackRepository,
@@ -19,6 +20,8 @@ import {
 } from "@openround/db";
 import { AuthService } from "./auth.js";
 import { AudienceOutboxWorker } from "./audience-outbox-worker.js";
+import { AudienceScopeService } from "./audience-scope-service.js";
+import { registerAudienceScopeRoutes } from "./audience-scope-routes.js";
 import {
   OpenAiCompatibleAuthoringAssistant,
   type AuthoringAssistant,
@@ -265,6 +268,15 @@ export async function buildApp(
   );
   const interactions = new InteractionService(repository, sessions, config, metrics);
   const qna = new QnaService(repository, sessions, interactions);
+  const audienceScopes = createAudienceScopeRepository(repository);
+  const audienceScopeService = new AudienceScopeService({
+    repository,
+    presentations: presentationSessions,
+    scopes: audienceScopes,
+    config,
+    interactions,
+    qna,
+  });
   const audienceOutboxWorker = new AudienceOutboxWorker(repository, interactions, metrics);
   const followups = new FollowupService(repository);
   const scanner =
@@ -379,6 +391,7 @@ export async function buildApp(
     stripeClient: overrides.stripe,
   });
   await registerQuestionHealthRoutes(app, { config, repository, auth });
+  await registerAudienceScopeRoutes(app, audienceScopeService, cache.consumeRateLimit.bind(cache));
   await registerRecoveryPackRoutes(app, { config, repository, packs: recoveryPacks, auth });
   await registerRecoveryPackPortabilityRoutes(app, { packs: recoveryPacks, auth });
   await registerRecoveryPackSourceRoutes(app, { config, repository, packs: recoveryPacks, auth });
@@ -478,6 +491,8 @@ export async function buildApp(
     qna,
     interactions,
     audienceOutboxWorker,
+    audienceScopes,
+    audienceScopeService,
     followups,
     authoring,
     oidc,

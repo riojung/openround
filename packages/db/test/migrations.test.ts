@@ -27,6 +27,24 @@ afterEach(async () => {
 });
 
 describe("database migration discovery", () => {
+  it("adds scoped Presentation storage without changing Round keys or the room-code registry", async () => {
+    const directory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const migration = (await discoverMigrations(directory)).find(({ version }) => version === 59)!;
+    expect(migration.name).toBe("audience_scope_foundation");
+    for (const table of ["audience_scopes", "scoped_audience_outbox"]) {
+      expect(migration.sql).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`);
+    }
+    expect(migration.sql).toContain(
+      "REFERENCES presentation_live_sessions(workspace_id, id) ON DELETE CASCADE",
+    );
+    expect(migration.sql).toContain(
+      "REFERENCES audience_scopes(workspace_id, id) ON DELETE CASCADE",
+    );
+    expect(migration.sql).toContain("UNIQUE (scope_id, audience_seq)");
+    expect(migration.sql).toContain("audience_scopes_identity_immutable");
+    expect(migration.sql).not.toContain("ALTER TABLE game_sessions");
+    expect(migration.sql).not.toContain("ALTER TABLE live_room_codes");
+  });
   it("adds bounded sequence state and durable fences to the existing forced-RLS followup parents", async () => {
     const directory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const migration = (await discoverMigrations(directory)).find(({ version }) => version === 57)!;

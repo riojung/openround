@@ -2,6 +2,22 @@
 
 This engineering inventory is not a legal opinion. Confirm purposes, legal basis, processor location, notices, and contracts before production.
 
+The Core-Parity audience foundation stores opted-in Presentation scope metadata (workspace/source
+ID, immutable facilitator-visible alias policy, creation receipt, audience sequence, and source
+retention deadline) and a metadata-only activation outbox event. It adds no learner identities,
+submission content, signals, or survey attempts. Parent session/workspace deletion cascades in
+PostgreSQL and memory; scheduled session retention removes these records. Owner account export
+includes scope metadata, not authorization credentials or socket bindings. Scoped websocket
+bindings contain only native credential hashes for revalidation; reusable bearer credentials are
+not retained in distributed socket data, Redis adapter fetches, account exports, or logs.
+No scope event exposes credentials, aliases, individual activity, or answers.
+
+Learning Round/Presentation scope responses explicitly disclose that moderators can see the session
+alias even when the public room display says Anonymous. Presentation audience interaction UI and
+organizer-blind feedback-room/survey modes are not yet shipped; do not market the new scope
+foundation as organizer-blind anonymous feedback. Those future modes require separate projections
+and privacy/security acceptance across every API, event, moderation, report, export, and account path.
+
 Source-assisted Recovery Pack conversion reuses an existing validated authoring output; it makes
 no new provider request. Pack content copies the selected diagnostic/recheck, source-derived card,
 and citations. A separate creator-only record retains source name/digest, logical job ID, canonical

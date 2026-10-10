@@ -1,35 +1,25 @@
 import { randomUUID } from "node:crypto";
 import type { QnaPage, QnaQuestion, QnaReply, QnaSettings } from "@openround/contracts";
 import type {
-  ParticipantRecord,
   QnaQuestionRecord,
   QnaReplyRecord,
   QnaSettingsRecord,
   Repository,
-  SessionStaffCredentialRecord,
   StoredSession,
 } from "@openround/db";
-import { cleanPlainText, hashToken, safeHashEqual } from "./security.js";
+import { cleanPlainText, hashToken } from "./security.js";
+import {
+  AudienceAccessError,
+  RoundAudienceAccess,
+  roundAudienceCanModerate,
+  type RoundAudienceActor as QnaActor,
+  type RoundStaffActor as StaffActor,
+} from "./audience-access.js";
 import type { SessionService } from "./session-service.js";
 import type { InteractionService } from "./interaction-service.js";
 
 type QnaQuestionStatus = QnaQuestionRecord["status"];
 type QnaReplyStatus = QnaReplyRecord["status"];
-
-type ParticipantActor = {
-  kind: "participant";
-  participant: ParticipantRecord;
-  session: StoredSession;
-};
-
-type StaffActor = {
-  kind: "staff";
-  rootHost: boolean;
-  credential: SessionStaffCredentialRecord | null;
-  session: StoredSession;
-};
-
-type QnaActor = ParticipantActor | StaffActor;
 
 export class QnaError extends Error {
   constructor(
@@ -112,31 +102,16 @@ export class QnaService {
   }
 
   private async authenticate(sessionId: string, token: string): Promise<QnaActor> {
-    const session = await this.repository.getSessionById(sessionId);
-    if (!session || session.expiresAt <= new Date()) {
-      throw new QnaError("NOT_FOUND", "Live round not found");
+    try {
+      return await new RoundAudienceAccess(this.repository).authenticate(sessionId, token);
+    } catch (error) {
+      if (error instanceof AudienceAccessError) throw new QnaError(error.code, error.message);
+      throw error;
     }
-    const tokenHash = hashToken(token);
-    const participant = await this.repository.getParticipantByToken(tokenHash);
-    if (participant?.sessionId === sessionId) {
-      const runtimeParticipant = session.state.participants[participant.id];
-      if (!runtimeParticipant || runtimeParticipant.kicked || participant.status === "kicked") {
-        throw new QnaError("UNAUTHORIZED", "Participant access has been revoked");
-      }
-      return { kind: "participant", participant, session };
-    }
-    if (safeHashEqual(session.hostTokenHash, tokenHash)) {
-      return { kind: "staff", rootHost: true, credential: null, session };
-    }
-    const credential = await this.repository.getSessionStaffByToken(tokenHash, new Date());
-    if (credential?.sessionId !== sessionId) {
-      throw new QnaError("UNAUTHORIZED", "Session credential is invalid or expired");
-    }
-    return { kind: "staff", rootHost: false, credential, session };
   }
 
   private canModerate(actor: QnaActor): actor is StaffActor {
-    return actor.kind === "staff" && (actor.rootHost || actor.credential?.role === "cohost");
+    return roundAudienceCanModerate(actor);
   }
 
   private async ensureOpen(session: StoredSession) {

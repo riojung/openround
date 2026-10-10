@@ -2053,6 +2053,86 @@ describe("deployment configuration and manifest validation", () => {
     expect(validateReceiptConfigCheckSummary(summary, config, buildId)).toBe(summary);
   });
 
+  it("accepts only a complete bounded core-parity group without changing legacy receipt hashes", () => {
+    const config = validateDeployConfig(singleVmConfig(), "staging");
+    const legacy = receiptConfigCheckSummary(config);
+    const legacyBytes = JSON.stringify(legacy);
+    expect(() =>
+      validateEnvFileKeys(
+        `${singleVmRuntimeEnvironment()}\nFEATURE_AUDIENCE_SCOPES=false\nFEATURE_FEEDBACK_ROOMS=false\nFEATURE_SURVEYS=false\nFEATURE_FEEDBACK_EXPORTS=false\nCORE_PARITY_WORKSPACE_ALLOWLIST=\n`,
+        "single-vm-runtime",
+      ),
+    ).not.toThrow();
+    const flags = {
+      audienceScopes: false,
+      feedbackRooms: false,
+      surveys: false,
+      feedbackExports: false,
+    };
+    const current = {
+      ...legacy,
+      coreParityWorkspaceAllowlistSize: 0,
+      featureFlags: { ...legacy.featureFlags, ...flags },
+    };
+    expect(validateReceiptConfigCheckSummary(current, config, buildId)).toBe(current);
+    expect(validateReceiptConfigCheckSummary(legacy, config, buildId)).toBe(legacy);
+    expect(JSON.stringify(legacy)).toBe(legacyBytes);
+    for (const count of [-1, 1_001, 0.5, "0", null]) {
+      expect(() =>
+        validateReceiptConfigCheckSummary(
+          { ...current, coreParityWorkspaceAllowlistSize: count },
+          config,
+          buildId,
+        ),
+      ).toThrow("invalid coreParityWorkspaceAllowlistSize");
+    }
+    expect(() =>
+      validateReceiptConfigCheckSummary(
+        { ...legacy, coreParityWorkspaceAllowlistSize: 0 },
+        config,
+        buildId,
+      ),
+    ).toThrow("unexpected field set");
+    expect(() =>
+      validateReceiptConfigCheckSummary(
+        { ...legacy, featureFlags: current.featureFlags },
+        config,
+        buildId,
+      ),
+    ).toThrow("unexpected field set");
+    expect(() =>
+      validateReceiptConfigCheckSummary(
+        { ...current, coreParityWorkspaceAllowlist: ["private-id"] },
+        config,
+        buildId,
+      ),
+    ).toThrow("unexpected field set");
+    const flyConfig = validateDeployConfig(stagingConfig(), "staging");
+    const fly = {
+      ...current,
+      publicApiUrl: flyConfig.publicApiUrl,
+      webOrigin: flyConfig.publicWebUrl,
+      metrics: "disabled",
+      featureFlags: {
+        ...current.featureFlags,
+        signups: false,
+        roundExperiences: false,
+        audiencePulse: false,
+        roomChat: false,
+      },
+    };
+    expect(() => assertConfigCheckSummary(fly, flyConfig, buildId)).not.toThrow();
+    for (const flag of Object.keys(flags)) {
+      expect(() =>
+        assertConfigCheckSummary(
+          { ...fly, featureFlags: { ...fly.featureFlags, [flag]: true } },
+          flyConfig,
+          buildId,
+        ),
+      ).toThrow(`feature flag ${flag} enabled`);
+    }
+  });
+
   it("keeps exact Fly live-card checks disabled while accepting older rollback image summaries", () => {
     const config = validateDeployConfig(stagingConfig(), "staging");
     const summary = receiptConfigCheckSummary(config);

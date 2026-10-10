@@ -16,33 +16,24 @@ import {
   type ChatMessageRecord,
   type ChatReactionRecord,
   type InteractionSettingsRecord,
-  type ParticipantRecord,
   type ParticipantChatActivityRecord,
   type ParticipantSignalRecord,
   type Repository,
-  type SessionStaffCredentialRecord,
   type StoredSession,
 } from "@openround/db";
 import { avatarIdForSeed } from "@openround/game-engine";
-import { cleanPlainText, hashToken, safeHashEqual } from "./security.js";
+import { cleanPlainText } from "./security.js";
+import {
+  AudienceAccessError,
+  RoundAudienceAccess,
+  roundAudienceCanModerate,
+  type RoundAudienceActor as InteractionActor,
+  type RoundParticipantActor as ParticipantActor,
+  type RoundStaffActor as StaffActor,
+} from "./audience-access.js";
 import type { SessionService } from "./session-service.js";
 import type { MetricsService } from "./metrics.js";
 import type { AppConfig } from "./config.js";
-
-type ParticipantActor = {
-  kind: "participant";
-  participant: ParticipantRecord;
-  session: StoredSession;
-};
-
-type StaffActor = {
-  kind: "staff";
-  rootHost: boolean;
-  credential: SessionStaffCredentialRecord | null;
-  session: StoredSession;
-};
-
-type InteractionActor = ParticipantActor | StaffActor;
 
 export type AudienceRealtimeViewer = {
   moderator: boolean;
@@ -135,32 +126,17 @@ export class InteractionService {
   }
 
   private async authenticate(sessionId: string, token: string): Promise<InteractionActor> {
-    if (!token) throw new InteractionError("UNAUTHORIZED", "A session credential is required");
-    const session = await this.repository.getSessionById(sessionId);
-    if (!session || session.expiresAt <= new Date()) {
-      throw new InteractionError("NOT_FOUND", "Live round not found");
+    try {
+      return await new RoundAudienceAccess(this.repository).authenticate(sessionId, token);
+    } catch (error) {
+      if (error instanceof AudienceAccessError)
+        throw new InteractionError(error.code, error.message);
+      throw error;
     }
-    const tokenHash = hashToken(token);
-    const participant = await this.repository.getParticipantByToken(tokenHash);
-    if (participant?.sessionId === sessionId) {
-      const runtime = session.state.participants[participant.id];
-      if (!runtime || runtime.kicked || participant.status === "kicked") {
-        throw new InteractionError("UNAUTHORIZED", "Participant access has been revoked");
-      }
-      return { kind: "participant", participant, session };
-    }
-    if (safeHashEqual(session.hostTokenHash, tokenHash)) {
-      return { kind: "staff", rootHost: true, credential: null, session };
-    }
-    const credential = await this.repository.getSessionStaffByToken(tokenHash, new Date());
-    if (credential?.sessionId !== sessionId || credential.workspaceId !== session.workspaceId) {
-      throw new InteractionError("UNAUTHORIZED", "Session credential is invalid or expired");
-    }
-    return { kind: "staff", rootHost: false, credential, session };
   }
 
   private canModerate(actor: InteractionActor): actor is StaffActor {
-    return actor.kind === "staff" && (actor.rootHost || actor.credential?.role === "cohost");
+    return roundAudienceCanModerate(actor);
   }
 
   private ensureOpen(actor: InteractionActor) {

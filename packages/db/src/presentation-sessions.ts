@@ -9,6 +9,14 @@ export { MemoryPresentationSessionRepository } from "./presentation-session-memo
 export { PostgresPresentationSessionRepository } from "./presentation-session-postgres.js";
 
 export function createPresentationSessionRepository(
+  repository: MemoryRepository,
+  options?: { concurrentResponseWrites?: boolean },
+): MemoryPresentationSessionRepository;
+export function createPresentationSessionRepository(
+  repository: Repository,
+  options?: { concurrentResponseWrites?: boolean },
+): PresentationSessionRepository;
+export function createPresentationSessionRepository(
   repository: Repository,
   options: { concurrentResponseWrites?: boolean } = {},
 ): PresentationSessionRepository {

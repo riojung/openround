@@ -30,6 +30,7 @@ import {
   PostgresPresentationRepository,
   PostgresPresentationSessionRepository,
   createRecoveryPackRepository,
+  createAudienceScopeRepository,
   RecoveryPackMediaValidationError,
   type PresentationSessionCommandInput,
   type PresentationSessionCredentialRecord,
@@ -52,6 +53,7 @@ import {
   presentationSessionConformanceContent,
 } from "./support/presentation-session-conformance.js";
 import { expectRecoveryPackDraftUndoConformance } from "./support/recovery-pack-draft-undo-conformance.js";
+import { expectAudienceScopeConformance } from "./support/audience-scope-conformance.js";
 import { expectPresentationLiveInsertionConformance } from "./support/presentation-live-insertion-conformance.js";
 import { expectRecoveryPackLiveMetadataConformance } from "./support/recovery-pack-live-metadata-conformance.js";
 import {
@@ -1066,6 +1068,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 56, name: "recovery_pack_practice" },
       { version: 57, name: "recovery_pack_sequence_practice" },
       { version: 58, name: "recovery_pack_source_authoring" },
+      { version: 59, name: "audience_scope_foundation" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -2527,6 +2530,114 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       beginWorkspaceDeletion: async () => {
         await repository.claimWorkspaceMediaDeletion(owner.workspaceId);
       },
+    });
+  });
+
+  it("keeps PostgreSQL on the shared scope activation, outbox lease, and deletion contract", async () => {
+    const owner = await creator("audience-scope-conformance");
+    const published = await createPublishedPresentationFixture(owner, "Scope foundation");
+    await expectAudienceScopeConformance({
+      scopes: createAudienceScopeRepository(repository),
+      sessions: new PostgresPresentationSessionRepository(repository),
+      workspaceId: owner.workspaceId,
+      presentationId: published.presentation.id,
+      presentationVersionId: published.version.id,
+      createdBy: owner.userId,
+    });
+  });
+
+  it("forces scope RLS, composite source isolation, immutable privacy, and account export", async () => {
+    const owner = await creator("audience-scope-rls-owner");
+    const outsider = await creator("audience-scope-rls-outsider");
+    const published = await createPublishedPresentationFixture(owner, "Scope RLS");
+    const sessions = new PostgresPresentationSessionRepository(repository);
+    const now = new Date();
+    const session = await sessions.createSession({
+      id: randomUUID(),
+      workspaceId: owner.workspaceId,
+      presentationId: published.presentation.id,
+      presentationVersionId: published.version.id,
+      content: published.content,
+      title: "Scope RLS",
+      code: String(randomInt(1_000_000, 10_000_000)),
+      status: "active",
+      phase: "lobby",
+      currentBlockIndex: -1,
+      revision: 0,
+      createdBy: owner.userId,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: null,
+      liveExpiresAt: new Date(now.getTime() + 60_000),
+      retentionExpiresAt: new Date(now.getTime() + 86_400_000),
+    });
+    const scopes = createAudienceScopeRepository(repository);
+    await expect(
+      packPracticeScoped(outsider.workspaceId, (client) =>
+        client.query(
+          `INSERT INTO audience_scopes
+      (id, workspace_id, kind, identity_policy, creation_idempotency_key, created_at, expires_at)
+      VALUES ($1, $2, 'presentation', 'facilitator_visible_alias', $3, $4, $5)`,
+          [session.id, outsider.workspaceId, randomUUID(), now, session.retentionExpiresAt],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "23503" });
+    await scopes.activatePresentation({
+      workspaceId: owner.workspaceId,
+      sessionId: session.id,
+      idempotencyKey: randomUUID(),
+      now,
+    });
+    await packPracticeScoped(outsider.workspaceId, async (client) => {
+      for (const table of ["audience_scopes", "scoped_audience_outbox"]) {
+        expect(
+          (
+            await client.query(`SELECT * FROM ${table} WHERE workspace_id = $1`, [
+              owner.workspaceId,
+            ])
+          ).rows,
+        ).toEqual([]);
+      }
+    });
+    await expect(
+      packPracticeScoped(owner.workspaceId, (client) =>
+        client.query(
+          "UPDATE audience_scopes SET identity_policy = 'organizer_blind' WHERE id = $1",
+          [session.id],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "42501" });
+    const admin = new Pool({ connectionString: adminUrl });
+    try {
+      expect(
+        (
+          await admin.query(
+            "SELECT relforcerowsecurity FROM pg_class WHERE relname IN ('audience_scopes', 'scoped_audience_outbox') ORDER BY relname",
+          )
+        ).rows,
+      ).toEqual([{ relforcerowsecurity: true }, { relforcerowsecurity: true }]);
+      await expect(
+        admin.query(
+          "UPDATE audience_scopes SET expires_at = expires_at + interval '1 day' WHERE id = $1",
+          [session.id],
+        ),
+      ).rejects.toMatchObject({ code: "55000" });
+    } finally {
+      await admin.end();
+    }
+    const exported = (await repository.exportAccount(owner.userId)) as {
+      audienceScopes: Array<{ id: string }>;
+    };
+    expect(exported.audienceScopes).toEqual([expect.objectContaining({ id: session.id })]);
+    await sessions.deleteSession(owner.workspaceId, session.id, new Date(now.getTime() + 60_001));
+    await packPracticeScoped(owner.workspaceId, async (client) => {
+      expect(
+        (
+          await client.query("SELECT * FROM scoped_audience_outbox WHERE scope_id = $1", [
+            session.id,
+          ])
+        ).rows,
+      ).toEqual([]);
     });
   });
 

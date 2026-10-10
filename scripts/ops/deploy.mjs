@@ -186,6 +186,12 @@ const optionalConfigCheckFeatureKeys = Object.freeze([
   "recoveryPackLiveCards",
   "presentationCompanion",
 ]);
+const coreParityConfigCheckFeatureKeys = Object.freeze([
+  "audienceScopes",
+  "feedbackRooms",
+  "surveys",
+  "feedbackExports",
+]);
 
 function assertExactObjectKeys(value, expected, label, optional = []) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -201,10 +207,18 @@ function assertExactObjectKeys(value, expected, label, optional = []) {
 }
 
 export function validateReceiptConfigCheckSummary(summary, config, buildId) {
-  assertExactObjectKeys(summary, configCheckSummaryKeys, "configuration summary");
+  // Preserve legacy receipt bytes/hashes. The new bounded group is either fully present or absent.
+  const hasCoreParity =
+    Object.hasOwn(summary ?? {}, "coreParityWorkspaceAllowlistSize") ||
+    coreParityConfigCheckFeatureKeys.some((key) => Object.hasOwn(summary?.featureFlags ?? {}, key));
+  assertExactObjectKeys(
+    summary,
+    [...configCheckSummaryKeys, ...(hasCoreParity ? ["coreParityWorkspaceAllowlistSize"] : [])],
+    "configuration summary",
+  );
   assertExactObjectKeys(
     summary.featureFlags,
-    configCheckFeatureKeys,
+    [...configCheckFeatureKeys, ...(hasCoreParity ? coreParityConfigCheckFeatureKeys : [])],
     "configuration feature flags",
     optionalConfigCheckFeatureKeys,
   );
@@ -229,6 +243,16 @@ export function validateReceiptConfigCheckSummary(summary, config, buildId) {
     if (summary[key] !== value) {
       throw new Error(`The deployed configuration summary returned unexpected ${key}`);
     }
+  }
+  if (
+    hasCoreParity &&
+    (!Number.isInteger(summary.coreParityWorkspaceAllowlistSize) ||
+      summary.coreParityWorkspaceAllowlistSize < 0 ||
+      summary.coreParityWorkspaceAllowlistSize > 1_000)
+  ) {
+    throw new Error(
+      "The deployed configuration summary returned invalid coreParityWorkspaceAllowlistSize",
+    );
   }
   for (const key of Object.keys(summary.featureFlags)) {
     if (typeof summary.featureFlags[key] !== "boolean") {
@@ -1037,7 +1061,11 @@ export function assertConfigCheckSummary(summary, config, buildId) {
   }
   // Keep pre-flag rollback summaries valid; selecting a schema-compatible image is still required.
   // A current image must confirm the exact Fly template keeps live-card playback disabled.
-  for (const key of ["recoveryPackLiveCards", "presentationCompanion"]) {
+  for (const key of [
+    "recoveryPackLiveCards",
+    "presentationCompanion",
+    ...coreParityConfigCheckFeatureKeys,
+  ]) {
     if (Object.hasOwn(summary.featureFlags, key) && summary.featureFlags[key] !== false) {
       throw new Error(`The exact server image config-check left feature flag ${key} enabled`);
     }

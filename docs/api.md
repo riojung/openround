@@ -10,6 +10,51 @@ environment, persisted-version, and webhook boundaries. Errors use:
 Creator routes use the secure HttpOnly creator cookie. Session, staff, presenter, participant,
 embed, and follow-up routes use their own scoped credentials as documented by the returned flow.
 
+## Audience-scope foundation (partial M1)
+
+These additive interfaces do not replace legacy `/v1/sessions/:id/...` routes or game events.
+Use `Authorization: Bearer <room credential>`; credentials are never accepted in URLs. Responses
+are `private, no-store`. The explicit `kind` selector prevents cross-engine ID ambiguity.
+
+| Interface                                                   | Implemented behavior                                                                                                                                                                    |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/audience-scopes`                                  | Body `{kind:"presentation",sessionId,idempotencyKey}` (UUIDs). Native host pass only. Returns 201 on first activation, 200 on retry; scope/event commit atomically.                     |
+| `GET /v1/audience-scopes/:scopeId?kind=round\|presentation` | Authorized version-1 metadata, identity disclosure, audience sequence, permissions, and enabled interaction features.                                                                   |
+| `POST /v1/audience-scopes/:scopeId/sync`                    | Body `{kind,limit?}`; limit 1–50, default 50. Round returns `{scope,round:{interactions,qna}}` using existing projections; disabled Q&A is `null`. Presentation returns `{scope}` only. |
+
+Activation requires `FEATURE_AUDIENCE_SCOPES=true` and the workspace in
+`CORE_PARITY_WORKSPACE_ALLOWLIST`; its distributed per-credential budget is 20 requests/minute,
+in addition to the normal per-IP limiter. The native Presentation host pass is not interchangeable
+with a creator cookie or Companion pass. Reads, sync, and accepted activation retries remain
+available during writer rollback, but expired/revoked credentials do not.
+
+The Presentation scope shares its source session ID, freezes facilitator-visible alias policy and
+source retention, and currently advertises **all interaction features false**. Scope activation is
+not a Q&A/chat/Pulse enable switch. Existing Round aliases remain moderator-visible, including
+when their public Q&A display is anonymous. Organizer-blind feedback is not implemented yet.
+
+Additive Socket.IO messages:
+
+- `audience.scope.subscribe`: `{kind,scopeId,token}`; acknowledges `{data:{scope}}`.
+- `audience.scope.sync.request`: same plus `limit?`; returns the REST sync shape.
+- `audience.scope.activated`: `{schemaVersion:1,eventId,scopeId,audienceSeq,serverTime,
+type:"audience.scope.activated",payload:{kind:"presentation"}}`.
+
+Bindings and sequence cursors are separate from game/Presentation control subscriptions. Revalidate
+credentials on sync and before delivery. Duplicate outbox deliveries retain `eventId`; consumers
+must deduplicate. A reconnect/gap requests current state rather than assuming exactly-once delivery.
+Sockets allow at most five scoped subscriptions and twenty scope requests per ten seconds. Only
+the metadata-only activation event is currently supported; arbitrary/private outbox payloads are
+not broadcast. Legacy Round `audience.sync.request`, `qna.*`, and interaction events are unchanged.
+Scoped subscription does not yet replace the legacy Round live-event subscription; Round clients
+continue using existing session bindings for ongoing Q&A/chat/Pulse updates.
+
+Scope errors include `UNAUTHORIZED` (401), `NOT_FOUND` (404), `ROOM_CLOSED` and idempotency
+`CONFLICT` (409), `VALIDATION_ERROR` (400), and `RATE_LIMITED` (429). Messages identify the
+credential/rollout/lifecycle problem and a retry or rejoin action. Apply migration 059 before rollout.
+Surveys, feedback-room admission/settings, scoped interaction mutations, and export/share routes
+are deliberately not registered by this foundation.
+
 ## Service and feature APIs
 
 - `GET /health/live` — process liveness and the build-time `buildId` used to bind readiness

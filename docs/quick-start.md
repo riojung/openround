@@ -9,6 +9,10 @@ The guides are currently in English and label optional capabilities that are not
 This guide starts the complete community stack and walks through one live checkpoint round. The
 normal path takes about ten minutes after container images are available.
 
+Core-parity work is currently a backend foundation only. This walkthrough and the existing UI
+remain unchanged; Surveys, organizer-blind feedback rooms, word clouds/ranking/open-text polls,
+and feedback exports are not available yet. See the [staged implementation status](implementation-status.md).
+
 ## What you need
 
 - A running Docker Desktop, Docker Engine, or Docker-backed Colima profile, with Docker Compose v2

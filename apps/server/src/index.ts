@@ -1,5 +1,6 @@
 import { loadConfig } from "./config.js";
 import { startTelemetry } from "./tracing.js";
+import { ScopedAudienceOutboxWorker } from "./scoped-audience-outbox-worker.js";
 
 const config = loadConfig();
 const telemetry = startTelemetry(config);
@@ -19,12 +20,37 @@ const {
   metrics,
   cache,
   presentationService,
+  audienceScopes,
+  audienceScopeService,
 } = await buildApp(config);
-const realtime = await attachRealtime(app.server, sessions, config, metrics, interactions, {
-  service: presentationService,
-  consumeAdmission: cache.consumeRateLimit.bind(cache),
-});
+const realtime = await attachRealtime(
+  app.server,
+  sessions,
+  config,
+  metrics,
+  interactions,
+  {
+    service: presentationService,
+    consumeAdmission: cache.consumeRateLimit.bind(cache),
+  },
+  audienceScopeService,
+);
+const scopedAudienceOutboxWorker = new ScopedAudienceOutboxWorker(audienceScopes, (event) =>
+  realtime.scopedAudience!.publish(event),
+);
+let activeScopedAudienceRun: Promise<unknown> | null = null;
 const audienceOutboxTimer = setInterval(() => {
+  if (!activeScopedAudienceRun) {
+    activeScopedAudienceRun = scopedAudienceOutboxWorker
+      .runUntilIdle()
+      .then((results) => {
+        if (results.includes("retry")) app.log.warn("scoped audience outbox delivery will retry");
+      })
+      .catch(() => app.log.error("scoped audience outbox relay failed"))
+      .finally(() => {
+        activeScopedAudienceRun = null;
+      });
+  }
   void audienceOutboxWorker
     .runUntilIdle()
     .then((results) => {
@@ -100,6 +126,7 @@ const shutdown = async (signal: string) => {
   clearInterval(reportTimer);
   clearInterval(authoringTimer);
   clearInterval(audienceOutboxTimer);
+  await activeScopedAudienceRun;
   await realtime.close();
   await activeReportRun;
   await app.close();
