@@ -47,8 +47,36 @@ export class MemoryAudienceScopeRepository
   ) {}
 
   async get(workspaceId: string, scopeId: string) {
+    return this.getSync(workspaceId, scopeId);
+  }
+
+  getSync(workspaceId: string, scopeId: string) {
     const scope = this.scopes.get(scopeId);
     return scope?.workspaceId === workspaceId ? structuredClone(scope) : null;
+  }
+
+  appendQnaEventSync(workspaceId: string, scopeId: string, now: Date) {
+    const scope = this.scopes.get(scopeId);
+    if (!scope || scope.workspaceId !== workspaceId)
+      throw new AudienceScopeStoreError("NOT_FOUND", "Audience scope not found");
+    const event = ScopedAudienceEventSchema.parse({
+      schemaVersion: 1,
+      eventId: randomUUID(),
+      scopeId,
+      audienceSeq: scope.audienceSeq + 1,
+      serverTime: now.toISOString(),
+      type: "audience.qna.updated",
+      payload: { kind: "presentation" },
+    });
+    scope.audienceSeq = event.audienceSeq;
+    this.outbox.set(event.eventId, {
+      workspaceId,
+      event,
+      leaseToken: null,
+      leaseUntil: null,
+      publishedAt: null,
+    });
+    return event.audienceSeq;
   }
 
   async activatePresentation(input: {

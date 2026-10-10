@@ -30,17 +30,31 @@ boundary, so concurrent finishing/deletion cannot recreate removed records from 
 Separate scoped socket bindings cannot overwrite existing game or Companion roles and contain only
 credential hashes, not reusable bearer tokens. Cross-node delivery revalidates those hashes against
 the native credential store and scope lifecycle. Strict event
-validation currently allows only `audience.scope.activated`, with no identities/text/answers. Future
-interaction events require role-filtered projections, not raw outbox broadcasting. Scope sync adapts
-legacy Round current state; Presentation sync is metadata-only until scoped interaction writers land.
+validation allows `audience.scope.activated` and `audience.qna.updated`, with no identities/text/answers.
+The Q&A event is an invalidation: readers fetch authorized current state instead of replaying
+pending/removed content. Future content events require role-filtered projections, not raw outbox
+broadcasting. Round sync keeps existing projections; Presentation sync includes a role-filtered
+Q&A page and its audience sequence.
 Round settings and the audience cursor come from the same initialized record, not a concurrent
 pre-bootstrap read. Finished, uninitialized Rounds project transient interaction/Q&A defaults:
 authenticated scope reads and synchronization stay read-only and allocate no bootstrap event.
 The existing `live_room_codes` registry remains the only join-code namespace.
 
-This is a staged foundation, not a second Q&A/chat implementation. Scoped content repositories,
-feedback-room sources, organizer-blind projections, passcodes, and Presentation interaction UI
-remain next M1 work. Apply compatible migrations/readers before writer flags; disabling creation
+Migration 060 adds scoped Q&A settings, questions, unique votes, bans, command receipts, durable
+per-actor/action rate budgets, and moderator audit records. Forced RLS and composite scope/actor
+keys isolate sources. Commands lock workspace, parent session, scope and credential in that order;
+state, receipt, sequence and outbox commit together, without changing game sequences. Reads take
+shared locks and allocate no settings/event. Memory mutations have no internal await boundaries.
+Round and scoped storage share default, visibility, initial-status and alias projection policies;
+legacy Round tables/routes/replies remain compatible. Presentation replies are explicitly disabled
+until their next increment. Host changes require an expected audience sequence. Retries return the
+original body-free receipt after finish/ban, but never bypass credential revocation/expiry. Removal
+is terminal and ordinary views/account exports redact its body. PostgreSQL-backed budgets prevent
+a Redis outage from bypassing accepted-action limits.
+
+This is partial M1. Presentation interaction UI/replies, chat/Pulse adapters, feedback-room
+sources, organizer-blind projections and passcodes remain next work. Apply compatible
+migrations/readers before writer flags; disabling creation
 preserves retained resources and authenticated recovery paths.
 
 ## System context

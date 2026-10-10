@@ -1,7 +1,10 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { ActivatePresentationAudienceScopeSchema } from "@openround/contracts";
-import { AudienceScopeStoreError } from "@openround/db";
+import {
+  ActivatePresentationAudienceScopeSchema,
+  ScopedQnaCommandSchema,
+} from "@openround/contracts";
+import { AudienceScopeStoreError, ScopedQnaError } from "@openround/db";
 import { AudienceAccessError } from "./audience-access.js";
 import type { AudienceScopeService } from "./audience-scope-service.js";
 import { hashToken } from "./security.js";
@@ -30,8 +33,19 @@ export async function registerAudienceScopeRoutes(
   // Encapsulation keeps scope-specific error translation out of the legacy route handler.
   await app.register(async (scoped) => {
     scoped.setErrorHandler((error, request, reply) => {
-      if (error instanceof AudienceAccessError || error instanceof AudienceScopeStoreError) {
-        const status = error.code === "NOT_FOUND" ? 404 : error.code === "UNAUTHORIZED" ? 401 : 409;
+      if (
+        error instanceof AudienceAccessError ||
+        error instanceof AudienceScopeStoreError ||
+        error instanceof ScopedQnaError
+      ) {
+        const status =
+          error.code === "NOT_FOUND"
+            ? 404
+            : error.code === "UNAUTHORIZED"
+              ? 401
+              : error.code === "QNA_RATE_LIMITED"
+                ? 429
+                : 409;
         return reply
           .code(status)
           .send({ error: { code: error.code, message: error.message, requestId: request.id } });
@@ -69,6 +83,39 @@ export async function registerAudienceScopeRoutes(
       const { scopeId } = ScopeParams.parse(request.params);
       const input = SyncBody.parse(request.body);
       return service.sync(input.kind, scopeId, credential(request), input.limit);
+    });
+    // This first writer is Presentation-only. Legacy Round endpoints retain their request shapes.
+    const qnaQuery = z
+      .object({
+        kind: z.literal("presentation"),
+        limit: z.coerce.number().int().min(1).max(50).default(50),
+        cursor: z.string().max(256).optional(),
+      })
+      .strict();
+    scoped.get("/v1/audience-scopes/:scopeId/qna/questions", async (request) => {
+      const { scopeId } = ScopeParams.parse(request.params);
+      const input = qnaQuery.parse(request.query);
+      return service.listPresentationQna(scopeId, credential(request), {
+        limit: input.limit,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+      });
+    });
+    scoped.post("/v1/audience-scopes/:scopeId/qna/commands", async (request, reply) => {
+      const { scopeId } = ScopeParams.parse(request.params);
+      const input = z
+        .object({ kind: z.literal("presentation"), command: ScopedQnaCommandSchema })
+        .strict()
+        .parse(request.body);
+      const token = credential(request);
+      if (!(await consumeAdmission(`scoped-qna:${scopeId}:${hashToken(token)}`, 120, 60_000)))
+        return reply.code(429).send({
+          error: {
+            code: "QNA_RATE_LIMITED",
+            message: "Too many Q&A requests. Wait a minute and retry",
+            requestId: request.id,
+          },
+        });
+      return service.mutatePresentationQna(scopeId, token, input.command);
     });
   });
 }

@@ -7192,6 +7192,22 @@ export class PostgresRepository implements Repository {
                   creation_idempotency_key, created_at, expires_at
            FROM audience_scopes WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
         );
+        const scopedQnaSettings = await queryWorkspaceData(
+          "SELECT * FROM scoped_qna_settings WHERE workspace_id = ANY($1::uuid[]) ORDER BY scope_id",
+        );
+        const scopedQnaQuestions =
+          await queryWorkspaceData(`SELECT id, workspace_id, scope_id, participant_id, public_alias, status, label, created_at, updated_at,
+          CASE WHEN status = 'removed' THEN '' ELSE body END AS body
+          FROM scoped_qna_questions WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`);
+        const scopedQnaVotes = await queryWorkspaceData(
+          "SELECT * FROM scoped_qna_votes WHERE workspace_id = ANY($1::uuid[]) ORDER BY scope_id, question_id, participant_id",
+        );
+        const scopedQnaBans = await queryWorkspaceData(
+          "SELECT * FROM scoped_qna_bans WHERE workspace_id = ANY($1::uuid[]) ORDER BY scope_id, participant_id",
+        );
+        const scopedQnaAudit = await queryWorkspaceData(
+          "SELECT * FROM scoped_qna_audit WHERE workspace_id = ANY($1::uuid[]) ORDER BY occurred_at, id",
+        );
         const libraryFavorites = await client.query(
           `SELECT workspace_id, user_id, artifact_type, artifact_id, created_at
            FROM library_favorites WHERE user_id = $1
@@ -7558,6 +7574,11 @@ export class PostgresRepository implements Repository {
           sessions: sessions.rows,
           presentationSessions: presentationSessions.rows,
           audienceScopes: audienceScopes.rows,
+          scopedQnaSettings: scopedQnaSettings.rows,
+          scopedQnaQuestions: scopedQnaQuestions.rows,
+          scopedQnaVotes: scopedQnaVotes.rows,
+          scopedQnaBans: scopedQnaBans.rows,
+          scopedQnaAudit: scopedQnaAudit.rows,
           presentationSessionParticipants: presentationSessionParticipants.rows,
           presentationSessionResponses: presentationSessionResponses.rows,
           presentationSessionTimeline: presentationSessionTimeline.rows,

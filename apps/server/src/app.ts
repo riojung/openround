@@ -10,6 +10,7 @@ import type Stripe from "stripe";
 import {
   createCollaborationGroupRepository,
   createAudienceScopeRepository,
+  createScopedQnaRepository,
   createLibraryMetadataRepository,
   createPresentationRepository,
   createRecoveryPackRepository,
@@ -269,6 +270,7 @@ export async function buildApp(
   const interactions = new InteractionService(repository, sessions, config, metrics);
   const qna = new QnaService(repository, sessions, interactions);
   const audienceScopes = createAudienceScopeRepository(repository);
+  const scopedQna = createScopedQnaRepository(repository);
   const audienceScopeService = new AudienceScopeService({
     repository,
     presentations: presentationSessions,
@@ -276,6 +278,7 @@ export async function buildApp(
     config,
     interactions,
     qna,
+    scopedQna,
   });
   const audienceOutboxWorker = new AudienceOutboxWorker(repository, interactions, metrics);
   const followups = new FollowupService(repository);

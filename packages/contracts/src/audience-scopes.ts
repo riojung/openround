@@ -78,11 +78,69 @@ export const ScopedAudienceEventSchema = z
     scopeId: z.string().uuid(),
     audienceSeq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     serverTime: z.string().datetime(),
-    type: z.literal("audience.scope.activated"),
+    // Invalidation only: fetch authorized current state, never replay removed or pending text.
+    type: z.enum(["audience.scope.activated", "audience.qna.updated"]),
     payload: z.object({ kind: z.literal("presentation") }).strict(),
   })
   .strict();
 export type ScopedAudienceEvent = z.infer<typeof ScopedAudienceEventSchema>;
+
+const ScopedQnaSettings = z
+  .object({
+    enabled: z.boolean(),
+    displayMode: z.enum(["anonymous_public", "alias_public"]),
+    moderationMode: z.enum(["pre", "post"]),
+    participantReplies: z.literal(false),
+  })
+  .strict();
+const mutation = { idempotencyKey: z.string().uuid() };
+const fence = { expectedAudienceSeq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) };
+export const ScopedQnaCommandSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      ...mutation,
+      type: z.literal("question.create"),
+      body: z.string().trim().min(1).max(1_000),
+    })
+    .strict(),
+  z
+    .object({
+      ...mutation,
+      ...fence,
+      type: z.literal("settings.update"),
+      settings: ScopedQnaSettings,
+    })
+    .strict(),
+  z
+    .object({
+      ...mutation,
+      ...fence,
+      type: z.literal("question.moderate"),
+      questionId: z.string().uuid(),
+      status: z.enum(["pending", "published", "answered", "dismissed", "removed"]),
+      label: z.string().trim().min(1).max(80).nullable(),
+      banAuthor: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      ...mutation,
+      type: z.literal("vote.set"),
+      questionId: z.string().uuid(),
+      voted: z.boolean(),
+    })
+    .strict(),
+]);
+export type ScopedQnaCommand = z.infer<typeof ScopedQnaCommandSchema>;
+export const ScopedQnaReceiptSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    idempotencyKey: z.string().uuid(),
+    resourceId: z.string().uuid(),
+    audienceSeq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict();
+export type ScopedQnaReceipt = z.infer<typeof ScopedQnaReceiptSchema>;
 
 export const ScopedAudienceSubscribeSchema = z
   .object({

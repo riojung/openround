@@ -8,6 +8,38 @@ trademark review.
 
 ## Staged implementation plan checkpoint
 
+### Core parity M1 — scoped Presentation Q&A backend, October 10, 2026
+
+Implemented on `codex/core-parity-scoped-qna` from merged PR #99 (`bfc92f0`). This is a
+backend increment, not a new user-facing release or completion of M1.
+
+- Shared Round/Presentation Q&A defaults, visibility, initial-status and alias policies; legacy
+  Round tables/routes/replies remain compatible.
+- Ordered migration 060: forced RLS, composite cascades, scoped questions/settings/votes/bans,
+  retry receipts, durable per-actor/action limits and moderator audit.
+- Sanitized list/command APIs, host revision fences, unique votes and author bans; Companion
+  remains read-only. Presentation replies are explicitly disabled pending their next increment.
+- Atomic state/receipt/sequence/outbox writes; accepted retries preserve the original receipt
+  after finish/ban, not after credential expiry/revocation. Game sequences remain unchanged.
+- Metadata-only Q&A notices and current role-filtered sync; terminal removal with blank bodies
+  in ordinary views/account exports; parent retention and deletion cascades.
+
+Next: reuse the Q&A panel on Presentation host/participant/Companion surfaces with scoped
+transport, then scoped replies/chat/Pulse and feedback-room anonymity/passcodes. Surveys,
+opinion formats, exports/sharing and external launch gates remain later milestones. No
+participant-cap, billing, organizer-blind anonymity or GA availability claims change.
+
+Verification: full `CI=true pnpm check` passed; all twenty-two audience-scope API/realtime tests
+passed, including body-free notices for pending questions and read-only Companion sync. All
+75 PostgreSQL integration tests passed on an isolated PostgreSQL 18.3 cluster, including fresh/
+repeat migrations, memory/PostgreSQL Q&A conformance, forced RLS, receipt immutability, account
+export and deletion. Malformed cursor IDs use shared UUID validation and return an actionable
+`CONFLICT` before database casts. Timestamp bounds and explicit UTC query serialization keep
+cursor dates within PostgreSQL's supported range, including boundary dates; regression checks
+cover memory, PostgreSQL and HTTP. No
+Presentation UI/browser journey, target-region mixed-load run, external
+Redis/process-loss exercise or launch gate is claimed by this backend increment.
+
 ### Core parity M0/M1 — audience foundation, October 9, 2026
 
 Implementation starts on `codex/core-parity-audience-foundation` from reviewed Companion baseline

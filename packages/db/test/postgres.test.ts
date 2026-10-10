@@ -31,6 +31,7 @@ import {
   PostgresPresentationSessionRepository,
   createRecoveryPackRepository,
   createAudienceScopeRepository,
+  createScopedQnaRepository,
   RecoveryPackMediaValidationError,
   type PresentationSessionCommandInput,
   type PresentationSessionCredentialRecord,
@@ -54,6 +55,7 @@ import {
 } from "./support/presentation-session-conformance.js";
 import { expectRecoveryPackDraftUndoConformance } from "./support/recovery-pack-draft-undo-conformance.js";
 import { expectAudienceScopeConformance } from "./support/audience-scope-conformance.js";
+import { expectScopedQnaConformance } from "./support/scoped-qna-conformance.js";
 import { expectPresentationLiveInsertionConformance } from "./support/presentation-live-insertion-conformance.js";
 import { expectRecoveryPackLiveMetadataConformance } from "./support/recovery-pack-live-metadata-conformance.js";
 import {
@@ -1069,6 +1071,7 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       { version: 57, name: "recovery_pack_sequence_practice" },
       { version: 58, name: "recovery_pack_source_authoring" },
       { version: 59, name: "audience_scope_foundation" },
+      { version: 60, name: "scoped_qna" },
     ]);
 
     // An existing P0 database has the full schema but no ledger. Replaying the
@@ -2543,6 +2546,91 @@ describe.skipIf(!enabled)("PostgreSQL row-level isolation", () => {
       presentationId: published.presentation.id,
       presentationVersionId: published.version.id,
       createdBy: owner.userId,
+    });
+  });
+
+  it("matches scoped Q&A memory rules with durable receipts, moderation, privacy and deletion", async () => {
+    const owner = await creator("scoped-qna-conformance");
+    const other = await creator("scoped-qna-isolation");
+    const published = await createPublishedPresentationFixture(owner, "Scoped Q&A");
+    await expectScopedQnaConformance({
+      repository,
+      qna: createScopedQnaRepository(repository),
+      scopes: createAudienceScopeRepository(repository),
+      sessions: new PostgresPresentationSessionRepository(repository),
+      workspaceId: owner.workspaceId,
+      presentationId: published.presentation.id,
+      presentationVersionId: published.version.id,
+      createdBy: owner.userId,
+      beforeDelete: async (scopeId) => {
+        const tables = [
+          "scoped_qna_settings",
+          "scoped_qna_questions",
+          "scoped_qna_votes",
+          "scoped_qna_bans",
+          "scoped_qna_receipts",
+          "scoped_qna_rate_limits",
+          "scoped_qna_audit",
+        ];
+        await packPracticeScoped(other.workspaceId, async (client) => {
+          for (const table of tables)
+            expect(
+              (await client.query(`SELECT * FROM ${table} WHERE scope_id = $1`, [scopeId])).rows,
+            ).toEqual([]);
+        });
+        await packPracticeScoped(owner.workspaceId, async (client) => {
+          const security = await client.query(
+            "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = ANY($1::text[])",
+            [tables],
+          );
+          expect(security.rows).toHaveLength(tables.length);
+          expect(security.rows.every((row) => row.relrowsecurity && row.relforcerowsecurity)).toBe(
+            true,
+          );
+          const scope = (
+            await client.query("SELECT audience_seq FROM audience_scopes WHERE id = $1", [scopeId])
+          ).rows[0]!;
+          expect(
+            (
+              await client.query(
+                "SELECT count(*)::integer AS count FROM scoped_qna_receipts WHERE scope_id = $1",
+                [scopeId],
+              )
+            ).rows[0]!.count,
+          ).toBe(Number(scope.audience_seq) - 1);
+          expect(
+            (
+              await client.query(
+                "SELECT count(*)::integer AS count FROM scoped_audience_outbox WHERE scope_id = $1",
+                [scopeId],
+              )
+            ).rows[0]!.count,
+          ).toBe(Number(scope.audience_seq));
+        });
+        await expect(
+          packPracticeScoped(owner.workspaceId, (client) =>
+            client.query("UPDATE scoped_qna_receipts SET request_hash = $2 WHERE scope_id = $1", [
+              scopeId,
+              "a".repeat(64),
+            ]),
+          ),
+        ).rejects.toMatchObject({ code: "42501" });
+      },
+    });
+    await packPracticeScoped(owner.workspaceId, async (client) => {
+      for (const table of [
+        "scoped_qna_questions",
+        "scoped_qna_receipts",
+        "scoped_qna_votes",
+        "scoped_qna_audit",
+      ])
+        expect(
+          (
+            await client.query(`SELECT * FROM ${table} WHERE workspace_id = $1`, [
+              owner.workspaceId,
+            ])
+          ).rows,
+        ).toEqual([]);
     });
   });
 

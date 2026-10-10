@@ -101,8 +101,8 @@ export function registerScopedAudienceRealtime(io: Server, service: AudienceScop
 
   return {
     async publish(raw: ScopedAudienceEvent) {
-      // The foundation event contains no user text, identities, or answers. Future event types
-      // require their own role-filtered projection; never broadcast arbitrary outbox payloads.
+      // Only strict metadata invalidations contain no text, identities, or answers. Fetch visible
+      // current state after each notice; never broadcast arbitrary outbox payloads.
       const event = ScopedAudienceEventSchema.parse(raw);
       const key = room("presentation", event.scopeId);
       for (const socket of await io.in(key).fetchSockets()) {
