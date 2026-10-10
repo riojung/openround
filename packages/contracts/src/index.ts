@@ -4,6 +4,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 
 export { PRODUCT_BRAND } from "./product-brand";
 export * from "./audience-scopes";
+export * from "./qna-policy";
 
 export {
   clampContentSlideFrame,
@@ -2222,6 +2223,12 @@ export const QnaPageSchema = z.object({
   settings: QnaSettingsSchema,
 });
 export type QnaPage = z.infer<typeof QnaPageSchema>;
+export const ScopedQnaPageSchema = QnaPageSchema.extend({
+  schemaVersion: z.literal(1),
+  audienceSeq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  lifecycle: z.enum(["open", "closed"]),
+}).strict();
+export type ScopedQnaPage = z.infer<typeof ScopedQnaPageSchema>;
 
 export const AudienceSignalSchema = z.enum(["got_it", "unsure", "need_example", "too_fast"]);
 export type AudienceSignal = z.infer<typeof AudienceSignalSchema>;

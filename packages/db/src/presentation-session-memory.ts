@@ -478,6 +478,27 @@ export class MemoryPresentationSessionRepository
     return { status: "accepted", participant: clone(stored) };
   }
 
+  findAudienceActorSync(sessionId: string, tokenHash: string, now: Date) {
+    const workspaceId = this.sessions.get(sessionId)?.workspaceId;
+    const participant = [...this.participants.values()].find(
+      (candidate) =>
+        candidate.workspaceId === workspaceId &&
+        candidate.sessionId === sessionId &&
+        candidate.tokenHash === tokenHash,
+    );
+    if (participant)
+      return { role: "participant" as const, id: participant.id, alias: participant.nickname };
+    const credential = [...this.credentials.values()].find(
+      (candidate) =>
+        candidate.sessionId === sessionId &&
+        candidate.workspaceId === workspaceId &&
+        candidate.tokenHash === tokenHash &&
+        !candidate.revokedAt &&
+        candidate.expiresAt > now,
+    );
+    return credential ? { role: credential.role, id: credential.id, alias: "Facilitator" } : null;
+  }
+
   async findParticipant(sessionId: string, tokenHash: string) {
     const participant = [...this.participants.values()].find(
       (candidate) => candidate.sessionId === sessionId && candidate.tokenHash === tokenHash,

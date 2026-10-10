@@ -5,6 +5,16 @@ for an approved acceptable-use policy, safeguarding procedure, employment policy
 
 ## Before the round
 
+For the scoped Presentation backend preview, apply migration 060 first and use a native host
+credential. Companion remains read-only; the Presentation Q&A UI/replies are not shipped yet.
+The [API reference](../api.md#presentation-qa-commands-backend-preview) documents the current transport.
+Refresh before host changes and send the current audience sequence as the revision fence.
+Retry lost acknowledgements with the original key/payload; after a conflict review current state
+and use a new key for the revised command. Removal is terminal; ordinary views/account exports
+blank the removed body. `banAuthor` stops new questions/votes from that room credential without
+exposing its identity. All scoped Q&A records follow parent retention/deletion. Notices contain no
+body; clients must sync current visible state and discard removed cached content.
+
 1. Name the host and at least one cohost for a large or sensitive session. Give presenters only a
    read-only presenter credential.
 2. Leave chat disabled unless conversation serves the session. Choose public or private aliases,

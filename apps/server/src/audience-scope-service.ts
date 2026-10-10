@@ -2,11 +2,13 @@ import {
   AudienceScopeSnapshotSchema,
   audienceRolePermissions,
   type AudienceScopeSnapshot,
+  type ScopedQnaCommand,
 } from "@openround/contracts";
 import type {
   AudienceScopeRepository,
   PresentationSessionRepository,
   Repository,
+  ScopedQnaRepository,
 } from "@openround/db";
 import {
   AudienceAccessError,
@@ -19,6 +21,8 @@ import type { AppConfig } from "./config.js";
 import { coreParityCreationEnabled } from "./core-parity-rollout.js";
 import type { InteractionService } from "./interaction-service.js";
 import type { QnaService } from "./qna-service.js";
+import { cleanPlainText, hashToken } from "./security.js";
+import { ScopedQnaError } from "@openround/db";
 
 const ALIAS_DISCLOSURE =
   "The facilitator and moderators can see your session alias. Anonymous public display hides it from the room, not from moderators.";
@@ -32,6 +36,7 @@ export class AudienceScopeService {
       config: AppConfig;
       interactions: InteractionService;
       qna: QnaService;
+      scopedQna: ScopedQnaRepository;
     },
   ) {}
 
@@ -122,23 +127,45 @@ export class AudienceScopeService {
     const scope = await this.dependencies.scopes.get(actor.session.workspaceId, scopeId);
     if (!scope || scope.expiresAt <= new Date())
       throw new AudienceAccessError("NOT_FOUND", "Audience scope not found");
+    const qna = await this.dependencies.scopedQna.page({
+      workspaceId: actor.session.workspaceId,
+      scopeId,
+      tokenHash:
+        actor.role === "participant" ? actor.participant.tokenHash : actor.credential.tokenHash,
+      now: new Date(),
+      limit: 1,
+    });
     return AudienceScopeSnapshotSchema.parse({
       schemaVersion: 1,
       scopeId,
       kind: "presentation",
-      lifecycle: actor.session.status === "active" ? "open" : "closed",
+      lifecycle: qna.lifecycle,
       identityPolicy: scope.identityPolicy,
       identityDisclosure: ALIAS_DISCLOSURE,
-      audienceSeq: scope.audienceSeq,
-      // No Presentation interaction writers ship in this foundation increment.
-      permissions: { ...audienceRolePermissions(actor.role, false), read: true },
-      features: { qna: false, chat: false, pulse: false },
+      audienceSeq: qna.audienceSeq,
+      permissions: audienceRolePermissions(actor.role, qna.lifecycle === "open"),
+      features: { qna: qna.settings.enabled, chat: false, pulse: false },
     });
   }
 
   async sync(kind: "round" | "presentation", scopeId: string, token: string, limit: number) {
     const scope = await this.snapshot(kind, scopeId, token);
-    if (kind === "presentation") return { scope };
+    if (kind === "presentation") {
+      const qna = await this.listPresentationQna(scopeId, token, { limit });
+      return {
+        scope: {
+          ...scope,
+          lifecycle: qna.lifecycle,
+          audienceSeq: qna.audienceSeq,
+          permissions:
+            qna.lifecycle === "closed"
+              ? { ...scope.permissions, submit: false, moderate: false, manageSettings: false }
+              : scope.permissions,
+          features: { ...scope.features, qna: qna.settings.enabled },
+        },
+        presentation: { qna },
+      };
+    }
     const [interactions, qna] = await Promise.all([
       this.dependencies.interactions.sync(scopeId, token, limit),
       scope.features.qna
@@ -146,5 +173,50 @@ export class AudienceScopeService {
         : Promise.resolve(null),
     ]);
     return { scope, round: { interactions, qna } };
+  }
+
+  async listPresentationQna(
+    scopeId: string,
+    token: string,
+    options: { limit: number; cursor?: string },
+  ) {
+    const actor = await new PresentationAudienceAccess(
+      this.dependencies.presentations,
+    ).authenticate(scopeId, token);
+    return this.dependencies.scopedQna.page({
+      workspaceId: actor.session.workspaceId,
+      scopeId,
+      tokenHash: hashToken(token),
+      now: new Date(),
+      ...options,
+    });
+  }
+
+  async mutatePresentationQna(scopeId: string, token: string, input: ScopedQnaCommand) {
+    const actor = await new PresentationAudienceAccess(
+      this.dependencies.presentations,
+    ).authenticate(scopeId, token);
+    let command = input;
+    if (input.type === "question.create") {
+      const body = cleanPlainText(input.body.normalize("NFKC"), 1_000);
+      if (!body)
+        throw new ScopedQnaError(
+          "CONFLICT",
+          "Enter a question containing visible text before submitting",
+        );
+      command = { ...input, body };
+    }
+    if (input.type === "question.moderate" && input.label !== null) {
+      const label = cleanPlainText(input.label.normalize("NFKC"), 80);
+      if (!label) throw new ScopedQnaError("CONFLICT", "Enter a visible label or clear it");
+      command = { ...input, label };
+    }
+    return this.dependencies.scopedQna.mutate({
+      workspaceId: actor.session.workspaceId,
+      scopeId,
+      tokenHash: hashToken(token),
+      now: new Date(),
+      command,
+    });
   }
 }

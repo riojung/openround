@@ -1,5 +1,15 @@
 import { randomUUID } from "node:crypto";
-import type { QnaPage, QnaQuestion, QnaReply, QnaSettings } from "@openround/contracts";
+import {
+  qnaDefaults,
+  qnaDisplayName,
+  qnaInitialStatus,
+  qnaIsPublic as publicQuestionStatus,
+  qnaQuestionVisible,
+  type QnaPage,
+  type QnaQuestion,
+  type QnaReply,
+  type QnaSettings,
+} from "@openround/contracts";
 import type {
   QnaQuestionRecord,
   QnaReplyRecord,
@@ -59,10 +69,6 @@ function decodeCursor(cursor: string) {
   } catch {
     throw new QnaError("CONFLICT", "The Q&A pagination cursor is invalid");
   }
-}
-
-function publicQuestionStatus(status: QnaQuestionStatus) {
-  return status === "published" || status === "answered";
 }
 
 export class QnaService {
@@ -134,10 +140,7 @@ export class QnaService {
     const defaults: QnaSettingsRecord = {
       workspaceId: session.workspaceId,
       sessionId: session.id,
-      enabled: true,
-      displayMode: segment === "education" ? "anonymous_public" : "alias_public",
-      moderationMode: segment === "education" ? "pre" : "post",
-      participantReplies: segment === "workplace",
+      ...qnaDefaults(segment),
       updatedAt: new Date(),
     };
     // Reading retained Q&A in an uninitialized closed room must not create durable settings.
@@ -196,13 +199,12 @@ export class QnaService {
       status: question.status,
       label: question.label,
       author: {
-        displayName: this.canModerate(actor)
-          ? question.publicAlias
-          : mine
-            ? "You"
-            : settings.displayMode === "anonymous_public"
-              ? "Anonymous"
-              : question.publicAlias,
+        displayName: qnaDisplayName({
+          alias: question.publicAlias,
+          moderator: this.canModerate(actor),
+          mine,
+          displayMode: settings.displayMode,
+        }),
         mine,
       },
       voteCount: question.voteCount,
@@ -227,9 +229,11 @@ export class QnaService {
       actor.kind === "participant" ? actor.participant.id : undefined,
     );
     const visible = questions.filter((question) => {
-      if (this.canModerate(actor)) return true;
-      if (publicQuestionStatus(question.status)) return true;
-      return actor.kind === "participant" && question.participantId === actor.participant.id;
+      return qnaQuestionVisible(
+        question.status,
+        this.canModerate(actor),
+        actor.kind === "participant" && question.participantId === actor.participant.id,
+      );
     });
     const cursor = options.cursor ? decodeCursor(options.cursor) : null;
     const afterCursor = cursor
@@ -280,7 +284,7 @@ export class QnaService {
       participantId: actor.participant.id,
       body: clean,
       publicAlias: actor.participant.nickname,
-      status: settings.moderationMode === "pre" ? "pending" : "published",
+      status: qnaInitialStatus(settings.moderationMode),
       label: null,
       voteCount: 0,
       votedByViewer: false,

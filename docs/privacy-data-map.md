@@ -4,10 +4,14 @@ This engineering inventory is not a legal opinion. Confirm purposes, legal basis
 
 The Core-Parity audience foundation stores opted-in Presentation scope metadata (workspace/source
 ID, immutable facilitator-visible alias policy, creation receipt, audience sequence, and source
-retention deadline) and a metadata-only activation outbox event. It adds no learner identities,
-submission content, signals, or survey attempts. Parent session/workspace deletion cascades in
+retention deadline) and metadata-only activation/Q&A outbox events. Scoped Presentation Q&A now
+stores plain-text questions, existing session aliases, moderation status/labels, unique votes,
+room-scoped bans, body-free retry receipts, durable action budgets and moderator audit records.
+It adds no cross-session identities, signals or survey attempts. Parent session/workspace deletion cascades in
 PostgreSQL and memory; scheduled session retention removes these records. Owner account export
-includes scope metadata, not authorization credentials or socket bindings. Scoped websocket
+includes scope metadata and Q&A records, not authorization credentials, retry hashes or socket bindings.
+Removed bodies are blank in ordinary views, reconnect snapshots and account exports. Stored
+removed text expires with the room; no public replay or raw removed-content export exists. Scoped websocket
 bindings contain only native credential hashes for revalidation; reusable bearer credentials are
 not retained in distributed socket data, Redis adapter fetches, account exports, or logs.
 No scope event exposes credentials, aliases, individual activity, or answers.

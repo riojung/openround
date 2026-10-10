@@ -16,11 +16,13 @@ These additive interfaces do not replace legacy `/v1/sessions/:id/...` routes or
 Use `Authorization: Bearer <room credential>`; credentials are never accepted in URLs. Responses
 are `private, no-store`. The explicit `kind` selector prevents cross-engine ID ambiguity.
 
-| Interface                                                   | Implemented behavior                                                                                                                                                                    |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/audience-scopes`                                  | Body `{kind:"presentation",sessionId,idempotencyKey}` (UUIDs). Native host pass only. Returns 201 on first activation, 200 on retry; scope/event commit atomically.                     |
-| `GET /v1/audience-scopes/:scopeId?kind=round\|presentation` | Authorized version-1 metadata, identity disclosure, audience sequence, permissions, and enabled interaction features.                                                                   |
-| `POST /v1/audience-scopes/:scopeId/sync`                    | Body `{kind,limit?}`; limit 1–50, default 50. Round returns `{scope,round:{interactions,qna}}` using existing projections; disabled Q&A is `null`. Presentation returns `{scope}` only. |
+| Interface                                                          | Implemented behavior                                                                                                                                                             |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/audience-scopes`                                         | Body `{kind:"presentation",sessionId,idempotencyKey}` (UUIDs). Native host pass only. Returns 201 on first activation, 200 on retry; scope/event commit atomically.              |
+| `GET /v1/audience-scopes/:scopeId?kind=round\|presentation`        | Authorized version-1 metadata, identity disclosure, audience sequence, permissions, and enabled interaction features.                                                            |
+| `POST /v1/audience-scopes/:scopeId/sync`                           | Body `{kind,limit?}`; limit 1–50, default 50. Round returns `{scope,round:{interactions,qna}}`; disabled Round Q&A is `null`. Presentation returns `{scope,presentation:{qna}}`. |
+| `GET /v1/audience-scopes/:scopeId/qna/questions?kind=presentation` | Authorized version-1 Q&A page; optional cursor and limit 1–50 (default 50).                                                                                                      |
+| `POST /v1/audience-scopes/:scopeId/qna/commands`                   | Body `{kind:"presentation",command}`; atomic Q&A mutation. Returns `{receipt,duplicate}` after commit.                                                                           |
 
 Activation requires `FEATURE_AUDIENCE_SCOPES=true` and the workspace in
 `CORE_PARITY_WORKSPACE_ALLOWLIST`; its distributed per-credential budget is 20 requests/minute,
@@ -29,8 +31,8 @@ with a creator cookie or Companion pass. Reads, sync, and accepted activation re
 available during writer rollback, but expired/revoked credentials do not.
 
 The Presentation scope shares its source session ID, freezes facilitator-visible alias policy and
-source retention, and currently advertises **all interaction features false**. Scope activation is
-not a Q&A/chat/Pulse enable switch. Existing Round aliases remain moderator-visible, including
+source retention. Activated scopes now advertise Q&A availability; chat and Pulse remain false.
+Presentation UI/replies remain pending. Existing Round aliases remain moderator-visible, including
 when their public Q&A display is anonymous. Organizer-blind feedback is not implemented yet.
 
 Additive Socket.IO messages:
@@ -39,21 +41,55 @@ Additive Socket.IO messages:
 - `audience.scope.sync.request`: same plus `limit?`; returns the REST sync shape.
 - `audience.scope.activated`: `{schemaVersion:1,eventId,scopeId,audienceSeq,serverTime,
 type:"audience.scope.activated",payload:{kind:"presentation"}}`.
+- `audience.qna.updated`: the same metadata envelope with this type, no question ID/body/author.
+  Fetch current authorized Q&A state; removed bodies are never replayed.
 
 Bindings and sequence cursors are separate from game/Presentation control subscriptions. Revalidate
 credentials on sync and before delivery. Duplicate outbox deliveries retain `eventId`; consumers
 must deduplicate. A reconnect/gap requests current state rather than assuming exactly-once delivery.
 Sockets allow at most five scoped subscriptions and twenty scope requests per ten seconds. Only
-the metadata-only activation event is currently supported; arbitrary/private outbox payloads are
+metadata-only activation and Q&A invalidations are supported; arbitrary/private outbox payloads are
 not broadcast. Legacy Round `audience.sync.request`, `qna.*`, and interaction events are unchanged.
 Scoped subscription does not yet replace the legacy Round live-event subscription; Round clients
 continue using existing session bindings for ongoing Q&A/chat/Pulse updates.
 
 Scope errors include `UNAUTHORIZED` (401), `NOT_FOUND` (404), `ROOM_CLOSED` and idempotency
 `CONFLICT` (409), `VALIDATION_ERROR` (400), and `RATE_LIMITED` (429). Messages identify the
-credential/rollout/lifecycle problem and a retry or rejoin action. Apply migration 059 before rollout.
-Surveys, feedback-room admission/settings, scoped interaction mutations, and export/share routes
-are deliberately not registered by this foundation.
+credential/rollout/lifecycle problem and a retry or rejoin action. Apply migrations 059–060 and
+compatible readers before activation. Surveys, feedback-room admission/settings, scoped chat/Pulse,
+Q&A replies and export/share routes are deliberately not registered by this increment.
+
+### Presentation Q&A commands (backend preview)
+
+Every command requires a UUID `idempotencyKey`. Retry the same command/key after network loss.
+The receipt is `{schemaVersion:1,idempotencyKey,resourceId,audienceSeq}`. Reusing a key for different
+content returns `CONFLICT`. Accepted retries do not increment sequences, votes or action budgets
+and never return historical question bodies.
+
+- `question.create`: `{type,idempotencyKey,body}`; participants only; 1–1,000 characters.
+  Text is normalized; HTML/invisible controls are removed. Education defaults to premoderation
+  and anonymous-public display; workplace to postmoderation and alias-public display. Hosts can
+  see aliases in both modes. Replies are disabled in this preview.
+- `vote.set`: `{type,idempotencyKey,questionId,voted}`; participants only, public questions only.
+  One vote per participant/question; `voted:false` removes it.
+- `settings.update`: `{type,idempotencyKey,expectedAudienceSeq,settings}`; host only. Supply
+  `{enabled,displayMode,moderationMode,participantReplies:false}`.
+- `question.moderate`: `{type,idempotencyKey,expectedAudienceSeq,questionId,status,label,banAuthor}`;
+  host only. `label` is null or 1–80 characters. Banning targets the author internally without
+  exposing an author identifier. Removed questions cannot be republished.
+
+Use the latest page's sequence for host changes; on conflict refetch and give the revised command
+a new key. Pages include `schemaVersion:1`, `lifecycle`, `audienceSeq`, `settings`, `questions`,
+and `nextCursor`. Hosts see the moderation queue, participants public/own questions, Companion
+public questions only. Removed bodies are blank for everyone. Reads allocate no settings/event.
+Finished rooms are read-only while credentials remain valid; accepted receipts remain retryable.
+Companion credentials cannot submit, vote, change settings or moderate.
+
+Additional errors: `QNA_DISABLED`, `MODERATION_REQUIRED` (409) and `QNA_RATE_LIMITED` (429).
+Durable accepted-action limits are five questions or thirty vote actions per actor/minute;
+moderator actions allow 120/minute. Capacity is 200 questions per participant and 2,000 per scope.
+A separate shared request limit allows 120 mutation requests per credential/scope/minute,
+including retries. These interaction budgets do not increase participant caps or add edition gates.
 
 ## Service and feature APIs
 

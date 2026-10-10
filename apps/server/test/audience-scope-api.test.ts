@@ -6,6 +6,8 @@ import {
   AudienceScopeSnapshotSchema,
   type PresentationContent,
   type QuizDraft,
+  type ScopedQnaCommand,
+  ScopedQnaPageSchema,
 } from "@openround/contracts";
 import { MemoryRepository } from "@openround/db";
 import { addParticipant, createGameState } from "@openround/game-engine";
@@ -201,6 +203,224 @@ async function roundFixture(built: Awaited<ReturnType<typeof buildApp>>) {
 }
 
 describe("core-parity foundation", () => {
+  it.each(["-".repeat(36), "0".repeat(36), "12345678-1234-1234-1234-12345678901-"])(
+    "returns an actionable cursor conflict for malformed UUID %s",
+    async (invalidId) => {
+      const f = await fixture();
+      await f.activate();
+      const cursor = Buffer.from(JSON.stringify([new Date().toISOString(), invalidId])).toString(
+        "base64url",
+      );
+      const response = await f.app.inject({
+        method: "GET",
+        url: `/v1/audience-scopes/${f.session.id}/qna/questions?kind=presentation&cursor=${cursor}`,
+        headers: { authorization: `Bearer ${f.tokens.host}` },
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.json().error).toMatchObject({
+        code: "CONFLICT",
+        message: "The Q&A pagination cursor is invalid; refresh the list",
+      });
+    },
+  );
+
+  it("supports moderated Presentation questions and votes without granting Companion control", async () => {
+    const f = await fixture();
+    await f.activate();
+    const mutate = (role: keyof typeof f.tokens, command: ScopedQnaCommand) =>
+      f.app.inject({
+        method: "POST",
+        url: `/v1/audience-scopes/${f.session.id}/qna/commands`,
+        headers: { authorization: `Bearer ${f.tokens[role]}` },
+        payload: { kind: "presentation", command },
+      });
+    const list = (role: keyof typeof f.tokens) =>
+      f.app.inject({
+        method: "GET",
+        url: `/v1/audience-scopes/${f.session.id}/qna/questions?kind=presentation`,
+        headers: { authorization: `Bearer ${f.tokens[role]}` },
+      });
+    const settings: ScopedQnaCommand = {
+      type: "settings.update",
+      settings: {
+        enabled: true,
+        displayMode: "anonymous_public",
+        moderationMode: "pre",
+        participantReplies: false,
+      },
+      expectedAudienceSeq: 1,
+      idempotencyKey: randomUUID(),
+    };
+    expect((await mutate("companion", settings)).statusCode).toBe(401);
+    expect((await mutate("host", settings)).statusCode).toBe(200);
+    const creation: ScopedQnaCommand = {
+      type: "question.create",
+      body: "<b>A question</b>\u202e",
+      idempotencyKey: randomUUID(),
+    };
+    const created = await mutate("participant", creation);
+    expect(created.statusCode).toBe(200);
+    const receipt = created.json().receipt;
+    expect(created.body).not.toContain("question");
+    expect((await mutate("participant", creation)).json()).toEqual({ receipt, duplicate: true });
+    expect((await mutate("participant", { ...creation, body: "Changed" })).statusCode).toBe(409);
+    expect(
+      ScopedQnaPageSchema.parse((await list("participant")).json()).questions[0],
+    ).toMatchObject({ body: "A question", status: "pending", author: { displayName: "You" } });
+    expect((await list("companion")).json().questions).toEqual([]);
+    const publish: ScopedQnaCommand = {
+      type: "question.moderate",
+      questionId: receipt.resourceId,
+      expectedAudienceSeq: 3,
+      idempotencyKey: randomUUID(),
+      status: "published",
+      label: null,
+      banAuthor: false,
+    };
+    expect((await mutate("companion", publish)).statusCode).toBe(401);
+    expect((await mutate("host", { ...publish, expectedAudienceSeq: 2 })).statusCode).toBe(409);
+    expect((await mutate("host", publish)).statusCode).toBe(200);
+    const publicView = await list("companion");
+    expect(publicView.json().questions[0].author.displayName).toBe("Anonymous");
+    expect(publicView.body).not.toContain("Never in scope metadata");
+    expect(publicView.body).not.toContain("participantId");
+    const vote: ScopedQnaCommand = {
+      type: "vote.set",
+      questionId: receipt.resourceId,
+      voted: true,
+      idempotencyKey: randomUUID(),
+    };
+    expect((await mutate("participant", vote)).statusCode).toBe(200);
+    expect((await mutate("participant", vote)).json().duplicate).toBe(true);
+    expect((await list("participant")).json().questions[0].voteCount).toBe(1);
+    expect(
+      (
+        await mutate("host", {
+          ...publish,
+          idempotencyKey: randomUUID(),
+          status: "removed",
+          banAuthor: true,
+          expectedAudienceSeq: 5,
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect((await list("host")).json().questions[0].body).toBe("");
+    expect((await list("participant")).json().questions[0].body).toBe("");
+    expect((await list("companion")).json().questions).toEqual([]);
+    const sync = await f.audienceScopeService.sync(
+      "presentation",
+      f.session.id,
+      f.tokens.companion,
+      50,
+    );
+    expect(sync.presentation!.qna.questions).toEqual([]);
+    expect(sync.scope.audienceSeq).toBe(sync.presentation!.qna.audienceSeq);
+    expect(
+      (await mutate("participant", { ...creation, idempotencyKey: randomUUID() })).statusCode,
+    ).toBe(401);
+    expect(await f.presentationSessions.getSessionById(f.session.id)).toMatchObject({
+      revision: f.session.revision,
+      eventSeq: f.session.eventSeq,
+    });
+  });
+
+  it("enforces Q&A admission, rate limits, closed-room receipts and credential boundaries", async () => {
+    const f = await fixture();
+    const request = (token: string, command: ScopedQnaCommand) =>
+      f.app.inject({
+        method: "POST",
+        url: `/v1/audience-scopes/${f.session.id}/qna/commands`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { kind: "presentation", command },
+      });
+    const command: ScopedQnaCommand = {
+      type: "question.create",
+      body: "Question",
+      idempotencyKey: randomUUID(),
+    };
+    expect((await request(f.tokens.participant, command)).statusCode).toBe(404);
+    await f.activate();
+    expect((await request(hashToken(f.tokens.participant), command)).statusCode).toBe(401);
+    const first = await request(f.tokens.participant, command);
+    expect(first.statusCode).toBe(200);
+    for (let i = 0; i < 4; i++)
+      expect(
+        (await request(f.tokens.participant, { ...command, idempotencyKey: randomUUID() }))
+          .statusCode,
+      ).toBe(200);
+    expect(
+      (await request(f.tokens.participant, { ...command, idempotencyKey: randomUUID() }))
+        .statusCode,
+    ).toBe(429);
+    expect(
+      (await f.audienceScopeService.snapshot("presentation", f.session.id, f.tokens.host))
+        .audienceSeq,
+    ).toBe(6);
+    expect((await request(f.tokens.participant, command)).json().receipt).toEqual(
+      first.json().receipt,
+    );
+    const headers = { authorization: `Bearer ${f.tokens.host}` };
+    expect(
+      (
+        await f.app.inject({
+          method: "GET",
+          url: `/v1/audience-scopes/${f.session.id}/qna/questions?kind=presentation&limit=51`,
+          headers,
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await f.app.inject({
+          method: "GET",
+          url: `/v1/audience-scopes/${f.session.id}/qna/questions?kind=presentation&token=${f.tokens.host}`,
+          headers,
+        })
+      ).statusCode,
+    ).toBe(400);
+    await f.presentationSessions.transitionSession({
+      workspaceId: f.workspaceId,
+      sessionId: f.session.id,
+      expectedRevision: f.session.revision,
+      phase: "finished",
+      status: "finished",
+      currentBlockIndex: -1,
+      occurredAt: new Date(),
+      event: { type: "presentation.finished", blockId: null, blockIndex: -1 },
+    });
+    expect((await request(f.tokens.participant, command)).json().receipt).toEqual(
+      first.json().receipt,
+    );
+    const closed = await request(f.tokens.participant, {
+      ...command,
+      idempotencyKey: randomUUID(),
+    });
+    expect(closed.statusCode).toBe(409);
+    expect(closed.json().error.code).toBe("ROOM_CLOSED");
+    const scope = await f.audienceScopeService.snapshot(
+      "presentation",
+      f.session.id,
+      f.tokens.host,
+    );
+    expect(scope.lifecycle).toBe("closed");
+    expect(scope.permissions.moderate).toBe(false);
+    expect(scope.audienceSeq).toBe(6);
+    await f.presentationSessions.revokeCredential(
+      f.workspaceId,
+      f.session.id,
+      f.credentialIds.host!,
+    );
+    expect(
+      (
+        await f.app.inject({
+          method: "GET",
+          url: `/v1/audience-scopes/${f.session.id}/qna/questions?kind=presentation`,
+          headers,
+        })
+      ).statusCode,
+    ).toBe(401);
+  });
+
   it("keeps independent writer gates default-off and requires the dedicated allowlist", () => {
     const workspaceId = randomUUID();
     const settings = config();
@@ -229,7 +449,7 @@ describe("core-parity foundation", () => {
       kind: "presentation",
       audienceSeq: 1,
       identityPolicy: "facilitator_visible_alias",
-      features: { qna: false, chat: false, pulse: false },
+      features: { qna: true, chat: false, pulse: false },
     });
     expect(first.body).not.toContain("Never in scope metadata");
     expect(first.body).not.toContain(f.tokens.host);
@@ -246,9 +466,9 @@ describe("core-parity foundation", () => {
       expect(read.headers["cache-control"]).toBe("private, no-store");
       expect(read.json().scope.permissions).toEqual({
         read: true,
-        submit: false,
-        moderate: false,
-        manageSettings: false,
+        submit: role !== "companion",
+        moderate: role === "host",
+        manageSettings: role === "host",
       });
     }
     expect(await f.presentationSessions.getSessionById(f.session.id)).toMatchObject({
@@ -672,6 +892,38 @@ describe("core-parity foundation", () => {
     expect(await worker.runOnce(new Date(Date.now() + 31_000))).toBe("completed");
     expect(await duplicatePromise).toEqual(firstEvent);
     expect(await worker.runOnce()).toBe("idle");
+    // Q&A outbox events are invalidations, including submissions still awaiting moderation.
+    await f.audienceScopeService.mutatePresentationQna(f.session.id, f.tokens.host, {
+      type: "settings.update",
+      idempotencyKey: randomUUID(),
+      expectedAudienceSeq: 1,
+      settings: {
+        enabled: true,
+        displayMode: "anonymous_public",
+        moderationMode: "pre",
+        participantReplies: false,
+      },
+    });
+    const qnaNotice = new Promise<unknown>((resolve) =>
+      client.once("audience.qna.updated", resolve),
+    );
+    await f.audienceScopeService.mutatePresentationQna(f.session.id, f.tokens.participant, {
+      type: "question.create",
+      idempotencyKey: randomUUID(),
+      body: "PRIVATE PENDING QUESTION",
+    });
+    expect(await worker.runOnce()).toBe("completed");
+    expect(await worker.runOnce()).toBe("completed");
+    const notice = await qnaNotice;
+    expect(notice).toMatchObject({
+      type: "audience.qna.updated",
+      payload: { kind: "presentation" },
+    });
+    expect(JSON.stringify(notice)).not.toContain("PRIVATE PENDING QUESTION");
+    expect(JSON.stringify(notice)).not.toContain("Never in scope metadata");
+    const synced = await client.timeout(2_000).emitWithAck("audience.scope.sync.request", request);
+    expect(synced.data.presentation.qna.questions).toEqual([]);
+    expect(synced.data.scope.audienceSeq).toBe(synced.data.presentation.qna.audienceSeq);
     await f.presentationSessions.revokeCredential(
       f.workspaceId,
       f.session.id,

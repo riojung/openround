@@ -27,6 +27,31 @@ afterEach(async () => {
 });
 
 describe("database migration discovery", () => {
+  it("adds scoped Q&A with composite cascades, durable rate limits and forced isolation", async () => {
+    const migrations = await discoverMigrations(
+      join(dirname(fileURLToPath(import.meta.url)), "../migrations"),
+    );
+    const migration = migrations.find(({ version }) => version === 60)!;
+    expect(migration.name).toBe("scoped_qna");
+    for (const table of [
+      "scoped_qna_settings",
+      "scoped_qna_questions",
+      "scoped_qna_votes",
+      "scoped_qna_bans",
+      "scoped_qna_receipts",
+      "scoped_qna_rate_limits",
+      "scoped_qna_audit",
+    ])
+      expect(migration.sql).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+    expect(migration.sql).toContain("FORCE ROW LEVEL SECURITY");
+    expect(migration.sql).toContain("PRIMARY KEY (scope_id, actor_id, idempotency_key)");
+    expect(migration.sql).toContain(
+      "REFERENCES presentation_live_participants(workspace_id, session_id, id) ON DELETE CASCADE",
+    );
+    expect(migration.sql).toContain("REVOKE UPDATE ON scoped_qna_receipts, scoped_qna_audit");
+    expect(migration.sql).not.toContain("ALTER TABLE game_sessions");
+    expect(migration.sql).not.toContain("ALTER TABLE live_room_codes");
+  });
   it("adds scoped Presentation storage without changing Round keys or the room-code registry", async () => {
     const directory = join(dirname(fileURLToPath(import.meta.url)), "../migrations");
     const migration = (await discoverMigrations(directory)).find(({ version }) => version === 59)!;
