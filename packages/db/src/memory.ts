@@ -224,6 +224,7 @@ export interface MemoryRepositoryLifecycleContext {
 }
 
 export interface MemoryRepositoryLifecycleExtension {
+  deletePresentationSessionMetadata?(workspaceId: string, sessionId: string): void;
   exportAccount(
     context: MemoryRepositoryLifecycleContext,
   ): Promise<Record<string, unknown>> | Record<string, unknown>;
@@ -355,6 +356,12 @@ export class MemoryRepository implements Repository {
     string,
     { instance: unknown; lifecycle: MemoryRepositoryLifecycleExtension }
   >();
+
+  deletePresentationSessionMetadata(workspaceId: string, sessionId: string) {
+    for (const { lifecycle } of this.lifecycleExtensions.values()) {
+      lifecycle.deletePresentationSessionMetadata?.(workspaceId, sessionId);
+    }
+  }
   private readonly deletedLibraryArtifacts = new Set<string>();
   private readonly deletedQuizVersions = new Set<string>();
   private readonly deletedMediaReferenceOwners = new Set<string>();

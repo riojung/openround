@@ -52,9 +52,14 @@ export function createConfigCheckSummary(config: AppConfig) {
       conceptHealth: config.FEATURE_CONCEPT_HEALTH,
       extendedQuestionTypes: config.FEATURE_EXTENDED_QUESTION_TYPES,
       verifiedInstitution: config.FEATURE_VERIFIED_INSTITUTION,
+      audienceScopes: config.FEATURE_AUDIENCE_SCOPES,
+      feedbackRooms: config.FEATURE_FEEDBACK_ROOMS,
+      surveys: config.FEATURE_SURVEYS,
+      feedbackExports: config.FEATURE_FEEDBACK_EXPORTS,
     },
     themedInteractionsWorkspaceAllowlistSize: config.THEMED_INTERACTIONS_WORKSPACE_ALLOWLIST.length,
     uxBetaWorkspaceAllowlistSize: config.UX_BETA_WORKSPACE_ALLOWLIST.length,
     evidenceFeaturesWorkspaceAllowlistSize: config.EVIDENCE_FEATURES_WORKSPACE_ALLOWLIST.length,
+    coreParityWorkspaceAllowlistSize: config.CORE_PARITY_WORKSPACE_ALLOWLIST.length,
   };
 }

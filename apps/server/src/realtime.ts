@@ -17,6 +17,8 @@ import type { AppConfig } from "./config.js";
 import type { MetricsService } from "./metrics.js";
 import { originAllowed } from "./origin.js";
 import type { SessionService } from "./session-service.js";
+import type { AudienceScopeService } from "./audience-scope-service.js";
+import { registerScopedAudienceRealtime } from "./scoped-audience-realtime.js";
 import type {
   AudienceRealtimeViewer,
   InteractionService,
@@ -128,6 +130,7 @@ export async function attachRealtime(
   metrics: MetricsService,
   interactions?: InteractionService,
   presentationRealtime?: PresentationRealtimeOptions,
+  audienceScopes?: AudienceScopeService,
 ) {
   let closing = false;
   const adapterRedis = config.REDIS_URL
@@ -168,6 +171,7 @@ export async function attachRealtime(
       timer: NodeJS.Timeout;
     }
   >();
+  const scopedAudience = audienceScopes ? registerScopedAudienceRealtime(io, audienceScopes) : null;
   const lastAudienceSummaryAt = new Map<string, number>();
   const audienceSummaryExpiryTimers = new Map<string, NodeJS.Timeout>();
   const presentationRealtimeRegistration = presentationRealtime
@@ -556,6 +560,7 @@ export async function attachRealtime(
 
   return {
     io,
+    scopedAudience,
     async close() {
       closing = true;
       presentationRealtimeRegistration?.close();

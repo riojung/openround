@@ -6,6 +6,12 @@ do not need accounts.
 
 For a local first run, complete the [quick start](quick-start.md) first.
 
+The Core-Parity audience foundation does not yet add new user-facing workflows. Presentation
+Q&A/chat/Pulse, organizer-blind feedback rooms, Surveys, new opinion formats, and feedback
+export/sharing tools remain pending. Existing learning Q&A's Anonymous public display still lets
+moderators see the session alias; it is not organizer-blind feedback. Track availability in the
+[implementation status](implementation-status.md), not by enabling reserved future flags.
+
 For video guidance, open **Help** (`/help`). The quick start follows sign-in, authoring,
 preview, publishing, hosting, QR/link joining, answering, and results. The longer user guide
 covers themes, confidence, linked rechecks, Presentations, Audience Pulse, chat/Q&A,

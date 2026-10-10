@@ -8,6 +8,74 @@ trademark review.
 
 ## Staged implementation plan checkpoint
 
+### Core parity M0/M1 — audience foundation, October 9, 2026
+
+Implementation starts on `codex/core-parity-audience-foundation` from reviewed Companion baseline
+`9d6d2d8` (including `90ada94` and its source/schema-fencing follow-up). This is the first
+**partial M0/M1 increment**, not completion of the Core-Parity release or its external gates.
+
+Implemented:
+
+- Additive version-1 audience-scope contracts, identity disclosures, role permissions, and strict
+  schema/page-size boundaries. Feedback-room identity policies are reserved but have no writer.
+- One Round credential adapter now serves both Q&A and Pulse/chat. Existing tables, routes,
+  identifiers, envelopes, game state, and presenter/cohost behavior remain intact. Presentation
+  native credentials are adapted separately; Companion cannot gain moderation or hosting power.
+- Ordered migration `059_audience_scope_foundation.sql` adds forced-RLS Presentation scope and
+  outbox storage with composite workspace/source keys, immutable identity/retention, and cascades.
+  Activation and the first sequenced event commit together. The game revision/sequence is unchanged.
+- Host-only, allowlisted Presentation scope activation, authenticated scope reads and synchronization,
+  separate websocket subscription/sync, distributed activation throttling, and a lease-fenced outbox
+  relay using the existing Socket.IO adapter. Duplicate delivery keeps the same `eventId` and sequence.
+  Existing activation, reads, and synchronization survive a creation-rollout pause.
+- Memory/PostgreSQL conformance, direct RLS/source-isolation tests, credential revocation, retry,
+  removed-scope cleanup, metadata privacy, and real websocket delivery tests.
+
+Presentation scope activation is **infrastructure-only**: its response explicitly reports Q&A,
+chat, and Pulse unavailable and no interaction-writing permissions. It does not expose an unfinished
+workflow in the UI. Round scope sync delegates to the existing role-filtered Q&A/chat/Pulse services.
+The local room-code registry is unchanged; there is no second joining directory.
+
+`FEATURE_AUDIENCE_SCOPES`, `FEATURE_FEEDBACK_ROOMS`, `FEATURE_SURVEYS`, and
+`FEATURE_FEEDBACK_EXPORTS` default off. New activation also requires
+`CORE_PARITY_WORKSPACE_ALLOWLIST`. The last three flags reserve independent future writer gates;
+turning them on does not create the still-unimplemented features. Apply migration 059 before
+deploying these API/worker readers; keep compatible readers and migrations during feature rollback.
+
+Next, in delivery order:
+
+1. Finish M1: scoped Q&A/chat/Pulse repositories and shared moderation/lifecycle rules, Presentation
+   interaction UI, anonymous feedback-room credential/privacy/passcode foundations, and scoped
+   cross-process/Redis-disruption evidence.
+2. M2: open text, word cloud, ranking, multiple-selection opinion polls, capability-registry updates,
+   schema upgrades/negotiation, public-text moderation, and complete author/player/report journeys.
+3. M3: immutable Surveys, revision-fenced builder, rooms and universal QR/code joining, draft/resume/
+   atomic finalization, retention, and transactional shared Round/Survey publication quotas.
+4. M4: spotlight/queue, privacy-safe feedback reports, private export jobs, aggregate-only sharing,
+   load/security/accessibility/partner acceptance, and operating guides.
+
+The thirteen external release gates remain open. No participant cap, pricing, anonymity claim,
+report schema, or public-release status changes in this increment.
+
+Verification: `CI=true pnpm check` passes formatting, dependency-context checks, lint, strict types,
+package/support tests, and production builds. All 74 PostgreSQL integration tests pass separately
+against a fresh disposable local PostgreSQL 18.3 cluster, including migration/repeat/checksum,
+shared scope conformance, forced RLS, immutable retention/privacy, account export, and deletion.
+Thirteen new server tests cover API roles/rollback, activation throttling, legacy sync projections,
+kicked/expired access, real Socket.IO subscription, duplicate relay delivery, and revocation,
+hash-only distributed socket metadata, and serialized remote-subscriber credential revalidation.
+Review fixes also add memory race tests proving that concurrent finishing/deletion cannot recreate
+an audience scope or outbox event. Both reported regressions failed before their fixes; all thirteen
+audience server tests and three memory audience tests now pass, as does `CI=true pnpm check`.
+The review-fix follow-up did not rerun PostgreSQL integration or real multi-process Redis tests;
+the 74-test PostgreSQL result above is the earlier foundation verification.
+The October 10 PR follow-up keeps closed, uninitialized Round scope GET/sync requests read-only
+across all four roles, including Q&A settings, and derives active-room cursors from the initialized
+settings record. First GET and sync responses agree with the bootstrap event and interaction cursor;
+retries allocate no additional event. These behaviors have direct regression coverage.
+No web source changed; this backend-only increment did not rerun Playwright or claim manual
+accessibility/device, Redis multi-process, target-host capacity, legal, or partner acceptance.
+
 ### Presentation Companion standalone published questions — October 9, 2026
 
 Companion can now insert one explicitly selected immutable question from a published Round at a

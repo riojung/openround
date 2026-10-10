@@ -3,6 +3,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
 export { PRODUCT_BRAND } from "./product-brand";
+export * from "./audience-scopes";
 
 export {
   clampContentSlideFrame,
@@ -72,6 +73,7 @@ export const errorCodes = [
   "MESSAGE_REMOVED",
   "INVALID_REACTION",
   "AUDIENCE_SYNC_REQUIRED",
+  "ROOM_CLOSED",
   "PRECONDITION_REQUIRED",
   "STALE_DRAFT",
   "STALE_SESSION",

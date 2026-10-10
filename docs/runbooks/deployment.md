@@ -372,6 +372,23 @@ Both files must be regular non-symlink files, ignored by Git, mode `0600`, and l
 literal non-symlinked `artifacts/deploy/<environment>/` directory. Do not put secrets in target
 JSON, manifests, command arguments, logs, receipts, or release artifacts.
 
+### Core-parity audience canary
+
+Apply ordered migration 059 before deploying the audience-scope API and outbox relay. Do not alter
+older applied migrations or add another join-code directory. New activation defaults off; a local
+or reviewed canary may set `FEATURE_AUDIENCE_SCOPES=true` and explicitly include its workspace in
+`CORE_PARITY_WORKSPACE_ALLOWLIST`. Compose forwards these settings and config-check exposes only
+the allowlist size, never its IDs. Activation is host-pass-only and metadata-only: it does not enable
+Presentation Q&A/chat/Pulse. `FEATURE_FEEDBACK_ROOMS`, `FEATURE_SURVEYS`, and
+`FEATURE_FEEDBACK_EXPORTS` reserve later writers and should remain false.
+
+For a feature rollback, disable new activation and preserve the compatible API/worker readers,
+existing scope rows, receipts, and migrations. Native credential expiry/revocation remains enforced
+on reads, sync, and event delivery. Scope/outbox rows follow the source Presentation's frozen
+retention and cascade on source/workspace deletion. Inspect relay retry errors without recording
+event payloads or socket credentials. The exact-image Fly reference checks prohibit new flags
+being enabled; public promotion still requires all existing independent release gates.
+
 ## Promotion sequence
 
 For staging:

@@ -7187,6 +7187,11 @@ export class PostgresRepository implements Repository {
            FROM presentations WHERE workspace_id = ANY($1::uuid[])
            ORDER BY created_at, id`,
         );
+        const audienceScopes = await queryWorkspaceData(
+          `SELECT id, workspace_id, kind, identity_policy, schema_version, audience_seq,
+                  creation_idempotency_key, created_at, expires_at
+           FROM audience_scopes WHERE workspace_id = ANY($1::uuid[]) ORDER BY created_at, id`,
+        );
         const libraryFavorites = await client.query(
           `SELECT workspace_id, user_id, artifact_type, artifact_id, created_at
            FROM library_favorites WHERE user_id = $1
@@ -7552,6 +7557,7 @@ export class PostgresRepository implements Repository {
           mediaReferences: mediaReferences.rows,
           sessions: sessions.rows,
           presentationSessions: presentationSessions.rows,
+          audienceScopes: audienceScopes.rows,
           presentationSessionParticipants: presentationSessionParticipants.rows,
           presentationSessionResponses: presentationSessionResponses.rows,
           presentationSessionTimeline: presentationSessionTimeline.rows,

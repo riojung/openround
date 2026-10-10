@@ -59,6 +59,7 @@ export class MemoryPresentationSessionRepository
   constructor(
     private readonly liveRooms: Pick<Repository, "claimLiveRoomCode" | "releaseLiveRoomCode"> & {
       assertWorkspaceLiveSessionCreationAllowed?: (workspaceId: string) => void;
+      deletePresentationSessionMetadata?: (workspaceId: string, sessionId: string) => void;
       assertPresentationPublishedQuestionSource?: (
         workspaceId: string,
         source: NonNullable<PresentationSessionCommandInput["publishedQuestionSource"]>,
@@ -148,6 +149,8 @@ export class MemoryPresentationSessionRepository
   private async deleteSessionTree(sessionId: string) {
     // Remove every record synchronously before releasing the code so no suspended mutation or
     // report worker can republish retained room data while deletion is in progress.
+    const session = this.sessions.get(sessionId);
+    if (session) this.liveRooms.deletePresentationSessionMetadata?.(session.workspaceId, sessionId);
     this.sessions.delete(sessionId);
     const participantIds = new Set<string>();
     for (const [id, participant] of this.participants) {
@@ -311,6 +314,11 @@ export class MemoryPresentationSessionRepository
   }
 
   async getSessionForWorkspace(workspaceId: string, sessionId: string) {
+    return this.getSessionForWorkspaceSync(workspaceId, sessionId);
+  }
+
+  /** Memory-only read for atomic parent checks and dependent writes without an await boundary. */
+  getSessionForWorkspaceSync(workspaceId: string, sessionId: string) {
     const session = this.sessions.get(sessionId);
     return session?.workspaceId === workspaceId ? clone(session) : null;
   }

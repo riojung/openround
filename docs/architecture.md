@@ -8,6 +8,41 @@ the accountless Recovery Loop: ask, diagnose, intervene, recheck, and prove.
 
 Read the [implementation status](implementation-status.md) for verified and outstanding release work. Architecture intent is not a substitute for production readiness evidence.
 
+## Additive audience-scope foundation
+
+M0/M1 introduces a versioned audience context without rewriting Round foreign keys or merging
+audience traffic into the game state. Round Q&A and Pulse/chat share `RoundAudienceAccess` and
+keep legacy repositories/projections. Native Presentation host, Companion, and participant
+credentials use `PresentationAudienceAccess`; the Companion's audience permissions are read-only,
+independently of its existing bounded gameplay controls.
+
+Migration 059 adds `audience_scopes` and `scoped_audience_outbox` for opted-in Presentations.
+Composite workspace/session keys and forced RLS isolate sources. A parent lifecycle lock serializes
+initial activation; its immutable privacy/retention record and metadata-only sequence-1 event commit
+in one transaction. The session's game revision/event sequence is never incremented by activation.
+The outbox has `FOR UPDATE SKIP LOCKED` claiming, expiring leases, lease-token completion fences,
+and at-least-once Socket.IO delivery. Relay failure retries the same event rather than minting a
+new sequence. Delivery revalidates native credentials and leaves revoked bindings; transient
+repository failures do not mark an event delivered. The worker drains before repository shutdown.
+
+The memory adapter performs its parent lifecycle check and scope/outbox insertion without an await
+boundary, so concurrent finishing/deletion cannot recreate removed records from a stale snapshot.
+Separate scoped socket bindings cannot overwrite existing game or Companion roles and contain only
+credential hashes, not reusable bearer tokens. Cross-node delivery revalidates those hashes against
+the native credential store and scope lifecycle. Strict event
+validation currently allows only `audience.scope.activated`, with no identities/text/answers. Future
+interaction events require role-filtered projections, not raw outbox broadcasting. Scope sync adapts
+legacy Round current state; Presentation sync is metadata-only until scoped interaction writers land.
+Round settings and the audience cursor come from the same initialized record, not a concurrent
+pre-bootstrap read. Finished, uninitialized Rounds project transient interaction/Q&A defaults:
+authenticated scope reads and synchronization stay read-only and allocate no bootstrap event.
+The existing `live_room_codes` registry remains the only join-code namespace.
+
+This is a staged foundation, not a second Q&A/chat implementation. Scoped content repositories,
+feedback-room sources, organizer-blind projections, passcodes, and Presentation interaction UI
+remain next M1 work. Apply compatible migrations/readers before writer flags; disabling creation
+preserves retained resources and authenticated recovery paths.
+
 ## System context
 
 ```mermaid
